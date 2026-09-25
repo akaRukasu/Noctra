@@ -81,7 +81,8 @@
     "test:v200089": "node tests/v200089-bowd-cookies.mjs && npm run test:v200088",
     "test:v200090": "node tests/bowd-account-session.mjs && node tests/bowd-auth-refusal.mjs && npm run test:v200089",
     "test:v200105": "node tests/v200105-mobile-navigation.mjs",
-    "test:v200107": "node tests/v200107-resume-user-dock.mjs && npm run check"
+    "test:v200107": "node tests/v200107-resume-user-dock.mjs && npm run check",
+    "test:v200107h": "node tests/v200107h-aurora.mjs && npm run test:v200107"
   },
   "engines": {
     "node": ">=20"

@@ -1,3 +1,7 @@
+# Révision interface 200.107h — « Aurora »
+
+Refonte graphique complète (fond aurore, dégradés, halos, anneau lumineux, reflets au survol), sans modification de la lecture ni de la logique. Détails, garde-fous et désactivation : [VERIFICATION-200107h.md](VERIFICATION-200107h.md). Validation : `npm run test:v200107h`.
+
 # Version actuelle : 200.0.104
 
 Cette archive fournit le client média Noctra 200.0.104, son serveur Node.js, les bundles Jellyfin Web, le centre TV et les scripts de mise à jour Ultra.cc.
