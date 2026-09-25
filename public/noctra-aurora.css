@@ -1,4 +1,4 @@
-/* Noctra 200.107h — « Aurora », refonte graphique complète.
+/* Noctra 200.0.108 — « Aurora 2 », refonte graphique complète.
    Couche purement visuelle chargée en dernier : aucune règle de mise en page
    structurante (positions, tailles de lecteur, virtualisation) n'est modifiée.
    - Les arrondis existants sont conservés ou légèrement accentués.
@@ -30,6 +30,30 @@
  color-scheme:dark;
  accent-color:#c4b5fd;
 }
+
+/* Police de titre Sora (OFL 1.1, fichiers locaux dans public/fonts). */
+@font-face {font-family:'Noctra Sora';font-style:normal;font-display:swap;font-weight:100 800;
+ src:url(fonts/sora-latin-ext-wght.woff2?v=5.3.0) format('woff2-variations'),url(fonts/sora-latin-ext-wght.woff2?v=5.3.0) format('woff2');
+ unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+@font-face {font-family:'Noctra Sora';font-style:normal;font-display:swap;font-weight:100 800;
+ src:url(fonts/sora-latin-wght.woff2?v=5.3.0) format('woff2-variations'),url(fonts/sora-latin-wght.woff2?v=5.3.0) format('woff2');
+ unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+:root[data-noctra-skin="aurora"] {--na-display:'Noctra Sora',Inter,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;}
+
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready :is(
+ .noctra-home-heading h2,.noctra-premiere h1,
+ #noctra-panel > .noctra-panel-header h2,
+ #noctra-panel :is(.noctra-library-hero,.noctra-request-home-head,.noctra-download-hero,.noctra-arr-hero,.noctra-roulette-intro,.noctra-tv-title) h3,
+ #noctra-panel .noctra-tv-browser-head strong,
+ #noctra-mobile-more header h2,
+ .homePage .sectionTitle,.libraryPage .sectionTitle,.searchPage .sectionTitle,
+ .itemDetailPage .itemName,.standalonePage h1,
+ #noctra-panel .noctra-panel-body :is(h3,h4)) {
+ font-family:var(--na-display)!important;letter-spacing:-.022em!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-home-heading h2 {font-size:clamp(30px,4vw,60px)!important;line-height:1.02!important;font-weight:750!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere h1 {font-weight:760!important;letter-spacing:-.03em!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-home-heading h2 {letter-spacing:-.035em!important;}
 
 /* ─────────────────────────────── Fond « aurore » ─────────────────────────────── */
 /* Le fond de base passe sur <html> ; <body> devient transparent hors lecture
@@ -536,3 +560,109 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-toast:no
  /* Aucune animation d'aurore derrière le lecteur TV. */
  html[data-noctra-skin="aurora"].noctra-performance-desktop:not(#na-skin) body.noctra-ready:has(#noctra-backdrop[data-panel-kind="tv"][data-open="true"])::before {animation:none;will-change:auto;}
 }
+
+/* ═══════════════════════════ 200.0.108 — Aurora 2 ═══════════════════════════ */
+
+/* Lumière ambiante : l'affiche en cours se diffuse en halo flouté derrière
+   l'accueil (calques posés par noctra-aurora.js, fondu enchaîné). */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient {
+ position:absolute;left:0;right:0;top:0;height:min(1100px,130vh);z-index:-1;pointer-events:none;overflow:hidden;
+ -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 45%,transparent 100%);mask-image:linear-gradient(180deg,#000 0%,#000 45%,transparent 100%);
+ opacity:0;transition:opacity .9s ease;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-playing):not(.noctra-video-route) #na-ambient[data-ready="true"] {opacity:1;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient > i {
+ position:absolute;inset:-12% -8% 0;background-size:cover;background-position:center 30%;
+ filter:blur(70px) saturate(1.7) brightness(.72);opacity:0;transition:opacity 1.4s ease;transform:translateZ(0);
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient > i[data-on="true"] {opacity:.85;}
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient {height:760px;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient > i {filter:blur(46px) saturate(1.6) brightness(.7);}
+}
+
+/* Accueil : titres de rangée plus affirmés avec pastille lumineuse. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .homePage .sectionTitle {
+ font-weight:750!important;letter-spacing:-.03em!important;
+}
+
+/* Cartes : élévation au survol (desktop), le visuel reste net. */
+@media (hover:hover) and (pointer:fine) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card .cardBox {
+  transition:transform .45s var(--na-ease)!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card:is(:hover,:focus-within) .cardBox {
+  transform:translateY(-6px);
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card:is(:hover,:focus-within) .cardText-first {color:#fff!important;}
+}
+
+/* Dock : trait lumineux sous l'entrée active. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-active="true"],
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
+ box-shadow:inset 0 0 0 1px rgba(221,214,254,.34),inset 0 -2px 0 rgba(240,171,252,.95),0 6px 22px -6px rgba(167,139,250,.75)!important;
+}
+
+/* Fiches (détail d'un film ou d'une série) : titre en dégradé, boutons en verre. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage :is(.itemName,.parentName) {
+ background:linear-gradient(100deg,#fff 0%,#f5f0ff 45%,#c4b5fd 80%,#7dd3fc 100%);-webkit-background-clip:text;background-clip:text;color:transparent!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .detailButton {
+ border-radius:18px!important;transition:box-shadow .25s ease,background-color .25s ease!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage :is(.mediaInfoItem,.mediaInfoOfficialRating) {border-radius:8px;}
+
+/* ─────────────── Ergonomie ─────────────── */
+/* Téléchargements : les actions ne se replient plus sur trois lignes. */
+@media (min-width:761px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel :is(.noctra-download-relink-button,.noctra-download-add-button),
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel :is(.noctra-download-relink-button,.noctra-download-add-button) > span {white-space:nowrap!important;}
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel .noctra-download-toolbar {flex-wrap:wrap!important;row-gap:12px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel .noctra-download-toolbar > :first-child {flex:1 1 320px!important;min-width:0!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel .noctra-download-toolbar-actions {flex:0 1 auto!important;flex-wrap:wrap!important;min-width:0!important;max-width:100%!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel .noctra-download-toolbar-buttons {max-width:100%!important;min-width:0!important;}
+
+/* Menu « Plus » : plus de mot coupé au milieu (« Téléchargement-s »). */
+html[data-noctra-skin="aurora"]:not(#na-skin) body #noctra-mobile-more .noctra-more-links strong {
+ overflow-wrap:normal!important;word-break:normal!important;hyphens:auto;-webkit-hyphens:auto;
+}
+@media (max-width:380px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body #noctra-mobile-more .noctra-more-links strong {font-size:12px!important;letter-spacing:-.02em;}
+}
+
+/* Panneaux sur mobile : titres lisibles en entier et en-tête plus compact. */
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind] > .noctra-panel-header h2 {
+  font-size:clamp(21px,6.4vw,27px)!important;letter-spacing:-.03em!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind] > .noctra-panel-header .noctra-eyebrow {
+  font-size:9px!important;letter-spacing:.12em!important;
+ }
+ /* En-tête en deux colonnes : titre aligné à gauche sur toute la largeur utile,
+    bouton de fermeture à droite. Les titres longs passent sur deux lignes au
+    lieu d'être coupés par des points de suspension. */
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open #noctra-panel[data-noctra-panel-kind]:not([data-tv-safe-theater="true"]) > .noctra-panel-header {
+  display:grid!important;grid-template-columns:minmax(0,1fr) 44px!important;align-items:center!important;column-gap:12px!important;
+  padding-right:calc(14px + var(--noctra-safe-right,0px))!important;text-align:left!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open #noctra-panel[data-noctra-panel-kind]:not([data-tv-safe-theater="true"]) > .noctra-panel-header > div {
+  grid-column:1!important;min-width:0!important;width:auto!important;max-width:none!important;margin:0!important;text-align:left!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open #noctra-panel[data-noctra-panel-kind]:not([data-tv-safe-theater="true"]) > .noctra-panel-header > .noctra-close {
+  grid-column:2!important;position:static!important;inset:auto!important;transform:none!important;margin:0!important;justify-self:end!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open #noctra-panel[data-noctra-panel-kind]:not([data-tv-safe-theater="true"]) > .noctra-panel-header :is(h2,.noctra-eyebrow) {
+  white-space:normal!important;text-overflow:clip!important;overflow:visible!important;overflow-wrap:normal!important;max-width:none!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="tv"] .noctra-tv-title h3 {font-size:28px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="tv"] .noctra-tv-topbar {padding:12px 4px 10px!important;}
+}
+
+@media (prefers-reduced-motion:no-preference) {
+ /* Effet Ken Burns très lent sur l'affiche (desktop, hors lecture). */
+ html[data-noctra-skin="aurora"].noctra-performance-desktop:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-playing):not(.noctra-panel-open):not(.noctra-page-hidden) .homePage .noctra-premiere .noctra-premiere-picture {
+  animation:na-kenburns 26s ease-in-out infinite alternate!important;transform-origin:70% 40%;
+ }
+}
+@keyframes na-kenburns {from {transform:scale(1);} to {transform:scale(1.07);}}

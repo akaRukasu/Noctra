@@ -1,8 +1,12 @@
-# Révision interface 200.107h — « Aurora »
+# Version actuelle : 200.0.108 — « Aurora 2 » et stabilité Shaka
 
-Refonte graphique complète (fond aurore, dégradés, halos, anneau lumineux, reflets au survol), sans modification de la lecture ni de la logique. Détails, garde-fous et désactivation : [VERIFICATION-200107h.md](VERIFICATION-200107h.md). Validation : `npm run test:v200107h`.
+Refonte graphique (police Sora, lumière ambiante, anneau lumineux, halos), corrections ergonomiques PC/mobile et stabilisation du lecteur TV Shaka (mode séquence HLS, délais de relance, relance bornée après erreur). Détails : [MISE-A-JOUR-V200108.md](MISE-A-JOUR-V200108.md). Validation : `npm run test:v200108`.
 
-# Version actuelle : 200.0.104
+# Historique : révision interface 200.107h « Aurora »
+
+Voir [VERIFICATION-200107h.md](VERIFICATION-200107h.md).
+
+# Historique : 200.0.104
 
 Cette archive fournit le client média Noctra 200.0.104, son serveur Node.js, les bundles Jellyfin Web, le centre TV et les scripts de mise à jour Ultra.cc.
 

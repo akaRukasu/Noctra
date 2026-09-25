@@ -1,5 +1,5 @@
-// 200.107h — refonte graphique « Aurora » : couche visuelle isolée, sans
-// impact sur la lecture ni sur la mise en page existante.
+// 200.0.108 — refonte graphique « Aurora 2 » : couche visuelle isolée, sans
+// impact sur la lecture ni sur la logique existante.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -13,17 +13,25 @@ const [index, css, js] = await Promise.all([
 // Chargée après toutes les autres feuilles Noctra, activable par un seul attribut.
 assert.match(index, /<html [^>]*data-noctra-skin="aurora"/);
 const finish = index.indexOf('noctra-finish.css');
-const aurora = index.indexOf('noctra-aurora.css?v=200.107h');
+const aurora = index.indexOf('noctra-aurora.css?v=200.108');
 assert.ok(finish > 0 && aurora > finish, 'La couche Aurora doit être chargée après noctra-finish.css.');
-assert.ok(index.includes('noctra-aurora.js?v=200.107h'));
-assert.ok(index.includes('noctra-shell.js?v=200.107g'), 'Le shell applicatif ne change pas.');
+assert.ok(index.includes('noctra-aurora.js?v=200.108'));
+assert.ok(index.includes('noctra-shell.js?v=200.108'), 'Le correctif Shaka est rechargé par les navigateurs.');
+assert.ok(index.includes('fonts/sora-latin-wght.woff2'), 'Police de titre préchargée.');
 
 // Chaque règle est limitée à l'habillage Aurora.
 const rules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@[^{]+\{/g, '{').match(/[^{}@]+\{/g) ?? [];
 for (const raw of rules) {
   const selector = raw.slice(0, -1).trim();
   if (!selector || /^(from|to|\d+%|[\d%, ]+)$/.test(selector) || selector.startsWith('(')) continue;
-  for (const part of selector.split(/,(?![^(]*\))/)) {
+  const parts = []; let depth = 0, current = '';
+  for (const char of selector) {
+    if (char === '(') depth += 1;
+    if (char === ')') depth -= 1;
+    if (char === ',' && depth === 0) { parts.push(current); current = ''; } else current += char;
+  }
+  parts.push(current);
+  for (const part of parts) {
     assert.ok(part.trim().startsWith('html[data-noctra-skin="aurora"]') || part.trim().startsWith(':root[data-noctra-skin="aurora"]'),
       `Sélecteur hors périmètre Aurora : ${part.trim()}`);
   }
@@ -61,4 +69,4 @@ assert.ok(js.includes('prefers-reduced-motion'));
 assert.ok(js.includes("noctra-playing"));
 assert.ok(!/fetch\(|XMLHttpRequest|localStorage|ApiClient/.test(js), 'Le script visuel ne touche ni au réseau ni aux données.');
 
-console.log('v200.0.107h : refonte Aurora isolée, lecture et dock préservés : OK');
+console.log('v200.0.108 : refonte Aurora 2 isolée, lecture et dock préservés : OK');

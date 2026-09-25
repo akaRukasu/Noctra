@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.107';
+  const NOCTRA_BUILD_VERSION = '200.0.108';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -8100,8 +8100,10 @@
         const count = Math.max(2, tvSafeExtras.slots.length);
         player.configure({
           streaming: { bufferingGoal: count <= 4 ? 36 : 24, rebufferingGoal: 4, bufferBehind: 6,
-            segmentPrefetchLimit: 1, lowLatencyMode: false },
-          manifest: { defaultPresentationDelay: 30 },
+            segmentPrefetchLimit: 1, lowLatencyMode: false, maxDisabledTime: 15,
+            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 10000, connectionTimeout: 10000 } },
+          manifest: { defaultPresentationDelay: 30, hls: { ignoreManifestProgramDateTime: true },
+            retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5, timeout: 20000, stallTimeout: 8000, connectionTimeout: 10000 } },
           abr: { enabled: true, defaultBandwidthEstimate: Math.max(300000, Math.floor(2000000 / count)) }
         });
         listen(player, 'trackschanged', () => applyTvSafeShakaQuality(player));
@@ -9410,10 +9412,26 @@
         player.configure({
           // Prioritize the first playable segment; parallel prefetch only helps
           // continuity once playback has started on a constrained connection.
+          // 200.0.108 : une requête figée (aucun octet reçu) est relancée après
+          // 10 s au lieu de 15, tout en laissant 45 s aux gros segments qui
+          // progressent. Les variantes écartées reviennent plus vite.
           streaming: { bufferingGoal: 45, rebufferingGoal: 3, bufferBehind: 15, segmentPrefetchLimit: 1,
-            lowLatencyMode: false, retryParameters: { maxAttempts: 4, timeout: 45000, stallTimeout: 15000, connectionTimeout: 15000 } },
-          manifest: { defaultPresentationDelay: 30, retryParameters: { maxAttempts: 3, timeout: 30000 } },
-          abr: { enabled: true, defaultBandwidthEstimate: 1000000 }
+            lowLatencyMode: false, maxDisabledTime: 15,
+            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 10000, connectionTimeout: 10000 } },
+          // Les horodatages PROGRAM-DATE-TIME des flux IPTV sont souvent
+          // incohérents : l'alignement par numéro de séquence évite trous et
+          // sauts, et contourne la mise à jour PDT fragile de Shaka 5.2.
+          // Mode séquence : les segments sont enchaînés bout à bout, sans suivre
+          // leurs horodatages internes. Sur les flux IPTV dont les PTS sautent de
+          // ~2 s tous les 5 segments, le mode par segments faisait sauter la
+          // lecture en avant (~2,2 s toutes les 52 s) jusqu'à épuiser la réserve.
+          // Après une erreur fatale, la relance repasse en mode par segments.
+          manifest: { defaultPresentationDelay: 30,
+            hls: { ignoreManifestProgramDateTime: true, sequenceMode: !video._noctraShakaSegmentsMode },
+            retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5, timeout: 20000, stallTimeout: 8000, connectionTimeout: 10000 } },
+          // ABR plus prudent : montée en qualité seulement avec une vraie marge
+          // de débit, et pas plus d'un changement toutes les 12 s.
+          abr: { enabled: true, defaultBandwidthEstimate: 1000000, switchInterval: 12, bandwidthUpgradeTarget: 0.7, bandwidthDowngradeTarget: 0.9 }
         });
         video.addEventListener('playing', () => {
           if (videoEventSignal.aborted || tvShaka !== player) return;
@@ -9447,6 +9465,8 @@
           recordTvDiagnostic('shaka-seeking', {
             seekStart: Number.isFinite(range?.start) ? range.start : null,
             seekEnd: Number.isFinite(range?.end) ? range.end : null,
+            liveDistance: Number.isFinite(range?.end) ? Number((range.end - Number(video.currentTime || 0)).toFixed(2)) : null,
+            sequenceMode: player.getConfiguration?.()?.manifest?.hls?.sequenceMode === true,
             lastSegmentAgeMs: lastSegmentAt ? Date.now() - lastSegmentAt : null
           });
         }, { signal: videoEventSignal });
@@ -9475,6 +9495,21 @@
           lastErrorSignature = signature;
           if (error?.severity === 2) {
             if (playbackBecameActive && error.category === 1 && refreshResolvedStream(playbackProvider, true)) return;
+            // 200.0.108 : une erreur fatale après démarrage (décodeur, MSE,
+            // manifeste) relance d'abord le même flux, au plus 2 fois en 5 min,
+            // sans changer de moteur ni de serveur.
+            if (playbackBecameActive && typeof tvDirectRestart === 'function') {
+              const now = Date.now();
+              const recent = (video._noctraShakaFatalRestarts || []).filter(at => now - at < 300000);
+              if (recent.length < 2) {
+                video._noctraShakaFatalRestarts = [...recent, now];
+                if (error.category === 3) video._noctraShakaSegmentsMode = true;
+                recordTvDiagnostic('shaka-fatal-restart', { code: details.code, category: details.category, attempt: recent.length + 1 });
+                setTvPlaybackStatus('Shaka · reprise du direct…', 'loading');
+                void Promise.resolve(tvDirectRestart()).catch(() => reportShakaFailure('restart-' + (error?.code || 0)));
+                return;
+              }
+            }
             reportShakaFailure('error-' + (error?.code || 0));
           }
         });

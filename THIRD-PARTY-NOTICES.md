@@ -16,6 +16,13 @@ Le lecteur TV charge HLS.js 1.6.16 pour la lecture HLS dans les navigateurs util
 <https://github.com/video-dev/hls.js>
 
 
+## Police Sora
+
+Les titres de l’interface utilisent la police Sora (variable, sous-ensembles latin et latin étendu, version 5.3.0 du paquet Fontsource), fichiers `public/fonts/sora-*.woff2`. Sora est distribuée sous licence SIL Open Font License 1.1, dont le texte est fourni dans `public/fonts/SORA-OFL.txt`.
+
+<https://github.com/sora-xor/sora-font>
+
+
 ## iptv-org metadata (optional TV enrichment)
 
 Noctra peut consulter les API publiques `channels.json`, `logos.json` et `guides.json` d’iptv-org pour rapprocher le nom d’une chaîne avec un logo et, lorsque disponible, une source de guide programmes. Les données sont utilisées comme enrichissement facultatif : aucun flux iptv-org n’est ajouté automatiquement à Noctra.
