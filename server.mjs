@@ -11658,9 +11658,11 @@ function warmTvSegments(segments) {
     const reference = tvReferences.get(segment.token);
     if (!reference || reference.expiresAt <= Date.now()) continue;
     reference.meta = { ...reference.meta, finiteSegment: true };
+    // Allow 1.5× the segment duration (6–20 s) for long high-bitrate segments.
+    const deadlineMs = Math.min(20_000, Math.max(6_000, Math.round(Number(segment.duration || 0) * 1_500)));
     void tvSegmentCache.prime(segment.token, signal => fetchTvRemoteUntilHeaders(
       safeTvRemoteUrl(reference.url), { headers: { accept: '*/*', ...reference.headers }, signal }, 4_000
-    ));
+    ), { deadlineMs });
   }
 }
 
@@ -12498,12 +12500,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.108', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.109', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.108',
+        version: '200.0.109',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

@@ -16,7 +16,7 @@ const finish = index.indexOf('noctra-finish.css');
 const aurora = index.indexOf('noctra-aurora.css?v=200.108b');
 assert.ok(finish > 0 && aurora > finish, 'La couche Aurora doit être chargée après noctra-finish.css.');
 assert.ok(index.includes('noctra-aurora.js?v=200.108'));
-assert.ok(index.includes('noctra-shell.js?v=200.108'), 'Le correctif Shaka est rechargé par les navigateurs.');
+assert.match(index, /noctra-shell\.js\?v=200\.1(0[89]|[1-9]\d)/, 'Le shell est rechargé par les navigateurs.');
 assert.ok(index.includes('fonts/sora-latin-wght.woff2'), 'Police de titre préchargée.');
 
 // Chaque règle est limitée à l'habillage Aurora.
