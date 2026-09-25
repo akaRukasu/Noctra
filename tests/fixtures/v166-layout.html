@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr" data-noctra-role="user">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Noctra v166 layout QA</title>
+  <link rel="stylesheet" href="../../public/noctra-theme.css">
+</head>
+<body class="noctra-ready noctra-panel-open" data-noctra-role="user">
+  <nav id="noctra-dock" data-role="user" data-persistent="true" data-expanded="true">
+    <button class="noctra-brand"><i><img src="../../public/noctra-mark.svg" alt=""></i><span>NOCTRA</span></button>
+    <div class="noctra-dock-items">
+      <button class="noctra-dock-button" data-active="true"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9H3z"/></svg><span>Accueil</span></button>
+      <button class="noctra-dock-button"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/></svg><span>Médiathèques</span></button>
+      <button class="noctra-dock-button"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/></svg><span>Demandes</span></button>
+      <button class="noctra-dock-button"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="13" rx="2"/></svg><span>TV</span></button>
+    </div>
+  </nav>
+  <div id="noctra-backdrop" data-open="true">
+    <aside id="noctra-panel" class="noctra-panel--wide" data-noctra-panel-kind="tv">
+      <header class="noctra-panel-header"><div><p class="noctra-eyebrow">NOCTRA · TV</p><h2>Favoris</h2></div><button class="noctra-close">×</button></header>
+      <div class="noctra-panel-body">
+        <section class="noctra-tv-shell" data-tv-layout="favorites">
+          <nav class="noctra-tv-navigation"><div class="noctra-tv-section-tabs"><button data-active="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/></svg><span>Favoris</span><b>4</b></button><button><span>Chaînes</span><b>108</b></button><button><span>Sports</span><b>5</b></button></div><div class="noctra-tv-source-row"><div class="noctra-tv-source-context"><span>RACCOURCI</span><strong>Favoris</strong></div><div class="noctra-tv-source-strip"><span class="noctra-tv-source-strip-empty">4 chaînes · toutes les sources</span></div></div></nav>
+          <div class="noctra-tv-topbar"><div class="noctra-tv-title"><p class="noctra-eyebrow">NOCTRA · ACCÈS RAPIDE</p><div><h3>Chaînes favorites</h3><span>4</span></div><p>Une seule liste, commune à toutes les sources TV configurées.</p></div></div>
+          <div class="noctra-tv-favorites-grid">
+            <article class="noctra-tv-favorite-card"><button><span class="noctra-tv-channel-logo"><span class="noctra-tv-logo-fallback">ARTE</span></span><span><strong>Arte</strong><small>FSTV</small><em>France</em></span><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button><button class="noctra-tv-favorite-remove"><svg viewBox="0 0 24 24"><path d="M20 6a5 5 0 0 0-7 0l-1 1-1-1a5 5 0 0 0-7 7l8 8 8-8a5 5 0 0 0 0-7z"/></svg></button></article>
+            <article class="noctra-tv-favorite-card"><button><span class="noctra-tv-channel-logo"><span class="noctra-tv-logo-fallback">BEIN</span></span><span><strong>beIN SPORTS 1</strong><small>Volkamax</small><em>Sports</em></span><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button><button class="noctra-tv-favorite-remove"><svg viewBox="0 0 24 24"><path d="M20 6a5 5 0 0 0-7 0l-1 1-1-1a5 5 0 0 0-7 7l8 8 8-8a5 5 0 0 0 0-7z"/></svg></button></article>
+            <article class="noctra-tv-favorite-card"><button><span class="noctra-tv-channel-logo"><span class="noctra-tv-logo-fallback">C+</span></span><span><strong>Canal+ Sport</strong><small>Alternative</small><em>Sport 24/24</em></span><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button><button class="noctra-tv-favorite-remove"><svg viewBox="0 0 24 24"><path d="M20 6a5 5 0 0 0-7 0l-1 1-1-1a5 5 0 0 0-7 7l8 8 8-8a5 5 0 0 0 0-7z"/></svg></button></article>
+            <article class="noctra-tv-favorite-card"><button><span class="noctra-tv-channel-logo"><span class="noctra-tv-logo-fallback">TF1</span></span><span><strong>TF1</strong><small>WiTV</small><em>France</em></span><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button><button class="noctra-tv-favorite-remove"><svg viewBox="0 0 24 24"><path d="M20 6a5 5 0 0 0-7 0l-1 1-1-1a5 5 0 0 0-7 7l8 8 8-8a5 5 0 0 0 0-7z"/></svg></button></article>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

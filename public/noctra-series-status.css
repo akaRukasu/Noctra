@@ -1,0 +1,7 @@
+.noctra-series-status {display:block;width:fit-content;max-width:100%;box-sizing:border-box;margin:6px auto 0;padding:3px 7px;border:1px solid currentColor;border-radius:7px;font:500 11px/1.4 system-ui,sans-serif;white-space:normal;text-align:center;color:#b8c0d3;background:#171d2b;}
+.noctra-series-status[data-state="complete"] {color:#8ae2c1;background:#142d29;}
+.noctra-series-status[data-state="incomplete"] {color:#ffd09b;background:#30241b;}
+.noctra-series-status[data-state="ongoing"] {color:#b7c6ff;background:#202840;}
+.nameContainer > .noctra-series-status {position:static;display:table;font:500 13px/1.5 system-ui,sans-serif;letter-spacing:normal;text-transform:none;margin:10px 0;width:auto;max-width:100%;height:auto;clear:both;}
+.noctra-series-status::before,.noctra-series-status::after {content:none!important;}
+.itemDetailPage .nameContainer > .noctra-series-status {display:block!important;position:static!important;width:fit-content!important;min-width:0!important;height:auto!important;padding:2px 7px!important;margin:10px 0!important;border-radius:8px!important;font:500 11px/1.4 system-ui,sans-serif!important;letter-spacing:normal!important;}

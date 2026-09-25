@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const shell = await readFile(new URL('../public/noctra-shell.js', import.meta.url), 'utf8');
+const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
+assert.equal(pkg.version, '200.0.21');
+assert.ok(shell.includes("NOCTRA_BUILD_VERSION = '200.0.21'"));
+assert.ok(server.includes("version: '200.0.21'"));
+assert.ok(server.includes('function ohaChannelIdentity(value)'));
+assert.ok(server.includes(".replace(/\\b(\\d+)\\s+(?:e|eme)\\b/g, '$1eme')"));
+assert.ok(server.includes('validateOhaNativeHlsStream'));
+assert.ok(server.includes("if (!/#EXTM3U/i.test(preview))"));
+assert.ok(shell.includes("if (tvSafeExtras.theater) panelNode.setAttribute('data-tv-safe-theater', 'true')"));
+assert.ok(shell.includes("if (backdrop.dataset.open !== 'true' || backdrop.dataset.panelKind !== 'tv') destroyTvSafeExtras();"));
+console.log('OHA dédupliqué/validé + mode cinéma persistant Noctra v108 : OK');

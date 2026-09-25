@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {playerFixture} from './v200048-tv-recovery.mjs';
+const p=await playerFixture('LiveWatch',false,{section:'channels'});
+let now=100000;
+p.deps.Date={now:()=>now};
+p.video.paused=false;p.video.readyState=2;p.ahead=.08;
+p.video.dispatchEvent(new Event('playing'));
+p.video.dispatchEvent(new Event('waiting'));
+p.video.dispatchEvent(new Event('waiting'));
+assert.equal(p.video.paused,false,'Duplicate notifications are one interruption');
+now+=30000;p.video.dispatchEvent(new Event('playing'));p.video.dispatchEvent(new Event('waiting'));
+assert.equal(p.video.paused,false,'Two interruptions do not pause playback');
+now+=30000;p.video.dispatchEvent(new Event('playing'));p.video.dispatchEvent(new Event('waiting'));
+assert.equal(p.video.paused,true,'Three genuine interruptions in one minute rebuild the reserve');
+console.log('Spaced live interruptions trigger reserve reconstruction, duplicates do not');
+// The deliberate pause must end when enough forward media arrives.
+p.ahead=30;
+p.deps.tvForwardBufferedWindow=()=>({position:p.video.currentTime,ahead:30});
+const resume=[...p.callbacks.values()].filter(timer=>timer.ms===1000&&!timer.interval).at(-1);
+assert.ok(resume,'A resume check is scheduled');
+resume.fn();
+assert.equal(p.video.paused,false,'Playback resumes with the rebuilt reserve');
+console.log('Rebuilt reserve resumes playback automatically');

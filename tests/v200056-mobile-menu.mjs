@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const src=await readFile(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const code=src.slice(src.indexOf('  function mobileMoreMarkup('),src.indexOf('  function openMobileMore('));
+const render=new Function('icons',code+';return mobileMoreMarkup;')(new Proxy({},{get:()=>'<svg></svg>'}));
+const actions=s=>[...s.matchAll(/data-noctra="([^"]+)"/g)].map(m=>m[1]);
+assert.deepEqual(actions(render(false)),['roulette','install']);
+assert.deepEqual(actions(render(true)),['roulette','install','download','tools','dashboard','users','refresh']);
+assert.equal(new Set(actions(render(true))).size,7);
+assert.ok(!render(false).includes('Administration'));
+assert.ok(src.includes("['download', 'tools', 'dashboard', 'refresh', 'users'].includes(action) && !authContext?.isAdmin"));
+const request=src.slice(src.indexOf('  function requestHomeShellMarkup('),src.indexOf('  async function openRequests('));
+assert.ok(request.indexOf('<form')<request.indexOf('noctra-request-main-tabs'));
+console.log('v200.0.56: role-specific Plus menu, all seven actions reachable, admin guard retained, request search first.');

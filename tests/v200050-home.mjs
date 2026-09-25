@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const source=await readFile(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const start=source.indexOf('  function enhanceCinemaHome('),end=source.indexOf('\n  function enhanceHomePage(',start);
+const enhance=new Function(source.slice(start,end)+';return enhanceCinemaHome;')();
+let removed=0;const classes=new Set();let old=[{remove(){removed++;old=[]}}];
+const home={querySelectorAll:()=>old,classList:{add:n=>classes.add(n)}};
+enhance(home);enhance(home);assert.equal(removed,1);assert.ok(classes.has('noctra-content-home'));
+assert.ok(!source.slice(start,end).includes('innerHTML'),'No duplicate landing navigation');
+console.log('Home: cached landing removed once, native sections retained.');

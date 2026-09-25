@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const shell = await readFile(new URL('../public/noctra-shell.js', import.meta.url), 'utf8');
+const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
+const manifest = JSON.parse(await readFile(new URL('../public/noctra.webmanifest', import.meta.url), 'utf8'));
+const theme = await readFile(new URL('../public/noctra-theme.css', import.meta.url), 'utf8');
+const clientIndex = await readFile(new URL('../public/client/index.html', import.meta.url), 'utf8');
+const clientConfig = await readFile(new URL('../public/client/config.json', import.meta.url), 'utf8');
+const serviceWorker = await readFile(new URL('../public/noctra-sw.js', import.meta.url), 'utf8');
+const hlsVendor = await readFile(new URL('../public/vendor/hls.min.js', import.meta.url));
+const updater = await readFile(new URL('../ultra/update-noctra.sh', import.meta.url), 'utf8');
+const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const buildVersion = packageJson.version;
+const cacheRevision = buildVersion.split('.').at(-1);
+const assetVersion = buildVersion.replace(/^(\d+)\.0\.(\d+)$/, '$1.$2');
+
+const resolver = shell.slice(
+  shell.indexOf('function currentDetailItemId'),
+  shell.indexOf('function identifyError')
+);
+assert.ok(resolver.indexOf('lastMediaContext.itemId') < resolver.indexOf('routeDetailItemId()'),
+  'La cible explicite doit être prioritaire sur la page parente.');
+assert.ok(!shell.includes("document.addEventListener('pointerover'"),
+  'Le simple survol ne doit plus modifier la cible Identifier.');
+assert.ok(shell.includes('rememberMediaContext(event.target, true)'),
+  'Les clics et boutons de menu doivent figer la cible.');
+assert.ok(shell.includes('fetch(appPath(path)'),
+  'Les API doivent respecter le sous-chemin Ultra.cc.');
+assert.ok(server.includes('incomingPath.startsWith(`${basePath}/`)'),
+  'Le serveur doit accepter BASE_URL.');
+assert.ok(server.includes(`version: '${buildVersion}'`), 'Le serveur doit annoncer la version courante.');
+assert.equal((server.match(new RegExp(`version: '${buildVersion.replace(/\./g, '\\.')}'`, 'g')) || []).length, 2, 'Le health et /api/config doivent exposer la même version.');
+assert.ok(updater.includes('grep -q \"\\\"version\\\":\\\"${NEW_VERSION}\\\"\"'), 'Le script Ultra.cc doit refuser un ancien serveur encore vivant sur le port.');
+assert.equal(manifest.name, 'Noctra Media Client');
+assert.equal(manifest.display, 'standalone');
+assert.ok(manifest.icons.some(icon => icon.sizes === '512x512' && icon.purpose === 'maskable'));
+assert.ok(shell.includes('id="noctra-install-app"'), 'Le bouton PWA doit rester séparé de la rangée du dock.');
+assert.ok(shell.includes('registerNoctraServiceWorker'), 'Le service worker Noctra doit être enregistré.');
+assert.ok(clientIndex.includes(`noctra-shell.js?v=${assetVersion}`), 'Le client doit charger le shell courant sans ancien cache.');
+assert.ok(clientIndex.includes(`noctra-theme.css?v=${assetVersion}`), 'Le client doit charger le thème courant sans ancien cache.');
+assert.ok(clientIndex.includes('noctra.webmanifest?v=182'), 'Le manifeste doit être rechargé avec la version courante.');
+assert.ok(serviceWorker.includes(`noctra-shell-v200-r${cacheRevision}`), 'Le cache PWA doit être renouvelé avec la version courante.');
+assert.ok(serviceWorker.includes('noctra.webmanifest?v=182'), 'Le service worker doit précharger le manifeste courant.');
+assert.ok(manifest.icons.every(icon => !icon.src || icon.src.includes('?v=182')), 'Les icônes du manifeste doivent utiliser le cache-buster courant.');
+assert.ok(theme.includes('Noctra V54 — centre TV enrichi, lecteurs iframe fiables, WiTV/OHA'), 'Le marqueur de version v54 doit être présent.');
+assert.ok(server.includes('livewatch.top/api/v1/public/all'), 'Les sources LiveWatch intégrées doivent être présentes.');
+assert.ok(shell.includes('data-tv-section'), 'Le centre TV doit fournir ses sous-menus.');
+assert.ok(shell.includes('data-noctra="users" data-admin-dock'), 'La gestion des utilisateurs doit être intégrée au dock administrateur.');
+assert.ok(!shell.includes('noctra-users-shortcut'), 'Le raccourci Utilisateurs flottant ne doit plus être injecté.');
+assert.ok(shell.includes('chooseBalancedLibraryColumns'), 'La grille doit éviter une affiche orpheline.');
+assert.ok(shell.includes('installDesktopSmoothWheel'), 'Le lissage de la molette PC classique doit rester présent.');
+assert.ok(theme.includes('safe-area-inset-bottom'), 'Les zones sûres mobiles doivent être prises en charge.');
+assert.ok(server.includes('/api/files/roots'), 'L’explorateur de fichiers doit être exposé.');
+assert.ok(server.includes('/api/discovery'), 'Les découvertes intelligentes doivent être exposées.');
+assert.ok(shell.includes('openFileExplorer'), 'Le client doit intégrer l’explorateur média.');
+assert.ok(shell.includes('openDiscoveries'), 'Le client doit intégrer les découvertes.');
+
+assert.ok(server.includes("['trash', 'Trash'"), 'Le dossier Trash doit être ajouté à l’explorateur.');
+assert.ok(server.includes('/api/servarr/center'), 'Le centre Sonarr/Radarr doit être exposé.');
+assert.ok(server.includes('jellyfinTasteProfile'), 'Le moteur de suggestions doit analyser la médiathèque Jellyfin.');
+assert.ok(server.includes('prowlarrAvailability'), 'La disponibilité sur les trackers doit être vérifiable.');
+assert.ok(shell.includes('arrCenterState'), 'L’interface Arr Center doit être intégrée au client.');
+assert.ok(shell.includes('activateTrackerAvailability'), 'Les cartes doivent vérifier Prowlarr progressivement.');
+assert.ok(theme.includes('.noctra-arr-grid'), 'Le centre Arr doit être responsive.');
+
+assert.ok(shell.includes("appPath('/vendor/hls.min.js?v=182')"), 'Le lecteur TV doit charger HLS.js depuis Noctra.');
+assert.ok(hlsVendor.length > 500_000, 'Le bundle HLS.js local doit être livré avec Noctra.');
+assert.ok(serviceWorker.includes('./vendor/hls.min.js?v=182'), 'Le lecteur HLS local doit être inclus dans le cache PWA.');
+assert.ok(server.includes('/api/tv/catalog'), 'Le catalogue TV doit être exposé.');
+assert.ok(server.includes('/api/tv/stream/'), 'Le proxy sécurisé des flux TV doit être exposé.');
+assert.ok(shell.includes('openTv'), 'Le client doit intégrer le centre TV.');
+assert.ok(shell.includes('showTorrentDetails'), 'Les détails qBittorrent doivent être intégrés.');
+assert.ok(server.includes('/api/files/empty-trash'), 'Le dossier Trash doit pouvoir être vidé.');
+assert.ok(theme.includes('.noctra-tv-player-layout'), 'Le lecteur TV doit être responsive.');
+
+assert.ok(server.includes('PROWLARR_INTERNAL_URL'), 'Prowlarr doit pouvoir utiliser son URL interne Ultra.cc.');
+assert.ok(server.includes('looksLikeHtml'), 'Les pages HTML ne doivent plus être interprétées comme du JSON ou des playlists.');
+assert.ok(server.includes('jellyseerrAvailabilityState'), 'Jellyseerr doit distinguer présent, demandé et téléchargement en cours.');
+assert.ok(server.includes('parseLiveWatchCatalog'), 'Les catalogues JSON LiveWatch documentés doivent être interprétables.');
+assert.ok(server.includes('parseXmlTvNowNext'), 'Le guide XMLTV doit enrichir les chaînes.');
+assert.ok(shell.includes('noctra-tv-embed'), 'Le lecteur TV doit prendre en charge les lecteurs web documentés.');
+
+assert.ok(server.includes("id: 'witv-public'"), 'Le catalogue public WiTV doit être proposé comme source intégrée.');
+assert.ok(server.includes("id: 'oha-live'"), 'OHA Live doit être proposé en vue France/A-Z.');
+assert.ok(server.includes('tvCatalogFromWiTv'), 'Le serveur doit construire le catalogue WiTV à partir des pages publiques.');
+assert.ok(shell.includes("frame.removeAttribute('sandbox')"), 'Les lecteurs LiveWatch documentés doivent pouvoir être chargés sans sandbox imposé par Noctra.');
+assert.ok(shell.includes("portals: 'Portails'"), 'La TV doit disposer d’un sous-menu Portails.');
+
+assert.ok(server.includes("id: 'livewatch-curated'"), 'LiveWatch doit proposer un catalogue FR/US fusionné.');
+assert.ok(server.includes('tvCatalogFromLiveWatchCurated'), 'Le filtre LiveWatch FR/US doit être appliqué côté serveur.');
+assert.ok(server.includes('/api/tv/resolve/'), 'Le résolveur public TV doit rester disponible pour OHA et les pages publiquement indexables.');
+assert.ok(server.includes('tvIframeCandidatesFromHtml'), 'Le résolveur TV ne doit considérer que les lecteurs publiquement exposés par la page.');
+assert.ok(shell.includes('resolveAndPlayTvChannel'), 'Le client doit conserver le résolveur pour les sources TV qui en ont besoin.');
+assert.ok(shell.includes('data-tv-embed-option'), 'Les variantes des lecteurs résolus doivent rester sélectionnables.');
+assert.ok(theme.includes('Noctra V54 — TV FR/US, lecteur WiTV direct et portail OHA compact'), 'La base TV v54 doit rester présente.');
+assert.ok(theme.includes('Noctra V55 — TV virtualisée, recherche fiable, OHA France/A–Z'), 'Les optimisations TV v55 doivent rester présentes.');
+assert.ok(shell.includes('renderTvChannelList'), 'La liste TV doit être rendue par lots pour rester fluide.');
+assert.ok(shell.includes('data-tv-channel-search'), 'La recherche TV doit indexer le nom et les métadonnées des chaînes.');
+assert.ok(server.includes('tvCatalogFromOha'), 'OHA doit disposer d’un catalogue public dédié.');
+assert.ok(server.includes('ohaDiscoverPublicCatalog'), 'OHA doit tenter d’indexer ses données/API publiques avant le repli portail.');
+assert.ok(server.includes('/api/tv/image/'), 'Les logos TV doivent passer par un proxy image résilient.');
+assert.ok(shell.includes('castCurrentTv'), 'Le lecteur TV doit proposer AirPlay/Remote Playback pour les flux directs compatibles.');
+assert.ok(clientConfig.includes('chromecastPlayer/plugin'), 'Le client Jellyfin doit conserver le plugin Chromecast natif.');
+assert.ok(theme.includes('Noctra V58c — finition PC/mobile/tablette : dock membre, centre TV et lecteurs'), 'La couche TV/dock v57 doit être présente.');
+assert.ok(shell.includes('data-tv-toggle-sports'), 'Sports doit être masquable et réaffichable dans le centre TV.');
+assert.ok(shell.includes('noctra-tv-source-mini'), 'Le bouton Ajouter une source doit utiliser le format compact v58.');
+assert.ok(server.includes("playbackType: 'resolver'"), 'Les chaînes OHA indexées doivent passer par le résolveur public au lieu de charger la page complète.');
+assert.ok(server.includes('detectTvImageMime'), 'Le proxy de logos doit reconnaître les images même avec un Content-Type générique.');
+
+assert.ok(shell.includes('syncDockRoleButtons'), 'Le dock membre doit supprimer physiquement les actions administrateur.');
+assert.ok(shell.includes('data-admin-dock'), 'Les boutons administrateur du dock doivent être injectés uniquement pour le rôle admin.');
+assert.ok(server.includes('wiTvStreamFromPlayerHtml') && shell.includes('playTvDirectStream'), 'WiTV doit convertir son lecteur public en flux HLS natif Noctra.');
+assert.ok(shell.includes('data-tv-screen-fullscreen'), 'Le lecteur TV doit proposer un plein écran indépendant sur mobile.');
+assert.ok(shell.includes('noctra-tv-pseudo-fullscreen'), 'Le plein écran TV doit avoir un repli iOS/tablette.');
+assert.ok(server.includes('/api/tv/programme'), 'Le guide TV doit proposer un enrichissement automatique paresseux.');
+assert.ok(server.includes('iptvOrgProgramme'), 'Le serveur doit pouvoir rapprocher une chaîne reconnue d’un guide public.');
+assert.ok(server.includes('resolveTvUrl(rawLogo'), 'Les logos relatifs des catalogues TV doivent être résolus côté serveur.');
+assert.ok(theme.includes('Noctra V58c — finition PC/mobile/tablette : dock membre, centre TV et lecteurs'), 'La couche finale responsive v58 doit être présente.');
+
+assert.ok(shell.includes("const score = document.querySelector('[data-tv-now-score]')"), 'Le lecteur TV doit déclarer score avant usage.');
+assert.ok(shell.includes("const logo = document.querySelector('[data-tv-now-logo]')"), 'Le lecteur TV doit déclarer logo avant usage.');
+assert.ok(shell.includes('<span>Ajouter</span>'), 'Le bouton source TV doit conserver un libellé visible sur desktop.');
+assert.ok(server.includes("streamKind: 'Lecteur WiTV multi-serveurs'") && server.includes("resolverUrl: `/api/tv/resolve/${resolveRef}`"), 'WiTV doit résoudre ses lecteurs publics et exposer leurs serveurs.');
+assert.ok(server.includes('shareTvLogosAcrossDuplicateNames'), 'Les variantes d’une même chaîne doivent partager leur meilleur logo disponible.');
+assert.ok(server.includes('tvLogoIdentityKeys'), 'Le rapprochement des logos doit tolérer les variantes de nom courantes.');
+assert.ok(shell.includes('tvAppleTouchDevice') && shell.includes('enterTvPseudoFullscreen'), 'Le plein écran TV doit gérer explicitement iPhone/iPad.');
+assert.ok(theme.includes('Noctra V60 — TV : navigation intégrée, WiTV stable et plein écran mobile réel'), 'La couche TV v60 doit être présente.');
+assert.ok(theme.includes('body.noctra-tv-pseudo-fullscreen .noctra-panel-body'), 'Le pseudo-plein-écran doit neutraliser le contexte transformé du panneau.');
+assert.ok(theme.includes('Noctra V61 — dock membre aligné sur l\'admin + lecteurs TV mobile/pseudo-plein-écran'), 'La couche TV/dock v61 doit être présente.');
+assert.ok(theme.includes('height: clamp(340px, 58dvh, 520px)'), 'OHA mobile doit conserver une zone de navigation réellement utilisable.');
+assert.ok(theme.includes('background: rgba(247,249,255,.92)'), 'Le bouton plein écran TV doit rester clairement visible.');
+assert.ok(theme.includes('Noctra V62 — dock membre unifié, demandes éditorialisées et TV adaptative'), 'La couche finale v62 doit être présente.');
+assert.ok(shell.includes('smartDiscoveryMarkup') && shell.includes('noctra-smart-rail'), 'Demandes doit organiser les suggestions en parcours éditorial et en rubans.');
+assert.ok(!shell.includes('class="noctra-discovery-score"'), 'Le score technique ne doit plus apparaître sur les vignettes de suggestion.');
+assert.ok(server.includes('diversifyPersonalizedDiscovery'), 'Le classement intelligent doit limiter les répétitions de genres, formats et franchises.');
+assert.ok(server.includes('sanitizeWiTvPlayerHtml') && server.includes('/api/tv/embed/'), 'WiTV doit utiliser le lecteur public préparé sans les scripts tiers défaillants.');
+assert.ok(shell.includes("sandbox', 'allow-scripts allow-forms allow-popups"), 'Le lecteur WiTV préparé doit rester isolé du client Noctra.');
+assert.ok(shell.includes('configureOhaFrameSizing') && shell.includes('desktopViewport = Math.max(1080'), 'OHA doit conserver un viewport desktop adaptatif.');
+assert.ok(server.includes('livewatch-session.json') && server.includes('mode: 0o600'), 'La session LiveWatch doit rester dans un fichier privé côté serveur.');
+assert.ok(server.includes('connectLiveWatchVip') && server.includes('refreshLiveWatchVip'), 'La connexion VIP et son renouvellement doivent être gérés côté serveur.');
+assert.ok(server.includes("path === '/api/tv/livewatch/session' && method !== 'GET'"), 'La configuration LiveWatch doit être réservée aux administrateurs.');
+assert.ok(server.includes('proxyLiveWatchVipStream') && server.includes('/api/tv/livewatch/stream/'), 'Le flux VIP doit être résolu et relayé sans exposer la session.');
+assert.ok(server.includes("...(liveWatchHost ? { authorization: `Bearer ${session.accessToken}` } : {})"), 'Le jeton LiveWatch ne doit pas être envoyé aux hébergeurs HLS tiers.');
+assert.ok(shell.includes('noctra-livewatch-vip-form') && shell.includes('data-livewatch-vip-disconnect'), 'L’administrateur doit pouvoir connecter ou retirer le compte VIP depuis la TV.');
+assert.ok(!shell.includes('livewatch-auth') && !shell.includes('liveWatchSupabaseAnonKey'), 'Le client ne doit contenir ni clé de stockage ni configuration d’authentification LiveWatch.');
+assert.ok(theme.includes('Noctra V63 — session LiveWatch VIP partagée sans exposer ses jetons'), 'La couche visuelle VIP v63 doit être présente.');
+assert.ok(server.includes('normalizedJellyseerrDestination') && server.includes('Toujours envoyer à Jellyseerr une destination réellement disponible'), 'Les demandes doivent toujours envoyer un profil qualité encore valide.');
+assert.ok(shell.includes('noctra-request-profile-field') && shell.includes('Choisis la qualité souhaitée'), 'Tous les utilisateurs doivent pouvoir choisir le profil qualité.');
+assert.ok(server.includes('/mediaurl-catalog.json') && server.includes('/mediaurl-resolve.json'), 'OHA doit utiliser son catalogue et son résolveur publics natifs.');
+assert.ok(server.includes('/api/tv/oha/resolve/') && shell.includes('playTvResolvedOption'), 'Les serveurs OHA doivent être lisibles et sélectionnables dans le lecteur natif.');
+assert.ok(shell.includes('data-tv-mobile-view') && shell.includes('data-tv-zap'), 'La TV v64 doit proposer les vues mobiles et le zapping précédent/suivant.');
+assert.ok(theme.includes('Noctra V64 — demandes fiables et centre TV natif multi-plateforme'), 'La couche visuelle v64 doit être présente.');
+assert.ok(server.includes('server.id >= 0 && server.ready'), 'La première instance Jellyseerr numérotée 0 doit être utilisable.');
+assert.ok(shell.includes('afterUpdate: () => renderDestinationFields(selected.id)'), 'Les choix de destination doivent être rendus après le panneau.');
+assert.ok(shell.includes('data-tv-layout="error"') && shell.includes('Le reste du centre TV fonctionne toujours'), 'La navigation TV doit rester accessible après une panne de fournisseur.');
+assert.ok(shell.includes('noctra-tv-catalog-empty'), 'Une source vide doit afficher un état récupérable.');
+assert.ok(theme.includes('Noctra V65 — une source en panne ne bloque plus le centre TV'), 'La couche de disponibilité TV v65 doit être présente.');
+assert.ok(shell.includes("closest('button[data-tv-mobile-view]')"), 'Seuls les boutons de vue mobile doivent intercepter les clics TV.');
+assert.ok(!shell.includes("const tvMobileView = event.target.closest('[data-tv-mobile-view]')"), 'Le shell TV ne doit plus avaler tous les clics de ses sous-menus.');
+assert.ok(shell.includes('tvNavigationSequence') && shell.includes('sequence !== tvNavigationSequence'), 'Une réponse lente ne doit pas écraser la source TV choisie ensuite.');
+assert.ok(shell.includes('noctra-tv-section-tabs') && shell.includes('renderTvLoading'), 'La navigation et le chargement TV persistants doivent être présents.');
+assert.ok(server.includes("toString('base64url')") && server.includes('tvImageReference'), 'Les références de logos doivent survivre aux redémarrages.');
+assert.ok(server.includes('tvLogoCacheRoot') && server.includes("'x-noctra-tv-logo'"), 'Les logos valides doivent être mis en cache localement.');
+assert.ok(theme.includes('Noctra V66 — centre TV persistant, sous-menus unifiés et logos résilients'), 'La base TV v66 doit rester présente.');
+assert.ok(theme.includes('Noctra V69 — dock capsule + TV LiveWatch/OHA progressive et résiliente'), 'La base TV/dock v69 doit rester présente.');
+assert.ok(theme.includes('Noctra V70 — dock sans emplacement fantôme + logo intégré sans double capsule'), 'La finition dock v70 doit être présente.');
+assert.ok(theme.includes('#noctra-install-app[hidden]') && theme.includes('background: transparent !important'), 'Le dock V70 doit supprimer l’emplacement PWA fantôme et la double capsule du logo.');
+assert.ok(shell.includes('path.startsWith(`${noctraBasePath}/`)'), 'appPath doit refuser de préfixer deux fois BASE_URL.');
+assert.ok(server.includes('resolverUrl: `/api/tv/oha/resolve/${reference}`'), 'OHA doit exposer au client une route API relative non préfixée.');
+assert.ok(shell.includes('tvPlaybackSequence') && shell.includes('benignTvPlayInterruption'), 'Le zapping TV doit neutraliser les anciennes lectures et les interruptions play/pause bénignes.');
+assert.ok(server.includes('/api/tv/livewatch/diagnostics') && !shell.includes('data-livewatch-vip-test'), 'Le diagnostic VIP reste disponible côté serveur sans réintroduire le bouton de test retiré de la TV.');
+assert.ok(theme.includes('position: static !important') && theme.includes('#noctra-dock[data-expanded="true"]'), 'Le dock V69/V70 doit neutraliser les anciennes règles absolues/compactes.');
+assert.ok(theme.includes('Noctra V72 — dock totalement statique au survol') && theme.includes('transition: none !important') && theme.includes('animation: none !important'), 'Le dock V72 doit rester totalement statique au survol.');
+assert.ok(server.includes("url: 'https://kool.ws/live'") && server.includes("encodeTvStateReference('oha'"), 'OHA doit utiliser la source publique courante et des références résistantes aux redémarrages.');
+assert.ok(server.includes("encodeTvStateReference('witv-page'") && server.includes("encodeTvStateReference('witv-player'"), 'WiTV doit utiliser des références de lecteur résistantes aux redémarrages.');
+const playTvChannelSource = shell.slice(shell.indexOf('async function playTvChannel'), shell.indexOf('function setTvMobileView', shell.indexOf('async function playTvChannel')));
+assert.ok(!shell.includes('upgradeLiveWatchVipPlayback'), 'LiveWatch ne doit pas utiliser un basculement tardif qui interrompt une lecture en cours.');
+assert.ok(server.includes("playbackType: 'resolver'") && server.includes("streamKind: 'LiveWatch · VIP Premium'"), 'Avec un VIP actif, le resolver authentifié doit être le chemin principal.');
+assert.ok(shell.includes('LiveWatch · connexion VIP Premium…') && shell.includes('LiveWatch · VIP non transmis · secours public'), 'Le client doit distinguer la vraie tentative VIP du secours public avec publicité.');
+assert.ok(server.includes('liveWatchFirstPlaylistUri') && server.includes('liveWatchProbeResponse'), 'Le pont VIP doit valider playlist et ressource média avant la lecture.');
+assert.ok(server.includes('resolveLiveWatchVipPlayback') && server.includes('tvResponseCookieHeader'), 'Le résolveur VIP et le relayage de session doivent être exposés côté serveur.');
+assert.ok(server.includes('firstSuccessfulOhaCandidate'), 'OHA doit lancer ses serveurs progressivement et démarrer sur le premier flux fonctionnel.');
+assert.ok(shell.includes('result.serverChoices'), 'Le client doit conserver le changement de serveur OHA à la demande.');
+console.log('Tests statiques Noctra v88 : OK');
+
+assert.ok(theme.includes('Noctra V58c — finition PC/mobile/tablette : dock membre, centre TV et lecteurs'), 'Les finitions TV v57 doivent être présentes.');
+assert.ok(shell.includes('data-tv-toggle-sports'), 'Le bouton Sports repliable doit être présent.');
+assert.ok(server.includes("provider: 'OHA'") && server.includes("playbackType: 'resolver'"), 'OHA doit pouvoir utiliser le résolveur public lorsqu’un lecteur est indexable.');
+assert.ok(server.includes('detectTvImageMime'), 'Le proxy de logos TV doit détecter les formats image même avec un MIME imparfait.');

@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const source=await readFile(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const a=source.indexOf('  function smoothWheelStep('),b=source.indexOf('  function installDesktopSmoothWheel()',a);
+const step=new Function(source.slice(a,b)+';return smoothWheelStep;')();
+const simulate=(fps)=>{let x=0,v=0;for(let i=0;i<fps;i++){let s=step(x,300,v,1000/fps);assert.ok(s.current>=x&&s.current<=300);x=s.current;v=s.velocity;}return x;};
+assert.ok(Math.abs(simulate(60)-simulate(120))<.001,'Refresh-rate independent');
+let first=step(0,120,0,16);assert.ok(first.current>0&&first.current<12,'No instant wheel jump');
+let next=step(first.current,240,first.velocity,16);assert.ok(next.velocity>0);assert.ok(next.current<50);
+assert.ok(step(100,0,0,16).current<100,'Direction reversal responds on next frame');
+assert.ok(Number.isFinite(step(0,100,0,10000).current));
+const m=source.slice(source.indexOf('  function getCarouselMetrics('),source.indexOf('  function setCarouselPosition('));
+const slider={scrollWidth:1000,offsetWidth:1000,lastElementChild:null};
+const metrics=new Function('window',m+';return getCarouselMetrics;')({getComputedStyle:()=>({transform:'matrix(1,0,0,1,-120,0)'})});
+const actual=metrics({clientWidth:400,scrollWidth:1000,scrollLeft:0,getScrollSlider:()=>slider,getScrollPosition:()=>600,getScrollSize:()=>1000});
+assert.equal(actual.position,600,'Native API owns the position when available');
+console.log('v200.0.55: continuous damping at 60/120 Hz, no overshoot, immediate reversal, stale carousel position repaired.');

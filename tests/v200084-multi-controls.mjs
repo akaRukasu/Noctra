@@ -1,0 +1,24 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const s=fs.readFileSync(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const part=(a,b)=>s.slice(s.indexOf(a),s.indexOf(b,s.indexOf(a)+a.length));
+function node(){return {dataset:{},handlers:{},children:[],setAttribute(){},addEventListener(n,f){this.handlers[n]=f;},appendChild(e){this.children.push(e);}};}
+const layer=node(),tile=node(),slider=node();tile.dataset.tvSafeMultiTile='one';slider.value='35';const video={volume:1};
+layer.querySelectorAll=()=>[tile];tile.querySelector=q=>q.includes('volume')?slider:q.includes('video')?video:null;
+const audio=[];const c={window:{requestAnimationFrame(){}},document:{createElement:node},tvSafeExtras:{audioId:'one'},setTvSafeMultiviewAudio:id=>audio.push(id)};vm.createContext(c);
+vm.runInContext(part('  function bindTvSafeMultiviewChrome(','  function retryTvSafeMultiviewSlot('),c);
+c.bindTvSafeMultiviewChrome(layer);const handle=tile.children[0];
+assert.equal(tile.handlers.pointerenter,undefined,'Hover must not open controls');
+handle.handlers.click({detail:1});assert.equal(tile.dataset.controlsVisible,undefined,'A single click stays with the player');
+handle.handlers.dblclick({stopPropagation(){}});assert.equal(tile.dataset.controlsVisible,'true');
+handle.handlers.dblclick({stopPropagation(){}});assert.equal(tile.dataset.controlsVisible,'false');
+handle.handlers.click({detail:0});assert.equal(tile.dataset.controlsVisible,'true','Keyboard activation works');
+handle.handlers.pointerup({pointerType:'touch',preventDefault(){}});assert.equal(tile.dataset.controlsVisible,'false','Touch toggles controls');
+handle.handlers.pointerup({pointerType:'mouse',preventDefault(){}});assert.equal(tile.dataset.controlsVisible,'false');
+slider.handlers.input();assert.equal(video.volume,.35);
+vm.runInContext(part('  function setTvSafeExternalAudio(','  function bindTvSafeMultiviewChrome('),c);
+const external={muted:true,volume:1};const frame={contentDocument:{querySelectorAll:q=>q==='video,audio'?[external]:[]}};
+assert(c.setTvSafeExternalAudio(frame,false,0,.28));assert.equal(external.volume,.28);assert.equal(external.muted,false);
+assert.equal(c.setTvSafeExternalAudio({contentDocument:null},false,0,.28),false);
+console.log('v84: double-click only, keyboard fallback, native/external volume and unsupported-frame reporting passed');

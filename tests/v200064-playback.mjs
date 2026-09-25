@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+const policy=await readFile(new URL('../public/noctra-playback.js',import.meta.url),'utf8');
+let timers=new Map(),nextTimer=0;
+const context={window:{},URL,setTimeout:(fn,ms)=>{timers.set(++nextTimer,{fn,ms});return nextTimer;},clearTimeout:id=>timers.delete(id)};
+vm.runInNewContext(policy,context);
+const api=context.window.NoctraPlayback;
+for(const mobile of [false,true]) for(const bitrate of [2e6,8e6,12e6,30e6]) {
+ const c=api.hlsOptions({mediaSource:{Bitrate:bitrate}},'',{navigator:{userAgent:mobile?'iPhone':'Chrome',deviceMemory:8}});
+ assert.ok(c.maxBufferLength>=12);assert.ok(c.maxBufferLength<=75);assert.ok(c.backBufferLength<=30);
+ assert.equal(c.maxBufferSize,(mobile?64:96)*1024*1024);
+ if(bitrate<=12e6)assert.ok(c.maxBufferLength>=40,'1080p forward reserve');
+}
+let loads=[],plays=0,destroyHandler;
+const video={ended:false,paused:true,play(){plays++}};
+const hls={media:video,on:(event,cb)=>{assert.equal(event,'hlsDestroying');destroyHandler=cb;},startLoad:pos=>loads.push(pos)};
+const error={fatal:true,type:'networkError',response:{code:503}};
+for(const code of [400,401,403,404,410])assert.equal(api.recoverNetworkError(hls,video,{...error,response:{code}}),false);
+assert.equal(api.recoverNetworkError(hls,video,{...error,fatal:false}),false);
+assert.equal(api.recoverNetworkError(hls,video,{...error,details:'manifestLoadError'}),false);
+assert.equal(api.recoverNetworkError(hls,video,error),true);
+assert.equal(api.recoverNetworkError(hls,video,error),true);assert.equal(timers.size,1,'one pending restart');
+let timer=[...timers.values()][0];timers.clear();timer.fn();assert.deepEqual(loads,[-1]);assert.equal(plays,0,'pause is respected');
+assert.equal(api.recoverNetworkError(hls,video,error),true);timer=[...timers.values()][0];timers.clear();timer.fn();
+assert.equal(api.recoverNetworkError(hls,video,error),false,'two final attempts only');
+assert.equal(plays,0);assert.equal(loads.length,2);
+const another={...hls};assert.equal(api.recoverNetworkError(another,video,error),true);destroyHandler();assert.equal(timers.size,0);
+const playerHash=/71318:"([a-f0-9]+)"/.exec(await readFile(new URL('../public/client/runtime.bundle.js',import.meta.url),'utf8'))[1];
+const plugin=await readFile(new URL(`../public/client/htmlVideoPlayer-plugin.${playerHash}.chunk.js`,import.meta.url),'utf8');
+let a=plugin.indexOf('new Hls({'),b=plugin.indexOf(')).loadSource',a);
+const construct=new Function('Hls','t','r','u','l','window','return '+plugin.slice(a,b+1)+';');
+class MockHls {constructor(config){this.config=config;}}
+const instance=construct(MockHls,{playerStartPositionTicks:140000000,mediaSource:{Bitrate:8e6}},'https://example/jellyfin/videos/id/master.m3u8?VideoBitrate=2000000',60,false,context.window);
+assert.equal(instance.config.startPosition,14);assert.ok(instance.config.maxBufferLength>=45);assert.ok(instance.config.backBufferLength<Infinity);
+a=plugin.indexOf('r=new URL(i,window.location.href)');b=plugin.indexOf('i=r.toString()',a);
+const rewrite=new Function('i','window','var r;'+plugin.slice(a,b+'i=r.toString()'.length)+';return i;');
+for(const bitrate of ['1500000','4000000','12000000'])assert.equal(new URL(rewrite('https://example/jellyfin/videos/id/master.m3u8?VideoBitrate='+bitrate,{location:{href:'https://example/'}})).searchParams.get('VideoBitrate'),bitrate);
+assert.ok(!plugin.includes('&&(u=6)'));
+const main=await readFile(new URL('../public/client/main.jellyfin.bundle.js',import.meta.url),'utf8');
+assert.ok(main.includes('NoctraPlayback.recoverNetworkError(t,e._mediaElement,r)'));
+console.log('Jellyfin VOD: 1080p forward reserve, bounded memory policy, finite back buffer, negotiated bitrate retained, actual player config, paused playback, transient/auth errors and recovery cancellation OK');
+
+for(const ua of ['Chrome Windows','Android','iPhone','iPad','Macintosh']) { const options=api.hlsOptions({mediaSource:{Bitrate:12000000}},'',{navigator:{userAgent:ua,maxTouchPoints:ua==='Macintosh'?5:0}}); assert.equal(options.abrBandWidthFactor,.75);assert.equal(options.abrBandWidthUpFactor,.6);assert.equal(options.maxStarvationDelay,4); }
+const shell=await readFile(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const start=shell.indexOf('      const memoryGb = Number(navigator.deviceMemory'),end=shell.indexOf("      recordTvDiagnostic('hls-player-started'",start);
+const limit=new Function('navigator','appleTouch','hlsOptions',shell.slice(start,end)+';return hlsOptions;');
+for(const nav of [{userAgent:'Android'},{userAgent:'iPhone'},{userAgent:'Chrome',deviceMemory:4},{userAgent:'Safari'}]) {const config={backBufferLength:90,maxBufferSize:224000000,maxBufferLength:90,maxMaxBufferLength:150};limit(nav,nav.userAgent==='Safari',config);assert.equal(config.backBufferLength,15);assert.equal(config.maxBufferSize,64*1024*1024);assert.equal(config.maxBufferLength,45);assert.equal(config.maxMaxBufferLength,60);}
+const desktop={backBufferLength:90,maxBufferSize:224000000,maxBufferLength:90,maxMaxBufferLength:150};limit({userAgent:'Chrome',deviceMemory:16},false,desktop);assert.equal(desktop.maxBufferLength,90);
+console.log('200.0.64: automatic bandwidth headroom and bounded TV memory on Android, iOS/tablet and low-memory desktop OK');

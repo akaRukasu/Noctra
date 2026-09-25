@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const s=readFileSync(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const a=s.indexOf('  function applyTvChannelAutoQuality('),b=s.indexOf('  function populateTvQualitySelector(',a);
+const apply=new Function(s.slice(a,b)+';return applyTvChannelAutoQuality;')();
+const h={_noctraChannelAuto:true,capLevelToPlayerSize:true,levels:[{height:360,bitrate:700000},{height:720,bitrate:2500000},{height:1080,bitrate:7000000}]};
+apply(h);assert.equal(h.autoLevelCapping,1);assert.equal(h.capLevelToPlayerSize,false);
+apply(h,false);assert.equal(h.autoLevelCapping,-1);assert.equal(h.capLevelToPlayerSize,true);
+apply(h);assert.equal(h.autoLevelCapping,1);
+h.levels=[{height:1080,bitrate:7000000}];apply(h);assert.equal(h.autoLevelCapping,-1);
+const vod={autoLevelCapping:-1,levels:h.levels};apply(vod);assert.equal(vod.autoLevelCapping,-1);
+console.log('Channel auto cap, manual override, auto restore, single rendition and VOD isolation OK');

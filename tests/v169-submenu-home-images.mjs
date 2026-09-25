@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const shell = await readFile(new URL('../public/noctra-shell.js', import.meta.url), 'utf8');
+const theme = await readFile(new URL('../public/noctra-theme.css', import.meta.url), 'utf8');
+const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
+const index = await readFile(new URL('../public/client/index.html', import.meta.url), 'utf8');
+const sw = await readFile(new URL('../public/noctra-sw.js', import.meta.url), 'utf8');
+const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+assert.equal(pkg.version, '200.0.21');
+assert.ok(shell.includes("NOCTRA_BUILD_VERSION = '200.0.21'"));
+assert.ok(server.includes("version: '200.0.21'"));
+assert.ok(index.includes('noctra-shell.js?v=200.21') && index.includes('noctra-theme.css?v=200.21'));
+assert.ok(sw.includes('noctra-shell-v200-r15'));
+
+assert.ok(shell.includes("fallbackImage = document.createElement('img')"), 'Le repli doit etre une image reelle, pas seulement un fond CSS.');
+assert.ok(shell.includes("fallbackImage.className = 'noctra-home-library-fallback'"));
+assert.ok(shell.includes('cover.appendChild(fallbackImage)'), 'Le repli doit rester dans une couverture dediee.');
+assert.ok(!shell.includes('async function authenticatedHomeLibraryImage(image)'), 'Les images ne doivent plus dependre d URL Blob fragiles.');
+assert.ok(shell.includes("const image = source ? appPath(source) : '';"), 'Le chargement image doit utiliser le proxy meme origine.');
+assert.ok(shell.includes("window.ApiClient?._serverInfo?.AccessToken"), 'Le jeton Jellyfin doit etre recupere meme si accessToken() est indisponible.');
+assert.ok(shell.includes("const image = source ? appPath(source) : '';"), 'Une image proxy serveur doit etre utilisee directement.');
+assert.ok(shell.includes('function watchHomeLibraryImages(mediaSection)'), 'Les cartes reconstruites par Jellyfin doivent etre reparees.');
+assert.ok(shell.includes("homeLibraryObserver.observe(mediaSection, { childList: true, subtree: true })"));
+assert.ok(server.includes('async function jellyfinLibraryImage(view, includeItemTypes, session = null)'), 'Le serveur doit chercher une image de contenu si la vue Jellyfin ne suffit pas.');
+assert.ok(server.includes("path === '/api/libraries' || path.startsWith('/api/jellyfin/image/')"), 'Mes medias doit avoir un secours API key serveur quand la session navigateur manque.');
+assert.ok(server.includes("headers: jellyfinHeaders({}, session?.token)"), 'Le proxy image Jellyfin doit fonctionner avec session ou cle API serveur.');
+assert.match(theme, /img\.noctra-home-library-fallback\[data-noctra-library-fallback="true"\][\s\S]*?z-index:\s*2 !important;/);
+assert.match(theme, /Noctra V169[\s\S]*?body\.noctra-panel-open #noctra-panel > \.noctra-panel-header[\s\S]*?height:\s*88px !important;/);
+assert.match(theme, /Noctra V169[\s\S]*?\.noctra-panel-header > div[\s\S]*?padding-top:\s*0 !important;/);
+assert.match(theme, /cardImageContainer\[data-noctra-library-title\]::after \{[\s\S]*?content:\s*none !important;[\s\S]*?display:\s*none !important;/);
+assert.match(theme, /body\.noctra-panel-open #noctra-dock\[data-role\][\s\S]*?top:\s*max\(12px, env\(safe-area-inset-top\)\) !important;/);
+assert.match(theme, /@media \(max-width: 760px\)[\s\S]*?\.noctra-tv-favorite-toggle \{[\s\S]*?width:\s*28px !important;[\s\S]*?height:\s*28px !important;/);
+assert.match(theme, /\.noctra-tv-favorite-toggle svg \{[\s\S]*?width:\s*15px !important;[\s\S]*?height:\s*15px !important;/);
+assert.ok(!shell.includes("bar?.matches(':hover, :focus-within')"), 'Le survol ou le focus du bouton plein ecran ne doit plus bloquer le masquage.');
+assert.ok(shell.includes("controls?.addEventListener('pointerenter', () => showTvDesktopLiveControls(false)"));
+assert.ok(shell.includes("controls?.addEventListener('focusin', () => showTvDesktopLiveControls(false)"));
+assert.ok(shell.includes('/^(?:LiveWatch|NorthTV|FrameTV|OHA|FSTV|WiTV|StreamSports99)$/i'));
+assert.ok(shell.includes('const conservativePublicStream = /^(?:FSTV|WiTV)$/i'));
+assert.ok(shell.includes('liveSyncDurationCount: networkProfile.weak ? 4 : 3'));
+assert.ok(shell.includes('maxBufferLength: 30'));
+assert.ok(shell.includes('maxMaxBufferLength: 45'));
+assert.ok(shell.includes('!profile.weak && !bufferedResolvedStream && Number.isFinite(drift)'));
+assert.ok(!shell.includes('tvHls.startLoad(Number.isFinite(video.currentTime)'));
+assert.ok(shell.includes('? 12'));
+assert.ok(shell.includes('const startupFallbackDelay = networkProfile.weak ? 28_000 : (stabilitySensitiveStream ? 30_000 : 24_000)'));
+assert.ok(shell.includes('const prudentMode = !profile.desktop && profile.weak'));
+assert.ok(shell.includes("recordTvDiagnostic('desktop-live-stall-adaptation'"));
+
+console.log('Noctra v171 - interface, images et lecture TV desktop : OK');

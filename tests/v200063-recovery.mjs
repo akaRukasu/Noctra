@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+const root=new URL('../',import.meta.url),code=await readFile(new URL('public/noctra-playback.js',root),'utf8');
+let timers=[],destroy;
+const handlers=new Map(),video={currentTime:0,paused:false,ended:false,seeking:false,addEventListener:(n,f)=>handlers.set(n,f),removeEventListener:n=>handlers.delete(n)};
+const ctx={window:{},URL,setTimeout:f=>(timers.push(f),timers.length),clearTimeout:()=>{timers=[];}};
+vm.runInNewContext(code,ctx);
+const hls={media:video,on:(n,f)=>{destroy=f;},startLoad:p=>assert.equal(p,-1)};
+const error={fatal:true,type:'networkError',response:{code:503}},recover=()=>ctx.window.NoctraPlayback.recoverNetworkError(hls,video,error);
+assert(recover());timers.shift()();assert(recover());timers.shift()();assert.equal(recover(),false);
+video.currentTime=1000;handlers.get('timeupdate')();assert.equal(recover(),false,'seeking does not reset retries');
+for(let i=0;i<59;i++){video.currentTime++;handlers.get('timeupdate')();}assert.equal(recover(),false);
+handlers.get('waiting')();video.currentTime++;handlers.get('timeupdate')();assert.equal(recover(),false,'interruption resets stable interval');
+for(let i=0;i<60;i++){video.currentTime++;handlers.get('timeupdate')();}assert(recover(),'new incident after stable playback gets a fresh bounded budget');destroy();assert.equal(handlers.size,0);assert.equal(timers.length,0);
+const shell=await readFile(new URL('public/noctra-shell.js',root),'utf8');
+const server=await readFile(new URL('server.mjs',root),'utf8');
+const a=server.indexOf("    if (path === '/api/home/resume'"),b=server.indexOf("    if (path === '/api/libraries')",a);
+let session={user:{Id:'personal'},token:'personal-token'},called=0,result;
+const route=new Function('deps',`with(deps){return (async()=>{${server.slice(a,b)}})();}`);
+await route({path:'/api/home/resume',req:{method:'GET'},session,HttpError:Error,res:{setHeader(){}},jellyfinItems:async(path,params,s)=>{called++;assert.equal(s,session);assert.equal(path,'/Users/{userId}/Items/Resume');assert.equal(params.Limit,12);return [{Id:'x'}];},json:(res,status,payload)=>{result=payload;}});
+assert.equal(called,1);assert.equal(result.items[0].Id,'x');
+await assert.rejects(route({path:'/api/home/resume',req:{method:'GET'},session:null,HttpError:Error}),/401/);
+const player=JSON.parse(await readFile(new URL('tests/v200063-player-results.json',root),'utf8'));assert.equal(player.length,32);
+for(const r of player){assert.equal(r.backCount,1);for(const k of ['avatar','menuCentered','spacing','safeTop','hidden','videoFull'])assert(r[k],JSON.stringify(r));assert(!r.overflow);}
+console.log('200.0.63: personal resume endpoint, bounded VOD recovery after stable progress, seek/interruption guards, cleanup and 32 player layouts OK');

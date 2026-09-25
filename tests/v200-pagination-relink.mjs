@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { discoveryPageNumber, discoveryCatalogPage } from '../lib/discovery-pagination.mjs';
+import { matchTorrentMediaFiles, recoverRelinkByPieces, interiorPieceSamples } from '../lib/torrent-relink.mjs';
+
+assert.equal(discoveryPageNumber('2'), 2);
+assert.equal(discoveryPageNumber(-3), 1);
+assert.equal(discoveryPageNumber('invalid'), 1);
+assert.equal(discoveryPageNumber(9999), 500);
+assert.equal(discoveryCatalogPage([], [['movie', 'classics', { page: 4, total_pages: 12 }]], 2).nextPage, 3);
+assert.equal(discoveryCatalogPage([], [['tv', 'anime', { page: 2, totalPages: 2 }]], 2).hasMore, false);
+assert.equal(discoveryCatalogPage([], [['tv', 'anime', { page: 500, total_pages: 900 }]], 500).hasMore, false);
+assert.equal(discoveryCatalogPage([], [['tv', 'anime', { results: [] }]], 1).hasMore, false);
+
+const root = await mkdtemp(join(tmpdir(), 'noctra-v2009-relink-'));
+try {
+  const pieceSize = 1024;
+  const prefix = Buffer.alloc(137, 0x11);
+  const media = Buffer.concat(Array.from({ length: 7 }, (_, index) => Buffer.alloc(pieceSize, 0x30 + index)));
+  const wrong = Buffer.alloc(media.length, 0x7e);
+  const data = Buffer.concat([prefix, media]);
+  const hashes = [];
+  for (let i = 0; i < data.length; i += pieceSize) hashes.push(createHash('sha1').update(data.subarray(i, i + pieceSize)).digest('hex'));
+  const source = join(root, 'Titre traduit.mkv');
+  const unrelated = join(root, 'Autre video.mkv');
+  await writeFile(source, media);
+  await writeFile(unrelated, wrong);
+  const files = [{ index: 0, name: 'release.nfo', size: prefix.length, priority: 0 }, { index: 1, name: 'Original.S01E02.mkv', size: media.length, pieceRange: [0, 7], priority: 1 }];
+  const index = new Map([[media.length, [{ path: source, size: media.length }, { path: unrelated, size: media.length }]]]);
+  const matching = matchTorrentMediaFiles(files, [], index);
+  assert.equal(matching.unmatched.length, 1);
+  assert.equal(await recoverRelinkByPieces(matching, files, index, { pieceSize, hashes }), 1);
+  assert.equal(matching.unmatched.length, 0);
+  assert.equal(matching.matches[0].source.path, source);
+  assert.equal(matching.matches[0].proof, 'piece-sample');
+  const noProof = matchTorrentMediaFiles(files, [], new Map([[media.length, [{ path: unrelated, size: media.length }]]]));
+  assert.equal(await recoverRelinkByPieces(noProof, files, index, { pieceSize, hashes: hashes.map(() => '0'.repeat(40)) }), 0);
+  assert.deepEqual(interiorPieceSamples({ ...files[1], pieceRange: [3, 9] }, files, pieceSize, hashes), []);
+  const aliased = matchTorrentMediaFiles(files, [], new Map([[media.length, [{ path: source, aliases: ['/original/Original.S01E02.mkv'], size: media.length }]]]));
+  assert.equal(aliased.unmatched.length, 0);
+  const withAnnex = matchTorrentMediaFiles(files, [], new Map([[media.length, [{ path: source, aliases: ['Original.S01E02.mkv'], size: media.length }]], [prefix.length, [{ path: '/seed/release.nfo', size: prefix.length }]]]));
+  assert.equal(withAnnex.matches.filter(match => match.ancillary).length, 1);
+  const wrongNameMatch = matchTorrentMediaFiles(files, [], new Map([[media.length, [{ path: unrelated, aliases: ['Original.S01E02.mkv'], size: media.length }]]]));
+  assert.equal(wrongNameMatch.matches.length, 1);
+  assert.equal(await recoverRelinkByPieces(wrongNameMatch, files, index, { pieceSize, hashes, validateMatched: true }), 1);
+  assert.equal(wrongNameMatch.matches[0].source.path, source, 'Piece proof rejects a same-name, same-size wrong release');
+  const many = Array.from({ length: 12 }, (_, i) => ({ path: join(root, `other-${i}.mkv`), size: media.length }));
+  for (const candidate of many) await writeFile(candidate.path, wrong);
+  many.push({ path: source, size: media.length });
+  const largeIndex = new Map([[media.length, many]]);
+  const ambiguousSet = matchTorrentMediaFiles(files, [], largeIndex);
+  assert.equal(await recoverRelinkByPieces(ambiguousSet, files, largeIndex, { pieceSize, hashes }), 1, 'More than eight candidates must not suppress a valid association');
+  assert.equal(ambiguousSet.matches[0].source.path, source);
+} finally { await rm(root, { recursive: true, force: true }); }
+console.log('v200.12 pagination, aliases, existing annexes and piece-sample relink checks passed');

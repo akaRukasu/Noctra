@@ -1,0 +1,32 @@
+# Noctra v199
+
+- Les flèches de l'accueil sont pilotées par un gestionnaire unique et continuent à charger les ajouts récents au bord du rail.
+- Leur état actif ou désactivé suit désormais la position réelle et le chargement en cours.
+- Les flux de l'univers Chaînes utilisent un tampon HLS plus généreux, des reprises réseau renforcées et un démarrage à faible qualité qui remonte automatiquement.
+- Après plusieurs attentes rapprochées, le lecteur reconstruit une réserve initiale de 10 à 14 secondes avant de reprendre afin de remplacer les micro-coupures répétées par une reprise stable.
+- Si une même source rechute, la réserve augmente progressivement jusqu'à 18 secondes, puis revient au profil normal après trois minutes stables.
+- Le centre de téléchargements accepte maintenant l'ajout manuel d'un fichier `.torrent`, avec catégorie facultative et démarrage immédiat configurable.
+- Chaque torrent et chaque fichier détaillé indique explicitement s'il est en seed, arrêté, incomplet, ignoré ou indisponible.
+- La relocalisation pour le seed reste précédée d'une prévisualisation et son parcours qBittorrent est couvert par un test d'intégration isolé.
+- Un torrent que la relocalisation ne peut pas rattacher reste désormais en pause, ce qui évite tout redémarrage accidentel sur un tracker obsolète.
+- L'accueil ne rescane plus tout le document à chaque image ou carte chargée : les réparations d'icônes, de menus et de flèches sont limitées aux nouveaux nœuds.
+- Les sections Jellyfin vides n'allongent plus le bas de l'accueil et « Mes médias » garde une hauteur naturelle sur ordinateur, tablette et téléphone.
+- Les carrousels récents recyclent leurs plus anciennes cartes après plusieurs pages afin de conserver un DOM borné et un accueil fluide.
+- La révision 199.6 ajoute dans l'explorateur une recherche de doublons exacts par taille et SHA-256, en ignorant les hardlinks qui désignent déjà le même fichier physique.
+- La fenêtre de doublons permet une sélection individuelle ou globale, conserve toujours une copie et revérifie chaque fichier juste avant sa suppression définitive.
+- Le centre de téléchargements affiche désormais les statistiques globales qBittorrent et la répartition par tracker : téléchargé, envoyé, ratio, solde, torrents et taille suivie.
+- La relocalisation réutilise aussi les seeds Noctra existants et ne reprend un torrent qu'après une revérification qBittorrent terminée à 100 %. Tout résultat incomplet reste en pause.
+- Les flèches mémorisent leur destination pendant l'animation et réutilisent la géométrie du rail, ce qui réduit les ralentissements lors de clics rapides successifs.
+- La révision 199.7 retire le fondu des images et les effets de raccord déclenchés par les flèches de l'accueil : les cartes apparaissent désormais directement pendant le déplacement.
+- Le suivi de relocalisation utilise aussi l'état inclus dans le tableau de bord qBittorrent lorsqu'une réponse HTML transitoire remplace l'API dédiée, puis se reconnecte sans afficher un grand bandeau d'erreur.
+- Les actions des fiches média forment un groupe compact cohérent sur ordinateur et mobile, sans bouton Lecture blanc isolé.
+- L'écran de lancement masque la navigation et les raccourcis jusqu'à la fin du splash, et centre le logo sur le viewport réel.
+- La révision 199.8 conserve les commandes masquées par Jellyfin hors du groupe d'actions, afin que seules les actions réellement disponibles occupent de la place.
+- La révision 199.9 rétablit les boutons circulaires historiques des fiches média et centre leur rangée sur toute la largeur disponible.
+- La révision 200.1 fait traverser à cette rangée les deux colonnes de la fiche afin d'obtenir un centrage visuel réel sur ordinateur.
+- L'ajout manuel d'un `.torrent` propose les destinations déjà connues de qBittorrent, refuse les chemins arbitraires et retente une réponse HTML transitoire sans créer de doublon grâce à l'info-hash.
+- Sonarr peut maintenant rechercher un pack de saison complète ou agréger les packs de toutes les saisons ; les intégrales et packs complets sont placés avant les épisodes, avec l'indexeur affiché.
+- La relocalisation inspecte aussi les torrents incomplets déjà arrêtés, ignore les petites annexes absentes et exige toujours une taille exacte ainsi qu'une identité de titre avant de créer un lien.
+- Le même contrôle remet en partage les torrents que qBittorrent confirme déjà complets, sans reprendre un torrent incomplet ni lancer de téléchargement.
+- Le centre de téléchargements retente les lectures remplacées temporairement par une page HTML et conserve le dernier état valide au lieu d'afficher un grand bandeau d'erreur.
+- Sur ordinateur, les mutations successives des carrousels sont regroupées et les flous dynamiques coûteux sont désactivés sur les surfaces principales.

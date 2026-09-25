@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const s=await readFile(new URL('../public/noctra-shell.js',import.meta.url),'utf8');
+const extract=(name,async=false)=>{let a=s.indexOf(`  ${async?'async ':''}function ${name}(`);return s.slice(a,s.indexOf('\n  }',a)+4);};
+const writes=[];const win={setTimeout:()=>0,matchMedia:()=>({matches:false})};
+const set=new Function('window','homeCarouselTargets',extract('setCarouselPosition')+';return setCarouselPosition;')(win,new Map());
+const scroller={getScrollPosition:()=>0,scrollToPosition:(p,instant)=>writes.push([p,instant])};
+set(scroller,320,true,{slider:{style:{setProperty(){throw Error('Native rail must not be transformed')}}}});
+set(scroller,0,false,{});assert.deepEqual(writes,[[320,false],[0,true]]);
+let configured;
+const frame={setAttribute(){},addEventListener(){}};
+const status={dataset:{}};
+const tile={isConnected:true,dataset:{tvSafeMultiTile:'web'},querySelector:s=>s.includes('frame')?frame:s.includes('status')?status:null};
+const deps={document:{querySelectorAll:()=>[tile]},tvSafeExtras:{multiOpen:true,multiGeneration:1,multiControllers:new Map()},window:{},configureTvIframe:(f,c)=>{configured=c;}};
+const start=new Function('deps',`with(deps){${extract('startTvSafeMultiviewStream',true)};return startTvSafeMultiviewStream;}`)(deps);
+await start({id:'web',provider:'Volkamax',playbackType:'embed',embedUrl:'https://example.test/embed'});
+assert.equal(configured.provider,'Volkamax');assert.equal(configured.embedUrl,frame.src);assert.equal(frame.referrerPolicy,'strict-origin-when-cross-origin');
+console.log('200.0.72: native carousel API and external multiview provider policy OK');

@@ -1,0 +1,524 @@
+[
+  {
+    "route": "/motion",
+    "moving": true,
+    "stopped": true,
+    "resumed": true,
+    "animation": "noctra-premiere-travel"
+  },
+  {
+    "route": "/home",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 1,
+    "paused": true,
+    "running": true,
+    "nativeActions": true,
+    "reducedMotion": true,
+    "animationName": "none",
+    "arrowOffsets": []
+  },
+  {
+    "route": "/roulette",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 97,
+    "bodyHeight": 903,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": [],
+    "results": 3,
+    "resultOverflow": 0
+  },
+  {
+    "route": "/requests",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 97,
+    "bodyHeight": 903,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/libraries",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 97,
+    "bodyHeight": 903,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/more",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 97,
+    "bodyHeight": 903,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/icons",
+    "width": 1440,
+    "height": 1000,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 7,
+    "heroCount": 0,
+    "arrowOffsets": [
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      }
+    ]
+  },
+  {
+    "route": "/home",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 1,
+    "paused": true,
+    "running": true,
+    "nativeActions": true,
+    "reducedMotion": true,
+    "animationName": "none",
+    "arrowOffsets": []
+  },
+  {
+    "route": "/roulette",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 76,
+    "bodyHeight": 1104,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": [],
+    "results": 3,
+    "resultOverflow": 0
+  },
+  {
+    "route": "/requests",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 76,
+    "bodyHeight": 1104,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/libraries",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 76,
+    "bodyHeight": 1104,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/more",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 76,
+    "bodyHeight": 1104,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/icons",
+    "width": 820,
+    "height": 1180,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 7,
+    "heroCount": 0,
+    "arrowOffsets": [
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      }
+    ]
+  },
+  {
+    "route": "/home",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": -15,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 80,
+    "icons": 0,
+    "heroCount": 1,
+    "paused": true,
+    "running": true,
+    "nativeActions": true,
+    "reducedMotion": true,
+    "animationName": "none",
+    "arrowOffsets": []
+  },
+  {
+    "route": "/roulette",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 772,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": [],
+    "results": 3,
+    "resultOverflow": 0
+  },
+  {
+    "route": "/requests",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 772,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/libraries",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 772,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/more",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 772,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/icons",
+    "width": 390,
+    "height": 844,
+    "documentOverflow": -15,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 80,
+    "icons": 7,
+    "heroCount": 0,
+    "arrowOffsets": [
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      }
+    ]
+  },
+  {
+    "route": "/home",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": -15,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 80,
+    "icons": 0,
+    "heroCount": 1,
+    "paused": true,
+    "running": true,
+    "nativeActions": true,
+    "reducedMotion": true,
+    "animationName": "none",
+    "arrowOffsets": []
+  },
+  {
+    "route": "/roulette",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 496,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": [],
+    "results": 3,
+    "resultOverflow": 0
+  },
+  {
+    "route": "/requests",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 496,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/libraries",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 496,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/more",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 72.078125,
+    "bodyHeight": 496,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/icons",
+    "width": 320,
+    "height": 568,
+    "documentOverflow": -15,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 80,
+    "icons": 7,
+    "heroCount": 0,
+    "arrowOffsets": [
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      }
+    ]
+  },
+  {
+    "route": "/home",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 1,
+    "paused": true,
+    "running": true,
+    "nativeActions": true,
+    "reducedMotion": true,
+    "animationName": "none",
+    "arrowOffsets": []
+  },
+  {
+    "route": "/roulette",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 62.296875,
+    "bodyHeight": 328,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": [],
+    "results": 3,
+    "resultOverflow": 0
+  },
+  {
+    "route": "/requests",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 62.296875,
+    "bodyHeight": 328,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/libraries",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 62.296875,
+    "bodyHeight": 328,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/more",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerHeight": 62.296875,
+    "bodyHeight": 328,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 0,
+    "heroCount": 0,
+    "arrowOffsets": []
+  },
+  {
+    "route": "/icons",
+    "width": 844,
+    "height": 390,
+    "documentOverflow": 0,
+    "bodyOverflow": 0,
+    "headerContained": true,
+    "rootScroll": 0,
+    "icons": 7,
+    "heroCount": 0,
+    "arrowOffsets": [
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      },
+      {
+        "x": 0,
+        "y": 0,
+        "glyphX": 0
+      }
+    ]
+  }
+]

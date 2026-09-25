@@ -1,0 +1,61 @@
+{
+  "name": "Noctra Media Client",
+  "short_name": "Noctra",
+  "id": "../noctra-media-client",
+  "description": "Client média Noctra pour Jellyfin",
+  "lang": "fr-FR",
+  "start_url": "./index.html#/home.html",
+  "scope": "./",
+  "theme_color": "#050711",
+  "background_color": "#050711",
+  "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
+  "orientation": "any",
+  "categories": [
+    "entertainment",
+    "video"
+  ],
+  "icons": [
+    {
+      "sizes": "180x180",
+      "src": "../icons/noctra-180.png?v=28",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "sizes": "192x192",
+      "src": "../icons/noctra-192.png?v=28",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "sizes": "512x512",
+      "src": "../icons/noctra-512.png?v=28",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "sizes": "512x512",
+      "src": "../icons/noctra-maskable-512.png?v=28",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Accueil Noctra",
+      "short_name": "Accueil",
+      "url": "./index.html#/home.html",
+      "icons": [
+        {
+          "src": "../icons/noctra-192.png?v=28",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
