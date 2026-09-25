@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.109",
+  "version": "200.0.110",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -83,7 +83,8 @@
     "test:v200105": "node tests/v200105-mobile-navigation.mjs",
     "test:v200107": "node tests/v200107-resume-user-dock.mjs && npm run check",
     "test:v200108": "node tests/v200108-aurora.mjs && node tests/v200108-shaka-stability.mjs && node tests/tv-shaka.mjs && node tests/tv-shaka-multiview.mjs && node tests/tv-shaka-microstalls.mjs && node tests/tv-shaka-empty-index.mjs && npm run check",
-    "test:v200109": "node tests/v200109-segment-relay.mjs && node tests/v200050-seedbox-cache.mjs && npm run test:v200108"
+    "test:v200109": "node tests/v200109-segment-relay.mjs && node tests/v200050-seedbox-cache.mjs && npm run test:v200108",
+    "test:v200110": "node tests/v200110-relay-head-dock.mjs && npm run test:v200109"
   },
   "engines": {
     "node": ">=20"

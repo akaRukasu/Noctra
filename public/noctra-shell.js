@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.109';
+  const NOCTRA_BUILD_VERSION = '200.0.110';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -703,6 +703,7 @@
         <div class="noctra-panel-body">${content}</div>
       </aside>`;
     document.body.classList.add('noctra-panel-open');
+    document.querySelector('#noctra-dock .noctra-dock-button[data-noctra="home"]')?.setAttribute('data-active', 'false');
     premiereHomeController?.sync();
     backdrop.dataset.open = 'true';
     backdrop.dataset.panelKind = panelKind;
@@ -8101,7 +8102,7 @@
         player.configure({
           streaming: { bufferingGoal: count <= 4 ? 36 : 24, rebufferingGoal: 4, bufferBehind: 6,
             segmentPrefetchLimit: 1, lowLatencyMode: false, maxDisabledTime: 15,
-            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 10000, connectionTimeout: 10000 } },
+            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
           manifest: { defaultPresentationDelay: 30, hls: { ignoreManifestProgramDateTime: true },
             retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5, timeout: 20000, stallTimeout: 8000, connectionTimeout: 10000 } },
           abr: { enabled: true, defaultBandwidthEstimate: Math.max(300000, Math.floor(2000000 / count)) }
@@ -9412,12 +9413,12 @@
         player.configure({
           // Prioritize the first playable segment; parallel prefetch only helps
           // continuity once playback has started on a constrained connection.
-          // 200.0.108 : une requête figée (aucun octet reçu) est relancée après
-          // 10 s au lieu de 15, tout en laissant 45 s aux gros segments qui
-          // progressent. Les variantes écartées reviennent plus vite.
+          // 200.0.110 : 15 s sans octet avant relance (10 s en 108 coupait des
+          // segments que le relais partageait encore) ; 45 s pour les gros
+          // segments qui progressent. Les variantes écartées reviennent plus vite.
           streaming: { bufferingGoal: 45, rebufferingGoal: 3, bufferBehind: 15, segmentPrefetchLimit: 1,
             lowLatencyMode: false, maxDisabledTime: 15,
-            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 10000, connectionTimeout: 10000 } },
+            retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
           // Les horodatages PROGRAM-DATE-TIME des flux IPTV sont souvent
           // incohérents : l'alignement par numéro de séquence évite trous et
           // sauts, et contourne la mise à jour PDT fragile de Shaka 5.2.
@@ -13179,6 +13180,13 @@
         clearMobileDetailSectionHeights();
       }
       document.body.classList.toggle('noctra-home', home);
+      // 200.0.110 : le bouton Accueil reflète la page réellement affichée. Il
+      // gardait data-active="true" après une navigation Jellyfin (fiche,
+      // médiathèque…) et restait allumé sous les panneaux.
+      const homeDockButton = document.querySelector('#noctra-dock .noctra-dock-button[data-noctra="home"]');
+      if (homeDockButton && !document.body.classList.contains('noctra-panel-open') && !document.body.classList.contains('noctra-more-open')) {
+        homeDockButton.dataset.active = String(home);
+      }
       document.body.classList.toggle('noctra-dashboard', dashboard);
       document.body.classList.toggle('noctra-has-back', hasBack);
       syncMobileAdminLayout();

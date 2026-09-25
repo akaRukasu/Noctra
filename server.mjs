@@ -12333,10 +12333,52 @@ async function proxyOhaHttp(token, req, res, requestUrl) {
   res.end(buffer);
 }
 
+// 200.0.110 : Shaka interroge chaque segment en HEAD pour connaître son type.
+// Sans réponse, il retéléchargeait le segment entier en GET (~20 s perdues au
+// démarrage). Le type est déduit localement, sans requête au fournisseur ; s'il
+// est inconnu, 405 conserve l'ancien comportement (repli GET de Shaka).
+function tvMediaTypeFromUrl(value) {
+  let pathname = '';
+  try { pathname = new URL(value).pathname.toLowerCase(); } catch { return ''; }
+  if (/\.ts$/.test(pathname)) return 'video/mp2t';
+  if (/\.(?:m4s|mp4|m4v|cmfv)$/.test(pathname)) return 'video/mp4';
+  if (/\.(?:aac)$/.test(pathname)) return 'audio/aac';
+  if (/\.(?:m4a|cmfa)$/.test(pathname)) return 'audio/mp4';
+  if (/\.m3u8$/.test(pathname)) return 'application/vnd.apple.mpegurl';
+  if (/\.vtt$/.test(pathname)) return 'text/vtt';
+  return '';
+}
+
+function headTvStream(token, res) {
+  const reference = tvReferences.get(String(token || ''));
+  if (!reference || reference.expiresAt <= Date.now()) { res.writeHead(410, { 'cache-control': 'no-store' }); res.end(); return; }
+  const type = tvSegmentCache.get(String(token))?.type || tvMediaTypeFromUrl(reference.url);
+  if (!type) { res.writeHead(405, { allow: 'GET', 'cache-control': 'no-store' }); res.end(); return; }
+  res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+  res.end();
+}
+
 async function proxyTvStream(token, req, res) {
   const reference = tvReferences.get(String(token || ''));
   if (!reference || reference.expiresAt <= Date.now()) throw new HttpError(410, 'Le lien TV a expiré. Recharge la chaîne.');
   if (reference.meta?.finiteSegment && !req.headers.range) {
+    const ready = tvSegmentCache.get(String(token));
+    if (ready) {
+      res.writeHead(200, { 'content-type': ready.type, 'content-length': String(ready.body.length), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-noctra-relay': 'memory-hit' });
+      res.end(ready.body); return;
+    }
+    // 200.0.110 : un préchargement déjà commencé est partagé en direct
+    // (octets déjà reçus puis suivants) au lieu d'être refait depuis le début.
+    const shared = await tvSegmentCache.attach?.(String(token));
+    if (req.aborted || res.destroyed) { shared?.stream.destroy(); return; }
+    if (shared) {
+      res.writeHead(200, { 'content-type': shared.type, 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-noctra-relay': 'memory-stream' });
+      const stop = () => shared.stream.destroy();
+      res.once('close', stop);
+      shared.stream.on('error', () => { res.removeListener('close', stop); res.destroy(); });
+      shared.stream.pipe(res);
+      return;
+    }
     const cached = await tvSegmentCache.read(String(token));
     if (req.aborted || res.destroyed) return;
     if (cached) {
@@ -12500,12 +12542,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.109', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.110', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.109',
+        version: '200.0.110',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -12891,6 +12933,11 @@ const server = createServer(async (req, res) => {
     if (path.startsWith('/api/tv/stream/') && req.method === 'GET') {
       const token = path.split('/').at(-1) || '';
       await proxyTvStream(token, req, res);
+      return;
+    }
+
+    if (path.startsWith('/api/tv/stream/') && req.method === 'HEAD') {
+      headTvStream(path.split('/').at(-1) || '', res);
       return;
     }
 

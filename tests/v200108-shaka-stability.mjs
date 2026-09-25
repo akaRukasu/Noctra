@@ -20,7 +20,7 @@ const player = p.deps.tvShaka;
 const config = player.config;
 assert.equal(config.manifest.hls.ignoreManifestProgramDateTime, true, 'PDT IPTV ignoré');
 assert.equal(config.manifest.hls.sequenceMode, true, 'Segments enchaînés sans suivre les PTS irréguliers');
-assert.equal(config.streaming.retryParameters.stallTimeout, 10000);
+assert.equal(config.streaming.retryParameters.stallTimeout, 15000, 'Laisse le relais partager un segment en cours');
 assert.equal(config.streaming.retryParameters.timeout, 45000, 'Les gros segments qui progressent gardent leur délai');
 assert.equal(config.streaming.maxDisabledTime, 15);
 assert.equal(config.manifest.retryParameters.stallTimeout, 8000);
@@ -81,6 +81,6 @@ d.deps.tvVideoEventsController.abort();
 const shell = await readFile(new URL('../public/noctra-shell.js', import.meta.url), 'utf8');
 const multi = shell.slice(shell.indexOf('bufferingGoal: count <= 4'));
 assert.match(multi.slice(0, 1200), /ignoreManifestProgramDateTime: true/);
-assert.match(multi.slice(0, 1200), /stallTimeout: 10000/);
+assert.match(multi.slice(0, 1200), /stallTimeout: 15000/);
 
 console.log('v200.0.108 : Shaka durci (PDT, délais, ABR) et relance bornée après erreur fatale : OK');
