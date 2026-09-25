@@ -12333,6 +12333,85 @@ async function proxyOhaHttp(token, req, res, requestUrl) {
   res.end(buffer);
 }
 
+const tvPlaylistMemory = new Map();
+const TV_PLAYLIST_CLIENT_WAIT_MS = 7_000;
+const TV_PLAYLIST_STALE_MS = 30_000;
+
+async function rewriteProxiedTvPlaylist(response, reference, url, finalUrl, token, provider) {
+  const text = await readTvPlaylistBody(response);
+  const responseCookie = tvResponseCookieHeader(response);
+  const finalHeaders = tvChildReferenceHeaders(reference.headers, url.toString(), finalUrl);
+  const playlistHeaders = {
+    ...finalHeaders,
+    ...(responseCookie ? { cookie: mergeTvCookieHeaders(finalHeaders.cookie || '', responseCookie) } : {})
+  };
+  // Keep the session selected by an IPTV redirect for subsequent playlist
+  // refreshes. Reopening its entry URL can create a new stream timeline.
+  if (/^(?:Movix|Northlive|RénéVéo)$/i.test(provider)) {
+    reference.url = safeTvRemoteUrl(finalUrl).toString();
+    reference.headers = playlistHeaders;
+  }
+  return rewriteTvPlaylist(text, finalUrl, playlistHeaders, {
+    provider, referenceScope:/^(?:Movix|Northlive|RénéVéo)$/i.test(provider) ? token : ''
+  });
+}
+
+function rememberTvPlaylist(token, text) {
+  const key = String(token);
+  const entry = tvPlaylistMemory.get(key) || { text: '', at: 0, flight: null };
+  entry.text = text; entry.at = Date.now();
+  tvPlaylistMemory.delete(key); tvPlaylistMemory.set(key, entry);
+  // Bornée : les playlists les plus anciennes sont oubliées en premier.
+  while (tvPlaylistMemory.size > 64) tvPlaylistMemory.delete(tvPlaylistMemory.keys().next().value);
+}
+
+function refreshTvPlaylistDetached(token, reference, url, headers, provider) {
+  const entry = tvPlaylistMemory.get(token);
+  if (entry.flight) return entry.flight;
+  entry.flight = (async () => {
+    const response = await fetchTvRemoteUntilHeaders(url, { headers, signal: AbortSignal.timeout(30_000) }, 18_000);
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch {}
+      throw new HttpError(response.status, `Flux TV indisponible (${response.status}).`);
+    }
+    const finalUrl = response.url || url.toString();
+    const rewritten = await rewriteProxiedTvPlaylist(response, reference, url, finalUrl, token, provider);
+    rememberTvPlaylist(token, rewritten);
+    return rewritten;
+  })().finally(() => { const current = tvPlaylistMemory.get(token); if (current) current.flight = null; });
+  entry.flight.catch(() => undefined);
+  return entry.flight;
+}
+
+async function serveRememberedTvPlaylist(token, reference, url, headers, provider, req, res) {
+  const entry = tvPlaylistMemory.get(token);
+  let text = '', state = 'fresh', failure = null, timer;
+  try {
+    text = await Promise.race([
+      refreshTvPlaylistDetached(token, reference, url, headers, provider),
+      new Promise(resolve => { timer = setTimeout(() => resolve(''), TV_PLAYLIST_CLIENT_WAIT_MS); timer.unref?.(); })
+    ]);
+  } catch (error) { failure = error; } finally { clearTimeout(timer); }
+  if (req.aborted || res.destroyed) return true;
+  if (!text) {
+    // Lien expiré ou refusé : l'erreur remonte tout de suite pour que le
+    // lecteur renouvelle l'URL signée, comme avant.
+    if (failure && [401, 403, 404, 410].includes(Number(failure.status))) throw failure;
+    if (entry.text && Date.now() - entry.at <= TV_PLAYLIST_STALE_MS) { text = entry.text; state = 'stale'; }
+    else if (failure) throw failure;
+    else throw new HttpError(504, 'Le fournisseur TV ne répond pas.');
+  }
+  res.writeHead(200, {
+    'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
+    'cache-control': 'no-store',
+    'access-control-allow-origin': '*',
+    'x-noctra-playlist': state,
+    'x-accel-buffering': 'no'
+  });
+  res.end(text);
+  return true;
+}
+
 // 200.0.110 : Shaka interroge chaque segment en HEAD pour connaître son type.
 // Sans réponse, il retéléchargeait le segment entier en GET (~20 s perdues au
 // démarrage). Le type est déduit localement, sans requête au fournisseur ; s'il
@@ -12398,6 +12477,15 @@ async function proxyTvStream(token, req, res) {
     ...(reference.headers.cookie ? { cookie: reference.headers.cookie } : {}),
     ...(req.headers.range ? { range: req.headers.range } : {})
   };
+  // 200.0.111 : une playlist déjà servie est rafraîchie par un chargement
+  // détaché du lecteur. Une nouvelle tentative du lecteur rejoint ce même
+  // chargement au lieu de l'annuler et de le relancer ; s'il est trop lent,
+  // la dernière playlist connue est renvoyée (Shaka réessaie ensuite) plutôt
+  // qu'une erreur qui épuise ses tentatives.
+  if (!req.headers.range && typeof tvPlaylistMemory !== 'undefined' && tvPlaylistMemory.has(String(token))) {
+    const served = await serveRememberedTvPlaylist(String(token), reference, url, headers, provider, req, res);
+    if (served) return;
+  }
   const controller = new AbortController();
   const cleanup = () => {
     res.removeListener('close', onClose);
@@ -12421,22 +12509,8 @@ async function proxyTvStream(token, req, res) {
       || /(?:mpegurl|m3u8)/i.test(contentType)
       || /\.m3u8?(?:\?|$)/i.test(finalUrl);
     if (playlist) {
-      const text = await readTvPlaylistBody(response);
-      const responseCookie = tvResponseCookieHeader(response);
-      const finalHeaders = tvChildReferenceHeaders(reference.headers, url.toString(), finalUrl);
-      const playlistHeaders = {
-        ...finalHeaders,
-        ...(responseCookie ? { cookie: mergeTvCookieHeaders(finalHeaders.cookie || '', responseCookie) } : {})
-      };
-      // Keep the session selected by an IPTV redirect for subsequent playlist
-      // refreshes. Reopening its entry URL can create a new stream timeline.
-      if (/^(?:Movix|Northlive|RénéVéo)$/i.test(provider)) {
-        reference.url = safeTvRemoteUrl(finalUrl).toString();
-        reference.headers = playlistHeaders;
-      }
-      const rewritten = rewriteTvPlaylist(text, finalUrl, playlistHeaders, {
-        provider, referenceScope:/^(?:Movix|Northlive|RénéVéo)$/i.test(provider) ? token : ''
-      });
+      const rewritten = await rewriteProxiedTvPlaylist(response, reference, url, finalUrl, token, provider);
+      if (typeof rememberTvPlaylist === 'function') rememberTvPlaylist(token, rewritten);
       res.writeHead(200, {
         'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
         'cache-control': 'no-store',
@@ -12542,12 +12616,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.110', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.111', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.110',
+        version: '200.0.111',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
