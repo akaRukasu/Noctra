@@ -679,3 +679,35 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-home
 html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-noctra="home"] > svg {
  color:inherit!important;filter:none!important;
 }
+
+/* ═══════════ 200.0.112 — Affiche d'accueil adaptée au format de l'image ═══════════
+   Paysage : plein cadre. Poster vertical ou carré : image entière, sans
+   recadrage, posée sur un fond flouté d'elle-même (jamais de bande vide).
+   Mobile : le visuel occupe le haut de la carte et se fond sous le texte. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art {
+ overflow:hidden!important;isolation:isolate;background:#0b0e1d!important;animation:none!important;transform:none!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art::before {
+ content:"";position:absolute;inset:-12%;z-index:-1;pointer-events:none;
+ background:var(--noctra-art-url,none) center/cover no-repeat;
+ filter:blur(38px) saturate(1.4) brightness(.55);opacity:.9;transform:translateZ(0);
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-picture {
+ position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;margin:0!important;
+ object-fit:cover!important;object-position:center 30%!important;border-radius:0!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art:is([data-shape="portrait"],[data-shape="square"]) .noctra-premiere-picture {
+ inset:7% 5% 7% auto!important;width:auto!important;max-width:44%!important;height:86%!important;
+ object-fit:contain!important;object-position:center!important;border-radius:18px!important;
+ box-shadow:0 34px 70px -24px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.08)!important;animation:none!important;
+}
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-picture {
+  inset:0 0 auto 0!important;height:60%!important;object-position:center 28%!important;
+  -webkit-mask-image:linear-gradient(180deg,#000 62%,transparent 100%);mask-image:linear-gradient(180deg,#000 62%,transparent 100%);
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art:is([data-shape="portrait"],[data-shape="square"]) .noctra-premiere-picture {
+  inset:3% 0 auto 0!important;margin:0 auto!important;height:30%!important;width:auto!important;max-width:60%!important;
+  -webkit-mask-image:none;mask-image:none;border-radius:16px!important;
+ }
+}

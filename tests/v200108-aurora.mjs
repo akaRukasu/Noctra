@@ -13,9 +13,9 @@ const [index, css, js] = await Promise.all([
 // Chargée après toutes les autres feuilles Noctra, activable par un seul attribut.
 assert.match(index, /<html [^>]*data-noctra-skin="aurora"/);
 const finish = index.indexOf('noctra-finish.css');
-const aurora = index.indexOf('noctra-aurora.css?v=200.108b');
+const aurora = index.search(/noctra-aurora\.css\?v=200\.1\d\d/);
 assert.ok(finish > 0 && aurora > finish, 'La couche Aurora doit être chargée après noctra-finish.css.');
-assert.ok(index.includes('noctra-aurora.js?v=200.108'));
+assert.match(index, /noctra-aurora\.js\?v=200\.1\d\d/);
 assert.match(index, /noctra-shell\.js\?v=200\.1(0[89]|[1-9]\d)/, 'Le shell est rechargé par les navigateurs.');
 assert.ok(index.includes('fonts/sora-latin-wght.woff2'), 'Police de titre préchargée.');
 

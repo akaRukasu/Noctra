@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.111';
+  const NOCTRA_BUILD_VERSION = '200.0.112';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2031,8 +2031,9 @@
         try {
           const url = new URL(cssBackgroundUrl(source) || source, location.href);
           if (!/^https?:$/.test(url.protocol)) continue;
-          if (url.searchParams.has('fillWidth')) url.searchParams.set('fillWidth', '1280');
-          if (url.searchParams.has('fillHeight')) url.searchParams.set('fillHeight', '720');
+          const width = premiereImageWidth();
+          if (url.searchParams.has('fillWidth')) url.searchParams.set('fillWidth', String(width));
+          if (url.searchParams.has('fillHeight')) url.searchParams.set('fillHeight', String(Math.round(width * 9 / 16)));
           image = url.href;
           break;
         } catch { /* Ignore placeholders and wait for the native image. */ }
@@ -2042,12 +2043,20 @@
     return { id: card.dataset.id, card, title, subtitle, image, resume: card.querySelector('[data-action="resume"]'), visual };
   }
 
+  // 200.0.112 : l'affiche est demandée à la résolution réelle de l'écran
+  // (densité comprise, 1280 à 2560 px) au lieu de 1280 px partout.
+  function premiereImageWidth() {
+    const ratio = Math.min(Math.max(Number(window.devicePixelRatio) || 1, 1), 2);
+    const width = Math.max(Number(window.innerWidth) || 0, Number(window.screen?.width) || 0);
+    return Math.max(1280, Math.min(2560, Math.round(width * ratio / 160) * 160));
+  }
+
   function premiereResumeData(item) {
     const client = window.ApiClient;
     const serverId = item.ServerId || client?.serverInfo?.()?.Id || '';
     const imageId = item.BackdropImageTags?.length ? item.Id : item.ParentBackdropItemId || item.Id;
     const imageType = item.BackdropImageTags?.length || item.ParentBackdropItemId ? 'Backdrop' : 'Primary';
-    const image = client?.getImageUrl?.(imageId, { type: imageType, maxWidth: 1280, quality: 90 }) || appPath('/api/jellyfin/image/' + encodeURIComponent(item.Id));
+    const image = client?.getImageUrl?.(imageId, { type: imageType, maxWidth: premiereImageWidth(), quality: 90 }) || appPath('/api/jellyfin/image/' + encodeURIComponent(item.Id));
     const action = name => ({ click: () => {
       // Use this bundled client's native action handler, preserving resume ticks and player choice.
       let runtime;
@@ -2205,6 +2214,11 @@
         picture.className = 'noctra-premiere-picture';
         picture.onload = () => {
           if (!art.isConnected || art.dataset.image !== requested) return;
+          // Format réel de l'image : un poster vertical n'est plus recadré comme
+          // un paysage ; le thème l'affiche entier sur un fond flouté de lui-même.
+          const shape = picture.naturalWidth && picture.naturalHeight ? picture.naturalWidth / picture.naturalHeight : 16 / 9;
+          art.dataset.shape = shape < 1.2 ? 'portrait' : shape < 1.6 ? 'square' : 'landscape';
+          art.style.setProperty('--noctra-art-url', 'url(' + JSON.stringify(requested) + ')');
           const previous = art.lastElementChild;
           art.append(picture);
           if (previous) {
