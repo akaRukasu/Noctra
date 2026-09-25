@@ -124,13 +124,13 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role
  color:#b9bdd6!important;transition:color .18s ease,background-color .18s ease,box-shadow .18s ease!important;
 }
 html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-active="true"],
-html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-panel-open)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
  background:linear-gradient(135deg,rgba(167,139,250,.34),rgba(240,171,252,.16) 55%,rgba(125,211,252,.26))!important;
  color:#fff!important;
  box-shadow:inset 0 0 0 1px rgba(221,214,254,.34),0 6px 22px -6px rgba(167,139,250,.65)!important;
 }
 html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-active="true"] > svg,
-html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] > svg {
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-panel-open)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] > svg {
  color:#fff!important;filter:drop-shadow(0 0 6px rgba(221,214,254,.75));
 }
 @media (hover:hover) and (pointer:fine) {
@@ -599,7 +599,7 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-play
 
 /* Dock : trait lumineux sous l'entrée active. */
 html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-active="true"],
-html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-panel-open)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
  box-shadow:inset 0 0 0 1px rgba(221,214,254,.34),inset 0 -2px 0 rgba(240,171,252,.95),0 6px 22px -6px rgba(167,139,250,.75)!important;
 }
 
@@ -666,3 +666,16 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body #noctra-mobile-more .noctra-m
  }
 }
 @keyframes na-kenburns {from {transform:scale(1);} to {transform:scale(1.07);}}
+
+/* 200.0.108b — Accueil : la surbrillance suit la page réellement affichée.
+   Le bouton gardait data-active="true" après une navigation Jellyfin (fiche,
+   médiathèque…) et restait éclairé sous un panneau ouvert. Il ne s'allume
+   désormais que sur l'accueil, sans panneau par-dessus. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-home)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-noctra="home"],
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-noctra="home"] {
+ background:transparent!important;color:#b9bdd6!important;box-shadow:none!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-home)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-noctra="home"] > svg,
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-panel-open[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-noctra="home"] > svg {
+ color:inherit!important;filter:none!important;
+}

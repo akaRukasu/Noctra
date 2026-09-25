@@ -13,7 +13,7 @@ const [index, css, js] = await Promise.all([
 // Chargée après toutes les autres feuilles Noctra, activable par un seul attribut.
 assert.match(index, /<html [^>]*data-noctra-skin="aurora"/);
 const finish = index.indexOf('noctra-finish.css');
-const aurora = index.indexOf('noctra-aurora.css?v=200.108');
+const aurora = index.indexOf('noctra-aurora.css?v=200.108b');
 assert.ok(finish > 0 && aurora > finish, 'La couche Aurora doit être chargée après noctra-finish.css.');
 assert.ok(index.includes('noctra-aurora.js?v=200.108'));
 assert.ok(index.includes('noctra-shell.js?v=200.108'), 'Le correctif Shaka est rechargé par les navigateurs.');
@@ -68,5 +68,10 @@ assert.ok(js.includes("{ passive: true }"));
 assert.ok(js.includes('prefers-reduced-motion'));
 assert.ok(js.includes("noctra-playing"));
 assert.ok(!/fetch\(|XMLHttpRequest|localStorage|ApiClient/.test(js), 'Le script visuel ne touche ni au réseau ni aux données.');
+
+// Accueil : pas de surbrillance hors de l'accueil ni sous un panneau ouvert.
+assert.ok(css.includes('body.noctra-ready:not(.noctra-home)[data-noctra-role] #noctra-dock'));
+assert.ok(css.includes('body.noctra-ready.noctra-panel-open[data-noctra-role] #noctra-dock'));
+assert.ok(!/body\.noctra-ready\.noctra-home\[data-noctra-role\] #noctra-dock/.test(css), 'La surbrillance Accueil exige l’absence de panneau.');
 
 console.log('v200.0.108 : refonte Aurora 2 isolée, lecture et dock préservés : OK');

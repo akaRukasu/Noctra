@@ -34,6 +34,7 @@ Corrections :
 - **Menu « Plus »** : plus de mot coupé en deux (« Téléchargement-s ») sur les petits écrans.
 - **Téléchargements** : « Relocaliser pour le seed » et « Ajouter un .torrent » restent sur une ligne sur ordinateur, et la barre passe à la ligne plutôt que de déborder.
 - **TV sur mobile** : en-tête plus compact, pour que la liste des chaînes arrive plus vite.
+- **Dock (108b)** : le bouton Accueil ne reste plus en surbrillance après avoir quitté l'accueil (fiche, médiathèque…) ni sous un panneau ouvert. Il s'éclaire uniquement quand l'accueil est réellement affiché.
 
 ## Installation
 
