@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 const css = await readFile(new URL('../public/noctra-aurora.css', import.meta.url), 'utf8');
 const js = await readFile(new URL('../public/noctra-aurora.js', import.meta.url), 'utf8');
-const block = css.slice(css.indexOf('200.0.113 — Aurora Motion'));
+const block = css.slice(css.indexOf('200.0.113 — Aurora Motion'), css.indexOf('200.0.116 — Fluidité') > 0 ? css.indexOf('200.0.116 — Fluidité') : undefined);
 assert.ok(block.length > 1000);
 
 // Toutes les animations Motion dépendent de html.na-motion et de prefers-reduced-motion.

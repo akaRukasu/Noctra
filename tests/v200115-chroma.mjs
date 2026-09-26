@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 const css = await readFile(new URL('../public/noctra-aurora.css', import.meta.url), 'utf8');
 const js = await readFile(new URL('../public/noctra-aurora.js', import.meta.url), 'utf8');
-const block = css.slice(css.indexOf('200.0.115 — « Chroma »'));
+const block = css.slice(css.indexOf('200.0.115 — « Chroma »'), css.indexOf('200.0.116 — Fluidité') > 0 ? css.indexOf('200.0.116 — Fluidité') : undefined);
 assert.ok(block.length > 2000);
 
 // Couleurs dynamiques déclarées et animées ; valeurs par défaut Aurora.
@@ -29,7 +29,7 @@ assert.match(block, /\.noctra-library-card \{\s*height:auto!important;min-height
 // Intro : une fois par session, jamais bloquante, jamais avec le mouvement réduit.
 assert.match(block, /#na-intro \{\s*position:fixed;inset:0;z-index:2147483000;pointer-events:none;/);
 assert.match(js, /if \(seen \|\| !motionAllowed\(\)/);
-assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), 2000\)/);
+assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), (?:1[0-9]{3}|2000)\)/);
 
 // Animations nouvelles : gardées par na-motion ; aucune continue ; dock et vidéo intacts.
 const motion = block.slice(block.indexOf('@media (prefers-reduced-motion:no-preference)'));

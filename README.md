@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.108 — « Aurora 2 » et stabilité Shaka
+# Version actuelle : 200.0.116 — fluidité et centre d’automatisation
+
+Animations prises en charge par la carte graphique, plus aucun flou d’arrière-plan sur mobile, minuteur d’effets unique, et centre Radarr/Sonarr/Prowlarr intégré au design Aurora. Détails : [MISE-A-JOUR-V200116.md](MISE-A-JOUR-V200116.md). Validation : `npm run test:v200116` (versions 109 à 115 : fichiers `MISE-A-JOUR-V2001xx.md`).
+
+# Historique : 200.0.108 — « Aurora 2 » et stabilité Shaka
 
 Refonte graphique (police Sora, lumière ambiante, anneau lumineux, halos), corrections ergonomiques PC/mobile et stabilisation du lecteur TV Shaka (mode séquence HLS, délais de relance, relance bornée après erreur). Détails : [MISE-A-JOUR-V200108.md](MISE-A-JOUR-V200108.md). Validation : `npm run test:v200108`.
 

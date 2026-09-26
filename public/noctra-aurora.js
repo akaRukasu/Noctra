@@ -1,4 +1,4 @@
-// Noctra 200.0.115 — « Aurora Chroma ». Effets purement décoratifs :
+// Noctra 200.0.116 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -71,7 +71,6 @@
     ambient.dataset.ready = 'true';
   };
   try {
-    window.setInterval(syncAmbient, 1200);
     document.addEventListener('visibilitychange', syncAmbient);
     if (document.readyState !== 'loading') syncAmbient();
     else document.addEventListener('DOMContentLoaded', syncAmbient, { once: true });
@@ -137,6 +136,15 @@
 
   // 4 & 5. Relief des cartes et boutons magnétiques (pointeur fin uniquement).
   let tilted = null, magnet = null, pointerFrame = 0, pointer = null;
+  // Positions mémorisées : aucune lecture de mise en page à chaque image tant
+  // que rien ne défile ni ne change de taille.
+  let rects = new WeakMap();
+  const rectOf = element => {
+    let rect = rects.get(element);
+    if (!rect) { rect = element.getBoundingClientRect(); rects.set(element, rect); }
+    return rect;
+  };
+  const forgetRects = () => { rects = new WeakMap(); };
   const resetTilt = element => { element?.style.removeProperty('--na-rx'); element?.style.removeProperty('--na-ry'); };
   const resetMagnet = element => { element?.style.removeProperty('--na-bx'); element?.style.removeProperty('--na-by'); };
   const paintPointer = () => {
@@ -146,7 +154,7 @@
     const card = element?.closest?.('.card') ? element.closest('.card').querySelector('.cardBox') : element?.closest?.('.noctra-library-card');
     if (card !== tilted) { resetTilt(tilted); tilted = card || null; }
     if (tilted) {
-      const rect = (tilted.closest('.card') || tilted).getBoundingClientRect();
+      const rect = rectOf(tilted.closest('.card') || tilted);
       if (rect.width && rect.height) {
         const px = (x - rect.left) / rect.width - 0.5, py = (y - rect.top) / rect.height - 0.5;
         tilted.style.setProperty('--na-rx', `${(-py * 7).toFixed(2)}deg`);
@@ -156,7 +164,7 @@
     const button = element?.closest?.('.noctra-premiere-actions .noctra-button, #noctra-panel .noctra-button');
     if (button !== magnet) { resetMagnet(magnet); magnet = button || null; }
     if (magnet) {
-      const rect = magnet.getBoundingClientRect();
+      const rect = rectOf(magnet);
       magnet.style.setProperty('--na-bx', `${((x - rect.left - rect.width / 2) * 0.12).toFixed(1)}px`);
       magnet.style.setProperty('--na-by', `${((y - rect.top - rect.height / 2) * 0.2).toFixed(1)}px`);
     }
@@ -186,23 +194,22 @@
     const offset = Math.max(-80, Math.min(80, -rect.top * 0.18));
     premiere.style.setProperty('--na-parallax', `${offset.toFixed(1)}px`);
   };
+  let lastScroll = 0;
+  window.addEventListener('resize', forgetRects, { passive: true });
   window.addEventListener('scroll', () => {
+    lastScroll = performance.now();
+    forgetRects();
     if (!perfDesktop() || !root.classList.contains('na-motion') || playing() || !document.body?.classList.contains('noctra-home')) return;
     if (!scrollFrame) scrollFrame = window.requestAnimationFrame(paintParallax);
   }, { passive: true, capture: true });
 
-  try {
-    window.setInterval(() => {
-      if (document.hidden) return;
-      // Jellyfin peut réécrire la classe de <html> : l'état est réaffirmé.
-      if (root.classList.contains('na-motion') !== motionAllowed()) syncMotionClass();
-      if (!cursorLight.isConnected && document.body) document.body.prepend(cursorLight);
-      scanReveal();
-      watchPremiere();
-    }, 700);
-  } catch {
-    // Effets optionnels.
-  }
+  const motionTick = () => {
+    // Jellyfin peut réécrire la classe de <html> : l'état est réaffirmé.
+    if (root.classList.contains('na-motion') !== motionAllowed()) syncMotionClass();
+    if (!cursorLight.isConnected && document.body) document.body.prepend(cursorLight);
+    scanReveal();
+    watchPremiere();
+  };
 
   // ───────────── 200.0.115 — Chroma : couleurs tirées de l'œuvre affichée ─────────────
   // L'image déjà chargée par l'affiche (ou l'arrière-plan d'une fiche) est
@@ -289,7 +296,7 @@
   };
 
   // Intro animée : une fois par session, sans bloquer l'application qui se
-  // charge derrière (aucune interaction interceptée), retirée après 2 s.
+  // charge derrière (aucune interaction interceptée), retirée après 1,4 s.
   const playIntro = () => {
     let seen = false;
     try { seen = sessionStorage.getItem('noctra-intro') === '1'; sessionStorage.setItem('noctra-intro', '1'); } catch { seen = true; }
@@ -300,11 +307,24 @@
     const mark = document.querySelector('link[rel="icon"][type="image/svg+xml"]')?.getAttribute('href') || '../noctra-mark.svg';
     intro.innerHTML = `<div class="na-intro-mark"><img alt="" src="${mark.replace(/"/g, '')}"><b>NOCTRA</b></div>`;
     (document.body || document.documentElement).append(intro);
-    window.setTimeout(() => intro.remove(), 2000);
+    window.setTimeout(() => intro.remove(), 1400);
   };
   try {
     if (document.body) playIntro(); else document.addEventListener('DOMContentLoaded', playIntro, { once: true });
-    window.setInterval(() => { if (!document.hidden) { chromaTick(); glareTick(); } }, 900);
+    // Un seul minuteur pour tous les effets. Pendant un défilement (et pendant
+    // la lecture), seul l'état des animations est vérifié : aucune lecture du
+    // DOM ne vient concurrencer les images du défilement.
+    window.setInterval(() => {
+      if (document.hidden) return;
+      if (performance.now() - lastScroll < 300 || playing()) {
+        if (root.classList.contains('na-motion') !== motionAllowed()) syncMotionClass();
+        return;
+      }
+      motionTick();
+      syncAmbient();
+      chromaTick();
+      glareTick();
+    }, 800);
   } catch {
     // Effets optionnels.
   }

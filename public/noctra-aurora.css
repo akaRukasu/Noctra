@@ -1043,3 +1043,254 @@ html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro b {
 @keyframes na-intro-mark {from {opacity:0;transform:scale(.4) rotate(-12deg);filter:drop-shadow(0 0 0 transparent);} to {opacity:1;transform:none;}}
 @keyframes na-intro-word {from {opacity:0;letter-spacing:1.2em;} to {opacity:1;letter-spacing:.5em;}}
 @keyframes na-heading-depth {to {opacity:.08;transform:translate3d(0,-40px,0) scale(.92);}}
+
+/* ═══════════════ 200.0.116 — Fluidité et centre d'automatisation ═══════════════ */
+
+/* ── Fluidité ── */
+/* Couleurs Chroma : plus de transition sur <html> (elle recalculait le style de
+   toute la page à chaque image pendant 1,6 s). Seule l'aurore du fond fond vers
+   la nouvelle teinte, et seulement sur desktop performant ; ailleurs le
+   changement est immédiat. */
+html[data-noctra-skin="aurora"] {transition:none!important;}
+@media (prefers-reduced-motion:no-preference) {
+ html[data-noctra-skin="aurora"].noctra-performance-desktop:not(#na-skin) body.noctra-ready:not(.noctra-playing):not(.noctra-video-route)::before {
+  transition:--na-dyn-1 1.4s ease,--na-dyn-2 1.4s ease;
+ }
+ /* Aurore en pause (sans saut) quand un panneau la recouvre. */
+ html[data-noctra-skin="aurora"].noctra-performance-desktop:not(#na-skin) body.noctra-ready.noctra-panel-open:not(.noctra-playing):not(.noctra-video-route):not(.noctra-page-hidden)::before {
+  animation-play-state:paused!important;
+ }
+ /* Pastille « à l'affiche » : pulsation en opacité (composée par le GPU) au lieu
+    d'une ombre redessinée à chaque image. */
+ html[data-noctra-skin="aurora"].noctra-performance-desktop:not(#na-skin) body.noctra-ready:not(.noctra-playing):not(.noctra-page-hidden) .noctra-premiere .noctra-eyebrow::before {
+  animation:na-pulse-soft 2.6s ease-in-out infinite!important;
+ }
+ /* Ouverture des panneaux : zoom depuis le bouton touché (transform + opacité,
+    sans découpe circulaire recalculée à chaque image). */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) #noctra-backdrop[data-open="true"] > #noctra-panel {
+  animation:na-panel-zoom .5s cubic-bezier(.2,.9,.25,1) backwards!important;
+  transform-origin:var(--na-ox,50%) var(--na-oy,0%);
+ }
+ /* Reflet de l'affiche : déplacement en transform, plus en position. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .noctra-premiere .na-glare::before {left:-50%!important;will-change:transform;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .noctra-premiere .na-glare.na-sweep::before {animation:na-glare-move 1.1s cubic-bezier(.3,.7,.2,1) both!important;}
+ /* Parallaxe : l'image de l'affiche reste sur son propre calque. */
+ html[data-noctra-skin="aurora"].na-motion.noctra-performance-desktop:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-picture {will-change:translate;}
+ /* Intro plus courte. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro {animation:na-intro-out .45s ease .85s both!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro img {animation-duration:.8s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro b {animation-duration:.7s!important;animation-delay:.12s!important;}
+}
+@keyframes na-pulse-soft {50% {opacity:.45;}}
+@keyframes na-panel-zoom {from {opacity:0;scale:.94;translate:0 14px;} to {opacity:1;scale:1;translate:0 0;}}
+@keyframes na-glare-move {from {transform:translate3d(0,0,0) skewX(-18deg);} to {transform:translate3d(420%,0,0) skewX(-18deg);}}
+
+/* Écrans tactiles : aucun flou d'arrière-plan (recalculé à chaque image de
+   défilement sur mobile), remplacé par des fonds opaques équivalents. */
+@media (hover:none), (pointer:coarse) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-dock,
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role] {
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;background-color:rgba(11,12,26,.94)!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready :is(.skinHeader,#noctra-panel .noctra-panel-header) {
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel .noctra-panel-header {background-color:rgba(7,8,18,.96)!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .noctra-button {
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .noctra-button:not(.noctra-button--primary) {background-color:rgba(14,15,32,.78)!important;}
+}
+
+/* ── Centre d'automatisation (Radarr, Sonarr, Prowlarr) ── */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] {--na-auto-line:rgba(221,214,254,.12);--na-auto-glass:linear-gradient(145deg,rgba(26,24,48,.72),rgba(12,14,28,.72));}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content {display:flex!important;flex-direction:column!important;gap:18px!important;transition:opacity .25s ease;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content > * {margin:0!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content[data-loading="true"]:not(:has(.noctra-loading)) {opacity:.6;}
+
+/* Service : commutateur segmenté ; vues : une seule ligne défilante. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-service-tabs {
+ display:inline-grid!important;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);width:auto!important;max-width:100%!important;
+ gap:4px!important;padding:5px!important;margin:0 0 18px!important;border-radius:18px!important;
+ background:rgba(10,11,24,.7)!important;border:1px solid var(--na-auto-line)!important;box-shadow:inset 0 1px rgba(255,255,255,.04)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-service-tabs .noctra-tab {min-width:112px!important;min-height:42px!important;padding:0 20px!important;border-radius:13px!important;justify-content:center!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-nav {
+ display:flex!important;flex-wrap:nowrap!important;width:100%!important;max-width:100%!important;box-sizing:border-box!important;
+ gap:4px!important;padding:5px!important;border-radius:18px!important;overflow-x:auto!important;overscroll-behavior-x:contain;scrollbar-width:none;
+ scroll-snap-type:x proximity;background:rgba(10,11,24,.55)!important;border:1px solid var(--na-auto-line)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-nav::-webkit-scrollbar {display:none;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-nav > .noctra-tab {
+ flex:0 0 auto!important;min-width:0!important;white-space:nowrap!important;min-height:40px!important;padding:0 16px!important;
+ border-radius:13px!important;scroll-snap-align:start;font-size:13.5px!important;
+}
+
+/* En-tête : hauteur libre (une ancienne règle la bloquait à 66 px et le texte
+   débordait sur les compteurs), texte à gauche, actions à droite. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero {
+ display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;align-items:end!important;gap:18px 28px!important;
+ height:auto!important;min-height:0!important;max-height:none!important;box-sizing:border-box!important;
+ padding:clamp(20px,2.4vw,32px)!important;border-radius:26px!important;overflow:hidden!important;position:relative;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero::after {
+ content:"";position:absolute;right:-60px;top:-80px;width:260px;height:260px;border-radius:50%;pointer-events:none;
+ background:radial-gradient(closest-side,color-mix(in srgb,var(--na-k1) 30%,transparent),transparent);opacity:.7;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero > div:first-child {min-width:0;position:relative;z-index:1;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero .noctra-eyebrow {margin:0 0 8px!important;font-size:11px!important;letter-spacing:.18em!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero h3 {margin:0!important;font-size:clamp(26px,3vw,40px)!important;line-height:1.08!important;letter-spacing:-.035em!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero p:not(.noctra-eyebrow) {margin:10px 0 0!important;font-size:14px!important;line-height:1.55!important;color:#b9b6d6!important;max-width:52ch;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-quick-actions {display:flex!important;flex-wrap:wrap!important;justify-content:flex-end!important;gap:10px!important;position:relative;z-index:1;width:auto!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-quick-actions .noctra-button {flex:0 0 auto!important;width:auto!important;min-width:max-content!important;height:auto!important;min-height:44px!important;padding:0 18px!important;font-size:13.5px!important;white-space:nowrap!important;}
+
+/* Compteurs : tuiles égales avec liseré d'accent. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-metrics,
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content > .noctra-metrics {
+ display:grid!important;grid-template-columns:repeat(auto-fit,minmax(128px,1fr))!important;gap:12px!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric {
+ position:relative;overflow:hidden;height:auto!important;min-height:0!important;padding:16px 18px!important;border-radius:20px!important;
+ display:flex!important;flex-direction:column!important;gap:6px!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric {
+ background:radial-gradient(90% 120% at 0% 0%,color-mix(in srgb,var(--na-k1) 12%,transparent),transparent 60%),linear-gradient(145deg,rgba(26,24,48,.85),rgba(12,14,28,.85))!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric small {
+ margin:0!important;font-size:11px!important;line-height:1.2!important;letter-spacing:.12em!important;text-transform:uppercase;color:#a9a6c8!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric strong {font-size:clamp(22px,2.2vw,28px)!important;line-height:1.1!important;font-family:var(--na-display)!important;}
+
+/* Alertes de santé. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-access-note[data-tone="warn"] {
+ display:flex!important;flex-wrap:wrap;align-items:center;gap:6px 12px!important;padding:14px 18px!important;border-radius:18px!important;
+ background:linear-gradient(135deg,rgba(251,191,36,.12),rgba(12,14,28,.7))!important;border:1px solid rgba(251,191,36,.3)!important;color:#fde7b0!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-access-note[data-tone="warn"] strong {color:#fcd34d!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-access-note[data-tone="warn"] span {color:#e9dcc0!important;}
+
+/* Titres de section ; rien d'affiché pour une liste vide. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-section-heading {margin:6px 0 -4px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-section-heading h3 {font-size:22px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-section-heading:has(+ .noctra-arr-grid:empty),
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid:empty {display:none!important;}
+
+/* Cartes séries et films : affiche, état, progression et actions alignés. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid {display:grid!important;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))!important;gap:14px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card {
+ display:grid!important;grid-template-columns:92px minmax(0,1fr)!important;gap:16px!important;align-items:stretch!important;
+ padding:14px!important;border-radius:22px!important;min-width:0;height:auto!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-poster {
+ width:92px!important;height:auto!important;aspect-ratio:2/3;align-self:start;border-radius:14px!important;overflow:hidden!important;
+ border:1px solid rgba(221,214,254,.16)!important;box-shadow:0 14px 28px -18px rgba(0,0,0,.9)!important;background:#15172c!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-poster img {width:100%!important;height:100%!important;object-fit:cover!important;display:block;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card-body {display:flex!important;flex-direction:column!important;gap:10px!important;min-width:0!important;container-type:inline-size;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card-body h3 {margin:0!important;font-size:16.5px!important;line-height:1.25!important;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card-body h3 + p {margin:3px 0 0!important;font-size:13px!important;color:#a9a6c8!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-badges {display:flex!important;flex-wrap:wrap!important;gap:6px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-badges span {border-radius:999px!important;padding:3px 10px!important;font-size:11.5px!important;font-weight:600!important;border:1px solid rgba(255,255,255,.08);}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card .noctra-progress {height:5px!important;border-radius:5px!important;background:rgba(255,255,255,.07)!important;overflow:hidden;margin:0!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card .noctra-progress i {border-radius:5px!important;background:linear-gradient(90deg,var(--na-k1),var(--na-k3))!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions {
+ display:grid!important;grid-template-columns:auto minmax(0,1fr) 40px!important;gap:8px!important;margin-top:auto!important;align-items:center!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions .noctra-button {
+ min-width:0!important;width:100%!important;height:40px!important;min-height:40px!important;padding:0 14px!important;font-size:13px!important;
+ white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis;justify-content:center!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions .noctra-icon-button {width:40px!important;height:40px!important;min-height:40px!important;border-radius:13px!important;grid-column:3;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions > .noctra-button:only-child {grid-column:1/-1;}
+@container (max-width:290px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions {grid-template-columns:minmax(0,1fr) 40px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions > .noctra-button--primary {grid-column:1/-1;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-actions .noctra-icon-button {grid-column:2;}
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-lookup-card .noctra-arr-overview {margin:0!important;font-size:13px!important;line-height:1.5!important;color:#b9b6d6!important;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-lookup-card > .noctra-arr-card-body > .noctra-button {margin-top:auto!important;align-self:flex-start;}
+
+/* Calendrier et file d'attente : panneaux de verre aux couleurs Aurora. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-columns {display:grid!important;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr))!important;gap:14px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-columns > section {
+ display:flex!important;flex-direction:column!important;gap:10px!important;padding:18px!important;border-radius:24px!important;min-width:0;
+ background:var(--na-auto-glass)!important;border:1px solid var(--na-auto-line)!important;box-shadow:inset 0 1px rgba(255,255,255,.04)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-columns > section > .noctra-eyebrow {margin:0 0 2px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-calendar,.noctra-list) {display:flex!important;flex-direction:column!important;gap:8px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item {
+ display:grid!important;grid-template-columns:auto minmax(0,1fr) auto!important;align-items:center!important;gap:14px!important;
+ padding:12px 14px!important;border-radius:16px!important;background:rgba(255,255,255,.035)!important;border:1px solid rgba(221,214,254,.09)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item time {
+ padding:6px 10px!important;border-radius:11px!important;font-size:12px!important;font-weight:700!important;white-space:nowrap;color:#fff!important;
+ background:linear-gradient(135deg,color-mix(in srgb,var(--na-k1) 30%,transparent),color-mix(in srgb,var(--na-k3) 22%,transparent))!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item h3 {margin:0!important;font-size:14.5px!important;line-height:1.3!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item p {margin:3px 0 0!important;font-size:12.5px!important;color:#a9a6c8!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-row {border-radius:16px!important;padding:14px 16px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-row h3 {font-size:14.5px!important;margin:0!important;overflow-wrap:anywhere;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-row p {font-size:12.5px!important;color:#a9a6c8!important;margin:4px 0 0!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-row .noctra-progress {margin-top:10px!important;height:5px!important;border-radius:5px!important;background:rgba(255,255,255,.07)!important;overflow:hidden;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-row .noctra-progress i {background:linear-gradient(90deg,var(--na-k1),var(--na-k3))!important;border-radius:5px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-empty {
+ padding:22px 16px!important;border-radius:16px!important;text-align:center;color:#a9a6c8!important;font-size:14px!important;
+ background:rgba(255,255,255,.025)!important;border:1px dashed rgba(221,214,254,.16)!important;
+}
+
+/* Filtres, barres d'outils et ajout. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-filter,#noctra-arr-lookup) {display:flex!important;gap:10px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-filter,#noctra-arr-lookup) input {flex:1 1 auto;min-width:0;height:46px!important;border-radius:15px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-filter,#noctra-arr-lookup) .noctra-button {height:46px!important;flex:0 0 auto;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-release-toolbar {padding:0 4px!important;background:none!important;border:0!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-release-toolbar strong {font-size:16px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-release-toolbar span {color:#a9a6c8!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-add-layout {display:grid!important;grid-template-columns:minmax(0,1fr) minmax(240px,320px)!important;gap:16px!important;align-items:start;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-add-layout > section,
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-add-settings {padding:20px!important;border-radius:24px!important;background:var(--na-auto-glass)!important;border:1px solid var(--na-auto-line)!important;display:flex;flex-direction:column;gap:14px;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-indexer-toolbar {display:flex!important;justify-content:flex-end!important;}
+
+/* Entrées : les cartes arrivent en cascade à chaque changement de vue. */
+@media (prefers-reduced-motion:no-preference) {
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content > :is(.noctra-arr-hero,.noctra-arr-metrics,.noctra-metrics,.noctra-arr-columns,.noctra-list,.noctra-arr-calendar,.noctra-arr-add-layout) {animation:na-rise-soft .55s var(--na-ease) backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content > :is(.noctra-arr-metrics,.noctra-metrics) {animation-delay:.06s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid > .noctra-arr-card {animation:na-rise-soft .5s var(--na-ease) backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid > .noctra-arr-card:nth-child(2) {animation-delay:.04s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid > .noctra-arr-card:nth-child(3) {animation-delay:.08s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid > .noctra-arr-card:nth-child(4) {animation-delay:.12s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-grid > .noctra-arr-card:nth-child(n+5) {animation-delay:.16s!important;}
+}
+
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-service-tabs {display:grid!important;width:100%!important;margin-bottom:14px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-service-tabs .noctra-tab {min-width:0!important;padding:0 8px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content {gap:14px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-nav {
+  -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent);
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero {grid-template-columns:minmax(0,1fr)!important;padding:20px!important;border-radius:22px!important;gap:16px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero h3 {font-size:26px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-hero p:not(.noctra-eyebrow) {font-size:13.5px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-quick-actions {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-quick-actions .noctra-button {width:100%!important;min-width:0!important;min-height:46px!important;padding:6px 10px!important;white-space:normal!important;line-height:1.2!important;font-size:13px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-metrics,
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] #noctra-automation-content > .noctra-metrics {grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:8px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric {grid-column:span 2;padding:12px!important;border-radius:16px!important;gap:4px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric:nth-child(4):nth-last-child(2),
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric:nth-child(5):last-child {grid-column:span 3;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric small {font-size:9.5px!important;letter-spacing:.08em!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-metrics,#noctra-automation-content > .noctra-metrics) .noctra-metric strong {font-size:20px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card {grid-template-columns:76px minmax(0,1fr)!important;gap:12px!important;padding:12px!important;border-radius:20px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-poster {width:76px!important;border-radius:12px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-card-body h3 {font-size:15.5px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-columns > section {padding:14px!important;border-radius:20px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item {grid-template-columns:minmax(0,1fr) auto!important;gap:6px 10px!important;padding:12px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item time {grid-column:1/-1;justify-self:start;padding:4px 9px!important;font-size:11.5px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-calendar-item h3 {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-add-layout {grid-template-columns:minmax(0,1fr)!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-filter,#noctra-arr-lookup) .noctra-button span {display:none;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] :is(.noctra-arr-filter,#noctra-arr-lookup) .noctra-button {width:46px!important;padding:0!important;justify-content:center!important;}
+}
+@media (max-width:380px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"] .noctra-arr-quick-actions .noctra-button {font-size:12px!important;padding:6px 6px!important;letter-spacing:-.01em;}
+}
