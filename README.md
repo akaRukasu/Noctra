@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.122 — télécommande Jellyfin débloquée
+# Version actuelle : 200.0.123 — démarrage TV avec réserve garantie
+
+La première image Shaka n’arrive qu’avec 15 s de réserve (20 s d’attente au plus). Détails : [MISE-A-JOUR-V200123.md](MISE-A-JOUR-V200123.md). Validation : `npm run test:v200123`.
+
+# Historique : 200.0.122 — télécommande Jellyfin débloquée
 
 La page « Contrôle à distance » n’est plus recouverte par sa file d’attente masquée ; inclut toutes les corrections 200.0.121. Détails : [MISE-A-JOUR-V200122.md](MISE-A-JOUR-V200122.md). Validation : `npm run test:v200122`.
 

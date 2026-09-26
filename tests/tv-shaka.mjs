@@ -10,7 +10,14 @@ class Shaka extends EventTarget {
 const p=await playerFixture('LiveWatch',false,{section:'channels'});
 const old=p.deps.tvHls;
 p.deps.tvEnginePreference='shaka';p.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await p.deps.tvDirectRestart();
+// 200.0.123 : la lecture attend 15 s de réserve (Shaka télécharge vidéo en pause).
+p.ahead=0;
+const restarting=p.deps.tvDirectRestart();
+await new Promise(r=>setImmediate(r));
+assert.equal(p.video.paused,true,'Pas de play() avant la réserve de démarrage');
+p.ahead=16;
+for(let i=0;i<5&&p.video.paused;i++){for(const [id,{fn}] of [...p.callbacks]){p.callbacks.delete(id);fn();}await new Promise(r=>setImmediate(r));}
+await restarting;
 assert.equal(old.destroyed,true);assert.equal(p.deps.tvHls,null);
 const shaka=p.deps.tvShaka;
 assert.ok(shaka instanceof Shaka);assert.equal(shaka.url,'/media/original');assert.equal(p.video.paused,false);
@@ -98,7 +105,7 @@ console.log('Shaka slow startup: retains engine and pending load passed');
 const unstable=await playerFixture('LiveWatch',false,{section:'channels'});
 let now=1000;unstable.deps.performance={now:()=>now};
 unstable.deps.tvEnginePreference='shaka';unstable.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await unstable.deps.tvDirectRestart();unstable.video.dispatchEvent(new Event('playing'));
+unstable.ahead=20;await unstable.deps.tvDirectRestart();unstable.video.dispatchEvent(new Event('playing'));
 const unstablePlayer=unstable.deps.tvShaka;
 const buffering=active=>{const event=new Event('buffering');event.buffering=active;unstablePlayer.dispatchEvent(event);};
 for(let i=0;i<2;i++){buffering(true);now+=6000;buffering(false);now+=10000;}
@@ -112,7 +119,7 @@ for (const provider of ['WiTV', 'Northlive']) {
  const frozen=await playerFixture(provider,false,{section:'channels'});
  frozen.deps.tvEnginePreference='shaka';
  frozen.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
- await frozen.deps.tvDirectRestart();
+ frozen.ahead=20;await frozen.deps.tvDirectRestart();
  frozen.video.dispatchEvent(new Event('playing'));
  frozen.ahead=12;
  const previous=frozen.deps.tvShaka;
@@ -133,7 +140,7 @@ console.log('WiTV and Northlive Shaka freeze recovery: same URL, same engine, bo
 const gapOwner=await playerFixture('LiveWatch',false,{section:'channels'});
 gapOwner.deps.tvEnginePreference='shaka';
 gapOwner.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await gapOwner.deps.tvDirectRestart();
+gapOwner.ahead=20;await gapOwner.deps.tvDirectRestart();
 gapOwner.video.dispatchEvent(new Event('playing'));
 let genericJumps=0;
 gapOwner.deps.tvSkipBufferedGap=()=>{genericJumps++;return true;};

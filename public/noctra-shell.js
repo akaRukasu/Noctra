@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.122';
+  const NOCTRA_BUILD_VERSION = '200.0.123';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -7985,6 +7985,10 @@
     player.configure({ abr: { restrictions: { maxHeight: maximum } } });
   }
 
+  // 200.0.123 : réserve visée avant la première image Shaka, et attente maximale.
+  const TV_SHAKA_STARTUP_RESERVE = 15;
+  const TV_SHAKA_STARTUP_WAIT_MS = 20_000;
+
   function installTvShakaContinuity(player, video, signal, initialGoal, onAdjust = () => {}) {
     // Count short, real starvation events too, but never startup, seeks or pauses.
     // Shaka owns buffering; no extra pause/play loop or parallel recovery timer.
@@ -9586,6 +9590,26 @@
         await player.load(streamUrl, undefined, 'application/x-mpegurl');
         if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return;
         refreshTvSafeToolsMenu();
+        // 200.0.123 : réserve de démarrage garantie. Shaka démarre dès qu'il
+        // croit avoir atteint le bord du direct : quand la playlist tarde à se
+        // rafraîchir, il partait avec ~7,5 s (diagnostic 200.0.122) malgré
+        // rebufferingGoal. Shaka télécharge déjà pendant que la vidéo est en
+        // pause : on attend 15 s de réserve (20 s d'attente au plus) avant play().
+        const startupWaitStarted = performance.now();
+        setTvPlaybackStatus(`Préchargement du direct · ${TV_SHAKA_STARTUP_RESERVE} s…`, 'loading');
+        await new Promise(resolve => {
+          const check = () => {
+            if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return resolve();
+            if (tvBufferedAhead(video) >= TV_SHAKA_STARTUP_RESERVE || performance.now() - startupWaitStarted >= TV_SHAKA_STARTUP_WAIT_MS) return resolve();
+            window.setTimeout(check, 250);
+          };
+          check();
+        });
+        if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return;
+        recordTvDiagnostic('shaka-startup-reserve', {
+          reserve: Number(tvBufferedAhead(video).toFixed(2)),
+          waitedMs: Math.round(performance.now() - startupWaitStarted)
+        });
         await video.play().catch(error => {
           if (videoEventSignal.aborted || benignTvPlayInterruption(error)) return;
           playbackNeedsGesture = error?.name === 'NotAllowedError';

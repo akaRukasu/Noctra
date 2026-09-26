@@ -282,7 +282,8 @@ export async function playerFixture(provider, blockedAutoplay = false, { section
     tvSeekIntoBufferedWindow: () => false, tvAchievableBufferGoal: load(extract(shell, '  function tvAchievableBufferGoal(', '\n  function tvHlsFailurePolicy'), 'tvAchievableBufferGoal'),
     appPath: x => x, ensureHlsLibrary: async () => {}, benignTvPlayInterruption: () => false,
     api: (url, options) => { apiCalls.push({ url, options }); return new Promise(resolve => { finishResolve = resolve; }); },
-    tvPlaybackElapsedMs: () => 0
+    tvPlaybackElapsedMs: () => 0,
+    TV_SHAKA_STARTUP_RESERVE: 15, TV_SHAKA_STARTUP_WAIT_MS: 20_000
   };
   for (const name of ['refreshTvDesktopLiveControls', 'refreshTvLiveEdgeControl', 'updateTvCastButton', 'refreshTvSafeToolsMenu',
     'recordTvDiagnostic', 'setTvPlaybackStatus', 'refreshTvDesktopLiveState', 'scheduleTvLiveEdgeControl', 'syncTvFullscreenUi',

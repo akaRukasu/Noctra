@@ -15,7 +15,7 @@ const library = async () => ({ Player: Shaka, polyfill: { installAll() {} } });
 
 const p = await playerFixture('LiveWatch', false, { section: 'channels' });
 p.deps.tvEnginePreference = 'shaka'; p.deps.ensureShakaLibrary = library;
-await p.deps.tvDirectRestart();
+p.ahead=20;await p.deps.tvDirectRestart();
 const player = p.deps.tvShaka;
 const config = player.config;
 assert.equal(config.manifest.hls.ignoreManifestProgramDateTime, true, 'PDT IPTV ignoré');
@@ -60,14 +60,14 @@ p.deps.tvVideoEventsController.abort();
 const q = await playerFixture('LiveWatch', false, { section: 'channels' });
 q.video._noctraShakaSegmentsMode = true;
 q.deps.tvEnginePreference = 'shaka'; q.deps.ensureShakaLibrary = library;
-await q.deps.tvDirectRestart();
+q.ahead=20;await q.deps.tvDirectRestart();
 assert.equal(q.deps.tvShaka.config.manifest.hls.sequenceMode, false);
 q.deps.tvVideoEventsController.abort();
 
 // Le diagnostic de recalage indique l'écart au direct pour suivre la réserve.
 const d = await playerFixture('LiveWatch', false, { section: 'channels' });
 d.deps.tvEnginePreference = 'shaka'; d.deps.ensureShakaLibrary = library;
-await d.deps.tvDirectRestart();
+d.ahead=20;await d.deps.tvDirectRestart();
 const seen = [];
 d.deps.recordTvDiagnostic = (event, details) => seen.push({ event, ...details });
 d.deps.tvShaka.seekRange = () => ({ start: 66.1, end: 103.2 });
