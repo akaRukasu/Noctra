@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+# Un nouveau push sur la même branche annule la construction devenue obsolète.
+concurrency:
+  group: noctra-apps-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   tv:
     name: LG webOS + Samsung Tizen
