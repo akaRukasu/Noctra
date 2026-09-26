@@ -7,16 +7,16 @@ Noctra TV est l’appli **Jellyfin pour Android TV** (projet officiel [jellyfin-
 - **Identifiant `com.noctra.tv`.** L’appli s’installe à côté de l’appli Jellyfin officielle, sans conflit.
 
 - **Accueil Noctra.** Une fois connecté, l’appli s’ouvre sur l’accueil Noctra, avec un menu en haut de l’écran :
-  - **Accueil** : reprise de lecture, derniers ajouts de chaque médiathèque ;
-  - **Médiathèques** : chaque médiathèque en grille d’affiches, avec des tris (ajouts récents, titre, note, année, aléatoire) et un filtre « Non vus » ;
+  - **Accueil** : comme sur PC, « À l’affiche chez vous » et le carrousel « Continuer à regarder ». Il passe au titre suivant toutes les 8 secondes, s’arrête tant qu’il a le focus, et ses aperçus s’affichent dès qu’on les survole. Suivent les médiathèques en 2 × 2, « À suivre » et les derniers ajouts ;
+  - **Médiathèques** : les 4 médiathèques Noctra en 2 × 2, puis les autres. Chaque médiathèque s’ouvre en grille d’affiches, avec des tris (ajouts récents, titre, note, année, aléatoire) et un filtre « Non vus » ;
   - **TV en direct** : les sources et les chaînes du serveur Noctra.
     - Au lancement d’une chaîne, une fenêtre propose ses serveurs, classés dans cet ordre : le dernier serveur qui a fonctionné (mémorisé), puis le lecteur natif, les serveurs automatiques et les lecteurs web. Le premier démarre seul après 5 secondes, sauf si une touche est pressée.
     - Les flux directs passent par le lecteur natif (ExoPlayer). Il utilise un tampon élargi, retente les segments et revient au direct quand le flux prend trop de retard. Il relance aussi un flux bloqué et se reconnecte de plus en plus espacé (1, 2, 4, 8 s…). Après une coupure, l’appli redemande un lien neuf au serveur.
-    - Les lecteurs web (sports…) sont des pages externes. Pendant leur affichage, les flèches déplacent un curseur et OK envoie un vrai appui, pour lancer la lecture ou passer en plein écran.
+    - Les lecteurs web (sports…) sont des pages externes. Pendant leur affichage, les flèches déplacent un curseur et OK envoie un vrai appui, pour lancer la lecture ou passer en plein écran. Si le moteur web s’arrête (mémoire du téléviseur saturée), l’appli ne se ferme plus : elle revient à l’accueil.
     - En cas d’échec, la fenêtre des serveurs réapparaît avec le serveur en échec marqué, puis le suivant démarre après 4 secondes.
     - **Multiview** : le bouton Multiview d’une source permet de choisir jusqu’à 4 chaînes avec OK, puis de les lancer ensemble. Chaque vignette a son propre lecteur natif. Le son suit la vignette sélectionnée, OK l’agrandit et Retour revient à la grille. Seuls les flux directs peuvent partager l’écran.
   - **Découvrir** et **Demandes** (Jellyseerr) : suggestions, recherche, demande en un clic et suivi de « Mes demandes » ;
-  - **Roulette** : réglages (médiathèque, nombre de titres, note, titres déjà vus), rouleau d’affiches qui ralentit sur le titre tiré, puis révélation avec l’image de fond ;
+  - **Roulette** : réglages (médiathèque, genre, de 1 à 10 titres, note, titres déjà vus), rouleau d’affiches qui ralentit sur le titre tiré, puis révélation avec l’image de fond ;
   - **Rechercher** (loupe) : recherche dans les médiathèques ;
   - **Compte** (en haut à droite) : paramètres de l’appli. On y change de compte ou on se déconnecte dans Paramètres › Authentification.
 
@@ -28,7 +28,7 @@ Les téléchargements et l’administration de Noctra ne sont pas proposés sur 
 
 ### Fonctionnement de l’accueil Noctra
 
-- `web/` contient l’interface de l’accueil (HTML, CSS et JavaScript ES2017 sans dépendance, pensés pour la télécommande). L’appli l’embarque et la sert elle-même à l’adresse `https://akarukasu.merlion.usbx.me/noctra/tv-app/`. Elle partage donc l’origine de l’API Noctra et de Jellyfin, et rien n’est à installer sur le serveur.
+- `web/` contient l’interface de l’accueil (HTML, CSS et JavaScript ES2017 sans dépendance, pensés pour la télécommande). Pour la fluidité, la navigation cherche d’abord les voisins directs. Elle fait au plus un déplacement par image affichée, défile instantanément quand une touche reste enfoncée et ajoute les longues listes par petits paquets. L’appli l’embarque et la sert elle-même à l’adresse `https://akarukasu.merlion.usbx.me/noctra/tv-app/`. Elle partage donc l’origine de l’API Noctra et de Jellyfin, et rien n’est à installer sur le serveur.
 - `java/com/noctra/tv/` contient les écrans ajoutés à l’appli :
   - `NoctraHomeActivity` : WebView de l’accueil, avec un canal `MessagePort` réservé à la page principale (les lecteurs web des chaînes n’y ont pas accès) ;
   - `NoctraStream` : lecture d’une chaîne avec ExoPlayer, avec tampon, reprises et reconnexions ;

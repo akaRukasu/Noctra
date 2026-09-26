@@ -47,6 +47,9 @@
     settings: '<path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/>',
     grid: '<path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/>',
     check: '<path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/>',
+    prev: '<path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/>',
+    next: '<path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6z"/>',
+    tag: '<path d="M3 3h8l10 10-8 8L3 11zm4.5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>',
     play: '<path d="M8 5v14l11-7z"/>',
     info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>'
   };
@@ -113,6 +116,19 @@
     // Jellyfin 10.11+ refuse les anciens en-têtes (X-Emby-Token) : erreur 401.
     return request(url, { headers: { Authorization: 'MediaBrowser Client="Noctra TV", Device="Android TV", DeviceId="noctra-tv-' + S.userId + '", Version="1", Token="' + S.token + '"' } });
   }
+  // Données mises en mémoire quelques instants : retour instantané sur une page.
+  var memoStore = {};
+  function memo(key, ttl, load) {
+    var entry = memoStore[key];
+    if (entry && Date.now() - entry.at < ttl) return entry.promise;
+    var promise = load();
+    memoStore[key] = { at: Date.now(), promise: promise };
+    promise.catch(function () { if (memoStore[key] && memoStore[key].promise === promise) delete memoStore[key]; });
+    return promise;
+  }
+  function forget(prefix) {
+    Object.keys(memoStore).forEach(function (key) { if (key.indexOf(prefix) === 0) delete memoStore[key]; });
+  }
   function jfImage(id, type, tag, height) {
     if (!id) return '';
     return S.jf + '/Items/' + id + '/Images/' + (type || 'Primary') + '?maxHeight=' + (height || 420) + '&quality=85' + (tag ? '&tag=' + encodeURIComponent(tag) : '');
@@ -135,6 +151,8 @@
       try { data = JSON.parse(message.data); } catch (error) { return; }
       if (data.type === 'session') startSession(data);
       else if (data.type === 'playerClosed') playerClosed(data);
+      else if (data.type === 'resumed') appResumed();
+      else if (data.type === 'nativeError') toast('Action impossible : ' + data.message, true);
     };
     native('hello');
   });
@@ -167,6 +185,7 @@
     if (S.ready && !changed) { renderNav(); return; }
     S.ready = true;
     cache = {};
+    memoStore = {};
     // Cookie de session Noctra : nécessaire aux lecteurs web des chaînes (iframes).
     Promise.all([
       api('/api/session').then(function (session) {
@@ -179,6 +198,19 @@
     });
     renderNav();
     go('home', {}, true, true);
+    if (/recovered/.test(location.hash)) {
+      toast('Le lecteur web a dû être fermé (mémoire du téléviseur saturée). Essayez un autre serveur.', true);
+      try { history.replaceState(null, '', location.pathname); } catch (error) { /* adresse inchangée */ }
+    }
+  }
+
+  // Retour depuis une fiche ou une lecture : reprises et « À suivre » à jour.
+  function appResumed() {
+    forget('resume'); forget('nextup');
+    if (current && current.name === 'home' && !layer.firstChild) {
+      remember(current);
+      show(false);
+    }
   }
 
   // ── Horloge ────────────────────────────────────────────────────────
@@ -286,27 +318,47 @@
   }
 
   // ── Télécommande (navigation spatiale) ─────────────────────────────
+  // Pensée pour les processeurs modestes des TV : voisins directs d'abord
+  // (rangée, grille), recherche dans la page seulement aux bords ; une seule
+  // mesure par élément ; au plus un déplacement par image affichée ; défilement
+  // instantané quand une touche reste enfoncée.
+  var repeating = false;
   function focus(node) {
     if (!node) return;
     try { node.focus({ preventScroll: true }); } catch (error) { node.focus(); }
     reveal(node);
   }
+  function scrollTo(scroller, left, top) {
+    var options = { behavior: repeating ? 'auto' : 'smooth' };
+    if (left !== null) options.left = left;
+    if (top !== null) options.top = top;
+    try { scroller.scrollTo(options); } catch (error) {
+      if (left !== null) scroller.scrollLeft = left;
+      if (top !== null) scroller.scrollTop = top;
+    }
+  }
   function reveal(node) {
     var track = node.closest('.track');
     if (track) {
       var t = track.getBoundingClientRect(), r = node.getBoundingClientRect(), pad = t.width * 0.08;
-      if (r.left < t.left + pad) track.scrollLeft -= t.left + pad - r.left;
-      else if (r.right > t.right - pad) track.scrollLeft += r.right - (t.right - pad);
+      if (r.left < t.left + pad) scrollTo(track, track.scrollLeft - (t.left + pad - r.left), null);
+      else if (r.right > t.right - pad) scrollTo(track, track.scrollLeft + r.right - (t.right - pad), null);
     }
     var scroller = node.closest('.scroll');
     if (!scroller || isMenu(node)) return;
     var box = node.closest('.row, .reveal-box') || node;
-    if (box.getBoundingClientRect().height > scroller.clientHeight * 0.7) box = node;
     var s = scroller.getBoundingClientRect(), b = box.getBoundingClientRect();
-    var top = scroller === main ? document.getElementById('top').offsetHeight + 8 : s.top + 20;
-    if (b.top < top) scroller.scrollTop -= top - b.top;
-    else if (b.bottom > s.bottom - 30) scroller.scrollTop += Math.min(b.bottom - (s.bottom - 30), b.top - top);
+    if (b.height > scroller.clientHeight * 0.7) { box = node; b = node.getBoundingClientRect(); }
+    var top = scroller === main ? headerHeight() + 8 : s.top + 20;
+    if (b.top < top) scrollTo(scroller, null, scroller.scrollTop - (top - b.top));
+    else if (b.bottom > s.bottom - 30) scrollTo(scroller, null, scroller.scrollTop + Math.min(b.bottom - (s.bottom - 30), b.top - top));
   }
+  var headerCache = 0;
+  function headerHeight() {
+    if (!headerCache) headerCache = document.getElementById('top').offsetHeight;
+    return headerCache;
+  }
+  window.addEventListener('resize', function () { headerCache = 0; });
 
   function scope() {
     var modal = layer.lastElementChild;
@@ -316,6 +368,60 @@
     var r = node.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }
+  function focusable(node) {
+    return node && node.classList && node.classList.contains('f') && !node.disabled;
+  }
+  // Meilleur candidat parmi une liste, selon la direction (distance principale
+  // + écart latéral). Chaque élément n'est mesuré qu'une fois.
+  function nearest(from, a, list, direction) {
+    var horizontal = direction === 'left' || direction === 'right';
+    var viewport = window.innerHeight;
+    var best = null, bestScore = Infinity;
+    for (var i = 0; i < list.length; i++) {
+      var node = list[i];
+      if (node === from || node.disabled) continue;
+      var b = node.getBoundingClientRect();
+      if (!b.width || !b.height) continue;
+      if (!horizontal && (b.bottom < -viewport * 1.5 || b.top > viewport * 2.5)) continue;
+      var primary;
+      if (direction === 'right') primary = b.left - a.right + 1;
+      else if (direction === 'left') primary = a.left - b.right + 1;
+      else if (direction === 'down') primary = b.top - a.bottom + 1;
+      else primary = a.top - b.bottom + 1;
+      if (primary < -Math.min(a.width, a.height) * 0.3) continue;
+      var secondary;
+      if (horizontal) {
+        // Même rangée uniquement : chevauchement vertical requis.
+        var overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (overlap < Math.min(a.height, b.height) * 0.35) continue;
+        secondary = Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2);
+      } else {
+        secondary = Math.abs((a.left + a.right) / 2 - (b.left + b.right) / 2);
+      }
+      var score = Math.max(primary, 0) * (horizontal ? 1 : 2.2) + secondary * (horizontal ? 2 : 1);
+      if (score < bestScore) { bestScore = score; best = node; }
+    }
+    return best;
+  }
+  // Grille : la case au-dessus ou au-dessous se calcule par le nombre de colonnes.
+  function gridNeighbour(from, direction) {
+    var grid = from.parentElement;
+    if (!grid || !grid.classList.contains('grid') || (direction !== 'up' && direction !== 'down')) return null;
+    var cells = grid.children;
+    var index = Array.prototype.indexOf.call(cells, from);
+    if (index < 0) return null;
+    var firstTop = cells[0].offsetTop, columns = 0;
+    while (columns < cells.length && cells[columns].offsetTop === firstTop) columns++;
+    if (!columns) return null;
+    var target = direction === 'down' ? index + columns : index - columns;
+    if (target < 0) return null;
+    if (target >= cells.length) {
+      // Dernière rangée incomplète : dernière case, si elle est sur une rangée plus bas.
+      var last = cells[cells.length - 1];
+      return last.offsetTop > from.offsetTop && focusable(last) ? last : null;
+    }
+    return focusable(cells[target]) ? cells[target] : null;
+  }
   function move(direction) {
     var from = document.activeElement;
     var root = scope();
@@ -324,30 +430,13 @@
       focus(start);
       return;
     }
-    var nodes = Array.prototype.filter.call(root.querySelectorAll('.f'), function (node) { return node !== from && !node.disabled && visible(node); });
-    var a = from.getBoundingClientRect();
     var horizontal = direction === 'left' || direction === 'right';
-    var best = null, bestScore = Infinity;
+    var a = from.getBoundingClientRect();
     var fromRow = from.closest('.track');
-    nodes.forEach(function (node) {
-      var b = node.getBoundingClientRect();
-      var primary, secondary;
-      if (direction === 'right') primary = b.left - a.right + 1;
-      else if (direction === 'left') primary = a.left - b.right + 1;
-      else if (direction === 'down') primary = b.top - a.bottom + 1;
-      else primary = a.top - b.bottom + 1;
-      if (primary < -Math.min(a.width, a.height) * 0.3) return;
-      if (horizontal) {
-        // Même rangée uniquement : chevauchement vertical requis.
-        var overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-        if (overlap < Math.min(a.height, b.height) * 0.35) return;
-        secondary = Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2);
-      } else {
-        secondary = Math.abs((a.left + a.right) / 2 - (b.left + b.right) / 2);
-      }
-      var score = Math.max(primary, 0) * (horizontal ? 1 : 2.2) + secondary * (horizontal ? 2 : 1);
-      if (score < bestScore) { bestScore = score; best = node; }
-    });
+    var best = gridNeighbour(from, direction);
+    // Rangée, groupe de boutons : on regarde d'abord les voisins immédiats.
+    if (!best && horizontal && from.parentElement) best = nearest(from, a, from.parentElement.querySelectorAll('.f'), direction);
+    if (!best) best = nearest(from, a, root.querySelectorAll('.f'), direction);
     if (!best && direction === 'up' && root === document && !isMenu(from)) best = document.querySelector('#nav .nav.active') || document.querySelector('#nav .f');
     if (!best) return;
     // Retour dans une rangée déjà parcourue : dernier élément choisi.
@@ -359,6 +448,21 @@
     if (typeof best._onReach === 'function') best._onReach();
   }
 
+  var moveFrame = 0;
+  var lastMove = 0;
+  var pendingMove = '';
+  function runMove(direction) {
+    moveFrame = requestAnimationFrame(function () {
+      moveFrame = 0;
+      if (pendingMove) {
+        var next = pendingMove;
+        pendingMove = '';
+        repeating = false;
+        runMove(next);
+      }
+    });
+    move(direction);
+  }
   document.addEventListener('keydown', function (event) {
     var key = event.key;
     var code = event.keyCode;
@@ -373,7 +477,14 @@
         if (!(direction === 'left' && atStart) && !(direction === 'right' && atEnd)) return;
       }
       event.preventDefault();
-      move(direction);
+      // Touche maintenue : pas d'accumulation de déplacements en retard.
+      // Un appui isolé n'est jamais perdu : il attend l'image suivante.
+      var now = Date.now();
+      if (event.repeat && (moveFrame || now - lastMove < 85)) return;
+      if (moveFrame) { pendingMove = direction; return; }
+      repeating = event.repeat;
+      lastMove = now;
+      runMove(direction);
       return;
     }
     if ((key === 'Enter' || code === 13 || code === 23) && target && target.classList && target.classList.contains('f')) {
@@ -382,6 +493,7 @@
         if (typeof target._onSubmit === 'function') target._onSubmit();
         return;
       }
+      if (event.repeat) { event.preventDefault(); return; }
       if (target.tagName !== 'BUTTON') { event.preventDefault(); target.click(); }
       return;
     }
@@ -389,6 +501,7 @@
       if (back()) event.preventDefault();
     }
   });
+  document.addEventListener('keyup', function () { repeating = false; });
   document.addEventListener('focusin', function (event) {
     var row = event.target.closest && event.target.closest('.track');
     if (row) row._last = event.target;
@@ -459,15 +572,28 @@
     return { node: h('label', { class: 'field' }, icon('search'), input), input: input };
   }
 
+  // Ajout par petits paquets (une image affichée entre chaque) : la
+  // télécommande reste réactive pendant qu'une page de 70 titres arrive.
+  function appendChunked(container, items, make, done) {
+    var index = 0;
+    function chunk() {
+      if (!document.body.contains(container)) return;
+      var fragment = document.createDocumentFragment();
+      var end = Math.min(items.length, index + 18);
+      for (; index < end; index++) fragment.appendChild(make(items[index], index));
+      container.appendChild(fragment);
+      if (index < items.length) requestAnimationFrame(chunk);
+      else if (done) done();
+    }
+    chunk();
+  }
   // Rendu progressif des longues grilles (chaînes, médiathèques).
   function lazyGrid(grid, items, make, batch) {
     var index = 0;
     function more() {
-      var end = Math.min(items.length, index + (batch || 60));
-      var nodes = [];
-      for (; index < end; index++) nodes.push(make(items[index], index));
-      nodes.forEach(function (node) { grid.appendChild(node); });
-      armTail(grid, index < items.length ? more : null);
+      var slice = items.slice(index, index + (batch || 60));
+      index += slice.length;
+      appendChunked(grid, slice, make, function () { armTail(grid, index < items.length ? more : null); });
     }
     more();
   }
@@ -523,57 +649,190 @@
   }
 
   // ── Accueil ────────────────────────────────────────────────────────
+  // Comme sur PC : « À l'affiche chez vous », carrousel « Continuer à
+  // regarder » (défilement toutes les 8 s, suspendu tant qu'il a le focus),
+  // médiathèques en 2 × 2, puis « À suivre » et les derniers ajouts.
   views.home = function (params, alive) {
-    var hero = h('div');
+    main.appendChild(h('header', { class: 'home-heading' },
+      h('div', null, h('p', { text: 'VOTRE SALLE DE CINÉMA' }), h('h1', null, 'À l’affiche chez vous', h('span', { text: '.' }))),
+      h('span', { class: 'note', text: 'Votre collection. À votre rythme.' })));
+    var hero = h('div', { class: 'premiere-slot' }, h('section', { class: 'premiere premiere-empty' }));
+    var libs = h('div');
     var rows = h('div', null, loading());
     main.appendChild(hero);
+    main.appendChild(libs);
     main.appendChild(rows);
-    var resume = api('/api/home/resume').then(function (data) { return (data && data.items) || []; }).catch(function () {
-      return jf('/Users/{userId}/Items/Resume', { Limit: 12, MediaTypes: 'Video', Fields: 'PrimaryImageAspectRatio' }).then(function (d) { return d.Items || []; });
+    var resume = memo('resume', 30000, function () {
+      return api('/api/home/resume').then(function (data) { return (data && data.items) || []; }).catch(function () {
+        return jf('/Users/{userId}/Items/Resume', { Limit: 12, MediaTypes: 'Video', Fields: 'PrimaryImageAspectRatio,Overview' }).then(function (d) { return d.Items || []; });
+      });
     });
-    var libs = jf('/Users/{userId}/Views').then(function (d) { return d.Items || []; });
-    return Promise.all([resume, libs]).then(function (result) {
+    var noctraLibs = memo('noctraLibraries', 300000, function () { return api('/api/libraries').catch(function () { return {}; }); });
+    var views_ = memo('views', 300000, function () { return jf('/Users/{userId}/Views').then(function (d) { return d.Items || []; }); });
+
+    var heroDone = resume.then(function (items) {
       if (!alive()) return;
-      var resumeItems = result[0], libraries = result[1];
-      var media = libraries.filter(function (lib) { return ['movies', 'tvshows', 'homevideos', 'musicvideos', 'mixed', undefined].indexOf(lib.CollectionType) >= 0; }).slice(0, 6);
-      return Promise.all(media.map(function (lib) {
-        return jf('/Users/{userId}/Items/Latest', { ParentId: lib.Id, Limit: 16, Fields: 'PrimaryImageAspectRatio,ProductionYear,Overview', ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb' })
-          .then(function (items) { return { lib: lib, items: items || [] }; }, function () { return { lib: lib, items: [] }; });
-      })).then(function (latest) {
+      clear(hero);
+      hero.appendChild(premiere(items));
+    }, function () { /* le carrousel reste vide */ });
+    var libsDone = Promise.all([noctraLibs, views_]).then(function (result) {
+      if (!alive()) return;
+      add(libs, libraryBlock(result[0], result[1], false));
+    }, function () { /* médiathèques affichées plus bas */ });
+    var rowsDone = views_.then(function (libraries) {
+      var media = libraries.filter(function (lib) { return ['movies', 'tvshows'].indexOf(lib.CollectionType) >= 0; }).slice(0, 6);
+      return Promise.all([
+        memo('nextup', 30000, function () {
+          return jf('/Shows/NextUp', { UserId: S.userId, Limit: 16, Fields: 'PrimaryImageAspectRatio', ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb' })
+            .then(function (d) { return d.Items || []; }, function () { return []; });
+        })
+      ].concat(media.map(function (lib) {
+        return memo('latest:' + lib.Id, 120000, function () {
+          return jf('/Users/{userId}/Items/Latest', { ParentId: lib.Id, Limit: 16, Fields: 'PrimaryImageAspectRatio,ProductionYear', ImageTypeLimit: 1, EnableImageTypes: 'Primary' })
+            .then(function (items) { return items || []; }, function () { return []; });
+        }).then(function (items) { return { lib: lib, items: items }; });
+      }))).then(function (result) {
         if (!alive()) return;
         clear(rows);
-        var featured = resumeItems[0] || (latest[0] && latest[0].items[0]);
-        if (featured) hero.appendChild(heroBanner(featured, Boolean(resumeItems[0])));
-        add(rows, row('Reprendre', resumeItems.map(function (item) { return itemCard(item, 'wide'); })));
-        latest.forEach(function (entry) {
+        add(rows, row('À suivre', result[0].map(function (item) { return itemCard(item, 'wide'); })));
+        result.slice(1).forEach(function (entry) {
           add(rows, row('Derniers ajouts', entry.items.map(function (item) { return itemCard(item); }), entry.lib.Name));
         });
-        add(rows, row('Médiathèques', libraries.map(libraryCard)));
-        if (!rows.firstChild) rows.appendChild(h('div', { class: 'empty', text: 'Rien à afficher pour le moment.' }));
       });
     }).catch(function (error) {
       if (!alive()) return;
       clear(rows);
       rows.appendChild(failure(error, function () { go('home', {}, true); }));
     });
+    return Promise.all([heroDone, libsDone, rowsDone]);
   };
-  function heroBanner(item, resuming) {
-    var backdropId = item.BackdropImageTags && item.BackdropImageTags.length ? item.Id : (item.ParentBackdropItemId || item.SeriesId || item.Id);
-    var backdropTag = item.BackdropImageTags && item.BackdropImageTags.length ? item.BackdropImageTags[0] : (item.ParentBackdropImageTags && item.ParentBackdropImageTags[0]);
-    var backdrop = image(S.jf + '/Items/' + backdropId + '/Images/Backdrop?maxWidth=1280&quality=80' + (backdropTag ? '&tag=' + backdropTag : ''), '');
-    backdrop.className = 'backdrop';
-    return h('section', { class: 'hero reveal-box' },
-      backdrop,
-      h('div', { class: 'body' },
-        h('div', { class: 'kicker', text: resuming ? 'Reprendre' : 'Nouveauté' }),
-        h('h2', { text: itemTitle(item) }),
-        item.Type === 'Episode' ? h('div', { class: 'sub', text: itemSub(item) }) : null,
-        item.Overview ? h('p', { text: item.Overview }) : null,
-        h('div', { class: 'actions' },
-          h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { openItem(item.Id); } }, icon('play'), resuming ? 'Reprendre' : 'Voir la fiche'))));
+
+  function backdropUrl(item, width) {
+    if (item.BackdropImageTags && item.BackdropImageTags.length) return S.jf + '/Items/' + item.Id + '/Images/Backdrop?maxWidth=' + width + '&quality=80&tag=' + item.BackdropImageTags[0];
+    if (item.ParentBackdropItemId) return S.jf + '/Items/' + item.ParentBackdropItemId + '/Images/Backdrop?maxWidth=' + width + '&quality=80' + (item.ParentBackdropImageTags ? '&tag=' + item.ParentBackdropImageTags[0] : '');
+    return wideImage(item);
+  }
+  function premiere(items) {
+    items = items.slice(0, 12);
+    var node = h('section', { class: 'premiere reveal-box' });
+    if (!items.length) {
+      node.className = 'premiere premiere-empty reveal-box';
+      node.appendChild(h('div', { class: 'premiere-copy' },
+        h('p', { class: 'eyebrow', text: 'CONTINUER À REGARDER' }),
+        h('h2', { text: 'Tout est à jour' }),
+        h('p', { class: 'premiere-sub', text: 'Vos films et épisodes commencés apparaîtront ici.' })));
+      return node;
+    }
+    var index = 0;
+    var timer = 0;
+    var art = h('div', { class: 'premiere-art' });
+    var label = h('span', { class: 'premiere-label' });
+    var title = h('h2');
+    var subtitle = h('p', { class: 'premiere-sub' });
+    var count = h('span', { class: 'premiere-count' });
+    var play = h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { openItem(items[index].Id); } }, icon('play'), 'Reprendre');
+    var prev = h('button', { class: 'round f', 'aria-label': 'Titre précédent', onclick: function () { step(-1); } }, icon('prev'));
+    var next = h('button', { class: 'round f', 'aria-label': 'Titre suivant', onclick: function () { step(1); } }, icon('next'));
+    var previews = h('div', { class: 'premiere-previews' });
+    items.slice(0, 4).forEach(function (item, position) {
+      var preview = h('button', { class: 'preview f', onclick: function () { openItem(item.Id); } },
+        h('span', { class: 'preview-image' }, image(wideImage(item), '')), h('span', { class: 'preview-title', text: itemTitle(item) }));
+      // Survoler un titre à la télécommande l'affiche en grand.
+      preview.addEventListener('focus', function () { if (index !== position) { index = position; render(); } });
+      previews.appendChild(preview);
+    });
+    node.appendChild(art);
+    node.appendChild(h('div', { class: 'premiere-shade' }));
+    node.appendChild(h('div', { class: 'premiere-copy' },
+      h('p', { class: 'eyebrow', text: 'CONTINUER À REGARDER' }), label, title, subtitle,
+      h('div', { class: 'premiere-actions' }, play, items.length > 1 ? prev : null, items.length > 1 ? count : null, items.length > 1 ? next : null)));
+    if (items.length > 1) node.appendChild(previews);
+
+    function render() {
+      var item = items[index];
+      label.textContent = item.Type === 'Episode' ? 'L’histoire continue' : 'Reprendre la lecture';
+      title.textContent = itemTitle(item);
+      subtitle.textContent = item.Type === 'Episode'
+        ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + (item.Name || '')
+        : String(item.ProductionYear || '');
+      count.textContent = (index + 1) + ' / ' + items.length;
+      Array.prototype.forEach.call(previews.children, function (preview, position) { preview.classList.toggle('current', position === index); });
+      var src = backdropUrl(item, 1280);
+      if (art.getAttribute('data-src') === src) return;
+      art.setAttribute('data-src', src);
+      // Fondu enchaîné, uniquement une fois l'image prête (pas d'écran vide).
+      var picture = new Image();
+      picture.decoding = 'async';
+      picture.onload = function () {
+        if (art.getAttribute('data-src') !== src) return;
+        var previous = art.lastElementChild;
+        picture.className = 'premiere-picture';
+        art.appendChild(picture);
+        requestAnimationFrame(function () {
+          picture.classList.add('shown');
+          if (previous) setTimeout(function () { if (previous.parentNode) previous.parentNode.removeChild(previous); }, 700);
+        });
+      };
+      picture.src = src;
+      var following = items[(index + 1) % items.length];
+      if (following) { var preload = new Image(); preload.src = backdropUrl(following, 1280); }
+    }
+    function step(delta) {
+      index = (index + delta + items.length) % items.length;
+      render();
+    }
+    function sync() {
+      clearTimeout(timer);
+      if (items.length < 2) return;
+      timer = setTimeout(function () {
+        if (!document.body.contains(node)) return;
+        if (node.contains(document.activeElement) || layer.firstChild) { sync(); return; }
+        step(1);
+        sync();
+      }, 8000);
+    }
+    render();
+    sync();
+    return node;
   }
 
   // ── Médiathèques ───────────────────────────────────────────────────
+  // Les 4 médiathèques Noctra (Films, Séries, Films d'animation, Animes) en
+  // 2 × 2 comme sur PC ; les autres médiathèques Jellyfin à la suite.
+  function noctraLibraryList(catalog) {
+    return Object.keys(catalog || {}).filter(function (label) { return catalog[label] && catalog[label].id; }).map(function (label) {
+      var lib = catalog[label];
+      return { Id: lib.id, Name: label, CollectionType: lib.type || 'movies', count: lib.count, image: lib.image };
+    });
+  }
+  function libraryBlock(catalog, views, withOthers) {
+    var noctra = noctraLibraryList(catalog);
+    var ids = {};
+    noctra.forEach(function (lib) { ids[lib.Id] = true; });
+    var others = views.filter(function (lib) { return !ids[lib.Id]; });
+    var block = h('div');
+    var main4 = noctra.length ? noctra : views.slice(0, 4);
+    if (main4.length) {
+      var grid = h('div', { class: 'libs2' });
+      main4.forEach(function (lib) { grid.appendChild(libraryTile(lib)); });
+      block.appendChild(h('section', { class: 'row reveal-box' }, h('h2', { text: 'Médiathèques' }), grid));
+    }
+    if (withOthers && noctra.length && others.length) {
+      var rest = h('div', { class: 'grid wides' });
+      others.forEach(function (lib) { rest.appendChild(libraryCard(lib)); });
+      block.appendChild(h('section', { class: 'row' }, h('h2', { text: 'Autres médiathèques' }), rest));
+    }
+    return block;
+  }
+  function libraryTile(lib) {
+    var cover = lib.image ? absolute(lib.image) : jfImage(lib.Id, 'Primary', lib.ImageTags && lib.ImageTags.Primary, 360);
+    var picture = image(cover, '');
+    picture.className = 'lib-cover';
+    var count = typeof lib.count === 'number' ? lib.count + (lib.count > 1 ? ' titres' : ' titre') : libraryKind(lib.CollectionType);
+    return h('button', { class: 'lib-tile f', onclick: function () { openLibrary(lib); } },
+      picture, h('span', { class: 'lib-shade' }),
+      h('span', { class: 'lib-label' }, h('strong', { text: lib.Name }), h('small', { text: count })));
+  }
   function libraryCard(lib) {
     var node = card({ kind: 'library wide', title: lib.Name, image: jfImage(lib.Id, 'Primary', lib.ImageTags && lib.ImageTags.Primary, 300), noMeta: true,
       onSelect: function () { openLibrary(lib); } });
@@ -590,15 +849,17 @@
   }
   views.libraries = function (params, alive) {
     main.appendChild(head('Médiathèques', 'Parcourez vos films et séries.'));
-    var grid = h('div', { class: 'grid wides' });
     var status = loading();
     main.appendChild(status);
-    main.appendChild(grid);
-    return jf('/Users/{userId}/Views').then(function (data) {
+    return Promise.all([
+      memo('noctraLibraries', 300000, function () { return api('/api/libraries').catch(function () { return {}; }); }),
+      memo('views', 300000, function () { return jf('/Users/{userId}/Views').then(function (d) { return d.Items || []; }); })
+    ]).then(function (result) {
       if (!alive()) return;
       status.remove();
-      (data.Items || []).forEach(function (lib) { grid.appendChild(libraryCard(lib)); });
-      if (!grid.firstChild) main.appendChild(h('div', { class: 'empty', text: 'Aucune médiathèque.' }));
+      var block = libraryBlock(result[0], result[1], true);
+      if (!block.firstChild) main.appendChild(h('div', { class: 'empty', text: 'Aucune médiathèque.' }));
+      main.appendChild(block);
     }, function (error) {
       if (!alive()) return;
       status.replaceWith(failure(error, function () { go('libraries', {}, true); }));
@@ -662,9 +923,8 @@
         var items = data.Items || [];
         start += items.length;
         if (!items.length) total = start;
-        items.forEach(function (item) { grid.appendChild(itemCard(item)); });
-        armTail(grid, start < total ? page : null);
-        if (!grid.firstChild) grid.appendChild(h('div', { class: 'empty', text: 'Aucun titre.' }));
+        if (!items.length && !grid.firstChild) grid.appendChild(h('div', { class: 'empty', text: 'Aucun titre.' }));
+        appendChunked(grid, items, function (item) { return itemCard(item); }, function () { armTail(grid, start < total ? page : null); });
       }, function (error) {
         busy = false;
         if (!alive()) return;
@@ -1036,6 +1296,7 @@
     node._onClose = function (silent) {
       window.removeEventListener('message', onState);
       frame.src = 'about:blank';
+      document.body.classList.remove('embed-open');
       native('cursor', { data: false });
       native('keepScreenOn', { data: false });
       if (playback === state && !silent) {
@@ -1046,6 +1307,8 @@
       }
     };
     native('keepScreenOn', { data: true });
+    // Page d'accueil masquée pendant le lecteur web : moins de mémoire et de dessin.
+    document.body.classList.add('embed-open');
     openLayer(node);
     native('cursor', { data: true });
     setTimeout(function () { hint.classList.add('gone'); }, 7000);
@@ -1297,12 +1560,45 @@
 
   // ── Roulette ───────────────────────────────────────────────────────
   // Rouleau d'affiches qui ralentit sur le titre tiré, puis grande révélation.
-  var roulette = { library: '', count: 1, rating: 0, unplayed: true };
-  try { var savedRoulette = JSON.parse(localStorage.getItem('noctra-tv-roulette') || 'null'); if (savedRoulette) roulette = savedRoulette; } catch (error) { /* réglages par défaut */ }
+  var roulette = { library: '', genre: '', count: 1, rating: 0, unplayed: true };
+  try {
+    var savedRoulette = JSON.parse(localStorage.getItem('noctra-tv-roulette') || 'null');
+    if (savedRoulette) Object.keys(roulette).forEach(function (key) { if (key in savedRoulette) roulette[key] = savedRoulette[key]; });
+  } catch (error) { /* réglages par défaut */ }
+  function saveRoulette() {
+    try { localStorage.setItem('noctra-tv-roulette', JSON.stringify(roulette)); } catch (error) { /* stockage indisponible */ }
+  }
   views.roulette = function (params, alive) {
     var panel = h('aside', { class: 'roulette-panel' }, h('h1', { text: 'Roulette' }), h('p', { class: 'sub', text: 'Laissez Noctra choisir ce soir.' }));
     var stage = h('section', { class: 'roulette-stage' });
     var spin = h('button', { class: 'btn primary f roulette-go', 'data-start': true, onclick: draw }, icon('roulette'), 'Lancer la roulette');
+    var genreButton = h('button', { class: 'segment wide f', onclick: pickGenre }, icon('tag'), h('span', { text: roulette.genre || 'Tous les genres' }));
+    function pickGenre() {
+      var list = h('div', { class: 'genre-grid' }, loading('Chargement des genres…'));
+      var sheet = h('div', { class: 'list genres-list scroll' }, h('h2', null, 'Genre', h('small', { text: roulette.library ? 'Dans la médiathèque choisie' : 'Dans toutes les médiathèques' })), list,
+        h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
+      openLayer(h('div', { class: 'modal' }, sheet));
+      memo('genres:' + roulette.library, 600000, function () {
+        return jf('/Genres', { UserId: S.userId, ParentId: roulette.library, IncludeItemTypes: 'Movie,Series', Recursive: 'true', SortBy: 'SortName', EnableTotalRecordCount: 'false' })
+          .then(function (data) { return (data.Items || []).map(function (genre) { return genre.Name; }).filter(Boolean); });
+      }).then(function (genres) {
+        if (!document.body.contains(sheet)) return;
+        clear(list);
+        [''].concat(genres).forEach(function (genre) {
+          list.appendChild(h('button', { class: 'chip f' + (roulette.genre === genre ? ' on' : ''), text: genre || 'Tous les genres', onclick: function () {
+            roulette.genre = genre;
+            saveRoulette();
+            genreButton.lastChild.textContent = genre || 'Tous les genres';
+            closeLayer();
+          } }));
+        });
+        focus(list.querySelector('.chip.on') || list.querySelector('.chip'));
+      }, function (error) {
+        if (!document.body.contains(sheet)) return;
+        clear(list);
+        list.appendChild(failure(error));
+      });
+    }
     main.appendChild(h('div', { class: 'roulette reveal-box' }, panel, stage));
     idle();
 
@@ -1311,7 +1607,9 @@
       options.forEach(function (option) {
         chips.appendChild(h('button', { class: 'segment f' + (roulette[key] === option[0] ? ' on' : ''), text: option[1], onclick: function (event) {
           roulette[key] = option[0];
-          try { localStorage.setItem('noctra-tv-roulette', JSON.stringify(roulette)); } catch (error) { /* stockage indisponible */ }
+          // Les genres dépendent de la médiathèque choisie.
+          if (key === 'library' && roulette.genre) { roulette.genre = ''; genreButton.lastChild.textContent = 'Tous les genres'; }
+          saveRoulette();
           Array.prototype.forEach.call(chips.children, function (node) { node.classList.toggle('on', node === event.currentTarget); });
         } }));
       });
@@ -1337,14 +1635,15 @@
       clear(stage);
       stage.appendChild(loading('Préparation du tirage…'));
       // Toujours 10 titres : de quoi remplir le rouleau ; les premiers sont tirés.
-      var query = 'count=10&rating=' + roulette.rating + (roulette.library ? '&library=' + encodeURIComponent(roulette.library) : '') + (roulette.unplayed ? '&unplayed=1' : '');
+      var query = 'count=10&rating=' + roulette.rating + (roulette.library ? '&library=' + encodeURIComponent(roulette.library) : '')
+        + (roulette.genre ? '&genre=' + encodeURIComponent(roulette.genre) : '') + (roulette.unplayed ? '&unplayed=1' : '');
       api('/api/roulette?' + query).then(function (data) {
         if (!alive()) return;
         var pool = (data && data.results) || [];
         if (!pool.length) {
           spin.disabled = false;
           clear(stage);
-          stage.appendChild(h('div', { class: 'empty', text: 'Aucun titre ne correspond à ces réglages.' }));
+          stage.appendChild(h('div', { class: 'empty', text: 'Aucun titre ne correspond à ces réglages' + (roulette.genre ? ' (genre « ' + roulette.genre + ' »)' : '') + '.' }));
           return;
         }
         var winners = pool.slice(0, Math.min(roulette.count, pool.length));
@@ -1405,7 +1704,7 @@
       stage.appendChild(card);
       if (winners.length > 1) {
         stage.appendChild(h('div', { class: 'others' }, h('div', { class: 'label', text: 'Aussi tirés au sort' }),
-          h('div', { class: 'others-row' }, winners.slice(1).map(function (other) {
+          h('div', { class: 'others-row track' }, winners.slice(1).map(function (other) {
             var node = h('button', { class: 'other f', onclick: function () { openItem(other.id); } }, poster(other, 'other-poster'), h('span', { text: other.title }));
             return node;
           }))));
@@ -1423,7 +1722,8 @@
       Object.keys(catalog).forEach(function (label) { if (catalog[label] && catalog[label].id) options.push([catalog[label].id, label]); });
       if (roulette.library && !options.some(function (option) { return option[0] === roulette.library; })) roulette.library = '';
       setting('Médiathèque', options, 'library');
-      setting('Titres tirés', [[1, '1'], [3, '3'], [5, '5']], 'count');
+      panel.appendChild(h('div', { class: 'setting' }, h('div', { class: 'label', text: 'Genre' }), genreButton));
+      setting('Titres tirés', [[1, '1'], [3, '3'], [5, '5'], [10, '10']], 'count');
       setting('Note minimale', [[0, 'Toutes'], [6, '6+'], [7, '7+'], [8, '8+']], 'rating');
       setting('Déjà vus', [[true, 'Non vus'], [false, 'Tout']], 'unplayed');
       panel.appendChild(spin);

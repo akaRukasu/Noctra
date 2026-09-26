@@ -18,6 +18,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebMessage;
@@ -86,15 +87,44 @@ public class NoctraHomeActivity extends Activity {
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(9, 10, 15));
+        setContentView(root);
+        createWebView("index.html");
+    }
+
+    private void createWebView(String page) {
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(9, 10, 15));
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
-        root.addView(webView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        setContentView(root);
+        root.addView(webView, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         configureWebView();
-        webView.loadUrl(appBase + "index.html");
+        webView.loadUrl(appBase + page);
         webView.requestFocus();
+    }
+
+    // Le moteur web s'est arrêté (mémoire saturée par un lecteur web, plantage
+    // d'une page externe) : sans ce traitement, Android ferme toute l'appli.
+    // On repart d'une WebView neuve, sur l'accueil Noctra.
+    private void recoverWebView() {
+        cursorMode = false;
+        if (cursor != null) cursor.setVisibility(View.GONE);
+        if (customView != null) {
+            root.removeView(customView);
+            customView = null;
+            customViewCallback = null;
+        }
+        if (hostPort != null) {
+            try { hostPort.close(); } catch (Exception ignored) { }
+            hostPort = null;
+        }
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (webView != null) {
+            WebView crashed = webView;
+            webView = null;
+            root.removeView(crashed);
+            try { crashed.destroy(); } catch (Exception ignored) { }
+        }
+        createWebView("index.html#recovered");
     }
 
     private void configureWebView() {
@@ -131,6 +161,18 @@ public class NoctraHomeActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
                 return !request.getUrl().toString().startsWith(appBase);
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                if (view != webView) return true;
+                root.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        recoverWebView();
+                    }
+                });
+                return true;
             }
 
             @Override
@@ -244,6 +286,21 @@ public class NoctraHomeActivity extends Activity {
     }
 
     private void handleMessage(String raw) {
+        // Une action qui échoue ne doit jamais fermer l'appli.
+        try {
+            dispatchAction(raw);
+        } catch (Throwable error) {
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "nativeError");
+                message.put("message", String.valueOf(error.getMessage()));
+                send(message);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void dispatchAction(String raw) {
         if (raw == null) return;
         JSONObject message;
         try {
@@ -385,7 +442,15 @@ public class NoctraHomeActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (!cursorMode) return super.dispatchKeyEvent(event);
+        if (!cursorMode || webView == null) return super.dispatchKeyEvent(event);
+        try {
+            return cursorKey(event);
+        } catch (Throwable error) {
+            return true;
+        }
+    }
+
+    private boolean cursorKey(KeyEvent event) {
         int code = event.getKeyCode();
         boolean move = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
             || code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN;
@@ -470,6 +535,13 @@ public class NoctraHomeActivity extends Activity {
         if (current != null && !current.accessToken.equals(session.accessToken)) {
             session = current;
             sendSession();
+        }
+        // Retour d'une fiche ou d'une lecture : l'accueil met à jour les reprises.
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "resumed");
+            send(message);
+        } catch (Exception ignored) {
         }
     }
 

@@ -176,6 +176,22 @@ assert.ok(!/Jellyfin'\)|'Jellyfin'|dans Jellyfin/.test(tvApp), 'Interface sans b
 assert.match(tvApp, /native\('multiview', \{ items: items \}\)/);
 assert.match(tvApp, /native\('cursor', \{ data: true \}\)/);
 assert.match(tvApp, /noctra-tv-server:/, 'Dernier serveur fonctionnel mémorisé');
+// Accueil comme sur PC : carrousel « Continuer à regarder », pas de rangée Reprendre, médiathèques 2 × 2.
+assert.match(tvApp, /'CONTINUER À REGARDER'/);
+assert.ok(!/row\('Reprendre'/.test(tvApp), 'Reprises dans le carrousel seulement');
+assert.match(tvApp, /class: 'libs2'/);
+assert.match(await read('apps/androidtv/web/app.css'), /\.libs2 \{ display: grid; grid-template-columns: 1fr 1fr;/);
+// Fluidité : voisins directs, un déplacement par image, ajout par paquets.
+assert.match(tvApp, /function gridNeighbour\(from, direction\)/);
+assert.match(tvApp, /if \(event\.repeat && \(moveFrame \|\| now - lastMove < 85\)\) return;/);
+assert.match(tvApp, /function appendChunked\(container, items, make, done\)/);
+assert.ok(!/scroll-behavior: smooth/.test(await read('apps/androidtv/web/app.css')), 'Défilement piloté par le script');
+// Roulette : genre et jusqu'à 10 titres.
+assert.match(tvApp, /'&genre=' \+ encodeURIComponent\(roulette\.genre\)/);
+assert.match(tvApp, /\[10, '10'\]/);
+// Lecteurs web : un arrêt du moteur web ne ferme plus l'appli.
+assert.match(home, /public boolean onRenderProcessGone\(WebView view, RenderProcessGoneDetail detail\)/);
+assert.match(home, /createWebView\("index\.html#recovered"\)/);
 for (const route of ['/api/home/resume', '/api/tv/sources', '/api/tv/catalog?source=', '/api/jellyseerr/search?q=', '/api/jellyseerr/request', '/api/discovery?category=', '/api/roulette?']) {
   assert.ok(tvApp.includes(route), `Accueil TV : ${route}`);
 }
