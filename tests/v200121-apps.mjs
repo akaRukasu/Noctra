@@ -136,6 +136,35 @@ for (const density of ['ldpi', 'mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
 }
 assert.match(await read('apps/androidtv/README.md'), /GNU GPL v2/);
 
+// 5 bis. Accueil Noctra dans Noctra TV : StartupActivity ouvre NoctraHomeActivity
+//    (NoctraRouting), les écrans Jellyfin restent accessibles depuis l'accueil.
+assert.match(androidtv, /invoke-static \{v0\}, Lcom\/noctra\/tv\/NoctraRouting;->nextActivity\(Landroid\/content\/Context;\)Ljava\/lang\/Class;/);
+assert.match(androidtv, /invoke-static \{v0\}, Lcom\/noctra\/tv\/NoctraRouting;->nextActivityFlags\(Landroid\/content\/Context;\)I/);
+assert.match(androidtv, /activity\('NoctraHomeActivity'\) \+ activity\('NoctraPlayerActivity'\)/);
+assert.match(androidtv, /android:exported="false"/, 'Écrans Noctra non exportés');
+assert.match(androidtv, /'assets', 'noctra-tv'/);
+assert.match(androidtv, /'https:\/\/akarukasu\.merlion\.usbx\.me\/noctra'/);
+const routing = await read('apps/androidtv/java/com/noctra/tv/NoctraRouting.java');
+assert.match(routing, /intent\.hasExtra\("ItemId"\)/);
+assert.match(routing, /return NoctraHomeActivity\.class;/);
+const home = await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java');
+assert.match(home, /postWebMessage\(new WebMessage\("noctra-host"/, 'Canal natif par MessagePort');
+assert.ok(!home.includes('addJavascriptInterface'), 'Pas d’objet Java exposé aux lecteurs web');
+assert.match(home, /if \(sameOrigin\(target, server\)\) intent\.putExtra\(NoctraPlayerActivity\.EXTRA_TOKEN/, 'Jeton limité au serveur Noctra');
+assert.match(home, /return !request\.getUrl\(\)\.toString\(\)\.startsWith\(appBase\);/, 'Le cadre principal reste sur l’accueil');
+const player = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(player, /new DefaultMediaSourceFactory\(http\)/);
+assert.ok(!/implements\s+Player\.Listener/.test(player), 'Aucune interface d’écoute Media3 (réduites par R8)');
+const tvApp = await read('apps/androidtv/web/app.js');
+assert.ok(!/\?\.[\w([]|\?\?/.test(tvApp), 'Accueil TV en ES2017 (WebView anciennes)');
+assert.match(tvApp, /event\.source !== null/, 'Canal refusé aux iframes');
+assert.match(tvApp, /window\.NoctraTV = \{ back:/);
+for (const route of ['/api/home/resume', '/api/tv/sources', '/api/tv/catalog?source=', '/api/jellyseerr/search?q=', '/api/jellyseerr/request', '/api/discovery?category=', '/api/roulette?']) {
+  assert.ok(tvApp.includes(route), `Accueil TV : ${route}`);
+}
+const tvCss = await read('apps/androidtv/web/app.css');
+assert.ok(!/aspect-ratio|\binset:/.test(tvCss), 'CSS compatible Chromium < 88');
+
 // 6. iOS : WKWebView, messages limités au cadre principal et aux bonnes origines.
 const controller = await read('apps/ios/Noctra/WebViewController.swift');
 assert.match(controller, /guard message\.frameInfo\.isMainFrame/);

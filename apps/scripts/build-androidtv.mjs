@@ -4,21 +4,26 @@
    - serveur Jellyfin Noctra intégré : au démarrage, l'appli se connecte seule
      et ouvre directement la page d'authentification (plus d'adresse à saisir) ;
    - nom, icône, bannière et logo Noctra ;
-   - identifiant com.noctra.tv : s'installe à côté de l'appli Jellyfin officielle.
+   - identifiant com.noctra.tv : s'installe à côté de l'appli Jellyfin officielle ;
+   - accueil Noctra (apps/androidtv/web + java/com/noctra/tv) : menu du haut,
+     médiathèques, TV en direct (lecteur natif ExoPlayer), Découvrir, Demandes,
+     Roulette et recherche ; fiches et lecture des films et séries dans les
+     écrans natifs de Jellyfin.
    Interface native (fluide sur les boîtiers et vidéoprojecteurs) et lecteur
    vidéo natif (ExoPlayer, lecture directe sans transcodage quand c'est possible).
 
    Usage : node apps/scripts/build-androidtv.mjs [jellyfin-androidtv-release.apk]
    Sans fichier, l'APK officiel v0.19.10 est téléchargé depuis GitHub.
-   Variables : NOCTRA_JELLYFIN_URL (adresse du serveur Jellyfin), signature :
-   voir android-tools.mjs.  →  dist/apps/Noctra-androidtv.apk */
+   Variables : NOCTRA_JELLYFIN_URL (adresse du serveur Jellyfin), NOCTRA_URL
+   (adresse du serveur Noctra), signature : voir android-tools.mjs.  →  dist/apps/Noctra-androidtv.apk */
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { alignZip, appsRoot, listFiles, prepareTools, repoRoot, run, signApk, step, toolsDir } from './android-tools.mjs';
 
 const serverUrl = (process.env.NOCTRA_JELLYFIN_URL || 'https://akarukasu.merlion.usbx.me/jellyfin').replace(/\/+$/, '');
+const noctraUrl = (process.env.NOCTRA_URL || 'https://akarukasu.merlion.usbx.me/noctra').replace(/\/+$/, '');
 const packageName = 'com.noctra.tv';
 const appName = 'Noctra';
 const minSdk = 24;
@@ -27,7 +32,8 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 1;
+const noctraRevision = 2;
+const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
 const decoded = join(work, 'decoded');
@@ -125,7 +131,7 @@ const yml = join(decoded, 'apktool.yml');
 let apktoolYml = await readFile(yml, 'utf8');
 apktoolYml = apktoolYml
   .replace(/minSdkVersion: \d+/, `minSdkVersion: ${minSdk}`)
-  .replace(/versionName: .*/, `versionName: ${base.version}-noctra.${noctraRevision}`);
+  .replace(/versionName: .*/, `versionName: ${versionName}`);
 await writeFile(yml, apktoolYml);
 
 // ── 3. Marque Noctra ─────────────────────────────────────────────────────
@@ -146,10 +152,68 @@ for (const name of ['app_icon_background', 'app_banner_background']) {
 }
 await patch(join(decoded, 'res', 'mipmap-anydpi-v26', 'app_icon.xml'), [['@drawable/app_icon_foreground_monochrome', '@drawable/app_icon_foreground']]);
 
-// ── 4. Reconstruction et signature ───────────────────────────────────────
+// ── 4. Accueil Noctra ────────────────────────────────────────────────────
+// Une fois la session ouverte, StartupActivity ouvre l'accueil Noctra au lieu
+// de l'accueil Jellyfin (NoctraRouting) ; les écrans Jellyfin demandés depuis
+// l'accueil Noctra (fiche, médiathèque) restent ceux de Jellyfin.
+step(`Accueil Noctra : ${noctraUrl}`);
+await patch(smali('ui/startup/StartupActivity.smali'), [[
+  `    const-class v1, Lorg/jellyfin/androidtv/ui/browsing/MainActivity;
+
+    invoke-direct {p1, v0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V
+
+    const v0, 0x10004000`,
+  `    invoke-static {v0}, Lcom/noctra/tv/NoctraRouting;->nextActivity(Landroid/content/Context;)Ljava/lang/Class;
+
+    move-result-object v1
+
+    invoke-direct {p1, v0, v1}, Landroid/content/Intent;-><init>(Landroid/content/Context;Ljava/lang/Class;)V
+
+    invoke-static {v0}, Lcom/noctra/tv/NoctraRouting;->nextActivityFlags(Landroid/content/Context;)I
+
+    move-result v0`
+]]);
+const activity = name => `        <activity android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density" android:exported="false" android:name="com.noctra.tv.${name}" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n`;
+await patch(join(decoded, 'AndroidManifest.xml'), [['    </application>', activity('NoctraHomeActivity') + activity('NoctraPlayerActivity') + '    </application>']]);
+await cp(join(appsRoot, 'androidtv', 'web'), join(decoded, 'assets', 'noctra-tv'), { recursive: true });
+
+// Code Java : compilé contre Android et des signatures Media3 (stubs, jamais
+// incluses dans l'APK) ; les vraies classes Media3 sont celles de Jellyfin.
+const javaDir = join(work, 'java');
+const generated = join(javaDir, 'gen', 'com', 'noctra', 'tv');
+await mkdir(generated, { recursive: true });
+await writeFile(join(generated, 'NoctraConfig.java'), `package com.noctra.tv;
+
+/** Généré par apps/scripts/build-androidtv.mjs. */
+final class NoctraConfig {
+    static final String NOCTRA_URL = ${JSON.stringify(noctraUrl)};
+    static final String JELLYFIN_URL = ${JSON.stringify(serverUrl)};
+    static final String VERSION = ${JSON.stringify(versionName)};
+
+    private NoctraConfig() { }
+}
+`);
+const stubClasses = join(javaDir, 'stubs');
+const noctraClasses = join(javaDir, 'classes');
+await mkdir(stubClasses, { recursive: true });
+await mkdir(noctraClasses, { recursive: true });
+const javac = ['-encoding', 'UTF-8', '--release', '8', '-nowarn', '-Xlint:-options'];
+run('javac', [...javac, '-cp', tools.androidAll, '-d', stubClasses,
+  ...await listFiles(join(appsRoot, 'androidtv', 'stubs'), name => name.endsWith('.java'))]);
+run('javac', [...javac, '-cp', `${tools.androidAll}${delimiter}${stubClasses}`, '-d', noctraClasses,
+  ...await listFiles(join(appsRoot, 'androidtv', 'java'), name => name.endsWith('.java')), join(generated, 'NoctraConfig.java')]);
+// Dex suivant ceux de Jellyfin (classes.dex, classes2.dex, … sans trou).
+const dexCount = (await readdir(decoded)).filter(name => /^smali(_classes\d+)?$/.test(name)).length;
+const dexName = `classes${dexCount + 1}.dex`;
+const dexDir = join(javaDir, 'dex');
+await mkdir(dexDir, { recursive: true });
+run('java', ['-cp', tools.dx, 'com.android.dx.command.Main', '--dex', `--min-sdk-version=${minSdk}`, `--output=${join(dexDir, dexName)}`, noctraClasses]);
+
+// ── 5. Reconstruction et signature ───────────────────────────────────────
 step('Reconstruction (apktool + aapt2)');
 const unsigned = join(work, 'unsigned.apk');
 run('java', ['-jar', tools.apktool, 'b', '-o', unsigned, decoded]);
+run('jar', ['uf', unsigned, '-C', dexDir, dexName]);
 const aligned = join(work, 'aligned.apk');
 await alignZip(unsigned, aligned);
 step('Signature (apksig, schéma v2 : Android 7 et plus)');
@@ -159,5 +223,10 @@ const badging = run(tools.aapt2, ['dump', 'badging', output]);
 if (!badging.includes(`package: name='${packageName}'`) || !badging.includes('leanback-launchable-activity')) {
   throw new Error('APK final inattendu :\n' + badging.split('\n').slice(0, 8).join('\n'));
 }
+const manifestTree = run(tools.aapt2, ['dump', 'xmltree', output, '--file', 'AndroidManifest.xml']);
+const entries = run('jar', ['tf', output]).split(/\r?\n/);
+if (!manifestTree.includes('com.noctra.tv.NoctraHomeActivity') || !entries.includes(dexName) || !entries.includes('assets/noctra-tv/app.js')) {
+  throw new Error(`APK final incomplet : accueil Noctra, ${dexName} ou assets/noctra-tv manquant.`);
+}
 const { size } = await stat(output);
-console.log(`${relative(process.cwd(), output)} (${(size / 1048576).toFixed(1)} Mo) — ${packageName} ${base.version}-noctra.${noctraRevision}, Android ${minSdk}+, serveur ${serverUrl}`);
+console.log(`${relative(process.cwd(), output)} (${(size / 1048576).toFixed(1)} Mo) — ${packageName} ${versionName}, Android ${minSdk}+, Jellyfin ${serverUrl}, Noctra ${noctraUrl}`);
