@@ -711,3 +711,88 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .hom
   -webkit-mask-image:none;mask-image:none;border-radius:16px!important;
  }
 }
+
+/* ═══════════════════════ 200.0.113 — Aurora Motion ═══════════════════════
+   Motion design. Tout est coupé en lecture et avec prefers-reduced-motion
+   (la classe html.na-motion n'est posée par noctra-aurora.js que si le
+   mouvement est autorisé). Les effets continus restent réservés au desktop
+   performant ; le reste est ponctuel (entrées, transitions, retours tactiles). */
+
+/* Chargement : anneau dégradé aux couleurs Aurora (même animation qu'avant). */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-loading i {
+ border-color:rgba(196,181,253,.16)!important;border-top-color:#f0abfc!important;border-right-color:#7dd3fc!important;
+ box-shadow:0 0 18px -2px rgba(196,181,253,.55);
+}
+
+@media (prefers-reduced-motion:no-preference) {
+ /* 1. Ouverture des panneaux : révélation circulaire depuis le bouton du dock. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) #noctra-backdrop[data-open="true"] > #noctra-panel {
+  animation:na-panel-reveal .72s cubic-bezier(.2,.9,.25,1) backwards!important;
+ }
+ /* 2. Apparition des rangées et des cartes au défilement. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) [data-na-reveal="pending"] {
+  opacity:0;transform:translate3d(0,34px,0) scale(.985);
+ }
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) [data-na-reveal="in"] {
+  animation:na-reveal .9s var(--na-ease) backwards!important;
+ }
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card {
+  animation:na-card-in .8s var(--na-ease) backwards!important;
+ }
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card:nth-child(2) {animation-delay:.05s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card:nth-child(3) {animation-delay:.1s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card:nth-child(4) {animation-delay:.15s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card:nth-child(5) {animation-delay:.2s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .verticalSection[data-na-reveal="in"] .card:nth-child(n+6) {animation-delay:.25s!important;}
+
+ /* 3. Affiche : chaque changement de titre rejoue une entrée en cascade. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready .noctra-premiere-copy.na-swap > * {animation:na-rise-soft .75s var(--na-ease) backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready .noctra-premiere-copy.na-swap > :nth-child(2) {animation-delay:.06s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready .noctra-premiere-copy.na-swap > :nth-child(3) {animation-delay:.12s!important;animation-name:na-title-in!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready .noctra-premiere-copy.na-swap > :nth-child(4) {animation-delay:.2s!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready .noctra-premiere-copy.na-swap > :nth-child(n+5) {animation-delay:.26s!important;}
+
+ /* 4. Relief : les cartes s'inclinent vers le pointeur (desktop). */
+ @media (hover:hover) and (pointer:fine) {
+  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card {perspective:900px;}
+  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card:is(:hover,:focus-within) .cardBox {
+   transform:translateY(-6px) rotateX(var(--na-rx,0deg)) rotateY(var(--na-ry,0deg));transform-style:preserve-3d;
+  }
+  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind] .noctra-library-card:hover {
+   transform:translateY(-4px) perspective(1100px) rotateX(var(--na-rx,0deg)) rotateY(var(--na-ry,0deg));
+  }
+  /* 5. Boutons magnétiques : ils suivent légèrement le pointeur. */
+  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready :is(.noctra-premiere-actions,#noctra-panel) .noctra-button {
+   translate:var(--na-bx,0px) var(--na-by,0px);transition:translate .35s var(--na-ease),background-position .7s var(--na-ease),box-shadow .3s ease,background-color .2s ease,border-color .2s ease!important;
+  }
+ }
+ /* 6. Retour tactile : légère pression sur tous les boutons (hors dock). */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready :is(#noctra-panel,.noctra-premiere,#noctra-mobile-more) :is(.noctra-button,.noctra-tab,.noctra-premiere-controls > button,.noctra-more-links > button):active {
+  scale:.96;transition:scale .12s ease!important;
+ }
+ /* 7. Notifications : entrée à ressort. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready #noctra-toast[data-show="true"] {animation:na-toast-in .6s cubic-bezier(.2,1.4,.3,1) backwards!important;}
+ /* 8. Parallaxe de l'affiche au défilement (desktop, variable posée par le script). */
+ html[data-noctra-skin="aurora"].na-motion.noctra-performance-desktop:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-picture {
+  translate:0 var(--na-parallax,0px);
+ }
+ /* 9. Lumière qui suit le pointeur sur le fond (desktop performant). */
+ html[data-noctra-skin="aurora"].na-motion.noctra-performance-desktop:not(#na-skin) body.noctra-ready:not(.noctra-playing):not(.noctra-video-route) #na-cursor-light {
+  display:block;
+ }
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-cursor-light {
+ display:none;position:fixed;left:0;top:0;width:640px;height:640px;margin:-320px 0 0 -320px;z-index:-1;pointer-events:none;border-radius:50%;
+ background:radial-gradient(closest-side,rgba(167,139,250,.16),rgba(125,211,252,.07) 55%,transparent 100%);
+ transform:translate3d(var(--na-cx,-999px),var(--na-cy,-999px),0);transition:opacity .6s ease;will-change:transform;
+}
+
+@keyframes na-panel-reveal {
+ from {clip-path:circle(0% at var(--na-ox,50%) var(--na-oy,0%));opacity:.4;}
+ to {clip-path:circle(150% at var(--na-ox,50%) var(--na-oy,0%));opacity:1;}
+}
+@keyframes na-reveal {from {opacity:0;transform:translate3d(0,34px,0) scale(.985);} to {opacity:1;transform:none;}}
+@keyframes na-card-in {from {opacity:0;transform:translate3d(24px,18px,0) scale(.96);} to {opacity:1;transform:none;}}
+@keyframes na-rise-soft {from {opacity:0;transform:translate3d(0,18px,0);} to {opacity:1;transform:none;}}
+@keyframes na-title-in {from {opacity:0;transform:translate3d(0,26px,0);clip-path:inset(0 0 100% 0);} to {opacity:1;transform:none;clip-path:inset(0 0 -20% 0);}}
+@keyframes na-toast-in {from {opacity:0;transform:translate3d(0,24px,0) scale(.92);} to {opacity:1;transform:none;}}

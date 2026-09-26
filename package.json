@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.112",
+  "version": "200.0.113",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -86,7 +86,8 @@
     "test:v200109": "node tests/v200109-segment-relay.mjs && node tests/v200050-seedbox-cache.mjs && npm run test:v200108",
     "test:v200110": "node tests/v200110-relay-head-dock.mjs && npm run test:v200109",
     "test:v200111": "node tests/v200111-playlist-relay.mjs && npm run test:v200110",
-    "test:v200112": "node tests/v200112-premiere-image.mjs && npm run test:v200111"
+    "test:v200112": "node tests/v200112-premiere-image.mjs && npm run test:v200111",
+    "test:v200113": "node tests/v200113-motion.mjs && npm run test:v200112"
   },
   "engines": {
     "node": ">=20"
