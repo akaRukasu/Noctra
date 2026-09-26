@@ -11,7 +11,7 @@ const vendor = await readFile(new URL('public/vendor/shaka-player.compiled.js', 
 
 assert.match(shell, /const TV_SHAKA_STARTUP_RESERVE = 15;/);
 assert.match(shell, /const TV_SHAKA_STARTUP_WAIT_MS = 20_000;/);
-const start = shell.indexOf("await player.load(streamUrl, undefined, 'application/x-mpegurl');");
+const start = shell.search(/await player\.load\(streamUrl, [^,]+, 'application\/x-mpegurl'\);\s*if \(videoEventSignal\.aborted/);
 const gate = shell.slice(start, shell.indexOf('await video.play()', start));
 assert.ok(gate.length > 200, 'Attente placée entre load() et play()');
 assert.match(gate, /tvBufferedAhead\(video\) >= TV_SHAKA_STARTUP_RESERVE \|\| performance\.now\(\) - startupWaitStarted >= TV_SHAKA_STARTUP_WAIT_MS/);

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.123 — démarrage TV avec réserve garantie
+# Version actuelle : 200.0.124 — départ TV en retrait du direct
+
+Shaka démarre 30 s en retrait du direct, là où les segments sont déjà publiés : la réserve de 15 s devient atteignable. Détails : [MISE-A-JOUR-V200124.md](MISE-A-JOUR-V200124.md). Validation : `npm run test:v200124`.
+
+# Historique : 200.0.123 — démarrage TV avec réserve garantie
 
 La première image Shaka n’arrive qu’avec 15 s de réserve (20 s d’attente au plus). Détails : [MISE-A-JOUR-V200123.md](MISE-A-JOUR-V200123.md). Validation : `npm run test:v200123`.
 

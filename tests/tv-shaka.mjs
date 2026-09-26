@@ -5,7 +5,7 @@ class Shaka extends EventTarget {
  constructor(){super();this.config={abr:{enabled:true},streaming:{}};this.tracks=[{height:720,bandwidth:1000000}];}
  configure(c){for(const [k,v]of Object.entries(c))this.config[k]={...this.config[k],...v};}
  getConfiguration(){return this.config;}getStats(){return {estimatedBandwidth:1000000};}getVariantTracks(){return this.tracks;}
- async attach(video){this.video=video;}async load(url){this.url=url;}async destroy(){this.destroyed=true;}
+ async attach(video){this.video=video;}async load(url,startTime){this.url=url;this.startTime=startTime;}async destroy(){this.destroyed=true;}
 }
 const p=await playerFixture('LiveWatch',false,{section:'channels'});
 const old=p.deps.tvHls;
@@ -22,6 +22,7 @@ assert.equal(old.destroyed,true);assert.equal(p.deps.tvHls,null);
 const shaka=p.deps.tvShaka;
 assert.ok(shaka instanceof Shaka);assert.equal(shaka.url,'/media/original');assert.equal(p.video.paused,false);
 assert.equal(shaka.config.streaming.rebufferingGoal,15,'200.0.121 : démarrage avec 15 s de réserve');
+assert.equal(shaka.startTime,-30,'200.0.124 : départ 30 s en retrait du direct');
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,1,'First image takes priority over parallel prefetch');
 assert.equal(shaka.config.streaming.bufferingGoal,45);
 const diagnosticEvents=[];

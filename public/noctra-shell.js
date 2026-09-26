@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.123';
+  const NOCTRA_BUILD_VERSION = '200.0.124';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -7988,6 +7988,7 @@
   // 200.0.123 : réserve visée avant la première image Shaka, et attente maximale.
   const TV_SHAKA_STARTUP_RESERVE = 15;
   const TV_SHAKA_STARTUP_WAIT_MS = 20_000;
+  const TV_SHAKA_START_BEHIND_LIVE = -30;
 
   function installTvShakaContinuity(player, video, signal, initialGoal, onAdjust = () => {}) {
     // Count short, real starvation events too, but never startup, seeks or pauses.
@@ -9587,7 +9588,13 @@
         await player.attach(video);
         if (videoEventSignal.aborted) return;
         recordTvDiagnostic('shaka-player-started', { engine: engine.Player.version });
-        await player.load(streamUrl, undefined, 'application/x-mpegurl');
+        // 200.0.124 : départ 30 s en retrait du bord calculé par Shaka (valeur
+        // négative = relative au direct, bornée au début de la fenêtre). Le
+        // fournisseur publie ses segments en retard sur l'horloge : le départ par
+        // défaut tombait à ~7,5 s du dernier segment réel, et la réserve ne
+        // pouvait pas dépasser ces 7,5 s (diagnostic 200.0.123 : 20 s d'attente
+        // bloquées à 7,58 s). En retrait, les segments existent déjà.
+        await player.load(streamUrl, TV_SHAKA_START_BEHIND_LIVE, 'application/x-mpegurl');
         if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return;
         refreshTvSafeToolsMenu();
         // 200.0.123 : réserve de démarrage garantie. Shaka démarre dès qu'il
