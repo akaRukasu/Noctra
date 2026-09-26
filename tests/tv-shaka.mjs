@@ -23,6 +23,8 @@ const shaka=p.deps.tvShaka;
 assert.ok(shaka instanceof Shaka);assert.equal(shaka.url,'/media/original');assert.equal(p.video.paused,false);
 assert.equal(shaka.config.streaming.rebufferingGoal,15,'200.0.121 : démarrage avec 15 s de réserve');
 assert.equal(shaka.startTime,-30,'200.0.124 : départ 30 s en retrait du direct');
+assert.equal(shaka.config.streaming.returnToEndOfLiveWindowWhenOutside,true,'200.0.125 : hors fenêtre, retour vers le bord');
+assert.equal(shaka.config.streaming.safeSeekEndOffset,20,'200.0.125 : 20 s avant le bord');
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,1,'First image takes priority over parallel prefetch');
 assert.equal(shaka.config.streaming.bufferingGoal,45);
 const diagnosticEvents=[];
@@ -62,6 +64,17 @@ assert.equal(shaka.config.streaming.segmentPrefetchLimit,2,'Restore continuity p
 assert.equal(shaka.config.streaming.rebufferingGoal,6,'200.0.121 : reprise après coupure à partir de 6 s');
 for(let i=0;i<4;i++){p.video.dispatchEvent(new Event('waiting'));p.video.dispatchEvent(new Event('playing'));}
 assert.equal(p.video.paused,false,'No HLS managed rebuffer pause over Shaka');
+// 200.0.125 : lien expiré (playlist 404 répétée, erreurs non fatales) → renouvellement immédiat.
+const callsBeforeExpiry=p.apiCalls.length;
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.equal(p.apiCalls.length,callsBeforeExpiry,'Deux 404 : pas encore de renouvellement');
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.ok(diagnosticEvents.some(e=>e.event==='shaka-link-expired'),'Expiration diagnostiquée');
+assert.equal(p.apiCalls.length,callsBeforeExpiry+1,'Un seul renouvellement du lien');
+assert.match(p.apiCalls.at(-1).url,/refresh=1/);
+emit('downloadfailed',{requestType:1,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.equal(p.apiCalls.length,callsBeforeExpiry+1,'Un segment en 404 ne déclenche rien');
 p.deps.tvEnginePreference='hls';await p.deps.tvDirectRestart();
 assert.equal(shaka.destroyed,true);assert.equal(p.deps.tvShaka,null);assert.ok(p.deps.tvHls);
 const afterCleanup=diagnosticEvents.length;

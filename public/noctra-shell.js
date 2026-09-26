@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.124';
+  const NOCTRA_BUILD_VERSION = '200.0.125';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -7989,6 +7989,7 @@
   const TV_SHAKA_STARTUP_RESERVE = 15;
   const TV_SHAKA_STARTUP_WAIT_MS = 20_000;
   const TV_SHAKA_START_BEHIND_LIVE = -30;
+  const TV_SHAKA_EXPIRED_LINK_FAILURES = 3;
 
   function installTvShakaContinuity(player, video, signal, initialGoal, onAdjust = () => {}) {
     // Count short, real starvation events too, but never startup, seeks or pauses.
@@ -9466,6 +9467,12 @@
           // premières secondes après un départ à 7,5 s de réserve.
           streaming: { bufferingGoal: 45, rebufferingGoal: 15, bufferBehind: 15, segmentPrefetchLimit: 1,
             lowLatencyMode: false, maxDisabledTime: 15,
+            // 200.0.125 : si la lecture sort de la fenêtre du direct (retard
+            // accumulé + panne du fournisseur), revenir 20 s avant son bord, là
+            // où les segments existent, au lieu du début de la fenêtre : Shaka y
+            // retombait toutes les 11 s en annulant ses téléchargements
+            // (diagnostic 200.0.123 : 4 min sans image après 51 min de match).
+            returnToEndOfLiveWindowWhenOutside: true, safeSeekEndOffset: 20,
             retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
           // Les horodatages PROGRAM-DATE-TIME des flux IPTV sont souvent
           // incohérents : l'alignement par numéro de séquence évite trous et
@@ -9503,6 +9510,7 @@
           if (event.requestType === 1) lastSegmentAt = Date.now();
           if (event.requestType === 0) lastManifestAt = Date.now();
         });
+        let expiredManifestFailures = [];
         player.addEventListener('downloadfailed', event => {
           if (videoEventSignal.aborted) return;
           // In Shaka 5.2, aborted=true means its connection/stall timer
@@ -9515,6 +9523,19 @@
             httpStatus: Number.isFinite(event.httpResponseCode) ? event.httpResponseCode : null,
             timedOut
           });
+          // 200.0.125 : lien du direct expiré. La playlist répond 403/404/410 en
+          // boucle (erreurs non fatales pour Shaka) : renouveler le lien tout de
+          // suite, pendant que la réserve se lit encore, au lieu d'attendre le gel.
+          if (event.requestType === 0 && [403, 404, 410].includes(event.httpResponseCode)) {
+            const now = Date.now();
+            expiredManifestFailures = expiredManifestFailures.filter(at => now - at < 60_000);
+            expiredManifestFailures.push(now);
+            if (expiredManifestFailures.length >= TV_SHAKA_EXPIRED_LINK_FAILURES && playbackBecameActive) {
+              expiredManifestFailures = [];
+              recordTvDiagnostic('shaka-link-expired', { httpStatus: event.httpResponseCode, bufferAhead: Number(tvBufferedAhead(video).toFixed(2)) });
+              refreshResolvedStream(playbackProvider, true);
+            }
+          }
         });
         video.addEventListener('seeking', () => {
           const range = player.seekRange?.();

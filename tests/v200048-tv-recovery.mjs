@@ -283,7 +283,7 @@ export async function playerFixture(provider, blockedAutoplay = false, { section
     appPath: x => x, ensureHlsLibrary: async () => {}, benignTvPlayInterruption: () => false,
     api: (url, options) => { apiCalls.push({ url, options }); return new Promise(resolve => { finishResolve = resolve; }); },
     tvPlaybackElapsedMs: () => 0,
-    TV_SHAKA_STARTUP_RESERVE: 15, TV_SHAKA_STARTUP_WAIT_MS: 20_000, TV_SHAKA_START_BEHIND_LIVE: -30
+    TV_SHAKA_STARTUP_RESERVE: 15, TV_SHAKA_STARTUP_WAIT_MS: 20_000, TV_SHAKA_START_BEHIND_LIVE: -30, TV_SHAKA_EXPIRED_LINK_FAILURES: 3
   };
   for (const name of ['refreshTvDesktopLiveControls', 'refreshTvLiveEdgeControl', 'updateTvCastButton', 'refreshTvSafeToolsMenu',
     'recordTvDiagnostic', 'setTvPlaybackStatus', 'refreshTvDesktopLiveState', 'scheduleTvLiveEdgeControl', 'syncTvFullscreenUi',

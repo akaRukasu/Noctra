@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.124 — départ TV en retrait du direct
+# Version actuelle : 200.0.125 — direct TV sans boucle hors fenêtre, lien renouvelé à temps
+
+Hors de la fenêtre du direct, retour 20 s avant le bord ; lien LiveWatch expiré renouvelé dès trois 404 de playlist. Inclut la 200.0.124. Détails : [MISE-A-JOUR-V200125.md](MISE-A-JOUR-V200125.md). Validation : `npm run test:v200125`.
+
+# Historique : 200.0.124 — départ TV en retrait du direct
 
 Shaka démarre 30 s en retrait du direct, là où les segments sont déjà publiés : la réserve de 15 s devient atteignable. Détails : [MISE-A-JOUR-V200124.md](MISE-A-JOUR-V200124.md). Validation : `npm run test:v200124`.
 
