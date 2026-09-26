@@ -1331,3 +1331,19 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[da
   scale:.94;transition:scale .09s ease-out!important;
  }
 }
+
+/* ═══════════════ 200.0.120 — Un seul écran de démarrage, défilement natif ═══════════════ */
+/* L'intro Noctra remplace le logo de chargement de Jellyfin : elle est dans la
+   page dès la première image et s'efface quand l'application est prête. */
+html[data-noctra-skin="aurora"] #reactRoot > .splashLogo {visibility:hidden!important;animation:none!important;filter:none!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro,
+html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro {
+ transition:opacity .45s ease,visibility 0s linear .45s;
+ animation:na-intro-failsafe .01s linear 12s forwards!important; /* jamais bloquée si le script manque */
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro.na-intro-leave {opacity:0;visibility:hidden;}
+@media (prefers-reduced-motion:no-preference) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro img {animation:na-intro-mark .8s cubic-bezier(.2,1.3,.3,1) both!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro b {animation:na-intro-word .7s var(--na-ease) .12s both!important;}
+}
+@keyframes na-intro-failsafe {to {opacity:0;visibility:hidden;}}

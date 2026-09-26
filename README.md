@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.119 — fluidité PC rétablie, affiche d’accueil fiabilisée
+# Version actuelle : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
+
+Molette native rétablie sur PC, intro Noctra seul écran de démarrage, fenêtre du direct Shaka élargie à 120 s (tolérance 7 s → 91 s). Détails : [MISE-A-JOUR-V200120.md](MISE-A-JOUR-V200120.md). Validation : `npm run test:v200120`.
+
+# Historique : 200.0.119 — fluidité PC rétablie, affiche d’accueil fiabilisée
 
 Retrait des animations liées au défilement par affiche (379 → 7 couches graphiques), plus de lecture involontaire depuis l’affiche « Continuer à regarder ». Détails : [MISE-A-JOUR-V200119.md](MISE-A-JOUR-V200119.md). Validation : `npm run test:v200119`.
 

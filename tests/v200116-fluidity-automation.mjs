@@ -72,7 +72,7 @@ assert.match(js, /lastScroll = performance\.now\(\);\n    forgetRects\(\);/);
 assert.match(js, /const rect = rectOf\(tilted\.closest\('\.card'\) \|\| tilted\);/);
 assert.match(js, /const rect = rectOf\(magnet\);/);
 assert.ok(!/getBoundingClientRect\(\)/.test(js.slice(js.indexOf('const paintPointer'), js.indexOf('const cursorLight'))), 'Aucune lecture de mise en page par image');
-assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), 1400\)/);
+assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), \d{3,4}\)/); // 200.0.120 : retrait piloté par l'état de l'application
 assert.ok(!/fetch\(|XMLHttpRequest|localStorage|ApiClient/.test(js));
 
 console.log('v200.0.116 : fluidité (GPU, sans flou tactile, minuteur unique) et centre d’automatisation intégré : OK');

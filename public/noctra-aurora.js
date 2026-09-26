@@ -1,4 +1,4 @@
-// Noctra 200.0.119 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
+// Noctra 200.0.120 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -300,19 +300,37 @@
     if (title && title !== lastPremiereTitle) { if (lastPremiereTitle) sweepPremiere(); lastPremiereTitle = title; }
   };
 
-  // Intro animée : une fois par session, sans bloquer l'application qui se
-  // charge derrière (aucune interaction interceptée), retirée après 1,4 s.
+  // 200.0.120 : l'intro est le seul écran de démarrage. Elle est posée dans
+  // la page (index.html) pour s'afficher dès la première image, à la place du
+  // logo de chargement de Jellyfin, puis s'efface quand l'application est
+  // prête (au plus tôt 1,1 s à la première ouverture de la session, au plus
+  // tard 10 s). Aucune interaction n'est interceptée.
   const playIntro = () => {
     let seen = false;
     try { seen = sessionStorage.getItem('noctra-intro') === '1'; sessionStorage.setItem('noctra-intro', '1'); } catch { seen = true; }
-    if (seen || !motionAllowed() || /video|playback/i.test(location.hash)) return;
-    const intro = document.createElement('div');
-    intro.id = 'na-intro';
-    intro.setAttribute('aria-hidden', 'true');
-    const mark = document.querySelector('link[rel="icon"][type="image/svg+xml"]')?.getAttribute('href') || '../noctra-mark.svg';
-    intro.innerHTML = `<div class="na-intro-mark"><img alt="" src="${mark.replace(/"/g, '')}"><b>NOCTRA</b></div>`;
-    (document.body || document.documentElement).append(intro);
-    window.setTimeout(() => intro.remove(), 1400);
+    let intro = document.getElementById('na-intro');
+    if (!intro) {
+      if (seen || !motionAllowed() || /video|playback/i.test(location.hash)) return;
+      intro = document.createElement('div');
+      intro.id = 'na-intro';
+      intro.setAttribute('aria-hidden', 'true');
+      const mark = document.querySelector('link[rel="icon"][type="image/svg+xml"]')?.getAttribute('href') || '../noctra-mark.svg';
+      intro.innerHTML = `<div class="na-intro-mark"><img alt="" src="${mark.replace(/"/g, '')}"><b>NOCTRA</b></div>`;
+      (document.body || document.documentElement).append(intro);
+    }
+    const minimum = seen || !motionAllowed() ? 0 : 1100;
+    const leave = () => {
+      intro.classList.add('na-intro-leave');
+      window.setTimeout(() => intro.remove(), 500);
+    };
+    const check = () => {
+      if (!intro.isConnected) return;
+      const booting = document.querySelector('#reactRoot > .splashLogo');
+      const now = performance.now();
+      if (/video|playback/i.test(location.hash) || (!booting && now >= minimum) || now > 10000) leave();
+      else window.setTimeout(check, 120);
+    };
+    check();
   };
   try {
     if (document.body) playIntro(); else document.addEventListener('DOMContentLoaded', playIntro, { once: true });

@@ -29,7 +29,7 @@ assert.match(block, /\.noctra-library-card \{\s*height:auto!important;min-height
 // Intro : une fois par session, jamais bloquante, jamais avec le mouvement réduit.
 assert.match(block, /#na-intro \{\s*position:fixed;inset:0;z-index:2147483000;pointer-events:none;/);
 assert.match(js, /if \(seen \|\| !motionAllowed\(\)/);
-assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), (?:1[0-9]{3}|2000)\)/);
+assert.match(js, /window\.setTimeout\(\(\) => intro\.remove\(\), \d{3,4}\)/);
 
 // Animations nouvelles : gardées par na-motion ; aucune continue ; dock et vidéo intacts.
 const motion = block.slice(block.indexOf('@media (prefers-reduced-motion:no-preference)'));

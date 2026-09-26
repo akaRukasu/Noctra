@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.119';
+  const NOCTRA_BUILD_VERSION = '200.0.120';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -8140,7 +8140,7 @@
           streaming: { bufferingGoal: count <= 4 ? 36 : 24, rebufferingGoal: 4, bufferBehind: 6,
             segmentPrefetchLimit: 1, lowLatencyMode: false, maxDisabledTime: 15,
             retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
-          manifest: { defaultPresentationDelay: 30, hls: { ignoreManifestProgramDateTime: true },
+          manifest: { defaultPresentationDelay: 30, availabilityWindowOverride: 120, hls: { ignoreManifestProgramDateTime: true },
             retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5, timeout: 20000, stallTimeout: 8000, connectionTimeout: 10000 } },
           abr: { enabled: true, defaultBandwidthEstimate: Math.max(300000, Math.floor(2000000 / count)) }
         });
@@ -9464,7 +9464,12 @@
           // ~2 s tous les 5 segments, le mode par segments faisait sauter la
           // lecture en avant (~2,2 s toutes les 52 s) jusqu'à épuiser la réserve.
           // Après une erreur fatale, la relance repasse en mode par segments.
-          manifest: { defaultPresentationDelay: 30,
+          // 200.0.120 : fenêtre du direct élargie à 120 s. Avec une playlist courte
+          // (~36 s) et 30 s de retard, la fenêtre de lecture ne faisait que ~6 s :
+          // dès qu'un segment mettait plus de 6 s à arriver, Shaka ramenait la
+          // lecture dans la fenêtre en annulant les téléchargements en cours, en
+          // boucle (diagnostic 200.0.119 : 90 s sans aucun segment reçu).
+          manifest: { defaultPresentationDelay: 30, availabilityWindowOverride: 120,
             hls: { ignoreManifestProgramDateTime: true, sequenceMode: !video._noctraShakaSegmentsMode },
             retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.5, timeout: 20000, stallTimeout: 8000, connectionTimeout: 10000 } },
           // ABR plus prudent : montée en qualité seulement avec une vraie marge
@@ -13540,7 +13545,10 @@
     // V92 : on se rapproche du comportement mobile en laissant le navigateur
     // gérer l'inertie/scroll. L'ancien moteur JS de roue ajoutait une animation
     // supplémentaire et pouvait accentuer les ralentissements sur les pages riches.
-    document.documentElement.classList.toggle('noctra-native-wheel', false);
+    // 200.0.120 : ce réglage avait été forcé à false, si bien que chaque cran de
+    // molette passait par le script (preventDefault + défilement image par
+    // image) : le défilement natif, géré hors du fil principal, est rétabli.
+    document.documentElement.classList.toggle('noctra-native-wheel', performanceDesktop || ultrawide);
     document.documentElement.classList.toggle('noctra-performance-desktop', performanceDesktop);
     document.documentElement.classList.toggle('noctra-mobile-viewport', mobile);
     document.documentElement.classList.toggle('noctra-tablet-viewport', tablet);
