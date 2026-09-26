@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.118';
+  const NOCTRA_BUILD_VERSION = '200.0.119';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2178,10 +2178,10 @@
     let index = 0;
     const request = new AbortController();
     let disposed = false;
-    let timer = 0, paused = false, hovering = false, focused = false, visible = true;
+    let timer = 0, paused = false, hovering = false, focused = false, visible = true, touchedAt = 0, pressedIndex = -1;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
     const text = (selector, value) => { const node = premiere.querySelector(selector); if (node.textContent !== value) node.textContent = value; };
-    const canRun = () => !paused && !hovering && !focused && visible && !reduced.matches && !document.hidden && home.isConnected && !home.classList.contains('hide') && !document.body.classList.contains('noctra-panel-open') && !document.body.classList.contains('noctra-more-open') && items.length > 1;
+    const canRun = () => !paused && !hovering && !focused && Date.now() - touchedAt > 6000 && visible && !reduced.matches && !document.hidden && home.isConnected && !home.classList.contains('hide') && !document.body.classList.contains('noctra-panel-open') && !document.body.classList.contains('noctra-more-open') && items.length > 1;
     const sync = () => {
       clearTimeout(timer); timer = 0;
       premiere.dataset.motionPaused = String(!canRun());
@@ -2286,7 +2286,20 @@
       const activate = event => {
         if (button.disabled) return;
         if (event.type === 'click' && Date.now() - lastPointerActivation < 500) return;
-        if (event.type === 'pointerup') lastPointerActivation = Date.now();
+        if (event.type === 'pointerup') {
+          lastPointerActivation = Date.now();
+          // 200.0.119 : le changement de titre peut décaler les boutons ; sur
+          // téléphone, le clic qui suit le doigt levé tombait alors sur
+          // « Reprendre » et lançait la lecture. Ce clic fantôme est absorbé.
+          const swallowGhostClick = ghost => {
+            if (Date.now() - lastPointerActivation > 700 || button.contains(ghost.target)) return;
+            if (!premiere.contains(ghost.target)) return;
+            ghost.preventDefault();
+            ghost.stopImmediatePropagation();
+          };
+          document.addEventListener('click', swallowGhostClick, { capture: true, once: true });
+          window.setTimeout(() => document.removeEventListener('click', swallowGhostClick, { capture: true }), 750);
+        }
         event.preventDefault();
         event.stopPropagation();
         step(delta);
@@ -2299,8 +2312,18 @@
     };
     bindPremiereControl('[data-premiere-prev]', -1);
     bindPremiereControl('[data-premiere-next]', 1);
-    premiere.querySelector('[data-premiere-play]').onclick = () => items[index]?.resume?.click();
-    premiere.querySelector('[data-premiere-details]').onclick = () => items[index]?.visual?.click();
+    // 200.0.119 : l'action vise le titre affiché quand le doigt s'est posé,
+    // même si le défilement automatique a changé de titre entre-temps.
+    const pressedItem = () => items[pressedIndex >= 0 && pressedIndex < items.length ? pressedIndex : index];
+    premiere.querySelector('[data-premiere-play]').onclick = () => { const item = pressedItem(); pressedIndex = -1; item?.resume?.click(); };
+    premiere.querySelector('[data-premiere-details]').onclick = () => { const item = pressedItem(); pressedIndex = -1; item?.visual?.click(); };
+    // Toucher l'affiche suspend le défilement automatique 6 s.
+    premiere.addEventListener('pointerdown', event => {
+      touchedAt = Date.now();
+      pressedIndex = event.target.closest?.('[data-premiere-play], [data-premiere-details]') ? index : -1;
+      sync();
+      window.setTimeout(sync, 6100);
+    }, { passive: true });
     premiere.querySelector('.noctra-premiere-motion').onclick = event => {
       paused = !paused;
       const button = event.currentTarget;

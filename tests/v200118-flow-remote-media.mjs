@@ -15,32 +15,14 @@ const code = block.replace(/\/\*[\s\S]*?\*\//g, '');
 // 1. Ressort : courbe linear() seulement si le navigateur la connaît.
 assert.match(code, /@supports \(transition-timing-function: linear\(0, 1\)\) \{\s*:root\[data-noctra-skin="aurora"\] \{\s*--na-ease:linear\(0,/);
 
-// 2. Défilement natif : tout est sous @supports + mouvement autorisé + na-motion, jamais en lecture.
-const scroll = code.slice(code.indexOf('@supports (animation-timeline: view())'), code.indexOf('@keyframes na-flow-rise'));
-assert.match(scroll, /@media \(prefers-reduced-motion:no-preference\)/);
-for (const rule of scroll.match(/[^{}]+\{[^{}]*animation:na-[^{}]*\}/g) ?? []) {
-  assert.ok(rule.includes('.na-motion') && rule.includes(':not(.noctra-playing)'), rule.slice(0, 100));
-}
-assert.match(scroll, /\.verticalSection \{\s*animation:na-flow-rise linear both!important;animation-timeline:view\(\)!important;animation-range:entry 0% entry 55%!important;/);
-// Profondeur : une seule animation (entrée + sortie) pour ne pas s'écraser l'une l'autre ; desktop seulement.
-assert.match(scroll, /noctra-performance-desktop[^{]*\.scrollSlider > \.card \{\s*animation:na-flow-depth linear both!important;animation-timeline:view\(inline\)!important;/);
-assert.match(code, /@keyframes na-flow-depth \{\s*entry 0% \{opacity:\.3;scale:\.84;\} entry 100% \{opacity:1;scale:1;\}\s*exit 0% \{opacity:1;scale:1;\} exit 100% \{opacity:\.3;scale:\.84;\}/);
-assert.match(scroll, /\.noctra-premiere-picture \{\s*translate:none;animation:na-flow-parallax linear both!important;animation-timeline:scroll\(root\)!important;/);
-// Uniquement opacité / scale / translate (calculés par le GPU), aucune animation continue.
-for (const frames of code.match(/@keyframes na-flow-[\w-]+ \{[\s\S]*?\}\s*\}/g) ?? []) {
-  assert.ok(!/(width|height|top|left|filter|box-shadow|clip-path|background)/.test(frames), frames.slice(0, 60));
-}
+// 2-3. Les effets de défilement par rangée/affiche et le projecteur ont été
+//      retirés en 200.0.119 (≈ 380 couches graphiques sur un accueil réel) :
+//      voir tests/v200119-*. Restent la parallaxe de l'affiche et la pression à ressort.
+assert.match(code, /\.noctra-premiere-picture \{\s*translate:none;animation:na-flow-parallax linear both!important;animation-timeline:scroll\(root\)!important;/);
 assert.ok(!/infinite/.test(code));
 assert.ok(!/#noctra-dock/.test(code), 'Dock intact');
 assert.ok(!/(^|[\s>,(])(video|iframe)\b[^{]*\{/.test(code), 'Rien sur la vidéo');
-
-// Le script s'efface quand le navigateur anime lui-même.
-assert.match(aurora, /cssScroll = Boolean\(window\.CSS\?\.supports\?\.\('animation-timeline: view\(\)'\)\)/);
-assert.match(aurora, /if \(cssScroll \|\| !revealObserver/);
 assert.match(aurora, /if \(cssScroll \|\| !perfDesktop\(\)/);
-
-// 3. Projecteur au survol (pointeur fin) et pression à ressort.
-assert.match(code, /@media \(prefers-reduced-motion:no-preference\) and \(hover:hover\) and \(pointer:fine\)[\s\S]*?\.scrollSlider:has\(> \.card:hover\) > \.card:not\(:hover\) \.cardBox \{\s*opacity:\.42;/);
 assert.match(code, /:active \{\s*scale:\.94;transition:scale \.09s ease-out!important;/);
 
 // 4. Sous-titres dans le lecteur natif iOS / PiP / AirPlay.

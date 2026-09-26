@@ -1308,40 +1308,19 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[da
  }
 }
 
-@supports (animation-timeline: view()) {
+/* 200.0.119 : seule la parallaxe de l'affiche reste pilotée par le
+   défilement (un seul élément). Les rangées et les affiches animées au
+   défilement (118) créaient une couche graphique par affiche (≈ 380 sur un
+   accueil réel) et ralentissaient fortement le PC : elles sont retirées, et
+   l'apparition des rangées revient au script (animation jouée une fois). */
+@supports (animation-timeline: scroll()) {
  @media (prefers-reduced-motion:no-preference) {
-  /* Rangées de l'accueil : elles se lèvent au fil du défilement (plus aucun
-     état masqué en attente du script). */
-  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .homePage .homeSectionsContainer > .verticalSection {
-   animation:na-flow-rise linear both!important;animation-timeline:view()!important;animation-range:entry 0% entry 55%!important;
-  }
-  /* Profondeur des carrousels (desktop) : les affiches rétrécissent et
-     s'estompent en approchant des bords, comme sur une scène. */
-  html[data-noctra-skin="aurora"].na-motion.noctra-performance-desktop:not(#na-skin) body.noctra-ready:not(.noctra-playing) .homePage .emby-scroller .scrollSlider > .card {
-   animation:na-flow-depth linear both!important;animation-timeline:view(inline)!important;
-  }
-  /* Parallaxe de l'affiche calculée par le navigateur (le script s'efface). */
   html[data-noctra-skin="aurora"].na-motion.noctra-performance-desktop:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-playing) .homePage .noctra-premiere .noctra-premiere-picture {
    translate:none;animation:na-flow-parallax linear both!important;animation-timeline:scroll(root)!important;animation-range:0 700px!important;
   }
  }
 }
-@keyframes na-flow-rise {from {opacity:0;translate:0 56px;scale:.965;} to {opacity:1;translate:0 0;scale:1;}}
-@keyframes na-flow-depth {
- entry 0% {opacity:.3;scale:.84;} entry 100% {opacity:1;scale:1;}
- exit 0% {opacity:1;scale:1;} exit 100% {opacity:.3;scale:.84;}
-}
 @keyframes na-flow-parallax {from {translate:0 0;} to {translate:0 126px;}}
-
-/* Projecteur : au survol d'une affiche, ses voisines passent dans l'ombre. */
-@media (prefers-reduced-motion:no-preference) and (hover:hover) and (pointer:fine) {
- html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .scrollSlider > .card .cardBox {
-  transition:opacity .45s var(--na-ease),transform .5s var(--na-ease)!important;
- }
- html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .scrollSlider:has(> .card:hover) > .card:not(:hover) .cardBox {
-  opacity:.42;
- }
-}
 
 /* Retour tactile à ressort : les boutons s'enfoncent puis rebondissent. */
 @media (prefers-reduced-motion:no-preference) {

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.118 — « Aurora Flow », sous-titres iOS et AirPlay
+# Version actuelle : 200.0.119 — fluidité PC rétablie, affiche d’accueil fiabilisée
+
+Retrait des animations liées au défilement par affiche (379 → 7 couches graphiques), plus de lecture involontaire depuis l’affiche « Continuer à regarder ». Détails : [MISE-A-JOUR-V200119.md](MISE-A-JOUR-V200119.md). Validation : `npm run test:v200119`.
+
+# Historique : 200.0.118 — « Aurora Flow », sous-titres iOS et AirPlay
 
 Mouvement physique et animations pilotées par le défilement, sous-titres dans le lecteur natif iOS / PiP, bouton Diffuser (AirPlay, Remote Playback). Détails : [MISE-A-JOUR-V200118.md](MISE-A-JOUR-V200118.md). Validation : `npm run test:v200118`.
 

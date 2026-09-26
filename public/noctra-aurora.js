@@ -1,4 +1,4 @@
-// Noctra 200.0.118 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
+// Noctra 200.0.119 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -105,12 +105,13 @@
       revealObserver.unobserve(entry.target);
     }
   }, { rootMargin: '0px 0px -40px 0px', threshold: 0 }) : null;
-  // 200.0.118 : si le navigateur anime lui-même au défilement (CSS
-  // animation-timeline), le script ne masque et ne mesure plus rien.
+  // 200.0.119 : la parallaxe de l'affiche est calculée par le navigateur
+  // quand il sait animer au défilement ; l'apparition des rangées reste au
+  // script (animation jouée une fois, sans couche graphique permanente).
   let cssScroll = false;
-  try { cssScroll = Boolean(window.CSS?.supports?.('animation-timeline: view()')); } catch {}
+  try { cssScroll = Boolean(window.CSS?.supports?.('animation-timeline: scroll()')); } catch {}
   const scanReveal = () => {
-    if (cssScroll || !revealObserver || !root.classList.contains('na-motion') || playing()) return;
+    if (!revealObserver || !root.classList.contains('na-motion') || playing()) return;
     for (const element of document.querySelectorAll('.homePage .homeSectionsContainer > .verticalSection:not([data-na-reveal]), #noctra-panel .noctra-library-showcase > :not([data-na-reveal])')) {
       const rect = element.getBoundingClientRect();
       // Ce qui est déjà à l'écran n'est jamais masqué.
