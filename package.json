@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.120",
+  "version": "200.0.121",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -94,7 +94,9 @@
     "test:v200117": "node tests/v200117-subtitle-appearance.mjs && npm run test:v200116",
     "test:v200118": "node tests/v200118-flow-remote-media.mjs && npm run test:v200117",
     "test:v200119": "node tests/v200119-fluidity-premiere.mjs && npm run test:v200118",
-    "test:v200120": "node tests/v200120-native-scroll-intro-shaka.mjs && npm run test:v200119"
+    "test:v200120": "node tests/v200120-native-scroll-intro-shaka.mjs && npm run test:v200119",
+    "test:v200121": "node tests/v200121-apps.mjs && npm run test:v200120",
+    "apps:build": "node apps/scripts/build-tv.mjs"
   },
   "engines": {
     "node": ">=20"

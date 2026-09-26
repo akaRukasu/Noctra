@@ -1,0 +1,132 @@
+# Construit les applications Noctra : Android / Android TV (APK), iOS (IPA non
+# signée, à installer avec Sideloadly ou AltStore), LG webOS (IPK) et Samsung
+# Tizen (WGT, signé à l'installation par Apps2Samsung).
+# Les fichiers sont téléchargeables dans l'onglet Actions (« Artifacts »). Une
+# étiquette apps-v* (ex. apps-v1.0.0) publie aussi une Release GitHub.
+name: Applications Noctra
+
+on:
+  push:
+    paths:
+      - 'apps/**'
+      - 'public/noctra-app-bridge.js'
+      - '.github/workflows/noctra-apps.yml'
+    tags:
+      - 'apps-v*'
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'public/noctra-app-bridge.js'
+      - '.github/workflows/noctra-apps.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tv:
+    name: LG webOS + Samsung Tizen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Paquets TV
+        run: node apps/scripts/build-tv.mjs
+      - name: Contrôle des archives
+        run: |
+          cd dist/apps
+          ar t com.noctra.media_*_all.ipk
+          unzip -t Noctra.wgt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-tv
+          path: |
+            dist/apps/*.ipk
+            dist/apps/*.wgt
+          if-no-files-found: error
+
+  android:
+    name: Android + Android TV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Clé de signature (facultative)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NOCTRA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.jks"
+            echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.jks" >> "$GITHUB_ENV"
+          else
+            echo "::notice::Aucune clé NOCTRA_KEYSTORE_BASE64 : APK signé avec une clé de débogage (voir apps/README.md)."
+          fi
+      - name: APK
+        working-directory: apps/android
+        env:
+          NOCTRA_KEYSTORE_PASSWORD: ${{ secrets.NOCTRA_KEYSTORE_PASSWORD }}
+          NOCTRA_KEY_ALIAS: ${{ secrets.NOCTRA_KEY_ALIAS }}
+          NOCTRA_KEY_PASSWORD: ${{ secrets.NOCTRA_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          mkdir -p ../../dist/apps
+          cp app/build/outputs/apk/release/app-release.apk ../../dist/apps/Noctra-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android
+          path: dist/apps/Noctra-android.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS (iPhone + iPad)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: IPA non signée
+        working-directory: apps/ios
+        run: |
+          xcodegen generate
+          xcodebuild -project Noctra.xcodeproj -target Noctra -configuration Release \
+            -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            SYMROOT="$PWD/build" build
+          mkdir -p Payload ../../dist/apps
+          cp -R build/Release-iphoneos/Noctra.app Payload/
+          zip -qry ../../dist/apps/Noctra-ios-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-ios
+          path: dist/apps/Noctra-ios-unsigned.ipa
+          if-no-files-found: error
+
+  release:
+    name: Release GitHub
+    if: startsWith(github.ref, 'refs/tags/apps-v')
+    needs: [tv, android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Applications Noctra ${{ github.ref_name }}
+          files: dist/*
+          body: |
+            - **Noctra-android.apk** : téléphones, tablettes et Android TV (Google TV, Shield, Fire TV…).
+            - **Noctra-ios-unsigned.ipa** : iPhone et iPad, à installer avec Sideloadly ou AltStore.
+            - **com.noctra.media_…_all.ipk** : téléviseurs LG webOS (mode développeur).
+            - **Noctra.wgt** : téléviseurs Samsung Tizen, à installer avec Apps2Samsung.
+
+            Instructions : apps/README.md

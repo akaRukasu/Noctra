@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
+# Version actuelle : 200.0.121 — applications Android, Android TV, iOS, LG webOS et Samsung Tizen
+
+Noctra s’installe maintenant en application sur téléphone et tablette Android, Android TV, iPhone et iPad, et sur les téléviseurs LG et Samsung. Ces applis sont construites automatiquement par GitHub Actions. Côté serveur, un pont gère la télécommande, la touche Retour et la veille. Installation : [apps/README.md](apps/README.md). Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
+
+# Historique : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
 
 Molette native rétablie sur PC, intro Noctra seul écran de démarrage, fenêtre du direct Shaka élargie à 120 s (tolérance 7 s → 91 s). Détails : [MISE-A-JOUR-V200120.md](MISE-A-JOUR-V200120.md). Validation : `npm run test:v200120`.
 

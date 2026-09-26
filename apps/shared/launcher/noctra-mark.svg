@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Noctra">
+  <defs>
+    <linearGradient id="g" x1="9" y1="9" x2="55" y2="55" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#78a8ff"/>
+      <stop offset=".52" stop-color="#8b6cff"/>
+      <stop offset="1" stop-color="#d070ff"/>
+    </linearGradient>
+    <radialGradient id="b" cx="0" cy="0" r="1" gradientTransform="translate(19 14) rotate(49) scale(54)">
+      <stop stop-color="#242b50"/>
+      <stop offset="1" stop-color="#080b17"/>
+    </radialGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#b)"/>
+  <path d="M17 45V19l30 26V19" fill="none" stroke="url(#g)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="47" cy="18" r="4" fill="#72e8ff"/>
+</svg>

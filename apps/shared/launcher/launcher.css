@@ -1,0 +1,148 @@
+@font-face {
+  font-family: 'Sora';
+  src: url('sora-latin-wght.woff2') format('woff2');
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: #050711;
+  color: #eef1ff;
+  font-family: 'Sora', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background:
+    radial-gradient(60vmax 45vmax at 12% 8%, rgba(120, 168, 255, .20), transparent 60%),
+    radial-gradient(55vmax 40vmax at 92% 96%, rgba(208, 112, 255, .18), transparent 60%),
+    #050711;
+}
+
+.launcher {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+.brand img { width: 72px; height: 72px; margin-right: 18px; }
+.brand h1 { margin: 0; font-size: 44px; font-weight: 700; letter-spacing: -.02em; }
+
+.card {
+  padding: 28px;
+  border-radius: 24px;
+  background: rgba(20, 26, 52, .82);
+  border: 1px solid rgba(158, 197, 255, .16);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .45);
+}
+
+.eyebrow { margin: 0 0 6px; color: #9aa6d8; font-size: 14px; text-transform: uppercase; letter-spacing: .12em; }
+.server { margin: 0 0 18px; font-size: 20px; font-weight: 600; word-break: break-all; }
+.status { margin: 0 0 14px; color: #c9d2ff; font-size: 17px; }
+.hint { margin: 8px 0 18px; color: #9aa6d8; font-size: 14px; line-height: 1.45; }
+.footer { margin: 22px 0 0; text-align: center; color: #6f7aa8; font-size: 13px; }
+
+label { display: block; margin-bottom: 10px; font-size: 17px; font-weight: 600; }
+
+input[type="url"] {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 2px solid rgba(158, 197, 255, .22);
+  background: rgba(5, 7, 17, .75);
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+}
+
+.check { display: flex; align-items: center; font-weight: 400; font-size: 16px; cursor: pointer; }
+.check input { width: 24px; height: 24px; margin: 0 12px 0 0; accent-color: #8b6cff; }
+
+.error {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 92, 122, .12);
+  border: 1px solid rgba(255, 92, 122, .35);
+  color: #ffc1cd;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.actions { display: flex; flex-wrap: wrap; margin: 20px -6px 0; }
+.actions button { flex: 1 1 200px; margin: 6px; }
+
+button {
+  min-height: 52px;
+  padding: 12px 20px;
+  border-radius: 14px;
+  border: 2px solid rgba(158, 197, 255, .22);
+  background: rgba(255, 255, 255, .06);
+  color: #eef1ff;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #78a8ff, #8b6cff 55%, #d070ff);
+  color: #fff;
+}
+
+button:focus, input:focus, .check input:focus {
+  outline: 3px solid #9ec5ff;
+  outline-offset: 3px;
+}
+input[type="url"]:focus { outline-offset: 1px; border-color: #9ec5ff; }
+
+.progress { height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, .08); }
+.progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #78a8ff, #d070ff);
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  margin: 4px auto 18px;
+  border-radius: 50%;
+  border: 4px solid rgba(158, 197, 255, .18);
+  border-top-color: #9ec5ff;
+  -webkit-animation: spin 1s linear infinite;
+  animation: spin 1s linear infinite;
+}
+#view-busy { text-align: center; }
+@-webkit-keyframes spin { to { -webkit-transform: rotate(360deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Téléviseurs : lisible à distance. */
+html.tv .launcher { max-width: 760px; }
+html.tv .brand img { width: 104px; height: 104px; }
+html.tv .brand h1 { font-size: 64px; }
+html.tv .card { padding: 40px; }
+html.tv label, html.tv .status { font-size: 24px; }
+html.tv .server { font-size: 28px; }
+html.tv input[type="url"], html.tv button { font-size: 24px; min-height: 68px; }
+html.tv .hint, html.tv .check { font-size: 20px; }
+html.tv .footer { font-size: 18px; }

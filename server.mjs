@@ -12616,12 +12616,16 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.120', baseUrl: basePath || '/' });
+      // 200.0.121 : lu par l'écran de connexion des applications Noctra
+      // (page locale de l'appli, donc autre origine). Aucune donnée sensible.
+      const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
+      if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.121', baseUrl: basePath || '/' }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.120',
+        version: '200.0.121',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

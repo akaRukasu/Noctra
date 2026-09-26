@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Noctra</string>
+    <string name="download_started">Téléchargement démarré</string>
+    <string name="download_failed">Téléchargement impossible</string>
+    <string name="no_app_for_link">Aucune application pour ouvrir ce lien</string>
+    <string name="server_unreachable">Impossible de joindre le serveur Noctra. Vérifiez la connexion Internet ou l’adresse du serveur.</string>
+</resources>

@@ -1,0 +1,137 @@
+# Applications Noctra
+
+Noctra existe en applications pour :
+
+| Appareil | Fichier | Installation |
+|---|---|---|
+| Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
+| Android TV, Google TV, Shield, Fire TV | `Noctra-android.apk` (le même) | fichier APK |
+| iPhone et iPad | `Noctra-ios-unsigned.ipa` | Sideloadly ou AltStore |
+| Téléviseurs LG (webOS) | `com.noctra.media_1.0.0_all.ipk` | mode développeur LG |
+| Téléviseurs Samsung (Tizen) | `Noctra.wgt` | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
+
+## Fonctionnement
+
+On reprend le principe des applications Jellyfin pour webOS et pour mobile :
+
+1. Au premier lancement, l’appli demande l’adresse de votre serveur Noctra, par exemple `https://akarukasu.merlion.usbx.me/noctra`. C’est l’adresse qui ouvre Noctra dans un navigateur, sans `/client/index.html`. Elle est vérifiée puis mémorisée.
+2. L’appli ouvre ensuite l’interface Noctra de ce serveur en plein écran. La connexion Jellyfin, les demandes, la TV et le lecteur sont ceux que vous connaissez déjà.
+3. Aux lancements suivants, la connexion se fait seule après 3 secondes. Pendant ce délai, **Changer de serveur** permet de saisir une autre adresse.
+
+Comme l’interface vient du serveur, chaque mise à jour de Noctra (branche `production`, déployée automatiquement) arrive tout de suite dans toutes les applis. Il n’y a rien à réinstaller. Il faut réinstaller une appli uniquement quand son dossier `apps/` change.
+
+Le serveur doit être en **200.0.121 ou plus récent**. Cette version ajoute le pont `public/noctra-app-bridge.js`, qui gère la télécommande, la touche Retour et la veille, et autorise l’écran de connexion à interroger `/health`. Avec un serveur plus ancien, les applis se connectent quand même, mais sans ces adaptations.
+
+### Sur les téléviseurs
+
+- La mise en page TV de Jellyfin est activée automatiquement, et l’écran Android TV est affiché en 1920 px, comme sur LG et Samsung.
+- **Flèches et OK** : navigation. L’élément sélectionné est entouré d’un cadre bleu. Le pointeur de la Magic Remote LG fonctionne aussi.
+- **Retour** : ferme d’abord le panneau Noctra ouvert (demandes, TV, confirmation…), puis revient en arrière. À l’accueil, il quitte l’appli.
+- Les touches lecture, pause, avance et retour rapides pilotent le lecteur. Sur Samsung, elles peuvent rester sans effet, car le système ne les transmet pas toujours à une page web distante. Les commandes à l’écran restent disponibles.
+- Le flou d’arrière-plan est désactivé sur téléviseur : c’est l’effet le plus coûteux pour leur processeur graphique.
+- Sur Android, l’écran reste allumé pendant la lecture.
+
+### Compatibilité
+
+- **Samsung** : téléviseurs 2021 et plus récents (Tizen 6.5+).
+- **LG** : téléviseurs webOS 22 et plus récents (2022+).
+- **Android et Android TV** : Android 7 ou plus récent, avec « Android System WebView » (ou Chrome) à jour.
+- **iPhone et iPad** : iOS 15 ou plus récent.
+
+L’interface Noctra utilise des fonctions JavaScript récentes (Chromium 85). Sur un téléviseur plus ancien, l’écran de connexion l’indique au lieu d’afficher une page vide.
+
+## Récupérer les fichiers
+
+Toutes les applis sont construites automatiquement par GitHub Actions (workflow **Applications Noctra**), à chaque modification du dossier `apps/` :
+
+1. Sur GitHub, ouvrez l’onglet **Actions**, puis **Applications Noctra**.
+2. Ouvrez la dernière exécution réussie et téléchargez les **Artifacts** en bas de la page : `noctra-android`, `noctra-ios` et `noctra-tv`.
+
+Pour publier une version dans l’onglet **Releases**, poussez une étiquette. Par exemple : `git tag apps-v1.0.0 && git push origin apps-v1.0.0`.
+
+Les paquets TV se construisent aussi sur n’importe quel PC équipé de Node.js, sans SDK : `npm run apps:build` crée `dist/apps/*.ipk` et `dist/apps/Noctra.wgt`.
+
+## Installer
+
+### Android (téléphone, tablette)
+1. Copiez `Noctra-android.apk` sur le téléphone, ou téléchargez-le depuis GitHub.
+2. Ouvrez-le. Android demande d’autoriser l’installation d’applications inconnues pour le navigateur ou le gestionnaire de fichiers utilisé.
+
+### Android TV / Google TV / Fire TV
+Choisissez l’une de ces méthodes :
+- Installez l’appli **Downloader** (AFTVnews) sur la TV, puis ouvrez le lien de l’APK.
+- Utilisez **Send Files to TV** depuis votre téléphone.
+- Avec un PC : activez les *Options pour les développeurs* puis le *Débogage USB/réseau* sur la TV, et lancez `adb connect IP_DE_LA_TV` puis `adb install Noctra-android.apk`.
+
+Noctra apparaît ensuite dans la rangée des applications, avec sa bannière.
+
+**Signature stable (recommandé).** Sans clé configurée, l’APK est signé avec une clé de débogage différente à chaque construction. Il faut alors désinstaller l’ancienne version avant d’installer la nouvelle, ce qui efface la connexion. Pour éviter cela, créez une clé une seule fois :
+
+```bash
+keytool -genkeypair -v -keystore noctra.jks -alias noctra -keyalg RSA -keysize 4096 -validity 36500
+base64 -w0 noctra.jks > noctra.jks.b64
+```
+
+Ajoutez ensuite dans GitHub → *Settings* → *Secrets and variables* → *Actions* :
+- `NOCTRA_KEYSTORE_BASE64` : le contenu de `noctra.jks.b64` ;
+- `NOCTRA_KEYSTORE_PASSWORD` : le mot de passe de la clé ;
+- `NOCTRA_KEY_ALIAS` : `noctra` ;
+- `NOCTRA_KEY_PASSWORD` : le mot de passe de l’alias, s’il diffère du précédent.
+
+Conservez `noctra.jks` en lieu sûr et ne l’ajoutez jamais au dépôt.
+
+### iPhone et iPad
+Sans compte développeur payant, Apple n’autorise l’installation que par *sideloading*. L’IPA n’est pas signée : l’outil la signe avec votre identifiant Apple.
+1. Installez [Sideloadly](https://sideloadly.io) (Windows/macOS) ou [AltStore](https://altstore.io).
+2. Branchez l’iPhone, glissez `Noctra-ios-unsigned.ipa` dans l’outil et saisissez votre identifiant Apple.
+3. Sur l’iPhone, ouvrez *Réglages → Général → VPN et gestion de l’appareil* et faites confiance au profil. Sur iOS 16 et plus, activez aussi *Réglages → Confidentialité et sécurité → Mode développeur*.
+
+Avec un identifiant Apple gratuit, la signature expire au bout de 7 jours. AltStore la renouvelle automatiquement. Avec un compte développeur, ouvrez le projet dans Xcode (`cd apps/ios && xcodegen generate && open Noctra.xcodeproj`), choisissez votre équipe et installez directement.
+
+La PWA (Safari → Partager → Sur l’écran d’accueil) reste une alternative sans installation.
+
+### Téléviseurs LG (webOS)
+1. Créez un compte gratuit sur [webostv.developer.lge.com](https://webostv.developer.lge.com).
+2. Sur la TV, installez l’appli **Developer Mode** depuis le LG Content Store, connectez-vous avec ce compte, puis activez *Dev Mode Status* et *Key Server*. La TV redémarre.
+3. Sur le PC, installez l’outil LG et déclarez la TV. La phrase de passe s’affiche dans l’appli Developer Mode.
+   ```bash
+   npm install -g @webos-tools/cli
+   ares-setup-device        # ajouter la TV : adresse IP affichée dans Developer Mode, port 9922
+   ares-novacom --device tv --getkey
+   ares-install --device tv com.noctra.media_1.0.0_all.ipk
+   ```
+   Sans ligne de commande, [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) installe l’IPK en quelques clics.
+
+La session développeur LG expire au bout de 50 heures si elle n’est pas prolongée. Le bouton *Extend* de l’appli Developer Mode la prolonge, et webOS Dev Manager peut le faire automatiquement. Une TV rootée avec Homebrew Channel n’a pas cette limite.
+
+### Téléviseurs Samsung (Tizen), avec Apps2Samsung
+1. Sur la TV, ouvrez **Applications**, puis tapez `1` `2` `3` `4` `5` avec la télécommande. Activez **Developer mode** et saisissez l’adresse IP du PC. Éteignez puis rallumez la TV.
+2. Sur le PC (ou avec l’appli Android d’Apps2Samsung), lancez [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) et choisissez la TV.
+3. Choisissez **fichier .wgt personnalisé**, sélectionnez `Noctra.wgt`, puis lancez l’installation. Apps2Samsung signe le paquet avec votre compte Samsung (une seule connexion) et l’installe.
+
+Le PC et la TV doivent être sur le même réseau. Apps2Samsung explique la marche à suivre si le mode développeur n’est pas prêt.
+
+## Personnaliser
+
+- **Serveur proposé par défaut** : `apps/shared/launcher/config.js` (`defaultServerUrl`).
+- **Versions** : `apps/android/app/build.gradle.kts` (`versionCode`, `versionName`), `apps/ios/project.yml` (`MARKETING_VERSION`), `apps/webos/appinfo.json`, `apps/tizen/config.xml` et `appVersion` dans `config.js`.
+- **Icônes et bannières** : `node apps/scripts/render-icons.mjs`, à partir de `public/noctra-mark.svg` (nécessite Playwright).
+
+## Organisation du dossier
+
+```text
+apps/
+  shared/launcher/   écran de connexion commun (HTML/CSS/JS ES5)
+  webos/             appinfo.json, icônes et écran de démarrage LG
+  tizen/             config.xml et icône Samsung
+  android/           projet Gradle (Kotlin) : un APK téléphone + Android TV
+  ios/               projet XcodeGen (Swift, WKWebView)
+  scripts/           build-tv.mjs (IPK + WGT sans SDK), render-icons.mjs
+public/noctra-app-bridge.js   pont côté serveur, chargé avant le moteur Jellyfin
+```
+
+## Limites connues
+
+- Ces applis ont été testées dans Chromium en simulant chaque plateforme (agent utilisateur, touches Retour 461 et 10009, 1920 px, mise en page TV). Les APK et IPA sont compilés par GitHub Actions. Elles restent à essayer sur de vrais téléviseurs et téléphones.
+- Il n’y a pas de lecture hors ligne ni de téléchargement de films dans l’appli iOS.
+- Les touches média des télécommandes Samsung dépendent du modèle (voir plus haut).
