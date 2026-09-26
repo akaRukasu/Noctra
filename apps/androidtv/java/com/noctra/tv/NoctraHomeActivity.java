@@ -92,6 +92,13 @@ public class NoctraHomeActivity extends Activity {
         setContentView(root);
         createWebView("index.html");
         remoteCommand(getIntent());
+        // Événements du lecteur (SyncPlay : prêt, chargement, demandes de pause…).
+        NoctraPlayerBus.listener = new NoctraPlayerBus.Listener() {
+            @Override
+            public void onPlayerEvent(JSONObject event) {
+                send(event);
+            }
+        };
     }
 
     @Override
@@ -364,6 +371,8 @@ public class NoctraHomeActivity extends Activity {
             }
         } else if (action.equals("multiview")) {
             openMultiview(message.optJSONArray("items"));
+        } else if (action.equals("playerCommand")) {
+            NoctraPlayerBus.toPlayer(message);
         } else if (action.equals("webPlayer")) {
             String url = message.optString("url");
             if (!url.startsWith("https://") && !url.startsWith("http://")) return;
@@ -380,6 +389,14 @@ public class NoctraHomeActivity extends Activity {
         } else if (action.equals("play")) {
             String url = message.optString("url");
             if (!url.startsWith("https://") && !url.startsWith("http://")) return;
+            // Un seul lecteur : celui déjà ouvert (autre titre du groupe SyncPlay,
+            // « Lire sur… ») se ferme en enregistrant sa position.
+            try {
+                JSONObject stop = new JSONObject();
+                stop.put("command", "stop");
+                NoctraPlayerBus.toPlayer(stop);
+            } catch (Exception ignored) {
+            }
             Intent intent = new Intent(this, NoctraPlayerActivity.class);
             intent.putExtra(NoctraPlayerActivity.EXTRA_URL, url);
             intent.putExtra(NoctraPlayerActivity.EXTRA_TITLE, message.optString("title"));
@@ -401,6 +418,7 @@ public class NoctraHomeActivity extends Activity {
                 intent.putExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID, message.optString("playSessionId"));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_DEVICE_ID, deviceId);
                 intent.putExtra(NoctraPlayerActivity.EXTRA_START_MS, message.optLong("startMs", 0));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_SYNC, message.optBoolean("sync", false));
                 if (!sameOrigin(Uri.parse(message.optString("jellyfin")), jellyfin)) return;
             }
             try {
@@ -558,6 +576,8 @@ public class NoctraHomeActivity extends Activity {
             message.put("ok", resultCode != NoctraPlayerActivity.RESULT_ERROR);
             message.put("played", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_PLAYED, false));
             message.put("vod", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_VOD, false));
+            message.put("sync", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_SYNC, false));
+            message.put("playSessionId", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID));
             message.put("ended", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_ENDED, false));
             message.put("positionMs", data == null ? 0 : data.getLongExtra(NoctraPlayerActivity.EXTRA_POSITION_MS, 0));
             message.put("error", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_ERROR));
@@ -616,6 +636,7 @@ public class NoctraHomeActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (NoctraPlayerBus.listener != null) NoctraPlayerBus.listener = null;
         if (hostPort != null) {
             try { hostPort.close(); } catch (Exception ignored) { }
         }

@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -15,6 +16,8 @@ import android.widget.TextView;
 
 import androidx.media3.ui.PlayerView;
 
+import org.json.JSONObject;
+
 import java.util.HashMap;
 
 /**
@@ -22,7 +25,7 @@ import java.util.HashMap;
  * reconnexions et retour au direct). Un échec définitif est renvoyé à
  * l'accueil Noctra, qui propose alors un autre serveur de la chaîne.
  */
-public class NoctraPlayerActivity extends Activity implements NoctraStream.Callback {
+public class NoctraPlayerActivity extends Activity implements NoctraStream.Callback, NoctraPlayerBus.Player {
 
     static final String EXTRA_URL = "noctra_url";
     static final String EXTRA_TITLE = "noctra_title";
@@ -42,6 +45,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_START_MS = "noctra_start_ms";
     static final String EXTRA_POSITION_MS = "noctra_position_ms";
     static final String EXTRA_ENDED = "noctra_ended";
+    // SyncPlay : départ en pause, le groupe pilote la lecture.
+    static final String EXTRA_SYNC = "noctra_sync";
+    private static final long SEEK_STEP_MS = 10000;
     private static final long REPORT_MS = 10000;
     static final int RESULT_ERROR = RESULT_FIRST_USER;
 
@@ -53,6 +59,18 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private boolean vod;
     private boolean reportedStart;
     private boolean ended;
+    private boolean sync;
+    private TextView syncLabel;
+    private long pendingSeekMs = -1;
+
+    private final Runnable sendSeek = new Runnable() {
+        @Override
+        public void run() {
+            if (pendingSeekMs < 0) return;
+            event("user", "seek", pendingSeekMs);
+            pendingSeekMs = -1;
+        }
+    };
 
     private final Runnable progress = new Runnable() {
         @Override
@@ -116,8 +134,21 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         statusParams.bottomMargin = dp(64);
         root.addView(status, statusParams);
 
+        sync = intent.getBooleanExtra(EXTRA_SYNC, false);
+        syncLabel = text("", 16, Color.rgb(112, 217, 194));
+        syncLabel.setPadding(dp(18), dp(10), dp(18), dp(10));
+        syncLabel.setBackgroundColor(Color.argb(190, 9, 10, 15));
+        syncLabel.setVisibility(sync ? TextView.VISIBLE : TextView.GONE);
+        syncLabel.setText("SyncPlay · en attente du groupe…");
+        FrameLayout.LayoutParams syncParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        syncParams.setMargins(0, dp(32), dp(40), 0);
+        root.addView(syncLabel, syncParams);
+        // En groupe, les touches deviennent des demandes au groupe (voir dispatchKeyEvent).
+        if (sync) playerView.setUseController(false);
+
         setContentView(root);
         handler.postDelayed(hideBanner, 5000);
+        NoctraPlayerBus.player = this;
         vod = intent.getBooleanExtra(EXTRA_VOD, false);
         if (vod) {
             // Film ou épisode : en-tête Jellyfin (jeton) et suivi de lecture.
@@ -135,7 +166,97 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         } else {
             stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_TOKEN), false);
         }
+        if (sync) stream.setAutoplay(false);
         stream.start();
+    }
+
+    // ── SyncPlay et commandes à distance ───────────────────────────────────
+    private void event(String type, String action, long positionMs) {
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "playerEvent");
+            message.put("event", type);
+            message.put("action", action);
+            message.put("positionMs", positionMs);
+            message.put("playing", stream != null && stream.wantsToPlay());
+            NoctraPlayerBus.fromPlayer(message);
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onReadyChanged(NoctraStream source, boolean ready) {
+        if (source == stream && vod) event("state", ready ? "ready" : "buffering", stream.positionMs());
+    }
+
+    @Override
+    public void onCommand(JSONObject command) {
+        if (stream == null || finished) return;
+        String action = command.optString("command");
+        long position = command.has("positionMs") ? command.optLong("positionMs") : -1;
+        if (action.equals("pause")) {
+            stream.pause();
+            if (position >= 0) stream.seek(position);
+        } else if (action.equals("unpause")) {
+            if (position >= 0) stream.seek(position);
+            stream.play();
+        } else if (action.equals("playpause")) {
+            if (stream.wantsToPlay()) stream.pause(); else stream.play();
+        } else if (action.equals("seek")) {
+            if (command.optBoolean("pause", false)) stream.pause();
+            if (position >= 0) stream.seek(position);
+        } else if (action.equals("stop")) {
+            finishWith(true, null);
+            return;
+        }
+        if (command.has("status") && syncLabel != null) {
+            String text = command.optString("status");
+            syncLabel.setText(text);
+            syncLabel.setVisibility(text.isEmpty() ? TextView.GONE : TextView.VISIBLE);
+        }
+    }
+
+    private static String clock(long ms) {
+        long seconds = Math.max(0, ms / 1000);
+        long hours = seconds / 3600;
+        String minutes = String.valueOf((seconds / 60) % 60);
+        String rest = String.valueOf(seconds % 60);
+        if (rest.length() < 2) rest = "0" + rest;
+        if (hours > 0 && minutes.length() < 2) minutes = "0" + minutes;
+        return (hours > 0 ? hours + ":" : "") + minutes + ":" + rest;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (!sync || stream == null) return super.dispatchKeyEvent(event);
+        int code = event.getKeyCode();
+        boolean toggle = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
+            || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
+        boolean play = code == KeyEvent.KEYCODE_MEDIA_PLAY;
+        boolean pause = code == KeyEvent.KEYCODE_MEDIA_PAUSE;
+        boolean back = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_MEDIA_REWIND;
+        boolean forward = code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+        if (!toggle && !play && !pause && !back && !forward) return super.dispatchKeyEvent(event);
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
+        long position = stream.positionMs();
+        if (toggle || play || pause) {
+            if (event.getRepeatCount() > 0) return true;
+            boolean resume = play || (toggle && !stream.wantsToPlay());
+            event("user", resume ? "unpause" : "pause", position);
+            syncLabel.setText("SyncPlay · " + (resume ? "reprise demandée au groupe…" : "pause demandée au groupe…"));
+            syncLabel.setVisibility(TextView.VISIBLE);
+            return true;
+        }
+        // Avance / retour : cumulés, puis une seule demande au groupe.
+        if (pendingSeekMs < 0) pendingSeekMs = position;
+        pendingSeekMs = Math.max(0, pendingSeekMs + (forward ? SEEK_STEP_MS : -SEEK_STEP_MS));
+        long duration = stream.durationMs();
+        if (duration > 0) pendingSeekMs = Math.min(pendingSeekMs, duration - 1000);
+        syncLabel.setText("SyncPlay · aller à " + clock(pendingSeekMs) + (duration > 0 ? " / " + clock(duration) : ""));
+        syncLabel.setVisibility(TextView.VISIBLE);
+        handler.removeCallbacks(sendSeek);
+        handler.postDelayed(sendSeek, 800);
+        return true;
     }
 
     private TextView text(String value, int size, int color) {
@@ -177,6 +298,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         if (finished) return;
         finished = true;
         handler.removeCallbacks(progress);
+        handler.removeCallbacks(sendSeek);
+        if (NoctraPlayerBus.player == this) NoctraPlayerBus.player = null;
         long position = stream == null ? 0 : stream.positionMs();
         if (ended && stream != null) position = Math.max(position, stream.durationMs());
         if (report != null) {
@@ -187,6 +310,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         if (stream != null) stream.release();
         Intent data = new Intent();
         data.putExtra(EXTRA_VOD, vod);
+        data.putExtra(EXTRA_SYNC, sync);
+        data.putExtra(EXTRA_PLAY_SESSION_ID, getIntent().getStringExtra(EXTRA_PLAY_SESSION_ID));
         data.putExtra(EXTRA_POSITION_MS, position);
         data.putExtra(EXTRA_ENDED, ended);
         data.putExtra(EXTRA_PLAYED, stream != null && stream.hasPlayed());

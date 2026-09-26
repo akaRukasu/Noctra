@@ -78,6 +78,10 @@ public class NoctraMultiviewActivity extends Activity {
         }
 
         @Override
+        public void onReadyChanged(NoctraStream source, boolean ready) {
+        }
+
+        @Override
         public void onEnded(NoctraStream source) {
             // Un direct ne se termine pas (géré par NoctraStream).
         }

@@ -51,6 +51,8 @@
     audio: '<path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h2v-8H5v-1a7 7 0 0 1 14 0v1h-2v8h2a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/>',
     subtitles: '<path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7v2h4v-2zm6 0v2h6v-2zm-6-4v2h8V8zm10 0v2h2V8z"/>',
     restart: '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>',
+    people: '<path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM9 13c-3.3 0-7 1.6-7 4v3h14v-3c0-2.4-3.7-4-7-4zm8 0c-.5 0-1 0-1.6.1 1.6 1 2.6 2.3 2.6 3.9v3h5v-3c0-2.4-3.2-4-6-4z"/>',
+    close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/>',
     prev: '<path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/>',
     next: '<path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6z"/>',
     tag: '<path d="M3 3h8l10 10-8 8L3 11zm4.5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>',
@@ -158,6 +160,7 @@
       else if (data.type === 'resumed') appResumed();
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
+      else if (data.type === 'playerEvent') playerEvent(data);
       else if (data.type === 'nativeError') toast('Action impossible : ' + data.message, true);
     };
     native('hello');
@@ -204,6 +207,9 @@
       if (error.status === 401 || error.status === 403) toast('Session refusée par Noctra : reconnectez-vous depuis Compte › Paramètres.', true);
     });
     renderNav();
+    // Canal temps réel Jellyfin : SyncPlay et « Lire sur Noctra TV ».
+    reportCapabilities();
+    connectSocket();
     go('home', {}, true, true);
     if (/recovered/.test(location.hash)) {
       toast('Le lecteur web a dû être fermé (mémoire du téléviseur saturée). Essayez un autre serveur.', true);
@@ -253,6 +259,7 @@
   function accountMenu() {
     var list = h('div', { class: 'list scroll' },
       h('h2', null, S.userName || 'Compte', h('small', { text: 'Noctra TV' })),
+      h('button', { class: 'btn f', onclick: function () { closeLayer(); syncSheet(); } }, icon('people'), sync.group ? 'SyncPlay · ' + sync.group.name : 'SyncPlay · regarder ensemble'),
       h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
       h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
@@ -737,6 +744,12 @@
   }
   function playItem(item, options) {
     options = options || {};
+    // En groupe SyncPlay : la lecture est lancée pour tout le groupe.
+    if (sync.group && !options.sync) {
+      var ticks = typeof options.startMs === 'number' ? options.startMs * 10000 : options.fromStart ? 0 : (item.UserData && item.UserData.PlaybackPositionTicks || 0);
+      return syncPost('SetNewQueue', { PlayingQueue: [item.Id], PlayingItemPosition: 0, StartPositionTicks: ticks })
+        .then(function () { toast('SyncPlay : lecture lancée pour le groupe.'); }, function (error) { toast(error.message, true); });
+    }
     var load = item.MediaSources ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id);
     return load.then(function (full) {
       var source = (full.MediaSources || [])[0];
@@ -745,8 +758,9 @@
       var resumeTicks = full.UserData && full.UserData.PlaybackPositionTicks || 0;
       var startMs = typeof options.startMs === 'number' ? options.startMs : options.fromStart ? 0 : Math.floor(resumeTicks / 10000);
       var url = hlsUrl(full, source, playSessionId, pickAudio(full), pickSubtitle(full));
-      vodPlayback = { item: full };
+      vodPlayback = { item: full, playSessionId: playSessionId, sync: Boolean(options.sync) };
       var sent = native('play', {
+        sync: Boolean(options.sync),
         url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
         vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs
       });
@@ -762,7 +776,15 @@
   }
   function vodClosed(result) {
     var entry = vodPlayback;
+    // Lecteur remplacé (nouveau titre du groupe) : ancienne fermeture ignorée.
+    if (entry && result.playSessionId && entry.playSessionId !== result.playSessionId) return;
     vodPlayback = null;
+    if (entry && entry.sync && sync.group) {
+      forget('resume'); forget('nextup'); forget('item:');
+      // Quitter le lecteur quitte le groupe : les autres ne l'attendent pas.
+      if (!entry.stoppedByGroup && !result.ended) syncPost('Leave').then(function () { leaveLocalGroup('SyncPlay : vous avez quitté le groupe.'); }, function () { /* déjà sorti */ });
+      return;
+    }
     forget('resume'); forget('nextup'); forget('item:');
     if (!result.ok && result.error) toast(result.error, true);
     if (entry && result.ended && entry.item.Type === 'Episode') { nextEpisode(entry.item); return; }
@@ -1016,6 +1038,257 @@
       appendChunked(grid, items, function (child) { return itemCard(child); });
     });
   };
+
+  // ── SyncPlay (regarder ensemble) et commandes à distance ──────────
+  // Même protocole que Jellyfin Web : les groupes se rejoignent depuis le PC,
+  // un téléphone ou la TV. Le serveur envoie ses ordres (lecture, pause,
+  // avance) datés à son horloge ; la TV les applique au même instant.
+  var sync = { socket: null, retry: 0, keepAlive: 0, ping: 0, group: null, offset: 0, rtt: 0, playlistItemId: '', lastCommand: '', timers: [], awaitReady: 0, joining: false };
+  function serverIso() { return new Date(Date.now() + sync.offset).toISOString(); }
+  function jfJson(method, path, body) {
+    return request(S.jf + path, { method: method, headers: { Authorization: jfAuthorization(), 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  }
+  function syncPost(path, body) { return jfJson('POST', '/SyncPlay/' + path, body || {}); }
+  // Écart d'horloge avec le serveur : meilleur de 5 mesures (aller-retour le plus court).
+  function syncClock() {
+    var best = null;
+    var chain = Promise.resolve();
+    for (var i = 0; i < 5; i++) {
+      chain = chain.then(function () {
+        var sent = Date.now();
+        return request(S.jf + '/GetUtcTime', { headers: { Authorization: jfAuthorization() } }).then(function (data) {
+          var received = Date.now();
+          var t1 = Date.parse(data.RequestReceptionTime), t2 = Date.parse(data.ResponseTransmissionTime);
+          if (!t1 || !t2) return;
+          var rtt = (received - sent) - (t2 - t1);
+          var offset = ((t1 - sent) + (t2 - received)) / 2;
+          if (!best || rtt < best.rtt) best = { rtt: rtt, offset: offset };
+        });
+      });
+    }
+    return chain.then(function () { if (best) { sync.offset = best.offset; sync.rtt = Math.max(0, best.rtt); } }).catch(function () { /* horloge locale */ });
+  }
+  function reportCapabilities() {
+    jfJson('POST', '/Sessions/Capabilities/Full', { PlayableMediaTypes: ['Video'], SupportedCommands: ['DisplayMessage'], SupportsMediaControl: true, SupportsPersistentIdentifier: true }).catch(function () { /* facultatif */ });
+  }
+  function connectSocket() {
+    if (!S.jf || !S.token || !window.WebSocket) return;
+    var old = sync.socket;
+    sync.socket = null;
+    if (old) { try { old.close(); } catch (error) { /* déjà fermée */ } }
+    var address = S.jf.replace(/^http/i, 'ws') + '/socket?ApiKey=' + encodeURIComponent(S.token) + '&api_key=' + encodeURIComponent(S.token) + '&deviceId=' + encodeURIComponent(deviceId());
+    var socket;
+    try { socket = new WebSocket(address); } catch (error) { return; }
+    sync.socket = socket;
+    socket.onopen = function () { sync.retry = 0; };
+    socket.onmessage = function (event) {
+      var message;
+      try { message = JSON.parse(event.data); } catch (error) { return; }
+      try { socketMessage(message); } catch (error) { /* message inattendu */ }
+    };
+    socket.onclose = function () {
+      if (sync.socket !== socket) return;
+      clearInterval(sync.keepAlive);
+      var delay = Math.min(30000, 2000 * Math.pow(2, sync.retry++));
+      setTimeout(function () { if (sync.socket === socket) connectSocket(); }, delay);
+    };
+  }
+  function socketSend(message) {
+    try { if (sync.socket && sync.socket.readyState === 1) sync.socket.send(JSON.stringify(message)); } catch (error) { /* reconnexion en cours */ }
+  }
+  function socketMessage(message) {
+    var data = message.Data;
+    switch (message.MessageType) {
+      case 'ForceKeepAlive':
+        clearInterval(sync.keepAlive);
+        sync.keepAlive = setInterval(function () { socketSend({ MessageType: 'KeepAlive' }); }, Math.max(10, Number(data) || 60) * 500);
+        socketSend({ MessageType: 'KeepAlive' });
+        break;
+      case 'SyncPlayGroupUpdate': groupUpdate(data || {}); break;
+      case 'SyncPlayCommand': groupCommand(data || {}); break;
+      case 'Play':
+        // « Lire sur Noctra TV » depuis un autre appareil.
+        if (data && data.ItemIds && data.ItemIds[0]) playItem({ Id: String(data.ItemIds[0]).replace(/-/g, '') }, data.StartPositionTicks ? { startMs: Math.floor(data.StartPositionTicks / 10000) } : {});
+        break;
+      case 'Playstate':
+        if (data && !sync.group) remotePlaystate(data);
+        break;
+      case 'GeneralCommand':
+        if (data && data.Name === 'DisplayMessage' && data.Arguments) toast([data.Arguments.Header, data.Arguments.Text].filter(Boolean).join(' · '));
+        break;
+      default: break;
+    }
+  }
+  function remotePlaystate(data) {
+    var map = { Pause: 'pause', Unpause: 'unpause', PlayPause: 'playpause', Stop: 'stop', Seek: 'seek' };
+    var command = map[data.Command];
+    if (!command) return;
+    var payload = { command: command };
+    if (command === 'seek' && data.SeekPositionTicks) payload.positionMs = Math.floor(data.SeekPositionTicks / 10000);
+    native('playerCommand', payload);
+  }
+
+  function syncStatus(text) {
+    native('playerCommand', { command: 'status', status: text });
+    renderSyncBadge();
+  }
+  function renderSyncBadge() {
+    var badge = document.getElementById('sync-badge');
+    if (!sync.group) { if (badge) badge.remove(); return; }
+    if (!badge) {
+      badge = h('button', { id: 'sync-badge', class: 'nav sync-badge f', onclick: syncSheet });
+      var user = document.getElementById('user');
+      user.parentNode.insertBefore(badge, user);
+    }
+    badge.textContent = 'SyncPlay · ' + ((sync.group.participants || []).length || 1);
+  }
+  function leaveLocalGroup(message) {
+    sync.group = null;
+    sync.playlistItemId = '';
+    sync.timers.forEach(clearTimeout);
+    sync.timers = [];
+    clearInterval(sync.ping);
+    renderSyncBadge();
+    if (message) toast(message);
+  }
+  function groupUpdate(update) {
+    var data = update.Data;
+    switch (update.Type) {
+      case 'GroupJoined':
+        sync.group = { id: update.GroupId, name: data && data.GroupName || 'Groupe', participants: data && data.Participants || [] };
+        syncClock();
+        clearInterval(sync.ping);
+        sync.ping = setInterval(function () {
+          syncClock().then(function () { syncPost('Ping', { Ping: Math.round(sync.rtt) }).catch(function () { /* réessai plus tard */ }); });
+        }, 60000);
+        toast('SyncPlay : vous avez rejoint « ' + sync.group.name + ' ».');
+        renderSyncBadge();
+        break;
+      case 'UserJoined':
+        if (sync.group && data) { sync.group.participants.push(data); renderSyncBadge(); toast('SyncPlay : ' + data + ' a rejoint le groupe.'); }
+        break;
+      case 'UserLeft':
+        if (sync.group && data) {
+          sync.group.participants = sync.group.participants.filter(function (name) { return name !== data; });
+          renderSyncBadge();
+          toast('SyncPlay : ' + data + ' a quitté le groupe.');
+        }
+        break;
+      case 'GroupLeft': leaveLocalGroup('SyncPlay : vous avez quitté le groupe.'); break;
+      case 'NotInGroup': case 'GroupDoesNotExist': case 'LibraryAccessDenied': case 'JoinGroupDenied': case 'CreateGroupDenied':
+        leaveLocalGroup(update.Type === 'LibraryAccessDenied' ? 'SyncPlay : un titre du groupe n’est pas accessible à votre compte.' : update.Type === 'NotInGroup' ? '' : 'SyncPlay : action refusée par le serveur.');
+        break;
+      case 'StateUpdate':
+        var state = data && data.State;
+        syncStatus(state === 'Waiting' ? 'SyncPlay · en attente des autres…' : state === 'Paused' ? 'SyncPlay · en pause' : '');
+        break;
+      case 'PlayQueue':
+        playQueue(data || {});
+        break;
+      default: break;
+    }
+  }
+  function playQueue(queue) {
+    var list = queue.Playlist || [];
+    var entry = list[queue.PlayingItemIndex];
+    if (!entry) {
+      if (vodPlayback && vodPlayback.sync) { vodPlayback.stoppedByGroup = true; native('playerCommand', { command: 'stop' }); }
+      sync.playlistItemId = '';
+      return;
+    }
+    if (entry.PlaylistItemId === sync.playlistItemId && vodPlayback && vodPlayback.sync) return;
+    sync.playlistItemId = entry.PlaylistItemId;
+    playItem({ Id: String(entry.ItemId).replace(/-/g, '') }, { startMs: Math.floor((queue.StartPositionTicks || 0) / 10000), sync: true });
+  }
+  function atServerTime(when, action) {
+    var local = Date.parse(when) - sync.offset;
+    var delay = local - Date.now();
+    if (!(delay > 0)) { action(0); return; }
+    sync.timers.push(setTimeout(function () { action(Math.max(0, Date.now() - local)); }, delay));
+  }
+  function groupCommand(command) {
+    var key = [command.Command, command.When, command.PositionTicks, command.PlaylistItemId].join('|');
+    if (key === sync.lastCommand) return;
+    sync.lastCommand = key;
+    if (command.PlaylistItemId && sync.playlistItemId && command.PlaylistItemId !== sync.playlistItemId) return;
+    var position = Math.floor((command.PositionTicks || 0) / 10000);
+    switch (command.Command) {
+      case 'Unpause':
+        atServerTime(command.When, function (late) { native('playerCommand', { command: 'unpause', positionMs: position + late, status: '' }); });
+        break;
+      case 'Pause':
+        atServerTime(command.When, function () { native('playerCommand', { command: 'pause', positionMs: position, status: 'SyncPlay · en pause' }); });
+        break;
+      case 'Seek':
+        native('playerCommand', { command: 'seek', positionMs: position, pause: true, status: 'SyncPlay · synchronisation…' });
+        // Déjà en mémoire : pas de chargement, donc prêt tout de suite.
+        clearTimeout(sync.awaitReady);
+        sync.awaitReady = setTimeout(function () { sendReady(position, false); }, 1500);
+        break;
+      case 'Stop':
+        if (vodPlayback) vodPlayback.stoppedByGroup = true;
+        native('playerCommand', { command: 'stop' });
+        break;
+      default: break;
+    }
+  }
+  function sendReady(positionMs, playing) {
+    clearTimeout(sync.awaitReady);
+    sync.awaitReady = 0;
+    if (!sync.group) return;
+    syncPost('Ready', { When: serverIso(), PositionTicks: Math.floor(positionMs) * 10000, IsPlaying: Boolean(playing), PlaylistItemId: sync.playlistItemId }).catch(function () { /* réessai au prochain état */ });
+  }
+  // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
+  function playerEvent(event) {
+    if (!vodPlayback || !vodPlayback.sync || !sync.group) return;
+    if (event.event === 'state') {
+      if (event.action === 'ready') sendReady(event.positionMs, event.playing);
+      else {
+        clearTimeout(sync.awaitReady);
+        syncPost('Buffering', { When: serverIso(), PositionTicks: Math.floor(event.positionMs) * 10000, IsPlaying: Boolean(event.playing), PlaylistItemId: sync.playlistItemId }).catch(function () { /* facultatif */ });
+      }
+    } else if (event.event === 'user') {
+      if (event.action === 'pause') syncPost('Pause');
+      else if (event.action === 'unpause') syncPost('Unpause');
+      else if (event.action === 'seek') syncPost('Seek', { PositionTicks: Math.floor(event.positionMs) * 10000 });
+    }
+  }
+
+  function syncSheet() {
+    var list = h('div', { class: 'list scroll' },
+      h('h2', null, 'SyncPlay', h('small', { text: sync.group ? 'Groupe : ' + sync.group.name + ' · ' + (sync.group.participants || []).join(', ') : 'Regarder ensemble, synchronisé avec le PC ou le téléphone' })));
+    var groups = h('div', { class: 'sync-groups' }, loading('Recherche des groupes…'));
+    list.appendChild(groups);
+    if (sync.group) {
+      list.appendChild(h('button', { class: 'btn f', onclick: function () {
+        closeLayer();
+        syncPost('Leave').then(function () { leaveLocalGroup('SyncPlay : vous avez quitté le groupe.'); }, function (error) { toast(error.message, true); });
+      } }, icon('close'), 'Quitter le groupe'));
+    } else {
+      list.appendChild(h('button', { class: 'btn primary f', onclick: function () {
+        closeLayer();
+        syncPost('New', { GroupName: 'Noctra TV · ' + (S.userName || 'TV') }).catch(function (error) { toast(error.message, true); });
+      } }, icon('people'), 'Créer un groupe'));
+    }
+    list.appendChild(h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
+    openLayer(h('div', { class: 'modal' }, list));
+    jfJson('GET', '/SyncPlay/List').then(function (data) {
+      if (!document.body.contains(list)) return;
+      clear(groups);
+      var available = (data || []).filter(function (group) { return !sync.group || group.GroupId !== sync.group.id; });
+      if (!available.length) { groups.appendChild(h('p', { class: 'hint-text', text: sync.group ? 'Aucun autre groupe.' : 'Aucun groupe en cours. Créez-en un, ou lancez SyncPlay depuis le PC.' })); return; }
+      available.forEach(function (group) {
+        groups.appendChild(h('button', { class: 'btn f', onclick: function () {
+          closeLayer();
+          syncPost('Join', { GroupId: group.GroupId }).catch(function (error) { toast(error.message, true); });
+        } }, icon('people'), 'Rejoindre « ' + (group.GroupName || 'Groupe') + ' » · ' + (group.Participants || []).join(', ')));
+      });
+    }, function (error) {
+      if (!document.body.contains(list)) return;
+      clear(groups);
+      groups.appendChild(failure(error));
+    });
+  }
 
   // ── Accueil ────────────────────────────────────────────────────────
   // Comme sur PC : « À l'affiche chez vous », carrousel « Continuer à

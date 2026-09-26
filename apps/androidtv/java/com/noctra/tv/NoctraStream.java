@@ -43,6 +43,8 @@ final class NoctraStream {
         void onFailed(NoctraStream stream, String message);
         /** Fin d'un film ou d'un épisode (jamais pour un direct). */
         void onEnded(NoctraStream stream);
+        /** Prêt à lire (true) ou en chargement (false) : suivi SyncPlay. */
+        void onReadyChanged(NoctraStream stream, boolean ready);
     }
 
     static final String HLS = "application/x-mpegURL";
@@ -75,6 +77,7 @@ final class NoctraStream {
     private long readySince;
     private int reconnects;
     private float volume = 1f;
+    private boolean playWhenReady = true;
 
     private final Runnable poll = new Runnable() {
         @Override
@@ -154,6 +157,32 @@ final class NoctraStream {
         open();
     }
 
+    /** Démarrage en pause (SyncPlay : le groupe décide du départ). */
+    void setAutoplay(boolean autoplay) {
+        playWhenReady = autoplay;
+    }
+
+    void play() {
+        playWhenReady = true;
+        if (player != null) player.setPlayWhenReady(true);
+    }
+
+    void pause() {
+        playWhenReady = false;
+        if (player != null) player.setPlayWhenReady(false);
+    }
+
+    void seek(long ms) {
+        positionMs = Math.max(0, ms);
+        if (player != null) {
+            try { player.seekTo(positionMs); } catch (Exception ignored) { }
+        }
+    }
+
+    boolean wantsToPlay() {
+        return playWhenReady;
+    }
+
     void setVolume(float value) {
         volume = value;
         if (player != null) {
@@ -191,7 +220,7 @@ final class NoctraStream {
         if (live) player.setMediaItem(item.build());
         else player.setMediaItem(item.build(), positionMs);
         player.prepare();
-        player.setPlayWhenReady(true);
+        player.setPlayWhenReady(playWhenReady);
         handler.removeCallbacks(poll);
         handler.postDelayed(poll, POLL_MS);
     }
@@ -219,11 +248,13 @@ final class NoctraStream {
                 played = true;
                 readySince = now;
                 callback.onStatus(this, null);
+                callback.onReadyChanged(this, true);
             }
             bufferingSince = 0;
             if (!live) positionMs();
             if (reconnects > 0 && now - readySince > STABLE_MS) reconnects = 0;
         } else if (state == Player.STATE_BUFFERING) {
+            if (ready) callback.onReadyChanged(this, false);
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
             if (played && now - bufferingSince > (live ? STALL_TIMEOUT_MS : STALL_TIMEOUT_MS * 3)) {

@@ -455,3 +455,5 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .card.person { width: 7.5rem; text-align: center; }
 .card.person:focus .art { box-shadow: 0 0 0 .2rem var(--focus); }
 .episodes .card.episode { width: 17rem; }
+.nav.sync-badge { margin-right: .6rem; color: #07110f; background: var(--accent); font-size: .8rem; padding: .35rem .75rem; }
+.sync-groups { display: grid; grid-gap: .5rem; }

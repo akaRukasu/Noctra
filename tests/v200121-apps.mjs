@@ -215,6 +215,17 @@ assert.match(tvApp, /'\/api\/tv\/catalog\?ref=' \+ encodeURIComponent\(ref\)/);
 assert.match(tvApp, /function multiSheet\(\)/);
 const multiview = await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivity.java');
 for (const label of ['Écouter cette chaîne', 'Mettre en avant', 'Changer de serveur']) assert.ok(multiview.includes(label), label);
+// SyncPlay (absent de Jellyfin Android TV) : protocole Jellyfin, horloge du serveur, lecteur piloté par le groupe.
+for (const call of ["syncPost('Join'", "syncPost('New'", "syncPost('Leave')", "syncPost('SetNewQueue'", "syncPost('Ready'", "syncPost('Buffering'", "syncPost('Pause')", "syncPost('Unpause')", "syncPost('Seek'"]) {
+  assert.ok(tvApp.includes(call), call);
+}
+assert.match(tvApp, /'\/GetUtcTime'/);
+assert.match(tvApp, /case 'SyncPlayCommand': groupCommand/);
+assert.match(tvApp, /function atServerTime\(when, action\)/);
+assert.match(tvApp, /'\/socket\?ApiKey='/);
+const playerActivity = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(playerActivity, /if \(sync\) stream\.setAutoplay\(false\);/, 'Départ en pause : le groupe lance la lecture');
+assert.match(playerActivity, /event\("user", resume \? "unpause" : "pause", position\)/);
 for (const route of ['/api/home/resume', '/api/tv/sources', '/api/tv/catalog?source=', '/api/jellyseerr/search?q=', '/api/jellyseerr/request', '/api/discovery?category=', '/api/roulette?']) {
   assert.ok(tvApp.includes(route), `Accueil TV : ${route}`);
 }

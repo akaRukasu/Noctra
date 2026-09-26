@@ -10,6 +10,7 @@ Noctra TV est l’appli **Jellyfin pour Android TV** (projet officiel [jellyfin-
   - **Accueil** : comme sur PC, « À l’affiche chez vous » et le carrousel « Continuer à regarder ». Il passe au titre suivant toutes les 8 secondes et offre deux boutons : « Reprendre » lance la lecture, « Voir la fiche » ouvre la fiche. Viennent ensuite les derniers ajouts, puis « À suivre » et les médiathèques en 2 × 2 en bas ;
   - **Fiches films et séries** (sans écran Jellyfin) : image de fond, affiche, infos, Lecture / Reprendre / Depuis le début, langue audio et sous-titres (mémorisés), Vu, Favori, casting et titres similaires. Une série affiche aussi ses saisons et ses épisodes, et l’épisode suivant est proposé à la fin d’un épisode ;
   - **Lecture** : lecteur de l’appli (ExoPlayer). Jellyfin fournit un flux HLS qui recopie ce que le téléviseur sait décoder et ne convertit que le reste. La position est envoyée à Jellyfin pour mettre à jour les reprises et les titres vus. « Lire sur… » depuis un téléphone ou un PC ouvre aussi ce lecteur ;
+  - **SyncPlay** (regarder ensemble, absent de l’appli Jellyfin pour Android TV) : Compte › SyncPlay pour créer un groupe ou rejoindre celui lancé depuis le PC ou un téléphone. Une lecture lancée depuis la TV démarre pour tout le groupe. Les ordres du groupe (lecture, pause, avance) sont appliqués au moment fixé par le serveur, en tenant compte de l’écart d’horloge. Sur la TV, OK et ◀ ▶ deviennent des demandes au groupe. Quitter le lecteur quitte le groupe. « Lire sur Noctra TV » et la pause à distance passent aussi par cette connexion ;
   - **Médiathèques** : les 4 médiathèques Noctra en 2 × 2, puis les autres. Chaque médiathèque s’ouvre en grille d’affiches, avec des tris (ajouts récents, titre, note, année, aléatoire) et un filtre « Non vus » ;
   - **TV en direct** : les sources et les chaînes du serveur Noctra.
     - Au lancement d’une chaîne, une fenêtre propose ses serveurs, classés dans cet ordre : le dernier serveur qui a fonctionné (mémorisé), puis le lecteur natif, les serveurs automatiques et les lecteurs web. Le premier démarre seul après 5 secondes, sauf si une touche est pressée.
@@ -38,6 +39,7 @@ Les téléchargements et l’administration de Noctra ne sont pas proposés sur 
   - `NoctraWebPlayerActivity` (processus `:webplayer`) : lecteurs web des chaînes ;
   - `NoctraPlaybackReport` : suivi de lecture envoyé à Jellyfin ;
   - `NoctraRemote` : commandes « Lire sur… » et « Afficher » reçues d’un autre appareil ;
+  - `NoctraPlayerBus` : liaison entre la page (SyncPlay, commandes à distance) et le lecteur ;
   - `NoctraProcess` : saute l’initialisation de Jellyfin dans le processus du lecteur web ;
   - `NoctraRouting` : choix de l’écran ouvert après la connexion ;
   - `NoctraSession` : lecture de la session Jellyfin (le jeton sert aussi à l’API Noctra).
