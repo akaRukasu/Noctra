@@ -378,6 +378,12 @@
     }, profile.desktop ? 1800 : 650);
   }
 
+  // 200.0.121 : :focus-visible (Chromium 86) lève une erreur sur les
+  // téléviseurs et boîtiers Android plus anciens.
+  function focusVisible(element) {
+    try { return Boolean(element?.matches(':focus-visible')); } catch { return Boolean(element && element === document.activeElement); }
+  }
+
   function jellyfinAccessToken() {
     try {
       return window.ApiClient?.accessToken?.()
@@ -1948,7 +1954,7 @@
   const recentEpisodeRepairs = new WeakSet();
   async function repairRecentEpisodeCards(section) {
     if (recentEpisodeRepairs.has(section) || !window.ApiClient?.getItems) return;
-    const cards = [...section.querySelectorAll('.card:is([data-type="Episode" i],[data-type="Season" i])[data-id]')];
+    const cards = [...section.querySelectorAll('.card[data-type="Episode" i][data-id], .card[data-type="Season" i][data-id]')];
     const userId = window.ApiClient.getCurrentUserId?.();
     const tools = homeCarouselCardTools();
     if (!cards.length || !userId || !tools?.cards?.getCardsHtml) return;
@@ -5904,7 +5910,7 @@
     tvDesktopControlsHideTimer = window.setTimeout(() => {
       tvDesktopControlsHideTimer = 0;
       if (!screen?.isConnected || video.paused || video.ended || video.hidden) return;
-      if (screen.contains?.(document.activeElement) && document.activeElement?.matches(':focus-visible')) return;
+      if (screen.contains?.(document.activeElement) && focusVisible(document.activeElement)) return;
       if (tvSafeExtras.menuOpen) return;
       screen.setAttribute('data-tv-controls-hidden', 'true');
     }, delay);
@@ -7319,7 +7325,7 @@
         if (!frame || frame.hidden) return;
         screen.removeAttribute('data-tv-controls-hidden');
         idleTimer = setTimeout(() => {
-          if (screen.isConnected && !frame.hidden && !tvSafeExtras.menuOpen && !screen.querySelector('.noctra-tv-screen-tools :focus-visible')) screen.setAttribute('data-tv-controls-hidden', 'true');
+          if (screen.isConnected && !frame.hidden && !tvSafeExtras.menuOpen && !(screen.querySelector('.noctra-tv-screen-tools')?.contains(document.activeElement) && focusVisible(document.activeElement))) screen.setAttribute('data-tv-controls-hidden', 'true');
         }, 1800);
       };
       ['pointerenter','pointermove','pointerdown','focusout'].forEach(event => screen.addEventListener(event, idle, {passive:true}));

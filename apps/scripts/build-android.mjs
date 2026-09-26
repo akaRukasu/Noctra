@@ -165,6 +165,11 @@ step('Ressources (aapt2)');
 const manifestSource = await readFile(join(project, 'src', 'main', 'AndroidManifest.xml'), 'utf8');
 const manifest = join(work, 'AndroidManifest.xml');
 await writeFile(manifest, manifestSource.replace('<manifest ', `<manifest package="${packageName}" `));
+// Assets : écran de connexion partagé + copie du pont web du serveur.
+const assets = join(work, 'assets');
+await cp(join(appsRoot, 'shared'), assets, { recursive: true });
+await mkdir(join(assets, 'bridge'), { recursive: true });
+await cp(join(repoRoot, 'public', 'noctra-app-bridge.js'), join(assets, 'bridge', 'noctra-app-bridge.js'));
 const compiled = join(work, 'compiled.zip');
 run(aapt2, ['compile', '--dir', join(project, 'src', 'main', 'res'), '-o', compiled]);
 const gen = join(work, 'gen');
@@ -173,7 +178,7 @@ const unsigned = join(work, 'unsigned.apk');
 run(aapt2, ['link', '-o', unsigned, '-I', framework, '--manifest', manifest, '--java', gen,
   '--min-sdk-version', minSdk, '--target-sdk-version', targetSdk,
   '--version-code', versionCode, '--version-name', versionName,
-  '-A', join(appsRoot, 'shared'), '--auto-add-overlay', compiled]);
+  '-A', assets, '--auto-add-overlay', compiled]);
 
 // ── Code ─────────────────────────────────────────────────────────────────
 step('Compilation Java');

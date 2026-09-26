@@ -15,8 +15,8 @@ android {
         applicationId = "com.noctra.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     signingConfigs {
@@ -41,8 +41,10 @@ android {
     }
 
     sourceSets {
-        // L'écran de connexion est partagé avec les applis TV et iOS.
+        // L'écran de connexion est partagé avec les applis TV et iOS ; le pont
+        // web du serveur est embarqué pour les serveurs Noctra plus anciens.
         getByName("main").assets.srcDir("../../shared")
+        getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/noctra-bridge"))
     }
 
     compileOptions {
@@ -54,6 +56,12 @@ android {
         buildConfig = true
     }
 }
+
+val copyNoctraBridge by tasks.registering(Copy::class) {
+    from(rootDir.resolve("../../public/noctra-app-bridge.js"))
+    into(layout.buildDirectory.dir("generated/noctra-bridge/bridge"))
+}
+tasks.named("preBuild") { dependsOn(copyNoctraBridge) }
 
 // Aucune dépendance : uniquement les classes du système Android, pour que l'APK
 // puisse aussi être construit hors ligne (apps/scripts/build-android.mjs).

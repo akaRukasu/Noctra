@@ -298,7 +298,9 @@
     try { new Function('var a = {}; a.b ||= 1; return a?.b ?? 0;'); return true; } catch (error) { return false; }
   }
 
-  $('footer').textContent = 'Noctra ' + (labels[platform] || '') + ' ' + (config.appVersion || '');
+  var engine = (/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1];
+  $('footer').textContent = 'Noctra ' + (labels[platform] || '') + ' ' + (config.appVersion || '')
+    + (engine ? ' · moteur Chromium ' + engine : '');
   $('auto-connect').onclick = function () { connect(loadState().url, true); };
   $('auto-change').onclick = function () { showForm(loadState().url, ''); };
   $('busy-cancel').onclick = cancelBusy;
@@ -318,5 +320,7 @@
   // L'appli native signale un serveur devenu injoignable pendant l'utilisation.
   if (params.error) showForm(state.url || config.defaultServerUrl || '', params.error);
   else if (state.url && state.auto !== false && !state.skipAuto) showAuto(state);
+  // Premier lancement : serveur prévu dans config.js, ouvert sans saisie.
+  else if (!state.url && config.defaultServerUrl && !state.skipAuto) connect(config.defaultServerUrl, true);
   else showForm(state.url || config.defaultServerUrl || '', '');
 })();

@@ -14,9 +14,9 @@ Noctra existe en applications pour :
 
 On reprend le principe des applications Jellyfin pour webOS et pour mobile :
 
-1. Au premier lancement, l’appli demande l’adresse de votre serveur Noctra, par exemple `https://akarukasu.merlion.usbx.me/noctra`. C’est l’adresse qui ouvre Noctra dans un navigateur, sans `/client/index.html`. Elle est vérifiée puis mémorisée.
-2. L’appli ouvre ensuite l’interface Noctra de ce serveur en plein écran. La connexion Jellyfin, les demandes, la TV et le lecteur sont ceux que vous connaissez déjà.
-3. Aux lancements suivants, la connexion se fait seule après 3 secondes. Pendant ce délai, **Changer de serveur** permet de saisir une autre adresse.
+1. Au lancement, l’appli ouvre directement le serveur prévu dans `apps/shared/launcher/config.js` (`https://akarukasu.merlion.usbx.me/noctra`) : on arrive sur la page de connexion Jellyfin, sans rien saisir à la télécommande.
+2. L’interface Noctra s’affiche en plein écran. La connexion Jellyfin, les demandes, la TV et le lecteur sont ceux que vous connaissez déjà.
+3. Si le serveur est injoignable, l’écran de saisie apparaît pour corriger l’adresse ou réessayer.
 
 Comme l’interface vient du serveur, chaque mise à jour de Noctra (branche `production`, déployée automatiquement) arrive tout de suite dans toutes les applis. Il n’y a rien à réinstaller. Il faut réinstaller une appli uniquement quand son dossier `apps/` change.
 
@@ -24,7 +24,7 @@ Le serveur doit être en **200.0.121 ou plus récent**. Cette version ajoute le 
 
 ### Sur les téléviseurs
 
-- La mise en page TV de Jellyfin est activée automatiquement, et l’écran Android TV est affiché en 1920 px, comme sur LG et Samsung.
+- Noctra garde sa mise en page habituelle, celle du PC. La disposition « TV » de Jellyfin n’est pas utilisée, car l’interface Noctra ne la gère pas. Android TV est affiché en 1280 px : c’est la mise en page PC, agrandie 1,5× pour être lisible depuis le canapé.
 - **Flèches et OK** : navigation. L’élément sélectionné est entouré d’un cadre bleu. Le pointeur de la Magic Remote LG fonctionne aussi.
 - **Retour** : ferme d’abord le panneau Noctra ouvert (demandes, TV, confirmation…), puis revient en arrière. À l’accueil, il quitte l’appli.
 - Les touches lecture, pause, avance et retour rapides pilotent le lecteur. Sur Samsung, elles peuvent rester sans effet, car le système ne les transmet pas toujours à une page web distante. Les commandes à l’écran restent disponibles.

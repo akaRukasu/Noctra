@@ -23,15 +23,25 @@ assert.ok(bridgeTag > index.indexOf('name="viewport"'), 'Pont après la balise v
 assert.ok(bridgeTag < index.indexOf('<script defer'), 'Pont avant les scripts du moteur');
 execFileSync(process.execPath, ['--check', new URL('public/noctra-app-bridge.js', root).pathname]);
 assert.ok(!/\?\.|\?\?/.test(bridge.replace(/\/\*[\s\S]*?\*\//g, '')), 'Pas de ?. ni ?? : lisible par les anciens moteurs TV');
-assert.match(bridge, /NoctraApp\\\/\[\\d\.\]\+ \\\(\(\[a-z\]\+\)\\\)/, 'Agent utilisateur « NoctraApp/x (plateforme) »');
+
 assert.match(bridge, /var backKeyCodes = \{ 461: true, 10009: true \};/, 'Retour LG (461) et Samsung (10009)');
+// Téléviseurs : mise en page Noctra (PC), jamais la disposition « TV » de
+// Jellyfin (sans dock ni en-tête Noctra) ; navigation aux flèches assurée ici.
+assert.match(bridge, /if \(tv && readStorage\('layout'\) !== 'desktop'\) writeStorage\('layout', 'desktop'\);/);
+assert.match(bridge, /if \(named === 'android-leanback'\) return 'androidtv';/);
+assert.ok(bridge.includes('var agent = /NoctraApp\\/[\\d.]+ \\(([a-z-]+)\\)/i.exec(ua);'), 'Agent utilisateur « NoctraApp/x (plateforme) »');
+assert.match(bridge, /function nearest\(from, direction, list\) \{/);
+assert.match(bridge, /if \(\(direction === 'left' \|\| direction === 'right'\) && lateral > Math\.max\(a\.height, b\.height\)\) continue;/);
+assert.match(bridge, /var skipped = '\.cardOverlayContainer,\.cardText,\.cardFooter/);
+assert.match(bridge, /Erreur Noctra : /, 'Erreurs affichées à l’écran dans les applis');
+assert.match(bridge, /proto\.replaceChildren = function \(\) \{/, 'replaceChildren pour Chromium 85');
 assert.match(bridge, /if \(closeOverlay\(\)\) return 'handled';\s*if \(atRoot\(\)\) return 'exit';/);
 // Canal Android : port transmis par l'appli au seul cadre principal ; un port
 // venu d'une iframe (source non nulle) est ignoré ; messages en attente.
 assert.match(bridge, /if \(hostPort \|\| event\.data !== 'noctra-host' \|\| event\.source \|\| !event\.ports \|\| !event\.ports\[0\]\) return;/);
 assert.match(bridge, /else if \(hostQueue\.length < 20\) hostQueue\.push\(text\);/);
 assert.match(bridge, /postNative\('keepScreenOn', playing\)/);
-assert.match(bridge, /viewport\.setAttribute\('content', 'width=1920,initial-scale=1,viewport-fit=cover'\)/);
+assert.match(bridge, /viewport\.setAttribute\('content', 'width=1280,viewport-fit=cover'\)/);
 assert.match(bridge, /defineAt\(Array\.prototype\);/, 'Array.prototype.at pour Chromium 85');
 assert.match(bridge, /AbortSignal\.timeout = function/, 'AbortSignal.timeout pour Chromium 85');
 
@@ -98,7 +108,9 @@ assert.ok(!/^import androidx\./m.test(activity), 'Aucune bibliothèque androidx'
 assert.ok(!/->/.test(activity), 'Pas de lambda (dx sans désucrage)');
 assert.match(activity, /webView\.postWebMessage\(new WebMessage\("noctra-host", new WebMessagePort\[\] \{ channel\[1\] \}\), target\);/);
 assert.match(activity, /if \(!fromLauncher && !fromServer\) return;/);
-assert.match(activity, /" NoctraApp\/" \+ BuildConfig\.VERSION_NAME \+ " \(" \+ platform\(\) \+ "\)"/);
+assert.match(activity, /replaceAll\("\(\?i\)\(smart-\?\)\?tv", ""\)/, 'Pas de « tv » dans l’agent utilisateur');
+assert.match(activity, /\(tv \? "android-leanback" : "android"\)/);
+assert.match(activity, /webView\.evaluateJavascript\("if\(!window\.NoctraApp\)\{" \+ bridgeSource/, 'Pont embarqué pour les serveurs anciens');
 assert.match(activity, /FLAG_KEEP_SCREEN_ON/);
 const gradleApp = await read('apps/android/app/build.gradle.kts');
 assert.match(gradleApp, /assets\.srcDir\("\.\.\/\.\.\/shared"\)/);
@@ -117,5 +129,18 @@ const plist = await read('apps/ios/Noctra/Info.plist');
 assert.match(plist, /<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/);
 assert.match(plist, /<key>UIBackgroundModes<\/key>\s*<array>\s*<string>audio<\/string>/);
 assert.match(await read('apps/ios/project.yml'), /path: \.\.\/shared\/launcher\n\s+type: folder/);
+
+// 7. Police d'icônes Material Icons restaurée (fichiers corrompus à l'import :
+//    en-tête WOFF2 incohérent, d'où les carrés à la place des icônes).
+const woff2 = await readFile(new URL('public/client/MaterialIcons-Regular.2d8017489da689caedc1.woff2', root));
+assert.equal(woff2.subarray(0, 4).toString('latin1'), 'wOF2');
+assert.equal(woff2.readUInt32BE(8), woff2.length, 'Taille WOFF2 cohérente');
+const woff = await readFile(new URL('public/client/MaterialIcons-Regular.08cefa1bc6566a650da7.woff', root));
+assert.equal(woff.readUInt32BE(8), woff.length, 'Taille WOFF cohérente');
+assert.match(await read('public/noctra-theme.css'), /MaterialIcons-Regular\.2d8017489da689caedc1\.woff2\?v=200\.121/);
+// Sélecteurs récents rendus sûrs pour les moteurs Chromium 85.
+const shell = await read('public/noctra-shell.js');
+assert.ok(!shell.includes('.card:is('), 'Pas de :is() (Chromium 88)');
+assert.match(shell, /function focusVisible\(element\) \{/);
 
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

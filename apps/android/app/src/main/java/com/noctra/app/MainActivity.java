@@ -129,8 +129,12 @@ public class MainActivity extends Activity {
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setUserAgentString(settings.getUserAgentString()
-            + " NoctraApp/" + BuildConfig.VERSION_NAME + " (" + platform() + ")");
+        // Jellyfin passe en disposition « TV » dès que l'agent utilisateur contient
+        // « tv » (nom du modèle, « Android TV ») ; Noctra n'utilise pas cette
+        // disposition. L'appli Android TV s'annonce donc « android-leanback ».
+        String agent = settings.getUserAgentString().replaceAll("(?i)(smart-?)?tv", "");
+        settings.setUserAgentString(agent + " NoctraApp/" + BuildConfig.VERSION_NAME
+            + " (" + (tv ? "android-leanback" : "android") + ")");
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
@@ -163,7 +167,13 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                injectBridge(url);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
+                injectBridge(url);
                 // Redirection du serveur (http → https, autre chemin) : l'adresse servie devient celle de l'appli.
                 int index = url == null ? -1 : url.indexOf("/client/index.html");
                 if (index > 0 && isHttp(url)) {
@@ -282,6 +292,31 @@ public class MainActivity extends Activity {
         if (manual) builder.appendQueryParameter("manual", "1");
         if (error != null) builder.appendQueryParameter("error", error);
         webView.loadUrl(builder.build().toString());
+    }
+
+    // ── Pont web embarqué ──────────────────────────────────────────────────
+    // Le serveur Noctra charge public/noctra-app-bridge.js avant son interface.
+    // Un serveur plus ancien ne l'a pas : l'appli injecte alors sa propre copie
+    // (navigation à la télécommande, touche Retour, correctifs des moteurs anciens).
+    private String bridgeSource;
+
+    private void injectBridge(String url) {
+        if (url == null || !sameOrigin(Uri.parse(url), serverBase())) return;
+        if (bridgeSource == null) {
+            try {
+                InputStream stream = getAssets().open("bridge/noctra-app-bridge.js");
+                java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int read;
+                while ((read = stream.read(chunk)) != -1) buffer.write(chunk, 0, read);
+                stream.close();
+                bridgeSource = buffer.toString("UTF-8");
+            } catch (IOException error) {
+                bridgeSource = "";
+            }
+        }
+        if (bridgeSource.isEmpty()) return;
+        webView.evaluateJavascript("if(!window.NoctraApp){" + bridgeSource + "\n}", null);
     }
 
     // ── Canal natif ────────────────────────────────────────────────────────

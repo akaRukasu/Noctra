@@ -15,9 +15,9 @@
   font-family: 'Material Icons';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.50') format('woff2'),
-       url('client/MaterialIcons-Regular.08cefa1bc6566a650da7.woff?v=200.50') format('woff'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.50') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.08cefa1bc6566a650da7.woff?v=200.121') format('woff'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
@@ -25,8 +25,8 @@
   font-family: 'Material Symbols Rounded';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2') format('woff2'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
@@ -34,8 +34,8 @@
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2') format('woff2'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
