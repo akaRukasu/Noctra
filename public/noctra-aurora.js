@@ -1,4 +1,4 @@
-// Noctra 200.0.113 — « Aurora Motion ». Effets purement décoratifs :
+// Noctra 200.0.115 — « Aurora Chroma ». Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -200,6 +200,111 @@
       scanReveal();
       watchPremiere();
     }, 700);
+  } catch {
+    // Effets optionnels.
+  }
+
+  // ───────────── 200.0.115 — Chroma : couleurs tirées de l'œuvre affichée ─────────────
+  // L'image déjà chargée par l'affiche (ou l'arrière-plan d'une fiche) est
+  // réduite à 24 × 24 px pour en extraire deux teintes vives. Aucune requête
+  // supplémentaire hors cache ; une image non lisible est simplement ignorée.
+  let chromaSource = '';
+  const toHsl = (r, g, b) => {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min, s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h * 60, s, l];
+  };
+  const extractChroma = image => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 24;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(image, 0, 0, 24, 24);
+    const data = context.getImageData(0, 0, 24, 24).data;
+    const buckets = Array.from({ length: 12 }, () => ({ weight: 0, x: 0, y: 0, s: 0 }));
+    for (let index = 0; index < data.length; index += 4) {
+      const [h, s, l] = toHsl(data[index], data[index + 1], data[index + 2]);
+      const weight = s * s * Math.max(0, 1 - Math.abs(l - 0.52) * 1.9);
+      if (weight <= 0.01) continue;
+      const bucket = buckets[Math.floor(h / 30) % 12];
+      bucket.weight += weight; bucket.s += s * weight;
+      bucket.x += Math.cos(h * Math.PI / 180) * weight; bucket.y += Math.sin(h * Math.PI / 180) * weight;
+    }
+    const ranked = buckets.map(bucket => ({ ...bucket, h: (Math.atan2(bucket.y, bucket.x) * 180 / Math.PI + 360) % 360 }))
+      .filter(bucket => bucket.weight > 0).sort((a, b) => b.weight - a.weight);
+    if (!ranked.length) return null;
+    const first = ranked[0];
+    const second = ranked.find(bucket => Math.min(Math.abs(bucket.h - first.h), 360 - Math.abs(bucket.h - first.h)) > 40) || { h: (first.h + 150) % 360 };
+    const color = hue => `hsl(${Math.round(hue)} 82% 62%)`;
+    return [color(first.h), color(second.h)];
+  };
+  const applyChroma = url => {
+    if (!url || url === chromaSource) return;
+    chromaSource = url;
+    try {
+      const image = new Image();
+      if (new URL(url, location.href).origin !== location.origin) image.crossOrigin = 'anonymous';
+      image.decoding = 'async';
+      image.onload = () => {
+        if (chromaSource !== url) return;
+        try {
+          const colors = extractChroma(image);
+          if (!colors) return;
+          root.style.setProperty('--na-dyn-1', colors[0]);
+          root.style.setProperty('--na-dyn-2', colors[1]);
+        } catch { /* Image non lisible (origine différente) : teintes par défaut. */ }
+      };
+      image.src = url;
+    } catch {}
+  };
+  const chromaTick = () => {
+    const body = document.body;
+    if (!body || document.hidden || playing()) return;
+    let url = '';
+    if (body.classList.contains('noctra-home')) url = document.querySelector('.noctra-premiere .noctra-premiere-art[data-image]')?.dataset.image || '';
+    else {
+      const backdrop = document.querySelector('.itemDetailPage:not(.hide) .itemBackdrop');
+      const match = backdrop && /url\(["']?([^"')]+)["']?\)/.exec(getComputedStyle(backdrop).backgroundImage);
+      url = match?.[1] || '';
+    }
+    applyChroma(url);
+  };
+
+  // Reflet lumineux : balaie l'affiche à chaque changement de titre.
+  const sweepPremiere = () => {
+    const premiere = document.querySelector('.noctra-premiere');
+    if (!premiere || !root.classList.contains('na-motion')) return;
+    let glare = premiere.querySelector(':scope > .na-glare');
+    if (!glare) { glare = document.createElement('span'); glare.className = 'na-glare'; glare.setAttribute('aria-hidden', 'true'); premiere.append(glare); }
+    glare.classList.remove('na-sweep');
+    void glare.offsetWidth;
+    glare.classList.add('na-sweep');
+  };
+  let lastPremiereTitle = '';
+  const glareTick = () => {
+    const title = document.querySelector('.noctra-premiere .noctra-premiere-copy h1')?.textContent || '';
+    if (title && title !== lastPremiereTitle) { if (lastPremiereTitle) sweepPremiere(); lastPremiereTitle = title; }
+  };
+
+  // Intro animée : une fois par session, sans bloquer l'application qui se
+  // charge derrière (aucune interaction interceptée), retirée après 2 s.
+  const playIntro = () => {
+    let seen = false;
+    try { seen = sessionStorage.getItem('noctra-intro') === '1'; sessionStorage.setItem('noctra-intro', '1'); } catch { seen = true; }
+    if (seen || !motionAllowed() || /video|playback/i.test(location.hash)) return;
+    const intro = document.createElement('div');
+    intro.id = 'na-intro';
+    intro.setAttribute('aria-hidden', 'true');
+    const mark = document.querySelector('link[rel="icon"][type="image/svg+xml"]')?.getAttribute('href') || '../noctra-mark.svg';
+    intro.innerHTML = `<div class="na-intro-mark"><img alt="" src="${mark.replace(/"/g, '')}"><b>NOCTRA</b></div>`;
+    (document.body || document.documentElement).append(intro);
+    window.setTimeout(() => intro.remove(), 2000);
+  };
+  try {
+    if (document.body) playIntro(); else document.addEventListener('DOMContentLoaded', playIntro, { once: true });
+    window.setInterval(() => { if (!document.hidden) { chromaTick(); glareTick(); } }, 900);
   } catch {
     // Effets optionnels.
   }

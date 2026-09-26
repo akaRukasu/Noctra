@@ -931,3 +931,115 @@ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-play
 @keyframes na-page-in {from {opacity:0;transform:translate3d(0,18px,0);} to {opacity:1;transform:none;}}
 @keyframes na-poster-in {from {opacity:0;transform:translate3d(0,26px,0) scale(.94) rotateX(8deg);} to {opacity:1;transform:none;}}
 @keyframes na-backdrop-in {from {opacity:0;transform:scale(1.06);} to {opacity:1;transform:none;}}
+
+/* ═══════════════ 200.0.115 — « Chroma » : l'interface prend les couleurs du film ═══════════════ */
+
+/* Couleurs dynamiques animables (tirées de l'affiche par noctra-aurora.js). */
+@property --na-dyn-1 {syntax:'<color>';inherits:true;initial-value:#8b5cf6;}
+@property --na-dyn-2 {syntax:'<color>';inherits:true;initial-value:#38bdf8;}
+html[data-noctra-skin="aurora"] {transition:--na-dyn-1 1.6s ease,--na-dyn-2 1.6s ease;}
+
+/* L'aurore, l'anneau de l'affiche, le halo des boutons et le dock suivent l'œuvre. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing):not(.noctra-video-route)::before {
+ background:
+  radial-gradient(38vmax 30vmax at 18% 22%,color-mix(in srgb,var(--na-dyn-1) 40%,transparent),transparent 70%),
+  radial-gradient(34vmax 26vmax at 82% 16%,color-mix(in srgb,var(--na-dyn-2) 28%,transparent),transparent 70%),
+  radial-gradient(40vmax 30vmax at 70% 82%,rgba(217,70,239,.16),transparent 72%),
+  radial-gradient(30vmax 24vmax at 12% 86%,rgba(45,212,191,.12),transparent 70%)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere {
+ box-shadow:0 40px 90px -40px color-mix(in srgb,var(--na-dyn-1) 80%,transparent),0 22px 60px -30px color-mix(in srgb,var(--na-dyn-2) 60%,transparent),inset 0 1px rgba(255,255,255,.06)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere {
+ background:linear-gradient(125deg,color-mix(in srgb,var(--na-dyn-1) 70%,#fff 20%),rgba(240,171,252,.2) 38%,rgba(125,211,252,.1) 62%,color-mix(in srgb,var(--na-dyn-2) 70%,#fff 10%))!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready :is(.noctra-premiere,#noctra-panel) .noctra-button--primary,
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-button--primary {
+ box-shadow:0 12px 34px -10px color-mix(in srgb,var(--na-dyn-1) 90%,transparent),0 4px 16px -6px color-mix(in srgb,var(--na-dyn-2) 70%,transparent),inset 0 1px rgba(255,255,255,.55)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button.noctra-dock-button[data-active="true"],
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-panel-open)[data-noctra-role] #noctra-dock[data-role][data-expanded] .noctra-dock-items > button[data-noctra="home"] {
+ box-shadow:inset 0 0 0 1px rgba(221,214,254,.34),inset 0 -2px 0 color-mix(in srgb,var(--na-dyn-1) 60%,#f0abfc),0 6px 22px -6px color-mix(in srgb,var(--na-dyn-1) 85%,transparent)!important;
+}
+
+/* ── Affiche d'accueil sur mobile : image entière en 16:9, carte ajustée au contenu ── */
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere {
+  height:auto!important;min-height:0!important;grid-template-rows:auto auto!important;container-type:inline-size;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art::before {
+  filter:blur(28px) saturate(1.5) brightness(.42)!important;opacity:1!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art::after {
+  background:linear-gradient(180deg,transparent 0%,transparent 34%,rgba(8,9,20,.55) 58%,rgba(8,9,20,.9) 100%)!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-picture {
+  inset:0 0 auto 0!important;width:100%!important;height:auto!important;aspect-ratio:16/9;object-fit:cover!important;object-position:center!important;
+  -webkit-mask-image:linear-gradient(180deg,#000 72%,transparent 100%);mask-image:linear-gradient(180deg,#000 72%,transparent 100%);
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-art:is([data-shape="portrait"],[data-shape="square"]) .noctra-premiere-picture {
+  inset:14px 0 auto 0!important;margin:0 auto!important;width:auto!important;max-width:64%!important;aspect-ratio:auto;
+  height:calc((100vw - 24px) * .5625 - 20px)!important;height:calc(56.25cqw - 20px)!important;-webkit-mask-image:none;mask-image:none;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere .noctra-premiere-copy {
+  padding-top:max(120px,calc((100vw - 24px) * .5625 - 64px))!important;padding-top:max(120px,calc(56.25cqw - 64px))!important;
+ }
+ /* Poster vertical : le texte commence sous l'affiche. */
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready.noctra-home .homePage .noctra-premiere:has(.noctra-premiere-art:is([data-shape="portrait"],[data-shape="square"])) .noctra-premiere-copy {
+  padding-top:calc((100vw - 24px) * .5625 + 8px)!important;padding-top:calc(56.25cqw + 8px)!important;
+ }
+}
+
+/* ── Médiathèques : cartes au format de l'image Jellyfin (16:9), texte de l'image jamais rogné ── */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card {
+ height:auto!important;min-height:0!important;aspect-ratio:16/9!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__image {object-fit:cover!important;object-position:center!important;}
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__content {
+  inset:auto 8px 8px!important;padding:7px 10px!important;border-radius:14px!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__content > strong {font-size:13.5px!important;-webkit-line-clamp:1;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__meta i {font-size:11px!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__action b {width:28px!important;height:28px!important;}
+}
+
+/* ── Reflet lumineux qui balaie l'affiche à chaque changement de titre ── */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .na-glare {
+ position:absolute;inset:0;z-index:1;pointer-events:none;border-radius:inherit;overflow:hidden;opacity:0;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .na-glare::before {
+ content:"";position:absolute;top:-20%;bottom:-20%;left:-60%;width:45%;transform:skewX(-18deg);
+ background:linear-gradient(90deg,transparent,rgba(255,255,255,.16) 45%,color-mix(in srgb,var(--na-dyn-2) 30%,rgba(255,255,255,.1)) 55%,transparent);
+}
+
+/* ── Intro animée à l'ouverture (une fois par session) ── */
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro {
+ position:fixed;inset:0;z-index:2147483000;pointer-events:none;display:grid;place-items:center;
+ background:radial-gradient(60% 50% at 50% 50%,#12112a,#05060d 70%);
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro .na-intro-mark {display:grid;justify-items:center;gap:18px;}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro img {width:84px;height:84px;filter:drop-shadow(0 0 30px rgba(167,139,250,.9));}
+html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro b {
+ font:700 22px/1 var(--na-display);letter-spacing:.5em;padding-left:.5em;
+ background:var(--na-grad);-webkit-background-clip:text;background-clip:text;color:transparent;
+}
+
+@media (prefers-reduced-motion:no-preference) {
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .noctra-premiere .na-glare.na-sweep {opacity:1;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .noctra-premiere .na-glare.na-sweep::before {animation:na-glare 1.1s cubic-bezier(.3,.7,.2,1) both!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro {animation:na-intro-out .6s ease 1.25s both!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro img {animation:na-intro-mark 1.1s cubic-bezier(.2,1.3,.3,1) both!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro b {animation:na-intro-word .9s var(--na-ease) .25s both!important;}
+ /* Défilement : le grand titre d'accueil s'efface en profondeur (navigateurs compatibles). */
+ @supports (animation-timeline: scroll()) {
+  html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready.noctra-home:not(.noctra-playing) .noctra-home-heading {
+   animation:na-heading-depth linear both!important;animation-timeline:scroll(root)!important;animation-range:0 360px!important;
+  }
+ }
+}
+@keyframes na-glare {from {left:-60%;} to {left:130%;}}
+@keyframes na-intro-out {to {opacity:0;visibility:hidden;}}
+@keyframes na-intro-mark {from {opacity:0;transform:scale(.4) rotate(-12deg);filter:drop-shadow(0 0 0 transparent);} to {opacity:1;transform:none;}}
+@keyframes na-intro-word {from {opacity:0;letter-spacing:1.2em;} to {opacity:1;letter-spacing:.5em;}}
+@keyframes na-heading-depth {to {opacity:.08;transform:translate3d(0,-40px,0) scale(.92);}}

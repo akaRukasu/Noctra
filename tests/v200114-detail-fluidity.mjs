@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const css = await readFile(new URL('../public/noctra-aurora.css', import.meta.url), 'utf8');
-const block = css.slice(css.indexOf('200.0.114 — Fluidité'));
+const end = css.indexOf('200.0.115 — « Chroma »');
+const block = css.slice(css.indexOf('200.0.114 — Fluidité'), end > 0 ? end : undefined);
 assert.ok(block.length > 2000);
 
 // Fluidité : lumière ambiante calculée en petit puis agrandie ; pas de flou
