@@ -17,4 +17,8 @@ public interface Player {
     boolean isPlaying();
     void setVolume(float volume);
     void seekToDefaultPosition();
+    void setMediaItem(MediaItem mediaItem, long startPositionMs);
+    long getCurrentPosition();
+    long getDuration();
+    void seekTo(long positionMs);
 }

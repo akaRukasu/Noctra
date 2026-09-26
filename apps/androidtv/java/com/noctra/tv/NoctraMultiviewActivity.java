@@ -1,9 +1,11 @@
 package com.noctra.tv;
 
 import android.app.Activity;
-import android.content.Intent;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -11,54 +13,88 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.media3.ui.PlayerView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Multiview : 2 à 4 chaînes en direct à l'écran, chacune avec son lecteur
- * (NoctraStream, tampon réduit). Le son suit la vignette sélectionnée ; OK
- * l'agrandit en plein écran, Retour revient à la grille puis à l'accueil.
+ * (NoctraStream, tampon réduit).
+ *
+ * OK sur une vignette ouvre son menu : écouter cette chaîne (le son reste sur
+ * elle même en se déplaçant), la mettre en avant (grande vignette, les autres
+ * en colonne), plein écran, changer de serveur. Un flux qui tombe passe seul
+ * au serveur suivant de la chaîne.
  */
 public class NoctraMultiviewActivity extends Activity {
 
-    static final String EXTRA_URLS = "noctra_urls";
-    static final String EXTRA_TITLES = "noctra_titles";
-    static final String EXTRA_SUBTITLES = "noctra_subtitles";
-    static final String EXTRA_MIMES = "noctra_mimes";
-    static final String EXTRA_AUTHORIZED = "noctra_authorized";
+    static final String EXTRA_ITEMS = "noctra_items";
     static final String EXTRA_TOKEN = "noctra_token";
 
     private static final int ACCENT = Color.rgb(112, 217, 194);
+    private static final int GAP = 6;
 
     private final List<Tile> tiles = new ArrayList<Tile>();
-    private final List<LinearLayout> rows = new ArrayList<LinearLayout>();
+    private FrameLayout root;
+    private String token;
+    private Tile audio;
+    private Tile featured;
     private Tile zoomed;
+
+    private static final class Option {
+        String label;
+        String url;
+        String resolve;
+        String mime;
+    }
 
     private final class Tile implements NoctraStream.Callback {
         FrameLayout frame;
+        PlayerView view;
         TextView label;
         TextView status;
         NoctraStream stream;
         String title;
+        String subtitle;
+        final List<Option> options = new ArrayList<Option>();
+        final List<Integer> failed = new ArrayList<Integer>();
+        int current = -1;
+        int generation;
 
         @Override
         public void onStatus(NoctraStream source, String text) {
-            status.setText(text == null ? "" : text);
-            status.setVisibility(text == null ? View.GONE : View.VISIBLE);
+            if (source != stream) return;
+            showStatus(this, text);
+        }
+
+        @Override
+        public void onEnded(NoctraStream source) {
+            // Un direct ne se termine pas (géré par NoctraStream).
         }
 
         @Override
         public void onFailed(NoctraStream source, String message) {
-            String text = message != null && message.contains("DECODER")
-                ? "Le téléviseur ne peut pas décoder un flux de plus."
-                : "Flux indisponible.";
-            status.setText(text);
-            status.setVisibility(View.VISIBLE);
+            if (source != stream) return;
+            if (!failed.contains(current)) failed.add(current);
+            int next = nextOption(this);
+            if (next >= 0) {
+                showStatus(this, "Serveur indisponible · essai du suivant…");
+                play(this, next);
+            } else {
+                showStatus(this, message != null && message.contains("DECODER")
+                    ? "Le téléviseur ne peut pas décoder un flux de plus."
+                    : "Flux indisponible · OK › Changer de serveur");
+            }
         }
     }
 
@@ -66,96 +102,100 @@ public class NoctraMultiviewActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        Intent intent = getIntent();
-        String[] urls = intent.getStringArrayExtra(EXTRA_URLS);
-        String[] titles = intent.getStringArrayExtra(EXTRA_TITLES);
-        String[] subtitles = intent.getStringArrayExtra(EXTRA_SUBTITLES);
-        String[] mimes = intent.getStringArrayExtra(EXTRA_MIMES);
-        boolean[] authorized = intent.getBooleanArrayExtra(EXTRA_AUTHORIZED);
-        String token = intent.getStringExtra(EXTRA_TOKEN);
-        if (urls == null || urls.length == 0) {
+        token = getIntent().getStringExtra(EXTRA_TOKEN);
+        JSONArray items;
+        try {
+            items = new JSONArray(getIntent().getStringExtra(EXTRA_ITEMS));
+        } catch (Exception error) {
             finish();
             return;
         }
-        int count = Math.min(4, urls.length);
-
-        LinearLayout grid = new LinearLayout(this);
-        grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setBackgroundColor(Color.rgb(5, 6, 9));
-        grid.setPadding(dp(6), dp(6), dp(6), dp(6));
-        int perRow = count == 1 ? 1 : 2;
-        for (int i = 0; i < count; i++) {
-            if (i % perRow == 0) {
-                LinearLayout row = new LinearLayout(this);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                grid.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-                rows.add(row);
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.rgb(5, 6, 9));
+        setContentView(root);
+        for (int i = 0; i < Math.min(4, items.length()); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            Tile tile = createTile(item.optString("title"), item.optString("subtitle"));
+            JSONArray options = item.optJSONArray("options");
+            for (int j = 0; options != null && j < options.length(); j++) {
+                JSONObject source = options.optJSONObject(j);
+                if (source == null) continue;
+                Option option = new Option();
+                option.label = source.optString("label", "Serveur " + (j + 1));
+                option.url = source.optString("url", "");
+                option.resolve = source.optString("resolve", "");
+                option.mime = source.optString("mime", "");
+                if (!option.url.isEmpty() || !option.resolve.isEmpty()) tile.options.add(option);
             }
-            Tile tile = createTile(value(titles, i), value(subtitles, i));
-            rows.get(rows.size() - 1).addView(tile.frame, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-            String url = urls[i];
-            boolean withToken = authorized != null && i < authorized.length && authorized[i];
-            tile.stream = new NoctraStream(this, (PlayerView) tile.frame.getChildAt(0), tile, url, value(mimes, i), withToken ? token : null, true);
-            tile.stream.setVolume(i == 0 ? 1f : 0f);
+            if (tile.options.isEmpty()) continue;
             tiles.add(tile);
+            root.addView(tile.frame);
         }
-        // 3 chaînes : la dernière rangée garde une case vide pour conserver la grille 2×2.
-        if (count == 3) rows.get(1).addView(new View(this), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-        setContentView(grid);
-        for (Tile tile : tiles) tile.stream.start();
+        if (tiles.isEmpty()) {
+            finish();
+            return;
+        }
+        audio = tiles.get(0);
+        root.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View view, int left, int top, int right, int bottom, int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) arrange();
+            }
+        });
+        for (Tile tile : tiles) play(tile, 0);
+        refreshLabels();
         tiles.get(0).frame.requestFocus();
     }
 
-    private static String value(String[] values, int index) {
-        return values != null && index < values.length && values[index] != null ? values[index] : "";
-    }
-
+    // ── Vignettes ──────────────────────────────────────────────────────────
     private Tile createTile(String title, String subtitle) {
         final Tile tile = new Tile();
         tile.title = title;
+        tile.subtitle = subtitle;
         tile.frame = new FrameLayout(this);
         tile.frame.setFocusable(true);
         tile.frame.setPadding(dp(4), dp(4), dp(4), dp(4));
         tile.frame.setBackground(border(false));
-        PlayerView view = new PlayerView(this);
-        view.setUseController(false);
-        view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
-        view.setKeepContentOnPlayerReset(true);
-        view.setFocusable(false);
-        tile.frame.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        tile.view = new PlayerView(this);
+        tile.view.setUseController(false);
+        tile.view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
+        tile.view.setKeepContentOnPlayerReset(true);
+        tile.view.setFocusable(false);
+        tile.frame.addView(tile.view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        tile.label = new TextView(this);
-        tile.label.setTextColor(Color.rgb(242, 246, 244));
-        tile.label.setTextSize(15);
-        tile.label.setPadding(dp(12), dp(6), dp(12), dp(6));
-        tile.label.setBackgroundColor(Color.argb(170, 9, 10, 15));
-        tile.label.setText(subtitle.isEmpty() ? title : title + "  ·  " + subtitle);
+        tile.label = text(15);
         tile.label.setSingleLine(true);
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START);
         labelParams.setMargins(dp(10), 0, dp(10), dp(10));
         tile.frame.addView(tile.label, labelParams);
 
-        tile.status = new TextView(this);
-        tile.status.setTextColor(Color.rgb(242, 246, 244));
-        tile.status.setTextSize(15);
-        tile.status.setPadding(dp(14), dp(8), dp(14), dp(8));
-        tile.status.setBackgroundColor(Color.argb(170, 9, 10, 15));
+        tile.status = text(15);
         tile.status.setVisibility(View.GONE);
         tile.frame.addView(tile.status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
 
         tile.frame.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View view, boolean hasFocus) {
-                if (hasFocus) select(tile);
+                tile.frame.setBackground(border(hasFocus));
             }
         });
         tile.frame.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                toggleZoom(tile);
+                menu(tile);
             }
         });
         return tile;
+    }
+
+    private TextView text(int size) {
+        TextView view = new TextView(this);
+        view.setTextColor(Color.rgb(242, 246, 244));
+        view.setTextSize(size);
+        view.setPadding(dp(12), dp(6), dp(12), dp(6));
+        view.setBackgroundColor(Color.argb(180, 9, 10, 15));
+        return view;
     }
 
     private GradientDrawable border(boolean active) {
@@ -166,29 +206,201 @@ public class NoctraMultiviewActivity extends Activity {
         return drawable;
     }
 
-    // Le son suit la vignette sélectionnée.
-    private void select(Tile selected) {
+    private void showStatus(Tile tile, String text) {
+        tile.status.setText(text == null ? "" : text);
+        tile.status.setVisibility(text == null ? View.GONE : View.VISIBLE);
+    }
+
+    private void refreshLabels() {
         for (Tile tile : tiles) {
-            boolean active = tile == selected;
-            tile.frame.setBackground(border(active));
-            tile.label.setText((active ? "♪  " : "") + tile.label.getText().toString().replaceFirst("^♪  ", ""));
-            if (tile.stream != null) tile.stream.setVolume(active ? 1f : 0f);
+            Option option = tile.current >= 0 && tile.current < tile.options.size() ? tile.options.get(tile.current) : null;
+            String server = option == null || tile.options.size() < 2 ? "" : "  ·  " + option.label;
+            tile.label.setText((tile == audio ? "♪  " : "") + tile.title + (tile.subtitle.isEmpty() ? "" : "  ·  " + tile.subtitle) + server);
+            if (tile.stream != null) tile.stream.setVolume(tile == audio ? 1f : 0f);
         }
     }
 
-    private void toggleZoom(Tile tile) {
-        zoomed = zoomed == tile ? null : tile;
-        for (LinearLayout row : rows) {
-            boolean rowVisible = false;
-            for (int i = 0; i < row.getChildCount(); i++) {
-                View child = row.getChildAt(i);
-                boolean visible = zoomed == null || child == zoomed.frame;
-                child.setVisibility(visible ? View.VISIBLE : View.GONE);
-                if (visible && (zoomed != null || child.isFocusable())) rowVisible = true;
+    // ── Disposition : grille, écran mis en avant, plein écran ──────────────
+    private void arrange() {
+        int width = root.getWidth();
+        int height = root.getHeight();
+        if (width == 0 || height == 0) return;
+        int gap = dp(GAP);
+        int count = tiles.size();
+        for (int i = 0; i < count; i++) {
+            Tile tile = tiles.get(i);
+            int x, y, w, h;
+            if (zoomed != null) {
+                boolean visible = tile == zoomed;
+                tile.frame.setVisibility(visible ? View.VISIBLE : View.GONE);
+                x = 0; y = 0; w = width; h = height;
+            } else if (featured != null && count > 1) {
+                tile.frame.setVisibility(View.VISIBLE);
+                int mainWidth = Math.round(width * 0.7f);
+                if (tile == featured) {
+                    x = gap; y = gap; w = mainWidth - gap * 2; h = height - gap * 2;
+                } else {
+                    int others = count - 1;
+                    int position = 0;
+                    for (Tile other : tiles) {
+                        if (other == tile) break;
+                        if (other != featured) position++;
+                    }
+                    int slot = (height - gap) / Math.max(others, 1);
+                    x = mainWidth; y = gap + position * slot; w = width - mainWidth - gap; h = slot - gap;
+                }
+            } else {
+                tile.frame.setVisibility(View.VISIBLE);
+                int columns = count == 1 ? 1 : 2;
+                int rows = count <= 2 ? 1 : 2;
+                int cellW = (width - gap) / columns;
+                int cellH = (height - gap) / rows;
+                if (count == 2) cellH = Math.min(height - gap * 2, Math.round((cellW - gap) * 9f / 16f) + gap);
+                int top = count == 2 ? (height - cellH) / 2 : 0;
+                x = gap + (i % columns) * cellW; y = top + gap + (i / columns) * cellH;
+                w = cellW - gap; h = cellH - gap;
             }
-            row.setVisibility(zoomed == null || rowVisible ? View.VISIBLE : View.GONE);
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(Math.max(1, w), Math.max(1, h));
+            params.leftMargin = x;
+            params.topMargin = y;
+            tile.frame.setLayoutParams(params);
         }
-        tile.frame.requestFocus();
+    }
+
+    private void menu(final Tile tile) {
+        final List<String> labels = new ArrayList<String>();
+        final List<Runnable> actions = new ArrayList<Runnable>();
+        if (tile != audio) {
+            labels.add("♪  Écouter cette chaîne");
+            actions.add(new Runnable() { @Override public void run() { audio = tile; refreshLabels(); } });
+        }
+        if (tiles.size() > 1) {
+            labels.add(featured == tile ? "Revenir à la grille" : "Mettre en avant");
+            actions.add(new Runnable() { @Override public void run() { featured = featured == tile ? null : tile; arrange(); tile.frame.requestFocus(); } });
+        }
+        labels.add(zoomed == tile ? "Quitter le plein écran" : "Plein écran");
+        actions.add(new Runnable() { @Override public void run() { zoomed = zoomed == tile ? null : tile; arrange(); tile.frame.requestFocus(); } });
+        if (tile.options.size() > 1 || !tile.failed.isEmpty()) {
+            labels.add("Changer de serveur (" + tile.options.size() + ")");
+            actions.add(new Runnable() { @Override public void run() { servers(tile); } });
+        }
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(tile.title)
+            .setItems(labels.toArray(new String[0]), new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    actions.get(which).run();
+                }
+            })
+            .show();
+    }
+
+    private void servers(final Tile tile) {
+        String[] labels = new String[tile.options.size()];
+        for (int i = 0; i < labels.length; i++) {
+            Option option = tile.options.get(i);
+            labels[i] = (i == tile.current ? "▶  " : "") + option.label
+                + (option.url.isEmpty() ? "  (automatique)" : "") + (tile.failed.contains(i) ? "  · échec" : "");
+        }
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(tile.title + " · serveurs")
+            .setItems(labels, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    tile.failed.remove(Integer.valueOf(which));
+                    play(tile, which);
+                }
+            })
+            .show();
+    }
+
+    // ── Lecture et changement de serveur ───────────────────────────────────
+    private int nextOption(Tile tile) {
+        for (int step = 1; step <= tile.options.size(); step++) {
+            int index = (tile.current + step) % tile.options.size();
+            if (!tile.failed.contains(index)) return index;
+        }
+        return -1;
+    }
+
+    private void play(final Tile tile, final int index) {
+        if (tile.stream != null) tile.stream.release();
+        tile.stream = null;
+        tile.current = index;
+        final int generation = ++tile.generation;
+        refreshLabels();
+        final Option option = tile.options.get(index);
+        if (!option.url.isEmpty()) {
+            start(tile, option.url, option.mime);
+            return;
+        }
+        // Serveur « automatique » : le serveur Noctra fournit le flux à la demande.
+        showStatus(tile, "Connexion à " + option.label + "…");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String url = resolve(option.resolve);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || generation != tile.generation) return;
+                        if (url == null) {
+                            if (!tile.failed.contains(index)) tile.failed.add(index);
+                            int next = nextOption(tile);
+                            if (next >= 0) play(tile, next);
+                            else showStatus(tile, "Flux indisponible · OK › Changer de serveur");
+                            return;
+                        }
+                        option.url = url;
+                        start(tile, url, option.mime);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void start(Tile tile, String url, String mime) {
+        boolean ours = NoctraHomeActivity.sameOrigin(Uri.parse(url), Uri.parse(NoctraConfig.NOCTRA_URL));
+        tile.stream = new NoctraStream(this, tile.view, tile, url, mime, ours ? token : null, true);
+        tile.stream.setVolume(tile == audio ? 1f : 0f);
+        tile.stream.start();
+    }
+
+    private String resolve(String address) {
+        HttpURLConnection connection = null;
+        try {
+            URL target = new URL(address);
+            connection = (HttpURLConnection) target.openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(30000);
+            if (token != null && NoctraHomeActivity.sameOrigin(Uri.parse(address), Uri.parse(NoctraConfig.NOCTRA_URL))) {
+                connection.setRequestProperty("x-noctra-token", token);
+            }
+            if (connection.getResponseCode() != 200) return null;
+            InputStream input = connection.getInputStream();
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int read;
+            while ((read = input.read(chunk)) != -1) buffer.write(chunk, 0, read);
+            input.close();
+            JSONObject result = new JSONObject(buffer.toString("UTF-8"));
+            JSONArray options = result.optJSONArray("options");
+            if (options == null) {
+                String direct = result.optString("streamUrl", "");
+                return direct.isEmpty() ? null : new URL(target, direct).toString();
+            }
+            for (int i = 0; i < options.length(); i++) {
+                JSONObject option = options.optJSONObject(i);
+                if (option == null || option.optBoolean("manualOnly", false)) continue;
+                String stream = option.optString("streamUrl", "");
+                if (!stream.isEmpty()) return new URL(target, stream).toString();
+            }
+            return null;
+        } catch (Exception error) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     @Override
@@ -205,7 +417,10 @@ public class NoctraMultiviewActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (zoomed != null) {
-            toggleZoom(zoomed);
+            Tile tile = zoomed;
+            zoomed = null;
+            arrange();
+            tile.frame.requestFocus();
             return;
         }
         finish();
@@ -220,6 +435,7 @@ public class NoctraMultiviewActivity extends Activity {
     @Override
     protected void onDestroy() {
         for (Tile tile : tiles) {
+            tile.generation++;
             if (tile.stream != null) tile.stream.release();
         }
         super.onDestroy();

@@ -15,6 +15,8 @@ import android.widget.TextView;
 
 import androidx.media3.ui.PlayerView;
 
+import java.util.HashMap;
+
 /**
  * Lecteur plein écran des chaînes TV de Noctra (NoctraStream : ExoPlayer,
  * reconnexions et retour au direct). Un échec définitif est renvoyé à
@@ -29,12 +31,44 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_TOKEN = "noctra_token";
     static final String EXTRA_ERROR = "noctra_error";
     static final String EXTRA_PLAYED = "noctra_played";
+    // Films et épisodes (lecture Jellyfin) :
+    static final String EXTRA_VOD = "noctra_vod";
+    static final String EXTRA_AUTHORIZATION = "noctra_authorization";
+    static final String EXTRA_JELLYFIN_BASE = "noctra_jellyfin_base";
+    static final String EXTRA_ITEM_ID = "noctra_item_id";
+    static final String EXTRA_MEDIA_SOURCE_ID = "noctra_media_source_id";
+    static final String EXTRA_PLAY_SESSION_ID = "noctra_play_session_id";
+    static final String EXTRA_DEVICE_ID = "noctra_device_id";
+    static final String EXTRA_START_MS = "noctra_start_ms";
+    static final String EXTRA_POSITION_MS = "noctra_position_ms";
+    static final String EXTRA_ENDED = "noctra_ended";
+    private static final long REPORT_MS = 10000;
     static final int RESULT_ERROR = RESULT_FIRST_USER;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private NoctraStream stream;
     private TextView status;
     private LinearLayout banner;
+    private NoctraPlaybackReport report;
+    private boolean vod;
+    private boolean reportedStart;
+    private boolean ended;
+
+    private final Runnable progress = new Runnable() {
+        @Override
+        public void run() {
+            if (report == null || stream == null) return;
+            if (stream.hasPlayed()) {
+                if (!reportedStart) {
+                    reportedStart = true;
+                    report.started(stream.positionMs());
+                } else {
+                    report.progress(stream.positionMs(), stream.isPaused());
+                }
+            }
+            handler.postDelayed(this, reportedStart ? REPORT_MS : 1000);
+        }
+    };
 
     private final Runnable hideBanner = new Runnable() {
         @Override
@@ -84,7 +118,23 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
         setContentView(root);
         handler.postDelayed(hideBanner, 5000);
-        stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_TOKEN), false);
+        vod = intent.getBooleanExtra(EXTRA_VOD, false);
+        if (vod) {
+            // Film ou épisode : en-tête Jellyfin (jeton) et suivi de lecture.
+            HashMap<String, String> headers = new HashMap<String, String>();
+            String authorization = intent.getStringExtra(EXTRA_AUTHORIZATION);
+            if (authorization != null) headers.put("Authorization", authorization);
+            stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, false,
+                intent.getLongExtra(EXTRA_START_MS, 0));
+            if (authorization != null) {
+                report = new NoctraPlaybackReport(intent.getStringExtra(EXTRA_JELLYFIN_BASE), authorization,
+                    intent.getStringExtra(EXTRA_ITEM_ID), intent.getStringExtra(EXTRA_MEDIA_SOURCE_ID),
+                    intent.getStringExtra(EXTRA_PLAY_SESSION_ID), intent.getStringExtra(EXTRA_DEVICE_ID));
+                handler.postDelayed(progress, 1000);
+            }
+        } else {
+            stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_TOKEN), false);
+        }
         stream.start();
     }
 
@@ -115,9 +165,30 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         finishWith(false, message);
     }
 
+    @Override
+    public void onEnded(NoctraStream source) {
+        ended = true;
+        finishWith(true, null);
+    }
+
+    private boolean finished;
+
     private void finishWith(boolean ok, String error) {
+        if (finished) return;
+        finished = true;
+        handler.removeCallbacks(progress);
+        long position = stream == null ? 0 : stream.positionMs();
+        if (ended && stream != null) position = Math.max(position, stream.durationMs());
+        if (report != null) {
+            if (!reportedStart && stream != null && stream.hasPlayed()) report.started(position);
+            report.stopped(position);
+            report = null;
+        }
         if (stream != null) stream.release();
         Intent data = new Intent();
+        data.putExtra(EXTRA_VOD, vod);
+        data.putExtra(EXTRA_POSITION_MS, position);
+        data.putExtra(EXTRA_ENDED, ended);
         data.putExtra(EXTRA_PLAYED, stream != null && stream.hasPlayed());
         if (!ok) data.putExtra(EXTRA_ERROR, error);
         setResult(ok ? RESULT_OK : RESULT_ERROR, data);
@@ -139,6 +210,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(hideBanner);
+        if (!finished) finishWith(true, null);
         if (stream != null) stream.release();
         super.onDestroy();
     }

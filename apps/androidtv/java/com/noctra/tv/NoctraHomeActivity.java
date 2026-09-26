@@ -57,6 +57,7 @@ public class NoctraHomeActivity extends Activity {
 
     private static final int PLAYER_REQUEST = 7;
     private static final int MULTIVIEW_REQUEST = 8;
+    private static final int WEBPLAYER_REQUEST = 9;
 
     private FrameLayout root;
     private WebView webView;
@@ -69,6 +70,7 @@ public class NoctraHomeActivity extends Activity {
     private Uri server;
     private View cursor;
     private boolean cursorMode;
+    private JSONObject pendingRemote;
     private float cursorX;
     private float cursorY;
 
@@ -89,6 +91,35 @@ public class NoctraHomeActivity extends Activity {
         root.setBackgroundColor(Color.rgb(9, 10, 15));
         setContentView(root);
         createWebView("index.html");
+        remoteCommand(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        remoteCommand(intent);
+    }
+
+    // Commande « Lire sur… » reçue d'un téléphone ou d'un PC (NoctraRemote).
+    private void remoteCommand(Intent intent) {
+        if (intent == null || webView == null) return;
+        String play = intent.getStringExtra(NoctraRemote.EXTRA_PLAY_ITEM);
+        String show = intent.getStringExtra(NoctraRemote.EXTRA_SHOW_ITEM);
+        if (play == null && show == null) return;
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "remote");
+            message.put("action", play != null ? "play" : "show");
+            message.put("itemId", play != null ? play : show);
+            message.put("startMs", intent.getLongExtra(NoctraRemote.EXTRA_START_TICKS, -1) / 10000L);
+            intent.removeExtra(NoctraRemote.EXTRA_PLAY_ITEM);
+            intent.removeExtra(NoctraRemote.EXTRA_SHOW_ITEM);
+            // Page pas encore prête : envoi à la connexion du canal (sendSession).
+            if (hostPort == null) pendingRemote = message;
+            else send(message);
+        } catch (Exception ignored) {
+        }
     }
 
     private void createWebView(String page) {
@@ -280,7 +311,12 @@ public class NoctraHomeActivity extends Activity {
             message.put("noctraUrl", NoctraConfig.NOCTRA_URL);
             message.put("jellyfinUrl", NoctraConfig.JELLYFIN_URL);
             message.put("version", NoctraConfig.VERSION);
+            message.put("codecs", codecs());
             send(message);
+            if (pendingRemote != null) {
+                send(pendingRemote);
+                pendingRemote = null;
+            }
         } catch (Exception ignored) {
         }
     }
@@ -328,6 +364,17 @@ public class NoctraHomeActivity extends Activity {
             }
         } else if (action.equals("multiview")) {
             openMultiview(message.optJSONArray("items"));
+        } else if (action.equals("webPlayer")) {
+            String url = message.optString("url");
+            if (!url.startsWith("https://") && !url.startsWith("http://")) return;
+            Intent intent = new Intent(this, NoctraWebPlayerActivity.class);
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_URL, url);
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_TITLE, message.optString("title"));
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_SUBTITLE, message.optString("subtitle"));
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_COMPAT, message.optBoolean("compat", false));
+            // Le jeton ne sert qu'aux lecteurs préparés par le serveur Noctra.
+            if (sameOrigin(Uri.parse(url), server)) intent.putExtra(NoctraWebPlayerActivity.EXTRA_TOKEN, session.accessToken);
+            startActivityForResult(intent, WEBPLAYER_REQUEST);
         } else if (action.equals("cursor")) {
             setCursorMode(message.optBoolean("data", false));
         } else if (action.equals("play")) {
@@ -341,6 +388,21 @@ public class NoctraHomeActivity extends Activity {
             Uri target = Uri.parse(url);
             // Le jeton ne part que vers le serveur Noctra, jamais vers un autre hôte.
             if (sameOrigin(target, server)) intent.putExtra(NoctraPlayerActivity.EXTRA_TOKEN, session.accessToken);
+            if (message.optBoolean("vod", false)) {
+                // Film ou épisode : jeton Jellyfin seulement pour le serveur Jellyfin connu.
+                Uri jellyfin = jellyfinOrigin(target);
+                if (jellyfin == null) return;
+                String deviceId = message.optString("deviceId", "noctra-tv");
+                intent.putExtra(NoctraPlayerActivity.EXTRA_VOD, true);
+                intent.putExtra(NoctraPlayerActivity.EXTRA_AUTHORIZATION, NoctraPlaybackReport.authorization(session.accessToken, deviceId));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_JELLYFIN_BASE, message.optString("jellyfin"));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_ITEM_ID, message.optString("itemId"));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_MEDIA_SOURCE_ID, message.optString("mediaSourceId"));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID, message.optString("playSessionId"));
+                intent.putExtra(NoctraPlayerActivity.EXTRA_DEVICE_ID, deviceId);
+                intent.putExtra(NoctraPlayerActivity.EXTRA_START_MS, message.optLong("startMs", 0));
+                if (!sameOrigin(Uri.parse(message.optString("jellyfin")), jellyfin)) return;
+            }
             try {
                 startActivityForResult(intent, PLAYER_REQUEST);
             } catch (ActivityNotFoundException ignored) {
@@ -355,29 +417,9 @@ public class NoctraHomeActivity extends Activity {
 
     private void openMultiview(JSONArray items) {
         if (items == null || items.length() == 0) return;
-        int count = Math.min(4, items.length());
-        String[] urls = new String[count];
-        String[] titles = new String[count];
-        String[] subtitles = new String[count];
-        String[] mimes = new String[count];
-        boolean[] authorized = new boolean[count];
-        for (int i = 0; i < count; i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item == null) return;
-            String url = item.optString("url");
-            if (!url.startsWith("https://") && !url.startsWith("http://")) return;
-            urls[i] = url;
-            titles[i] = item.optString("title");
-            subtitles[i] = item.optString("subtitle");
-            mimes[i] = item.optString("mime");
-            authorized[i] = sameOrigin(Uri.parse(url), server);
-        }
         Intent intent = new Intent(this, NoctraMultiviewActivity.class);
-        intent.putExtra(NoctraMultiviewActivity.EXTRA_URLS, urls);
-        intent.putExtra(NoctraMultiviewActivity.EXTRA_TITLES, titles);
-        intent.putExtra(NoctraMultiviewActivity.EXTRA_SUBTITLES, subtitles);
-        intent.putExtra(NoctraMultiviewActivity.EXTRA_MIMES, mimes);
-        intent.putExtra(NoctraMultiviewActivity.EXTRA_AUTHORIZED, authorized);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_ITEMS, items.toString());
+        // Le jeton n'est envoyé qu'au serveur Noctra (vérifié par le multiview).
         intent.putExtra(NoctraMultiviewActivity.EXTRA_TOKEN, session.accessToken);
         try {
             startActivityForResult(intent, MULTIVIEW_REQUEST);
@@ -494,12 +536,30 @@ public class NoctraHomeActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == WEBPLAYER_REQUEST) {
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "webPlayerClosed");
+                // RESULT_CANCELED sans données : le processus du lecteur s'est arrêté.
+                message.put("crashed", data == null && resultCode == RESULT_CANCELED);
+                message.put("ok", resultCode == RESULT_OK);
+                message.put("playing", data != null && data.getBooleanExtra(NoctraWebPlayerActivity.EXTRA_PLAYING, false));
+                message.put("media", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_MEDIA));
+                message.put("error", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_ERROR));
+                send(message);
+            } catch (Exception ignored) {
+            }
+            return;
+        }
         if (requestCode != PLAYER_REQUEST) return;
         try {
             JSONObject message = new JSONObject();
             message.put("type", "playerClosed");
             message.put("ok", resultCode != NoctraPlayerActivity.RESULT_ERROR);
             message.put("played", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_PLAYED, false));
+            message.put("vod", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_VOD, false));
+            message.put("ended", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_ENDED, false));
+            message.put("positionMs", data == null ? 0 : data.getLongExtra(NoctraPlayerActivity.EXTRA_POSITION_MS, 0));
             message.put("error", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_ERROR));
             send(message);
         } catch (Exception ignored) {
@@ -569,6 +629,38 @@ public class NoctraHomeActivity extends Activity {
     private static int port(Uri uri) {
         if (uri.getPort() != -1) return uri.getPort();
         return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    // Origine Jellyfin autorisée à recevoir le jeton : l'adresse intégrée ou
+    // celle de la session enregistrée par l'appli.
+    private Uri jellyfinOrigin(Uri target) {
+        Uri configured = Uri.parse(NoctraConfig.JELLYFIN_URL);
+        if (sameOrigin(target, configured)) return configured;
+        if (session.serverAddress != null && !session.serverAddress.isEmpty()) {
+            Uri stored = Uri.parse(session.serverAddress);
+            if (sameOrigin(target, stored)) return stored;
+        }
+        return null;
+    }
+
+    // Décodeurs du téléviseur : le serveur ne convertit que ce qui ne passe pas.
+    private JSONObject codecs() {
+        JSONObject result = new JSONObject();
+        try {
+            android.media.MediaCodecList list = new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS);
+            java.util.HashSet<String> types = new java.util.HashSet<String>();
+            for (android.media.MediaCodecInfo info : list.getCodecInfos()) {
+                if (info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) types.add(type.toLowerCase());
+            }
+            result.put("hevc", types.contains("video/hevc"));
+            result.put("vp9", types.contains("video/x-vnd.on2.vp9"));
+            result.put("ac3", types.contains("audio/ac3"));
+            result.put("eac3", types.contains("audio/eac3"));
+            result.put("dts", types.contains("audio/vnd.dts"));
+        } catch (Throwable ignored) {
+        }
+        return result;
     }
 
     static boolean sameOrigin(Uri a, Uri b) {

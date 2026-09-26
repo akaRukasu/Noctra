@@ -418,3 +418,40 @@ h1, h2, h3, p { margin: 0; }
 .others-row.track { padding: .3rem .2rem .5rem; grid-gap: .8rem; }
 .others-row .other { margin-right: .8rem; flex: none; }
 body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibility: hidden; }
+.grid.bouquets { grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+.bouquet {
+  display: grid; justify-items: start; grid-gap: .35rem; padding: 1rem; border-radius: 1rem; background: var(--surface);
+  border: 1px solid var(--line); transition: transform .15s;
+}
+.bouquet-logo { position: relative; display: grid; place-items: center; width: 100%; height: 5rem; border-radius: .7rem; background: #151823; color: var(--accent); overflow: hidden; }
+.bouquet-logo img { position: absolute; top: 12%; left: 12%; width: 76%; height: 76%; object-fit: contain; }
+.bouquet-logo svg { width: 2rem; height: 2rem; }
+.bouquet strong { font-size: 1rem; }
+.bouquet small { color: var(--muted); font-size: .8rem; }
+.bouquet:focus { outline: none; transform: scale(1.04); border-color: transparent; box-shadow: 0 0 0 .2rem var(--focus); background: var(--surface-2); }
+
+/* ── Fiche film / série ───────────────────────────────────────────── */
+.detail { position: relative; margin: -.4rem 0 1rem; min-height: 26rem; }
+.detail-backdrop { position: absolute; top: calc(-1 * var(--header) - .4rem); left: 0; width: 100%; height: 34rem; object-fit: cover; opacity: .5; }
+.detail-shade {
+  position: absolute; top: calc(-1 * var(--header) - .4rem); left: 0; right: 0; height: 34rem;
+  background: linear-gradient(90deg, rgba(9, 10, 15, .96) 25%, rgba(9, 10, 15, .55) 60%, rgba(9, 10, 15, .2)),
+              linear-gradient(0deg, #090a0f 2%, rgba(9, 10, 15, 0) 45%);
+}
+.detail-body { position: relative; display: grid; grid-template-columns: 13rem 1fr; grid-gap: 2rem; padding: 1.2rem 2.5rem 0; align-items: start; }
+.detail-poster { position: relative; width: 13rem; height: 19.5rem; border-radius: 1rem; overflow: hidden; background: #1b1f2c; border: 1px solid var(--line); }
+.detail-poster.wide { height: 7.3rem; }
+.detail-poster img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.detail-info { display: grid; grid-gap: .6rem; align-content: start; max-width: 52rem; }
+.detail-info .eyebrow { color: var(--accent); font-size: .78rem; font-weight: 800; letter-spacing: .14em; }
+.detail-info h1 { font-size: 2.5rem; line-height: 1.08; font-weight: 800; }
+.detail-info .facts span { margin-right: 1rem; color: #cfd6e2; font-size: .92rem; font-weight: 600; }
+.detail-info .tagline { color: var(--accent); font-style: italic; font-size: .95rem; }
+.detail-info .overview { color: #cfd6e2; font-size: .95rem; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.detail-info .actions { margin-top: .4rem; }
+.btn.on { color: var(--accent); border-color: rgba(112, 217, 194, .45); }
+.btn.on:focus { color: #0b0d12; }
+.card.person .art { padding-bottom: 100%; border-radius: 50%; }
+.card.person { width: 7.5rem; text-align: center; }
+.card.person:focus .art { box-shadow: 0 0 0 .2rem var(--focus); }
+.episodes .card.episode { width: 17rem; }

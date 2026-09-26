@@ -47,6 +47,10 @@
     settings: '<path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/>',
     grid: '<path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/>',
     check: '<path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/>',
+    heart: '<path d="M12 20.5 10.6 19.2C5.4 14.5 2 11.4 2 7.6 2 4.5 4.4 2 7.5 2c1.7 0 3.4.8 4.5 2.1C13.1 2.8 14.8 2 16.5 2 19.6 2 22 4.5 22 7.6c0 3.8-3.4 6.9-8.6 11.6z"/>',
+    audio: '<path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h2v-8H5v-1a7 7 0 0 1 14 0v1h-2v8h2a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/>',
+    subtitles: '<path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7v2h4v-2zm6 0v2h6v-2zm-6-4v2h8V8zm10 0v2h2V8z"/>',
+    restart: '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>',
     prev: '<path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/>',
     next: '<path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6z"/>',
     tag: '<path d="M3 3h8l10 10-8 8L3 11zm4.5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>',
@@ -150,8 +154,10 @@
       var data;
       try { data = JSON.parse(message.data); } catch (error) { return; }
       if (data.type === 'session') startSession(data);
-      else if (data.type === 'playerClosed') playerClosed(data);
+      else if (data.type === 'playerClosed') { if (data.vod) vodClosed(data); else playerClosed(data); }
       else if (data.type === 'resumed') appResumed();
+      else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
+      else if (data.type === 'remote') remoteCommand(data);
       else if (data.type === 'nativeError') toast('Action impossible : ' + data.message, true);
     };
     native('hello');
@@ -178,6 +184,7 @@
     S.userId = data.userId;
     S.userName = data.userName || '';
     S.noctra = String(data.noctraUrl || '').replace(/\/+$/, '');
+    S.codecs = data.codecs || {};
     // Jellyfin sur la même origine que la page si possible (pas de CORS).
     var own = String(data.jellyfinUrl || '').replace(/\/+$/, '');
     var remote = String(data.serverAddress || '').replace(/\/+$/, '');
@@ -350,8 +357,11 @@
     var s = scroller.getBoundingClientRect(), b = box.getBoundingClientRect();
     if (b.height > scroller.clientHeight * 0.7) { box = node; b = node.getBoundingClientRect(); }
     var top = scroller === main ? headerHeight() + 8 : s.top + 20;
+    // Barre du multiview : les éléments choisis restent au-dessus d'elle.
+    var bar = scroller === main && document.getElementById('multibar');
+    var bottom = bar ? bar.getBoundingClientRect().top - 16 : s.bottom - 30;
     if (b.top < top) scrollTo(scroller, null, scroller.scrollTop - (top - b.top));
-    else if (b.bottom > s.bottom - 30) scrollTo(scroller, null, scroller.scrollTop + Math.min(b.bottom - (s.bottom - 30), b.top - top));
+    else if (b.bottom > bottom) scrollTo(scroller, null, scroller.scrollTop + Math.min(b.bottom - bottom, b.top - top));
   }
   var headerCache = 0;
   function headerHeight() {
@@ -631,9 +641,6 @@
     if (item.ImageTags && item.ImageTags.Primary) return jfImage(item.Id, 'Primary', item.ImageTags.Primary, 360);
     return '';
   }
-  function openItem(id) {
-    if (!native('openItem', { id: id })) toast('Fiche : disponible dans l’appli Noctra TV.');
-  }
   function itemCard(item, kind) {
     var wide = kind === 'wide';
     var progress = item.UserData && item.UserData.PlayedPercentage;
@@ -648,6 +655,368 @@
     });
   }
 
+  // ── Fiches films et séries (comme sur PC, sans écran Jellyfin) ──────
+  function openItem(id, extra) {
+    var params = { section: current && current.params && current.params.section || (current && current.name) || 'home', id: id };
+    if (extra) Object.keys(extra).forEach(function (key) { params[key] = extra[key]; });
+    go('item', params);
+  }
+  function jfSend(method, path) {
+    var url = S.jf + path.replace('{userId}', encodeURIComponent(S.userId));
+    return request(url, { method: method, headers: { Authorization: jfAuthorization() } });
+  }
+  function jfAuthorization() {
+    return 'MediaBrowser Client="Noctra TV", Device="Android TV", DeviceId="' + deviceId() + '", Version="1", Token="' + S.token + '"';
+  }
+  function deviceId() { return 'noctra-tv-' + S.userId; }
+  // Jellyfin récent (/UserPlayedItems) puis ancien chemin (/Users/…/PlayedItems).
+  function toggleUserFlag(kind, id, on) {
+    var method = on ? 'POST' : 'DELETE';
+    var modern = kind === 'played' ? '/UserPlayedItems/' : '/UserFavoriteItems/';
+    var legacy = kind === 'played' ? '/Users/{userId}/PlayedItems/' : '/Users/{userId}/FavoriteItems/';
+    return jfSend(method, modern + id + '?userId=' + encodeURIComponent(S.userId)).catch(function () {
+      return jfSend(method, legacy + id);
+    });
+  }
+  function runtimeText(ticks) {
+    var minutes = Math.round((ticks || 0) / 600000000);
+    if (!minutes) return '';
+    return minutes >= 60 ? Math.floor(minutes / 60) + ' h ' + ('0' + (minutes % 60)).slice(-2) : minutes + ' min';
+  }
+  function endsAt(ticks, positionTicks) {
+    var remaining = ((ticks || 0) - (positionTicks || 0)) / 10000;
+    if (remaining <= 0) return '';
+    var end = new Date(Date.now() + remaining);
+    return 'Fin vers ' + ('0' + end.getHours()).slice(-2) + ':' + ('0' + end.getMinutes()).slice(-2);
+  }
+
+  // Préférences de pistes : langue audio et sous-titres, réutilisées d'un épisode à l'autre.
+  var trackPrefs = { audio: '', subtitles: '' };
+  try { var savedTracks = JSON.parse(localStorage.getItem('noctra-tv-tracks') || 'null'); if (savedTracks) trackPrefs = savedTracks; } catch (error) { /* défaut */ }
+  function saveTracks() { try { localStorage.setItem('noctra-tv-tracks', JSON.stringify(trackPrefs)); } catch (error) { /* stockage indisponible */ } }
+  function streamsOf(item, type) {
+    var source = (item.MediaSources || [])[0];
+    return ((source && source.MediaStreams) || item.MediaStreams || []).filter(function (stream) { return stream.Type === type; });
+  }
+  function pickAudio(item) {
+    var audio = streamsOf(item, 'Audio');
+    var wanted = trackPrefs.audio && audio.filter(function (stream) { return stream.Language === trackPrefs.audio; })[0];
+    return wanted || audio.filter(function (stream) { return stream.IsDefault; })[0] || audio[0] || null;
+  }
+  function pickSubtitle(item) {
+    var subs = streamsOf(item, 'Subtitle');
+    if (trackPrefs.subtitles === 'none') return null;
+    if (trackPrefs.subtitles) return subs.filter(function (stream) { return stream.Language === trackPrefs.subtitles; })[0] || null;
+    return subs.filter(function (stream) { return stream.IsForced; })[0] || subs.filter(function (stream) { return stream.IsDefault; })[0] || null;
+  }
+  function trackLabel(stream) {
+    if (!stream) return 'Aucun';
+    return stream.DisplayTitle || stream.Title || stream.Language || ('Piste ' + stream.Index);
+  }
+
+  // Lecture dans le lecteur de l'appli (ExoPlayer) : Jellyfin fournit un flux
+  // HLS, en copiant ce que le téléviseur sait décoder et en convertissant le reste.
+  var vodPlayback = null;
+  function hlsUrl(item, source, playSessionId, audio, subtitle) {
+    var codecs = S.codecs || {};
+    var video = ['h264'].concat(codecs.hevc ? ['hevc'] : []);
+    var audioCodecs = ['aac', 'mp3'].concat(codecs.ac3 ? ['ac3'] : [], codecs.eac3 ? ['eac3'] : []);
+    var params = {
+      MediaSourceId: source.Id, PlaySessionId: playSessionId, DeviceId: deviceId(),
+      VideoCodec: video.join(','), AudioCodec: audioCodecs.join(','),
+      AudioStreamIndex: audio ? audio.Index : '',
+      SubtitleStreamIndex: subtitle ? subtitle.Index : '',
+      SubtitleMethod: subtitle ? (subtitle.IsTextSubtitleStream ? 'Hls' : 'Encode') : '',
+      MaxStreamingBitrate: 80000000, TranscodingMaxAudioChannels: 6, SegmentContainer: 'ts', MinSegments: 1,
+      BreakOnNonKeyFrames: 'True', AllowVideoStreamCopy: 'true', AllowAudioStreamCopy: 'true', RequireAvc: 'false',
+      'h264-profile': 'high,main,baseline,constrained baseline', 'h264-level': '51', 'hevc-profile': 'main,main10'
+    };
+    var query = Object.keys(params).filter(function (key) { return params[key] !== ''; })
+      .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
+    return S.jf + '/Videos/' + item.Id + '/master.m3u8?' + query;
+  }
+  function playItem(item, options) {
+    options = options || {};
+    var load = item.MediaSources ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id);
+    return load.then(function (full) {
+      var source = (full.MediaSources || [])[0];
+      if (!source) { toast('Aucune vidéo disponible pour ce titre.', true); return; }
+      var playSessionId = (Date.now().toString(16) + Math.random().toString(16).slice(2)).slice(0, 32);
+      var resumeTicks = full.UserData && full.UserData.PlaybackPositionTicks || 0;
+      var startMs = typeof options.startMs === 'number' ? options.startMs : options.fromStart ? 0 : Math.floor(resumeTicks / 10000);
+      var url = hlsUrl(full, source, playSessionId, pickAudio(full), pickSubtitle(full));
+      vodPlayback = { item: full };
+      var sent = native('play', {
+        url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
+        vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs
+      });
+      if (!sent) toast('La lecture est disponible dans l’appli Noctra TV.', true);
+    }, function (error) { toast(error.message, true); });
+  }
+  // « Lire sur… » depuis un téléphone ou un PC : lecteur Noctra ou fiche.
+  function remoteCommand(data) {
+    if (!/^[0-9a-f]{32}$/i.test(String(data.itemId || ''))) return;
+    if (data.action === 'show') { openItem(data.itemId); return; }
+    toast('Lecture demandée depuis un autre appareil…');
+    playItem({ Id: data.itemId }, data.startMs >= 0 ? { startMs: data.startMs } : {});
+  }
+  function vodClosed(result) {
+    var entry = vodPlayback;
+    vodPlayback = null;
+    forget('resume'); forget('nextup'); forget('item:');
+    if (!result.ok && result.error) toast(result.error, true);
+    if (entry && result.ended && entry.item.Type === 'Episode') { nextEpisode(entry.item); return; }
+    if (current && (current.name === 'item' || current.name === 'home') && !layer.firstChild) { remember(current); show(false); }
+  }
+  // Fin d'épisode : le suivant est proposé, lancé seul après 10 s.
+  function nextEpisode(episode) {
+    jf('/Shows/' + episode.SeriesId + '/Episodes', { UserId: S.userId, StartItemId: episode.Id, Limit: 2, Fields: 'Overview' }).then(function (data) {
+      var next = (data.Items || [])[1];
+      if (!next) { if (current && current.name === 'item') { remember(current); show(false); } return; }
+      var note = h('div', { class: 'picker-status', 'data-countdown': '1' });
+      var left = 10;
+      var timer = setInterval(function () {
+        left--;
+        if (left <= 0) { clearInterval(timer); if (document.body.contains(sheet)) { closeLayer(); playItem(next); } return; }
+        note.textContent = 'Lecture automatique dans ' + left + ' s…';
+      }, 1000);
+      note.textContent = 'Lecture automatique dans 10 s…';
+      var sheet = h('div', { class: 'list' },
+        h('h2', null, 'Épisode suivant', h('small', { text: itemTitle(next) + ' · ' + itemSub(next) })),
+        note,
+        h('button', { class: 'btn primary f', autofocus: true, onclick: function () { clearInterval(timer); closeLayer(); playItem(next); } }, icon('play'), 'Lire maintenant'),
+        h('button', { class: 'btn f', text: 'Plus tard', onclick: function () { clearInterval(timer); closeLayer(); } }));
+      var modal = h('div', { class: 'modal' }, sheet);
+      modal._onClose = function () { clearInterval(timer); };
+      openLayer(modal);
+    });
+  }
+
+  function trackChooser(title, streams, selected, onPick, allowNone) {
+    var list = h('div', { class: 'list scroll' }, h('h2', { text: title }));
+    if (allowNone) list.appendChild(h('button', { class: 'btn f' + (!selected ? ' primary' : ''), text: 'Aucun', onclick: function () { closeLayer(); onPick(null); } }));
+    streams.forEach(function (stream) {
+      list.appendChild(h('button', { class: 'btn f' + (selected && selected.Index === stream.Index ? ' primary' : ''), text: trackLabel(stream), onclick: function () { closeLayer(); onPick(stream); } }));
+    });
+    list.appendChild(h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
+    openLayer(h('div', { class: 'modal' }, list));
+  }
+
+  views.item = function (params, alive) {
+    var status = loading();
+    main.appendChild(status);
+    return memo('item:' + params.id, 60000, function () { return jf('/Users/{userId}/Items/' + params.id); }).then(function (item) {
+      if (!alive()) return;
+      status.remove();
+      if (item.Type === 'Series') return seriesPage(item, params, alive);
+      if (item.Type === 'BoxSet' || item.Type === 'Season' || item.Type === 'Folder' || item.Type === 'CollectionFolder') return collectionPage(item, alive);
+      if (item.Type === 'Person') { go('person', { section: params.section, person: item }); return; }
+      return titlePage(item, alive);
+    }, function (error) {
+      if (!alive()) return;
+      status.replaceWith(failure(error, function () { show(false); }));
+    });
+  };
+
+  function detailHeader(item, actions, extra) {
+    var seriesId = item.Type === 'Episode' ? item.SeriesId : null;
+    var backdrop = image(backdropUrl(item.Type === 'Episode' ? { Id: seriesId, BackdropImageTags: item.ParentBackdropImageTags || [] , ParentBackdropItemId: item.ParentBackdropItemId } : item, 1280), '');
+    backdrop.className = 'detail-backdrop';
+    var poster = image(item.Type === 'Episode' ? jfImage(item.Id, 'Primary', item.ImageTags && item.ImageTags.Primary, 360) : posterImage(item) || jfImage(item.Id, 'Primary', '', 480), '');
+    var user = item.UserData || {};
+    var facts = [
+      item.Type === 'Episode' ? itemSub(item) : '',
+      item.ProductionYear ? String(item.ProductionYear) : '',
+      item.Type === 'Series' ? (item.ChildCount ? item.ChildCount + ' saison' + (item.ChildCount > 1 ? 's' : '') : '') : runtimeText(item.RunTimeTicks),
+      item.CommunityRating ? '★ ' + Number(item.CommunityRating).toFixed(1) : '',
+      item.OfficialRating || '',
+      item.RunTimeTicks && item.Type !== 'Series' ? endsAt(item.RunTimeTicks, user.PlaybackPositionTicks) : ''
+    ].filter(Boolean);
+    return h('section', { class: 'detail reveal-box' },
+      backdrop, h('div', { class: 'detail-shade' }),
+      h('div', { class: 'detail-body' },
+        h('div', { class: 'detail-poster' + (item.Type === 'Episode' ? ' wide' : '') }, poster),
+        h('div', { class: 'detail-info' },
+          item.Type === 'Episode' ? h('p', { class: 'eyebrow', text: item.SeriesName || '' }) : h('p', { class: 'eyebrow', text: item.Type === 'Series' ? 'SÉRIE' : 'FILM' }),
+          h('h1', { text: item.Name || 'Sans titre' }),
+          h('div', { class: 'facts' }, facts.map(function (fact) { return h('span', { text: fact }); })),
+          item.Genres && item.Genres.length ? h('div', { class: 'genres' }, item.Genres.slice(0, 5).map(function (genre) { return h('span', { text: genre }); })) : null,
+          item.Taglines && item.Taglines[0] ? h('p', { class: 'tagline', text: item.Taglines[0] }) : null,
+          item.Overview ? h('p', { class: 'overview', text: item.Overview }) : null,
+          h('div', { class: 'actions' }, actions),
+          extra || null)));
+  }
+  function flagButtons(item, refresh) {
+    var user = item.UserData || {};
+    var played = h('button', { class: 'btn f' + (user.Played ? ' on' : ''), onclick: function () {
+      toggleUserFlag('played', item.Id, !user.Played).then(function () {
+        user.Played = !user.Played;
+        played.classList.toggle('on', user.Played);
+        played.lastChild.textContent = user.Played ? 'Vu' : 'Marquer vu';
+        forget('item:'); forget('resume'); forget('nextup');
+        if (refresh) refresh();
+      }, function (error) { toast(error.message, true); });
+    } }, icon('check'), user.Played ? 'Vu' : 'Marquer vu');
+    var favorite = h('button', { class: 'btn f' + (user.IsFavorite ? ' on' : ''), onclick: function () {
+      toggleUserFlag('favorite', item.Id, !user.IsFavorite).then(function () {
+        user.IsFavorite = !user.IsFavorite;
+        favorite.classList.toggle('on', user.IsFavorite);
+        favorite.lastChild.textContent = user.IsFavorite ? 'Favori' : 'Ajouter aux favoris';
+        forget('item:');
+      }, function (error) { toast(error.message, true); });
+    } }, icon('heart'), user.IsFavorite ? 'Favori' : 'Ajouter aux favoris');
+    return [played, favorite];
+  }
+  function trackButtons(item) {
+    var audios = streamsOf(item, 'Audio');
+    var subs = streamsOf(item, 'Subtitle');
+    var buttons = [];
+    if (audios.length > 1) {
+      var audioButton = h('button', { class: 'btn f', onclick: function () {
+        trackChooser('Langue audio', audios, pickAudio(item), function (stream) {
+          trackPrefs.audio = stream && stream.Language || '';
+          saveTracks();
+          audioButton.lastChild.textContent = 'Audio : ' + trackLabel(pickAudio(item));
+        }, false);
+      } }, icon('audio'), 'Audio : ' + trackLabel(pickAudio(item)));
+      buttons.push(audioButton);
+    }
+    if (subs.length) {
+      var subButton = h('button', { class: 'btn f', onclick: function () {
+        trackChooser('Sous-titres', subs, pickSubtitle(item), function (stream) {
+          trackPrefs.subtitles = stream ? (stream.Language || '') : 'none';
+          saveTracks();
+          subButton.lastChild.textContent = 'Sous-titres : ' + trackLabel(pickSubtitle(item));
+        }, true);
+      } }, icon('subtitles'), 'Sous-titres : ' + trackLabel(pickSubtitle(item)));
+      buttons.push(subButton);
+    }
+    return buttons;
+  }
+  function playButtons(item) {
+    var user = item.UserData || {};
+    var resume = user.PlaybackPositionTicks > 0 && !user.Played;
+    var left = resume ? runtimeText((item.RunTimeTicks || 0) - user.PlaybackPositionTicks) : '';
+    var buttons = [h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { playItem(item); } }, icon('play'), resume ? 'Reprendre' + (left ? ' · ' + left + ' restantes' : '') : 'Lecture')];
+    if (resume) buttons.push(h('button', { class: 'btn f', onclick: function () { playItem(item, { fromStart: true }); } }, icon('restart'), 'Depuis le début'));
+    return buttons;
+  }
+  function peopleRow(item) {
+    var people = (item.People || []).filter(function (person) { return person.Type === 'Actor' || person.Type === 'Director'; }).slice(0, 20);
+    return row('Casting', people.map(function (person) {
+      var node = card({ kind: 'person', title: person.Name, sub: person.Role || (person.Type === 'Director' ? 'Réalisation' : ''),
+        image: person.PrimaryImageTag ? jfImage(person.Id, 'Primary', person.PrimaryImageTag, 240) : '',
+        onSelect: function () { go('person', { section: current.params.section, person: person }); } });
+      return node;
+    }));
+  }
+  function similarRow(item, alive, container) {
+    jf('/Items/' + item.Id + '/Similar', { UserId: S.userId, Limit: 16, Fields: 'PrimaryImageAspectRatio,ProductionYear' }).then(function (data) {
+      if (!alive()) return;
+      add(container, row('Titres similaires', (data.Items || []).map(function (similar) { return itemCard(similar); })));
+    }, function () { /* facultatif */ });
+  }
+
+  function titlePage(item, alive) {
+    var actions = playButtons(item).concat(trackButtons(item), flagButtons(item));
+    if (item.Type === 'Episode' && item.SeriesId) actions.push(h('button', { class: 'btn f', onclick: function () { openItem(item.SeriesId); } }, icon('library'), 'Voir la série'));
+    main.appendChild(detailHeader(item, actions));
+    add(main, peopleRow(item));
+    var more = h('div');
+    main.appendChild(more);
+    similarRow(item.Type === 'Episode' ? { Id: item.SeriesId } : item, alive, more);
+  }
+
+  function seriesPage(series, params, alive) {
+    var playButton = h('button', { class: 'btn primary f', 'data-start': true, onclick: function () {
+      if (nextUp) playItem(nextUp); else toast('Chargement des épisodes…');
+    } }, icon('play'), 'Lecture');
+    var nextUp = null;
+    var actions = [playButton].concat(flagButtons(series));
+    main.appendChild(detailHeader(series, actions));
+    var seasonsBox = h('section', { class: 'row' }, h('h2', { text: 'Saisons' }));
+    var seasonChips = h('div', { class: 'chips' });
+    var episodes = h('div', { class: 'track episodes' });
+    seasonsBox.appendChild(seasonChips);
+    seasonsBox.appendChild(episodes);
+    main.appendChild(seasonsBox);
+    add(main, peopleRow(series));
+    var more = h('div');
+    main.appendChild(more);
+    similarRow(series, alive, more);
+
+    function showSeason(season, focusFirstEpisode) {
+      Array.prototype.forEach.call(seasonChips.children, function (chipNode) { chipNode.classList.toggle('on', chipNode._season === season); });
+      clear(episodes);
+      episodes.appendChild(loading());
+      jf('/Shows/' + series.Id + '/Episodes', { UserId: S.userId, SeasonId: season.Id, Fields: 'Overview,PrimaryImageAspectRatio' }).then(function (data) {
+        if (!alive()) return;
+        clear(episodes);
+        var target = null;
+        (data.Items || []).forEach(function (episode) {
+          var user = episode.UserData || {};
+          var node = card({
+            kind: 'wide episode', title: 'É' + (episode.IndexNumber || '?') + ' · ' + (episode.Name || ''),
+            sub: [runtimeText(episode.RunTimeTicks), user.Played ? 'Vu' : ''].filter(Boolean).join(' · '),
+            image: jfImage(episode.Id, 'Primary', episode.ImageTags && episode.ImageTags.Primary, 270),
+            progress: user.PlayedPercentage, badge: user.Played ? '✓' : '',
+            onSelect: function () { playItem(episode); }
+          });
+          if (nextUp && nextUp.Id === episode.Id) target = node;
+          episodes.appendChild(node);
+        });
+        if (focusFirstEpisode) focus(target || episodes.querySelector('.f'));
+        else if (target) episodes._last = target;
+      });
+    }
+    return Promise.all([
+      jf('/Shows/' + series.Id + '/Seasons', { UserId: S.userId, Fields: 'PrimaryImageAspectRatio' }),
+      jf('/Shows/NextUp', { UserId: S.userId, SeriesId: series.Id, Limit: 1, Fields: 'MediaSources' }).catch(function () { return { Items: [] }; })
+    ]).then(function (result) {
+      if (!alive()) return;
+      var seasons = result[0].Items || [];
+      nextUp = (result[1].Items || [])[0] || null;
+      if (nextUp) {
+        playButton.lastChild.textContent = 'Lecture · S' + (nextUp.ParentIndexNumber || 1) + ':É' + (nextUp.IndexNumber || 1);
+      }
+      seasons.forEach(function (season) {
+        var node = chip(season.Name || ('Saison ' + season.IndexNumber), false, function () { showSeason(season, true); });
+        node._season = season;
+        seasonChips.appendChild(node);
+      });
+      var initial = nextUp && seasons.filter(function (season) { return season.Id === nextUp.SeasonId; })[0] || seasons[0];
+      if (!nextUp && seasons[0]) {
+        // Aucune reprise : premier épisode de la première saison.
+        jf('/Shows/' + series.Id + '/Episodes', { UserId: S.userId, SeasonId: seasons[0].Id, Limit: 1 }).then(function (data) { nextUp = (data.Items || [])[0] || null; });
+      }
+      if (initial) showSeason(initial, false);
+      else seasonsBox.remove();
+    });
+  }
+
+  function collectionPage(item, alive) {
+    main.appendChild(head(item.Name || 'Collection', item.Overview || ''));
+    var grid = h('div', { class: 'grid posters' });
+    main.appendChild(grid);
+    return jf('/Users/{userId}/Items', { ParentId: item.Id, Fields: 'PrimaryImageAspectRatio,ProductionYear', SortBy: 'ProductionYear,SortName' }).then(function (data) {
+      if (!alive()) return;
+      appendChunked(grid, data.Items || [], function (child) { return itemCard(child); });
+    });
+  }
+
+  views.person = function (params, alive) {
+    var person = params.person;
+    main.appendChild(head(person.Name, 'Films et séries de vos médiathèques'));
+    var grid = h('div', { class: 'grid posters' });
+    main.appendChild(grid);
+    return jf('/Users/{userId}/Items', { PersonIds: person.Id, Recursive: 'true', IncludeItemTypes: 'Movie,Series', Fields: 'PrimaryImageAspectRatio,ProductionYear', SortBy: 'ProductionYear', SortOrder: 'Descending' }).then(function (data) {
+      if (!alive()) return;
+      var items = data.Items || [];
+      if (!items.length) grid.appendChild(h('div', { class: 'empty', text: 'Aucun titre.' }));
+      appendChunked(grid, items, function (child) { return itemCard(child); });
+    });
+  };
+
   // ── Accueil ────────────────────────────────────────────────────────
   // Comme sur PC : « À l'affiche chez vous », carrousel « Continuer à
   // regarder » (défilement toutes les 8 s, suspendu tant qu'il a le focus),
@@ -659,9 +1028,11 @@
     var hero = h('div', { class: 'premiere-slot' }, h('section', { class: 'premiere premiere-empty' }));
     var libs = h('div');
     var rows = h('div', null, loading());
+    var nextUp = h('div');
     main.appendChild(hero);
-    main.appendChild(libs);
     main.appendChild(rows);
+    main.appendChild(nextUp);
+    main.appendChild(libs);
     var resume = memo('resume', 30000, function () {
       return api('/api/home/resume').then(function (data) { return (data && data.items) || []; }).catch(function () {
         return jf('/Users/{userId}/Items/Resume', { Limit: 12, MediaTypes: 'Video', Fields: 'PrimaryImageAspectRatio,Overview' }).then(function (d) { return d.Items || []; });
@@ -694,7 +1065,7 @@
       }))).then(function (result) {
         if (!alive()) return;
         clear(rows);
-        add(rows, row('À suivre', result[0].map(function (item) { return itemCard(item, 'wide'); })));
+        add(nextUp, row('À suivre', result[0].map(function (item) { return itemCard(item, 'wide'); })));
         result.slice(1).forEach(function (entry) {
           add(rows, row('Derniers ajouts', entry.items.map(function (item) { return itemCard(item); }), entry.lib.Name));
         });
@@ -730,23 +1101,15 @@
     var title = h('h2');
     var subtitle = h('p', { class: 'premiere-sub' });
     var count = h('span', { class: 'premiere-count' });
-    var play = h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { openItem(items[index].Id); } }, icon('play'), 'Reprendre');
+    var play = h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { playItem(items[index]); } }, icon('play'), 'Reprendre');
+    var details = h('button', { class: 'btn f', onclick: function () { openItem(items[index].Id); } }, 'Voir la fiche');
     var prev = h('button', { class: 'round f', 'aria-label': 'Titre précédent', onclick: function () { step(-1); } }, icon('prev'));
     var next = h('button', { class: 'round f', 'aria-label': 'Titre suivant', onclick: function () { step(1); } }, icon('next'));
-    var previews = h('div', { class: 'premiere-previews' });
-    items.slice(0, 4).forEach(function (item, position) {
-      var preview = h('button', { class: 'preview f', onclick: function () { openItem(item.Id); } },
-        h('span', { class: 'preview-image' }, image(wideImage(item), '')), h('span', { class: 'preview-title', text: itemTitle(item) }));
-      // Survoler un titre à la télécommande l'affiche en grand.
-      preview.addEventListener('focus', function () { if (index !== position) { index = position; render(); } });
-      previews.appendChild(preview);
-    });
     node.appendChild(art);
     node.appendChild(h('div', { class: 'premiere-shade' }));
     node.appendChild(h('div', { class: 'premiere-copy' },
       h('p', { class: 'eyebrow', text: 'CONTINUER À REGARDER' }), label, title, subtitle,
-      h('div', { class: 'premiere-actions' }, play, items.length > 1 ? prev : null, items.length > 1 ? count : null, items.length > 1 ? next : null)));
-    if (items.length > 1) node.appendChild(previews);
+      h('div', { class: 'premiere-actions' }, play, details, items.length > 1 ? prev : null, items.length > 1 ? count : null, items.length > 1 ? next : null)));
 
     function render() {
       var item = items[index];
@@ -756,7 +1119,6 @@
         ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + (item.Name || '')
         : String(item.ProductionYear || '');
       count.textContent = (index + 1) + ' / ' + items.length;
-      Array.prototype.forEach.call(previews.children, function (preview, position) { preview.classList.toggle('current', position === index); });
       var src = backdropUrl(item, 1280);
       if (art.getAttribute('data-src') === src) return;
       art.setAttribute('data-src', src);
@@ -975,6 +1337,7 @@
 
   views.liveSource = function (params, alive) {
     var source = params.source;
+    var ref = params.ref || '';
     var group = params.group || '';
     var query = params.query || '';
     var multiButton = h('button', { class: 'btn f' + (multi.on ? ' primary' : ''), onclick: function () {
@@ -984,12 +1347,14 @@
       renderMultiBar();
       if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (4 au maximum).');
     } }, icon('grid'), multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview');
-    main.appendChild(head(source.name, source.description || '', multiButton));
+    main.appendChild(head(params.title || source.name, params.title ? source.name : (source.description || ''), multiButton));
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
     renderMultiBar();
-    var key = 'tv:' + source.id;
-    var load = cache[key] ? Promise.resolve(cache[key]) : api('/api/tv/catalog?source=' + encodeURIComponent(source.id), { timeout: 45000 }).then(function (data) {
+    // Les bouquets (Northlive, Movix…) renvoient des groupes à ouvrir un par un (?ref=).
+    var key = ref ? 'tv-ref:' + ref : 'tv:' + source.id;
+    var path = ref ? '/api/tv/catalog?ref=' + encodeURIComponent(ref) : '/api/tv/catalog?source=' + encodeURIComponent(source.id);
+    var load = cache[key] ? Promise.resolve(cache[key]) : api(path, { timeout: 45000 }).then(function (data) {
       cache[key] = data;
       return data;
     });
@@ -997,13 +1362,25 @@
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
+      var bouquets = ((data && data.groups) || []).filter(function (item) { return item && item.ref; });
       if (data && data.warning) main.appendChild(h('div', { class: 'empty', text: data.warning }));
+      if (bouquets.length) {
+        var tiles = h('div', { class: 'grid bouquets' });
+        bouquets.forEach(function (bouquet) {
+          tiles.appendChild(h('button', { class: 'bouquet f', onclick: function () {
+            go('liveSource', { section: 'live', source: source, ref: bouquet.ref, title: bouquet.name });
+          } }, h('span', { class: 'bouquet-logo' }, bouquet.image ? image(absolute(bouquet.image), '') : icon('live')),
+            h('strong', { text: bouquet.name || 'Bouquet' }), h('small', { text: typeof bouquet.count === 'number' ? bouquet.count + ' chaînes' : 'Ouvrir les chaînes' })));
+        });
+        main.appendChild(h('section', { class: 'row' }, h('h2', { text: 'Bouquets' }), tiles));
+        if (!channels.length) return;
+      }
       var counts = {};
       channels.forEach(function (channel) { var g = channel.group || ''; if (g) counts[g] = (counts[g] || 0) + 1; });
       var names = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 24);
       var field = searchField('Rechercher une chaîne…', query, function (value) {
         if (value === query) return;
-        current.params = { section: 'live', source: source, group: group, query: value };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value };
         query = value;
         fill();
       });
@@ -1018,7 +1395,7 @@
       main.appendChild(grid);
       function pickGroup(name) {
         group = name;
-        current.params = { section: 'live', source: source, group: group, query: query };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query };
         Array.prototype.forEach.call(main.querySelectorAll('.chips .chip'), function (node) {
           node.classList.toggle('on', node.textContent === (name || 'Toutes'));
         });
@@ -1264,8 +1641,37 @@
     failOption(state, result.error || 'Lecture impossible.');
   }
 
-  // Lecteur web (page du fournisseur) : curseur piloté par les flèches.
+  // Lecteur web (page du fournisseur) : dans l'appli, écran natif séparé
+  // (processus à part, curseur piloté par les flèches) ; un plantage de la
+  // page ne ferme plus l'appli. Dans un navigateur (essais) : iframe.
+  var webPlayback = null;
   function openEmbed(state, option, label) {
+    if (native('webPlayer', { url: absolute(option.url), title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage) })) {
+      webPlayback = { state: state, option: option };
+      return;
+    }
+    openEmbedFrame(state, option, label);
+  }
+  function webPlayerClosed(result) {
+    var entry = webPlayback;
+    webPlayback = null;
+    if (!entry || playback !== entry.state) return;
+    var state = entry.state;
+    if (result.media) {
+      // Flux trouvé par le pont du serveur : lecture native, plus stable.
+      state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl });
+      state.index++;
+      playOption();
+      return;
+    }
+    if (result.crashed) { failOption(state, 'Le lecteur web s’est arrêté. Essayez un autre serveur.'); return; }
+    if (!result.ok) { failOption(state, result.error || 'Ce lecteur web ne répond pas.'); return; }
+    if (result.playing) succeeded(state);
+    var quick = !result.playing && quickExit(state);
+    playback = null;
+    if (quick) showPicker(state, '', 0);
+  }
+  function openEmbedFrame(state, option, label) {
     var url = absolute(option.url);
     var external = url.indexOf(location.origin + '/') !== 0;
     var hint = h('div', { class: 'hint' }, h('b', { text: state.channel.name }), ' · ' + label,
@@ -1325,6 +1731,23 @@
     else multi.items.push({ key: key, channel: channel, source: source });
     Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
     renderMultiBar();
+    if (index < 0) multiSheet();
+  }
+  // Après chaque ajout : lancer tout de suite, sans devoir faire défiler
+  // toute la liste jusqu'à la barre du bas.
+  function multiSheet() {
+    var full = multi.items.length >= 4;
+    var list = h('div', { class: 'list scroll' },
+      h('h2', null, 'Multiview · ' + multi.items.length + '/4', h('small', { text: multi.items.map(function (item) { return item.channel.name; }).join(', ') })),
+      h('button', { class: 'btn primary f', autofocus: full || null, onclick: function () { closeLayer(); launchMulti(); } }, icon('grid'), 'Lancer le multiview (' + multi.items.length + ' chaîne' + (multi.items.length > 1 ? 's' : '') + ')'),
+      full ? null : h('button', { class: 'btn f', autofocus: true, onclick: function () { closeLayer(); } }, icon('requests'), 'Ajouter une autre chaîne'),
+      h('button', { class: 'btn f', text: 'Vider la sélection', onclick: function () {
+        closeLayer();
+        multi.items = [];
+        Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
+        renderMultiBar();
+      } }));
+    openLayer(h('div', { class: 'modal' }, list));
   }
   function markMulti(node) {
     var key = node.getAttribute('data-channel');
@@ -1355,37 +1778,33 @@
       } }));
     main.appendChild(bar);
   }
-  // Seuls les flux directs peuvent partager l'écran (un lecteur natif par vignette).
-  function nativeStream(channel) {
-    return channelOptions(channel).then(function (options) {
-      var direct = options.filter(function (option) { return option.streamUrl && !option.manualOnly; })[0];
-      if (direct) return direct;
-      var resolvable = options.filter(function (option) { return optionKind(option) === 'resolve'; });
-      var chain = Promise.resolve(null);
-      resolvable.slice(0, 3).forEach(function (option) {
-        chain = chain.then(function (found) {
-          if (found) return found;
-          return resolveOptions(option.resolveUrl).then(function (list) {
-            return list.filter(function (item) { return item.streamUrl; })[0] || null;
-          }, function () { return null; });
-        });
-      });
-      return chain;
+  // Seuls les flux directs peuvent partager l'écran (un lecteur natif par
+  // vignette). Chaque vignette reçoit tous les serveurs de sa chaîne : le
+  // multiview passe seul au suivant, ou au choix depuis son menu (OK).
+  function multiviewOptions(options, channel) {
+    var list = [];
+    options.forEach(function (option, index) {
+      if (option.manualOnly) return;
+      var label = optionLabel(option, index);
+      if (option.streamUrl) list.push({ label: label, url: absolute(option.streamUrl), mime: option.transport === 'ts' || channel.transport === 'ts' ? 'video/mp2t' : '' });
+      else if (optionKind(option) === 'resolve') list.push({ label: label, resolve: absolute(option.resolveUrl) });
     });
+    // Serveurs directs d'abord.
+    return list.filter(function (item) { return item.url; }).concat(list.filter(function (item) { return !item.url; }));
   }
   function launchMulti() {
     if (!multi.items.length) return;
     toast('Préparation du multiview…');
     var picked = multi.items.slice();
     Promise.all(picked.map(function (item) {
-      return nativeStream(item.channel).catch(function () { return null; });
-    })).then(function (streams) {
+      return channelOptions(item.channel).then(function (options) { return multiviewOptions(options, item.channel); }, function () { return []; });
+    })).then(function (lists) {
       var items = [];
       var skipped = [];
-      streams.forEach(function (stream, i) {
+      lists.forEach(function (options, i) {
         var channel = picked[i].channel;
-        if (!stream) { skipped.push(channel.name); return; }
-        items.push({ url: absolute(stream.streamUrl), title: channel.name, subtitle: channel.provider || '', mime: stream.transport === 'ts' ? 'video/mp2t' : '' });
+        if (!options.length) { skipped.push(channel.name); return; }
+        items.push({ title: channel.name, subtitle: channel.provider || '', options: options });
       });
       if (skipped.length) toast('Sans flux direct, ignorées : ' + skipped.join(', '), true);
       if (!items.length) return;

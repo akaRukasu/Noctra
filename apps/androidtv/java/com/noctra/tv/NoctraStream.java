@@ -17,6 +17,7 @@ import androidx.media3.ui.PlayerView;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Lecture d'une chaîne en direct avec ExoPlayer (Media3 de l'appli Jellyfin),
@@ -40,6 +41,8 @@ final class NoctraStream {
         void onStatus(NoctraStream stream, String status);
         /** Échec définitif : le flux ne peut pas être lu. */
         void onFailed(NoctraStream stream, String message);
+        /** Fin d'un film ou d'un épisode (jamais pour un direct). */
+        void onEnded(NoctraStream stream);
     }
 
     static final String HLS = "application/x-mpegURL";
@@ -54,8 +57,11 @@ final class NoctraStream {
     private final PlayerView view;
     private final Callback callback;
     private final String url;
-    private final String token;
+    private final Map<String, String> headers;
     private final boolean compact;
+    private final boolean live;
+    private final long startMs;
+    private long positionMs;
     private final List<String> attempts = new ArrayList<String>();
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -84,16 +90,26 @@ final class NoctraStream {
         }
     };
 
+    /** Chaîne en direct. Le jeton Noctra n'est envoyé qu'au serveur Noctra (choix de l'appelant). */
+    NoctraStream(Context context, PlayerView view, Callback callback, String url, String mime, String token, boolean compact) {
+        this(context, view, callback, url, mime, tokenHeaders(token), compact, true, 0);
+    }
+
     /**
      * @param compact tampon réduit (multiview : plusieurs lecteurs à la fois).
+     * @param live direct (retour au direct, jamais de fin) ou film/épisode (reprise à la position).
      */
-    NoctraStream(Context context, PlayerView view, Callback callback, String url, String mime, String token, boolean compact) {
+    NoctraStream(Context context, PlayerView view, Callback callback, String url, String mime, Map<String, String> headers,
+                 boolean compact, boolean live, long startMs) {
         this.context = context;
         this.view = view;
         this.callback = callback;
         this.url = url;
-        this.token = token;
+        this.headers = headers == null ? new HashMap<String, String>() : headers;
         this.compact = compact;
+        this.live = live;
+        this.startMs = Math.max(0, startMs);
+        this.positionMs = this.startMs;
         String hint = mime == null ? "" : mime;
         boolean hls = hint.toLowerCase().contains("mpegurl") || url.contains(".m3u8") || url.contains("/api/tv/stream/");
         if (!hint.isEmpty() && !hint.toLowerCase().contains("mpegurl")) {
@@ -108,8 +124,29 @@ final class NoctraStream {
         }
     }
 
+    private static Map<String, String> tokenHeaders(String token) {
+        HashMap<String, String> map = new HashMap<String, String>();
+        if (token != null && !token.isEmpty()) map.put("x-noctra-token", token);
+        return map;
+    }
+
     boolean hasPlayed() {
         return played;
+    }
+
+    long positionMs() {
+        if (player != null && played) {
+            try { positionMs = Math.max(0, player.getCurrentPosition()); } catch (Exception ignored) { }
+        }
+        return positionMs;
+    }
+
+    long durationMs() {
+        try { return player == null ? 0 : Math.max(0, player.getDuration()); } catch (Exception error) { return 0; }
+    }
+
+    boolean isPaused() {
+        try { return player != null && ready && !player.isPlaying(); } catch (Exception error) { return false; }
     }
 
     void start() {
@@ -129,8 +166,6 @@ final class NoctraStream {
         ready = false;
         startedAt = System.currentTimeMillis();
         bufferingSince = 0;
-        HashMap<String, String> headers = new HashMap<String, String>();
-        if (token != null && !token.isEmpty()) headers.put("x-noctra-token", token);
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
             .setUserAgent("NoctraTV/" + NoctraConfig.VERSION)
             .setAllowCrossProtocolRedirects(true)
@@ -152,7 +187,9 @@ final class NoctraStream {
         if (!mime.isEmpty()) item.setMimeType(mime);
         view.setPlayer(player);
         player.setVolume(volume);
-        player.setMediaItem(item.build());
+        // Film ou épisode : reprise à la position (début, reprise, ou point de coupure).
+        if (live) player.setMediaItem(item.build());
+        else player.setMediaItem(item.build(), positionMs);
         player.prepare();
         player.setPlayWhenReady(true);
         handler.removeCallbacks(poll);
@@ -165,7 +202,7 @@ final class NoctraStream {
         PlaybackException error = player.getPlayerError();
         int state = player.getPlaybackState();
         if (error != null) {
-            if (error.errorCode == BEHIND_LIVE_WINDOW && played) {
+            if (live && error.errorCode == BEHIND_LIVE_WINDOW && played) {
                 // Trop de retard sur le direct : on revient au bord du direct.
                 callback.onStatus(this, "Retour au direct…");
                 player.seekToDefaultPosition();
@@ -184,20 +221,27 @@ final class NoctraStream {
                 callback.onStatus(this, null);
             }
             bufferingSince = 0;
+            if (!live) positionMs();
             if (reconnects > 0 && now - readySince > STABLE_MS) reconnects = 0;
         } else if (state == Player.STATE_BUFFERING) {
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
-            if (played && now - bufferingSince > STALL_TIMEOUT_MS) {
+            if (played && now - bufferingSince > (live ? STALL_TIMEOUT_MS : STALL_TIMEOUT_MS * 3)) {
                 recover("Le flux ne répond plus.");
                 return;
             }
         } else if (state == Player.STATE_ENDED) {
+            if (!live) {
+                handler.removeCallbacks(poll);
+                callback.onEnded(this);
+                return;
+            }
             // Un direct ne se termine pas : fin de playlist = coupure côté source.
             recover("Le direct s'est interrompu.");
             return;
         }
-        if (!played && now - startedAt > START_TIMEOUT_MS) {
+        // Film : le serveur peut mettre du temps à préparer la conversion.
+        if (!played && now - startedAt > (live ? START_TIMEOUT_MS : START_TIMEOUT_MS * 2)) {
             recover("Le flux ne répond pas.");
             return;
         }

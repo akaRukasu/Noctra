@@ -7,20 +7,21 @@ Noctra TV est l’appli **Jellyfin pour Android TV** (projet officiel [jellyfin-
 - **Identifiant `com.noctra.tv`.** L’appli s’installe à côté de l’appli Jellyfin officielle, sans conflit.
 
 - **Accueil Noctra.** Une fois connecté, l’appli s’ouvre sur l’accueil Noctra, avec un menu en haut de l’écran :
-  - **Accueil** : comme sur PC, « À l’affiche chez vous » et le carrousel « Continuer à regarder ». Il passe au titre suivant toutes les 8 secondes, s’arrête tant qu’il a le focus, et ses aperçus s’affichent dès qu’on les survole. Suivent les médiathèques en 2 × 2, « À suivre » et les derniers ajouts ;
+  - **Accueil** : comme sur PC, « À l’affiche chez vous » et le carrousel « Continuer à regarder ». Il passe au titre suivant toutes les 8 secondes et offre deux boutons : « Reprendre » lance la lecture, « Voir la fiche » ouvre la fiche. Viennent ensuite les derniers ajouts, puis « À suivre » et les médiathèques en 2 × 2 en bas ;
+  - **Fiches films et séries** (sans écran Jellyfin) : image de fond, affiche, infos, Lecture / Reprendre / Depuis le début, langue audio et sous-titres (mémorisés), Vu, Favori, casting et titres similaires. Une série affiche aussi ses saisons et ses épisodes, et l’épisode suivant est proposé à la fin d’un épisode ;
+  - **Lecture** : lecteur de l’appli (ExoPlayer). Jellyfin fournit un flux HLS qui recopie ce que le téléviseur sait décoder et ne convertit que le reste. La position est envoyée à Jellyfin pour mettre à jour les reprises et les titres vus. « Lire sur… » depuis un téléphone ou un PC ouvre aussi ce lecteur ;
   - **Médiathèques** : les 4 médiathèques Noctra en 2 × 2, puis les autres. Chaque médiathèque s’ouvre en grille d’affiches, avec des tris (ajouts récents, titre, note, année, aléatoire) et un filtre « Non vus » ;
   - **TV en direct** : les sources et les chaînes du serveur Noctra.
     - Au lancement d’une chaîne, une fenêtre propose ses serveurs, classés dans cet ordre : le dernier serveur qui a fonctionné (mémorisé), puis le lecteur natif, les serveurs automatiques et les lecteurs web. Le premier démarre seul après 5 secondes, sauf si une touche est pressée.
     - Les flux directs passent par le lecteur natif (ExoPlayer). Il utilise un tampon élargi, retente les segments et revient au direct quand le flux prend trop de retard. Il relance aussi un flux bloqué et se reconnecte de plus en plus espacé (1, 2, 4, 8 s…). Après une coupure, l’appli redemande un lien neuf au serveur.
-    - Les lecteurs web (sports…) sont des pages externes. Pendant leur affichage, les flèches déplacent un curseur et OK envoie un vrai appui, pour lancer la lecture ou passer en plein écran. Si le moteur web s’arrête (mémoire du téléviseur saturée), l’appli ne se ferme plus : elle revient à l’accueil.
+    - Les lecteurs web (sports…) sont des pages externes. Ils s’ouvrent dans un écran séparé, dans son propre processus : si la page ou le moteur web plante, seul ce lecteur se ferme et l’accueil propose un autre serveur. Les flèches déplacent un curseur et OK envoie un vrai appui, pour lancer la lecture ou passer en plein écran. Quand le serveur trouve le flux vidéo, le lecteur natif prend le relais.
+    - Les sources présentées en bouquets (Northlive, Movix…) affichent leurs bouquets, puis les chaînes du bouquet choisi.
     - En cas d’échec, la fenêtre des serveurs réapparaît avec le serveur en échec marqué, puis le suivant démarre après 4 secondes.
-    - **Multiview** : le bouton Multiview d’une source permet de choisir jusqu’à 4 chaînes avec OK, puis de les lancer ensemble. Chaque vignette a son propre lecteur natif. Le son suit la vignette sélectionnée, OK l’agrandit et Retour revient à la grille. Seuls les flux directs peuvent partager l’écran.
+    - **Multiview** : le bouton Multiview d’une source permet de choisir jusqu’à 4 chaînes. Chaque OK ouvre une fenêtre (lancer, ajouter une chaîne, vider), sans devoir faire défiler toute la liste. Chaque vignette a son propre lecteur natif. OK sur une vignette ouvre son menu : écouter cette chaîne (le son reste dessus), la mettre en avant (grande vignette et les autres en colonne), plein écran, changer de serveur. Un flux qui tombe passe seul au serveur suivant. Seuls les flux directs peuvent partager l’écran.
   - **Découvrir** et **Demandes** (Jellyseerr) : suggestions, recherche, demande en un clic et suivi de « Mes demandes » ;
   - **Roulette** : réglages (médiathèque, genre, de 1 à 10 titres, note, titres déjà vus), rouleau d’affiches qui ralentit sur le titre tiré, puis révélation avec l’image de fond ;
   - **Rechercher** (loupe) : recherche dans les médiathèques ;
   - **Compte** (en haut à droite) : paramètres de l’appli. On y change de compte ou on se déconnecte dans Paramètres › Authentification.
-
-  Les fiches et la lecture des films et des séries utilisent les écrans natifs de l’appli. La touche Retour ramène ensuite à l’accueil Noctra.
 
 L’interface Jellyfin est native, ce qui la rend fluide sur les boîtiers et les vidéoprojecteurs. La lecture passe par le lecteur vidéo d’Android (ExoPlayer) : MKV, HEVC, AC3/DTS et sous-titres sont lus directement quand l’appareil les prend en charge, sinon Jellyfin transcode.
 
@@ -34,6 +35,10 @@ Les téléchargements et l’administration de Noctra ne sont pas proposés sur 
   - `NoctraStream` : lecture d’une chaîne avec ExoPlayer, avec tampon, reprises et reconnexions ;
   - `NoctraPlayerActivity` : lecteur plein écran des chaînes ;
   - `NoctraMultiviewActivity` : de 2 à 4 chaînes à l’écran ;
+  - `NoctraWebPlayerActivity` (processus `:webplayer`) : lecteurs web des chaînes ;
+  - `NoctraPlaybackReport` : suivi de lecture envoyé à Jellyfin ;
+  - `NoctraRemote` : commandes « Lire sur… » et « Afficher » reçues d’un autre appareil ;
+  - `NoctraProcess` : saute l’initialisation de Jellyfin dans le processus du lecteur web ;
   - `NoctraRouting` : choix de l’écran ouvert après la connexion ;
   - `NoctraSession` : lecture de la session Jellyfin (le jeton sert aussi à l’API Noctra).
 - `stubs/` contient les signatures Media3 nécessaires à la compilation. Elles ne sont jamais incluses dans l’APK : l’appli utilise les classes Media3 déjà présentes dans Jellyfin.

@@ -192,6 +192,29 @@ assert.match(tvApp, /\[10, '10'\]/);
 // Lecteurs web : un arrêt du moteur web ne ferme plus l'appli.
 assert.match(home, /public boolean onRenderProcessGone\(WebView view, RenderProcessGoneDetail detail\)/);
 assert.match(home, /createWebView\("index\.html#recovered"\)/);
+// Lecteur web isolé dans son processus ; Jellyfin n'y initialise rien.
+assert.match(androidtv, /activity\('NoctraWebPlayerActivity', ' android:process=":webplayer"'\)/);
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraProcess;->isSecondary\(Landroid\/content\/Context;\)Z/);
+const webPlayer = await read('apps/androidtv/java/com/noctra/tv/NoctraWebPlayerActivity.java');
+assert.match(webPlayer, /WebView\.setDataDirectorySuffix\("webplayer"\)/);
+assert.match(webPlayer, /public boolean onRenderProcessGone/);
+assert.match(tvApp, /native\('webPlayer', \{/);
+// Contrôle à distance : « Lire sur… » ouvre le lecteur ou la fiche Noctra.
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraRemote;->play\(Landroid\/content\/Context;Ljava\/util\/UUID;Ljava\/lang\/Long;\)V/);
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraRemote;->show\(Landroid\/content\/Context;Ljava\/util\/UUID;\)V/);
+assert.match(tvApp, /function remoteCommand\(data\)/);
+// Fiches et lecture Noctra (HLS Jellyfin, suivi de lecture), sans écran Jellyfin.
+assert.match(tvApp, /views\.item = function/);
+assert.match(tvApp, /'\/Videos\/' \+ item\.Id \+ '\/master\.m3u8\?'/);
+assert.ok(!tvApp.includes("native('openItem'"), 'Fiches affichées par Noctra');
+const report = await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.java');
+for (const path of ['/Sessions/Playing"', '/Sessions/Playing/Progress"', '/Sessions/Playing/Stopped"', '/Videos/ActiveEncodings?deviceId=']) assert.ok(report.includes(path), path);
+assert.match(home, /private Uri jellyfinOrigin\(Uri target\)/, 'Jeton Jellyfin limité au serveur Jellyfin');
+// TV : bouquets et multiview (serveurs, son, mise en avant).
+assert.match(tvApp, /'\/api\/tv\/catalog\?ref=' \+ encodeURIComponent\(ref\)/);
+assert.match(tvApp, /function multiSheet\(\)/);
+const multiview = await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivity.java');
+for (const label of ['Écouter cette chaîne', 'Mettre en avant', 'Changer de serveur']) assert.ok(multiview.includes(label), label);
 for (const route of ['/api/home/resume', '/api/tv/sources', '/api/tv/catalog?source=', '/api/jellyseerr/search?q=', '/api/jellyseerr/request', '/api/discovery?category=', '/api/roulette?']) {
   assert.ok(tvApp.includes(route), `Accueil TV : ${route}`);
 }

@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 4;
+const noctraRevision = 5;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -173,9 +173,50 @@ await patch(smali('ui/startup/StartupActivity.smali'), [[
 
     move-result v0`
 ]]);
-const activity = name => `        <activity android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density" android:exported="false" android:name="com.noctra.tv.${name}" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n`;
-await patch(join(decoded, 'AndroidManifest.xml'), [['    </application>', activity('NoctraHomeActivity') + activity('NoctraPlayerActivity') + activity('NoctraMultiviewActivity') + '    </application>']]);
+const activity = (name, extra = '') => `        <activity android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density" android:exported="false" android:name="com.noctra.tv.${name}"${extra} android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n`;
+// Lecteur web des chaînes dans son propre processus : un plantage de la page
+// d'un fournisseur (ou du moteur web) ne ferme plus l'appli.
+await patch(join(decoded, 'AndroidManifest.xml'), [['    </application>', activity('NoctraHomeActivity') + activity('NoctraPlayerActivity') + activity('NoctraMultiviewActivity')
+  + activity('NoctraWebPlayerActivity', ' android:process=":webplayer"') + '    </application>']]);
+// Ce processus n'a pas l'injection de dépendances de Jellyfin (Koin, démarré
+// par androidx.startup dans le processus principal) : son initialisation est sautée.
+await patch(join(decoded, 'smali_classes6', 'org', 'jellyfin', 'androidtv', 'JellyfinApplication.smali'), [[
+  `    invoke-super {p0}, Landroid/app/Application;->onCreate()V
+`,
+  `    invoke-super {p0}, Landroid/app/Application;->onCreate()V
+
+    invoke-static {p0}, Lcom/noctra/tv/NoctraProcess;->isSecondary(Landroid/content/Context;)Z
+
+    move-result v0
+
+    if-eqz v0, :noctra_main_process
+
+    return-void
+
+    :noctra_main_process
+`
+]]);
 await cp(join(appsRoot, 'androidtv', 'web'), join(decoded, 'assets', 'noctra-tv'), { recursive: true });
+
+// Contrôle à distance (« Lire sur… » depuis un téléphone ou un PC) : la
+// commande reçue par Jellyfin ouvre le lecteur ou la fiche Noctra.
+await patch(smali('data/eventhandling/SocketHandler.smali'), [[
+  `    invoke-interface {v2, v0, v1, p1, v3}, Lorg/jellyfin/androidtv/util/PlaybackHelper;->retrieveAndPlay(Ljava/util/UUID;ZLjava/lang/Long;Landroid/content/Context;)V`,
+  `    invoke-static {v3, v0, p1}, Lcom/noctra/tv/NoctraRemote;->play(Landroid/content/Context;Ljava/util/UUID;Ljava/lang/Long;)V`
+], [
+  `    invoke-direct {p0, p1, p2, p3}, Lorg/jellyfin/androidtv/data/eventhandling/SocketHandler;->onDisplayContent(Ljava/util/UUID;Lorg/jellyfin/sdk/model/api/BaseItemKind;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+
+    move-result-object p0
+
+    return-object p0`,
+  `    iget-object p0, p0, Lorg/jellyfin/androidtv/data/eventhandling/SocketHandler;->context:Landroid/content/Context;
+
+    invoke-static {p0, p1}, Lcom/noctra/tv/NoctraRemote;->show(Landroid/content/Context;Ljava/util/UUID;)V
+
+    sget-object p0, Lkotlin/Unit;->INSTANCE:Lkotlin/Unit;
+
+    return-object p0`
+]]);
 
 // Code Java : compilé contre Android et des signatures Media3 (stubs, jamais
 // incluses dans l'APK) ; les vraies classes Media3 sont celles de Jellyfin.
