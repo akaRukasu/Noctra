@@ -1,4 +1,4 @@
-// Noctra 200.0.121 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
+// Noctra 200.0.126 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -292,10 +292,11 @@
     }
     // 200.0.121 : intro un peu plus longue (2,2 s à la première ouverture de la
     // session, 1,2 s ensuite) ; toujours retirée dès que possible en mouvement réduit.
-    const minimum = !motionAllowed() ? 0 : seen ? 1200 : 2200;
+    // 200.0.126 : encore allongée (3,5 s à la première ouverture, 2,5 s ensuite).
+    const minimum = !motionAllowed() ? 0 : seen ? 2500 : 3500;
     const leave = () => {
       intro.classList.add('na-intro-leave');
-      window.setTimeout(() => intro.remove(), 500);
+      window.setTimeout(() => intro.remove(), 750);
     };
     const check = () => {
       if (!intro.isConnected) return;

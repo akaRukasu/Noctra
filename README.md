@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.125 — direct TV sans boucle hors fenêtre, lien renouvelé à temps
+# Version actuelle : 200.0.126 — intro de démarrage plus longue
+
+Intro Noctra de 3,5 s à la première ouverture (2,5 s ensuite), animation plus posée. Inclut les 200.0.124 et 200.0.125. Détails : [MISE-A-JOUR-V200126.md](MISE-A-JOUR-V200126.md). Validation : `npm run test:v200126`.
+
+# Historique : 200.0.125 — direct TV sans boucle hors fenêtre, lien renouvelé à temps
 
 Hors de la fenêtre du direct, retour 20 s avant le bord ; lien LiveWatch expiré renouvelé dès trois 404 de playlist. Inclut la 200.0.124. Détails : [MISE-A-JOUR-V200125.md](MISE-A-JOUR-V200125.md). Validation : `npm run test:v200125`.
 

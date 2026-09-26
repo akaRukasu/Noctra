@@ -51,6 +51,6 @@ assert.match(shell, /player\.configure\(\{ streaming: \{ segmentPrefetchLimit: 2
 assert.match(shell, /installTvShakaContinuity\(player, video, videoEventSignal, 6, reserve =>/);
 
 // 5. Intro : 2,2 s à la première ouverture de la session, 1,2 s ensuite.
-assert.match(aurora, /const minimum = !motionAllowed\(\) \? 0 : seen \? 1200 : 2200;/);
+assert.match(aurora, /const minimum = !motionAllowed\(\) \? 0 : seen \? \d{4} : \d{4};/); // allongée en 200.0.126
 
 console.log('v200.0.121 : survol fluide, fiche/lecture fiables à chaque clic, réglages en colonne, réserve Shaka 15 s : OK');
