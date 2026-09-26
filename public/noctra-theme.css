@@ -6019,7 +6019,7 @@ body.noctra-home .homePage .homeSectionsContainer {
 @media (min-width: 1100px) {
   body:not(.noctra-home):not(.noctra-detail):not(.noctra-dashboard)
   .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage)
-  .itemsContainer:has(> .card.portraitCard) {
+  .itemsContainer:not(.hide):has(> .card.portraitCard) {
     display: grid !important;
     grid-template-columns: var(
       --noctra-library-grid,
@@ -6034,7 +6034,7 @@ body.noctra-home .homePage .homeSectionsContainer {
 
   body:not(.noctra-home):not(.noctra-detail):not(.noctra-dashboard)
   .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage)
-  .itemsContainer:has(> .card.portraitCard) > .card {
+  .itemsContainer:not(.hide):has(> .card.portraitCard) > .card {
     width: 100% !important;
     min-width: 0 !important;
     max-width: none !important;
@@ -6970,7 +6970,7 @@ body {
 
   html.noctra-ultrawide body:not(.noctra-home):not(.noctra-detail):not(.noctra-dashboard)
   .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage)
-  .itemsContainer:has(> .card.portraitCard) {
+  .itemsContainer:not(.hide):has(> .card.portraitCard) {
     gap: 15px 12px !important;
   }
 }
@@ -7603,19 +7603,19 @@ body {
   /* Médiathèques Jellyfin : on force une grille mobile visible et compacte.
      Le correctif sert de garde-fou lorsqu'un style desktop ou un calcul inline
      de Jellyfin laisse la zone vide. */
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage),
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .itemsContainer {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage),
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .itemsContainer:not(.hide) {
     content-visibility: visible !important;
     contain: none !important;
     overflow-x: hidden !important;
   }
 
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) {
     padding-top: calc(var(--noctra-v36-header-height) + .3rem) !important;
     padding-bottom: var(--noctra-v36-dock-space) !important;
   }
 
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .itemsContainer {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .itemsContainer:not(.hide) {
     display: flex !important;
     flex-wrap: wrap !important;
     align-items: flex-start !important;
@@ -7628,7 +7628,7 @@ body {
     margin: 0 !important;
   }
 
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .itemsContainer > .card {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .itemsContainer:not(.hide) > .card {
     display: block !important;
     opacity: 1 !important;
     visibility: visible !important;
@@ -7636,16 +7636,16 @@ body {
     margin: 0 !important;
   }
 
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .portraitCard,
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .squareCard {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .portraitCard,
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .squareCard {
     flex: 0 0 calc(50% - 5px) !important;
     width: calc(50% - 5px) !important;
     max-width: calc(50% - 5px) !important;
   }
 
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .backdropCard,
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .overflowBackdropCard,
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) .smallBackdropCard {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .backdropCard,
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .overflowBackdropCard,
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) .smallBackdropCard {
     flex: 0 0 100% !important;
     width: 100% !important;
     max-width: 100% !important;
@@ -7884,7 +7884,7 @@ body {
   body.noctra-home .homePage.withTabs,
   body.noctra-home .homePage.libraryPage,
   body.noctra-home .homePage.libraryPage.withTabs,
-  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage) {
+  body:not(.noctra-home):not(.noctra-detail) .libraryPage:not(.homePage):not(.itemDetailPage):not(.itemDetailsPage):not(.nowPlayingPage) {
     padding-top: calc(var(--noctra-v37-header-height) + .65rem) !important;
   }
 

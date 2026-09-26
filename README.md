@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.121 — survol fluide, fiches fiables, réglages en colonne
+# Version actuelle : 200.0.122 — télécommande Jellyfin débloquée
+
+La page « Contrôle à distance » n’est plus recouverte par sa file d’attente masquée ; inclut toutes les corrections 200.0.121. Détails : [MISE-A-JOUR-V200122.md](MISE-A-JOUR-V200122.md). Validation : `npm run test:v200122`.
+
+# Historique : 200.0.121 — survol fluide, fiches fiables, réglages en colonne
 
 Survol des affiches 100× moins coûteux, « Voir la fiche » / « Reprendre » fiables à chaque clic, réglages PC en une colonne, 15 s de réserve au démarrage TV, intro allongée. Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
 
