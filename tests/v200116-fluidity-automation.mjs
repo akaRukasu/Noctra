@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 const css = await readFile(new URL('../public/noctra-aurora.css', import.meta.url), 'utf8');
 const js = await readFile(new URL('../public/noctra-aurora.js', import.meta.url), 'utf8');
-const block = css.slice(css.indexOf('200.0.116 — Fluidité'));
+const block = css.slice(css.indexOf('200.0.116 — Fluidité'), css.indexOf('200.0.118 — « Aurora Flow »') > 0 ? css.indexOf('200.0.118 — « Aurora Flow »') : undefined);
 assert.ok(block.length > 4000, 'Bloc 116 présent');
 const P = 'html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="automation"]';
 

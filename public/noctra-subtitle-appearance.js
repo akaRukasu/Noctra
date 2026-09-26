@@ -12,9 +12,9 @@
   const appleWebKit = /iP(?:hone|ad|od)/.test(ua)
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
     || (/AppleWebKit/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox|Android/.test(ua));
-  let cueSupported = appleWebKit;
-  try { cueSupported = cueSupported || CSS.supports('selector(::cue)'); } catch { /* ancien moteur */ }
-  if (!cueSupported) return;
+  // Limité au WebKit d'Apple : ailleurs, une réponse vide peut signifier que
+  // le moteur ne sait vraiment pas styliser les sous-titres (certaines TV).
+  if (!appleWebKit) return;
 
   const patched = function getComputedStyle(element, pseudo) {
     const style = native.apply(this === undefined ? window : this, arguments);

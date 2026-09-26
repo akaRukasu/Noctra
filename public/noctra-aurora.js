@@ -1,4 +1,4 @@
-// Noctra 200.0.116 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
+// Noctra 200.0.118 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -105,8 +105,12 @@
       revealObserver.unobserve(entry.target);
     }
   }, { rootMargin: '0px 0px -40px 0px', threshold: 0 }) : null;
+  // 200.0.118 : si le navigateur anime lui-même au défilement (CSS
+  // animation-timeline), le script ne masque et ne mesure plus rien.
+  let cssScroll = false;
+  try { cssScroll = Boolean(window.CSS?.supports?.('animation-timeline: view()')); } catch {}
   const scanReveal = () => {
-    if (!revealObserver || !root.classList.contains('na-motion') || playing()) return;
+    if (cssScroll || !revealObserver || !root.classList.contains('na-motion') || playing()) return;
     for (const element of document.querySelectorAll('.homePage .homeSectionsContainer > .verticalSection:not([data-na-reveal]), #noctra-panel .noctra-library-showcase > :not([data-na-reveal])')) {
       const rect = element.getBoundingClientRect();
       // Ce qui est déjà à l'écran n'est jamais masqué.
@@ -199,7 +203,7 @@
   window.addEventListener('scroll', () => {
     lastScroll = performance.now();
     forgetRects();
-    if (!perfDesktop() || !root.classList.contains('na-motion') || playing() || !document.body?.classList.contains('noctra-home')) return;
+    if (cssScroll || !perfDesktop() || !root.classList.contains('na-motion') || playing() || !document.body?.classList.contains('noctra-home')) return;
     if (!scrollFrame) scrollFrame = window.requestAnimationFrame(paintParallax);
   }, { passive: true, capture: true });
 

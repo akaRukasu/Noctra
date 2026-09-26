@@ -54,11 +54,11 @@ assert.equal(run({ ua: ipadDesktop, platform: 'MacIntel', touch: 5 }).supported,
   assert.equal(vm.runInContext(detection, context), true);
   const video = new context.Element('video');
   assert.equal(context.getComputedStyle(video, '::cue').background, 'rgba(0, 0, 0, 0.8)');
-  assert.notEqual(nativeStyle, context.getComputedStyle, 'Correctif posé mais transparent');
+  assert.equal(nativeStyle, context.getComputedStyle, 'Hors WebKit Apple : aucun correctif (200.0.118)');
 }
-// 3. Moteur sans ::cue (ni WebKit Apple, ni selector(::cue)) : aucun correctif.
+// 3. Autre moteur, même annonçant ::cue : aucun correctif (une réponse vide peut y être réelle).
 {
-  const { context, nativeStyle, supported } = run({ ua: chrome });
+  const { context, nativeStyle, supported } = run({ ua: chrome, cssSelector: true });
   assert.equal(context.getComputedStyle, nativeStyle);
   assert.equal(supported, false);
 }

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.117 — apparence des sous-titres sur iOS
+# Version actuelle : 200.0.118 — « Aurora Flow », sous-titres iOS et AirPlay
+
+Mouvement physique et animations pilotées par le défilement, sous-titres dans le lecteur natif iOS / PiP, bouton Diffuser (AirPlay, Remote Playback). Détails : [MISE-A-JOUR-V200118.md](MISE-A-JOUR-V200118.md). Validation : `npm run test:v200118`.
+
+# Historique : 200.0.117 — apparence des sous-titres sur iOS
 
 La partie « Apparence » des réglages de sous-titres est de nouveau disponible sur iPhone/iPad (iOS 27). Détails : [MISE-A-JOUR-V200117.md](MISE-A-JOUR-V200117.md). Validation : `npm run test:v200117`.
 

@@ -23,7 +23,7 @@ assert.ok(index.includes('fonts/sora-latin-wght.woff2'), 'Police de titre préch
 const rules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@[^{]+\{/g, '{').match(/[^{}@]+\{/g) ?? [];
 for (const raw of rules) {
   const selector = raw.slice(0, -1).trim();
-  if (!selector || /^(from|to|\d+%|[\d%, ]+)$/.test(selector) || selector.startsWith('(')) continue;
+  if (!selector || /^(from|to|\d+%|[\d%, ]+|(?:entry|exit|cover|contain)(?:-crossing)? [\d.]+%)$/.test(selector) || selector.startsWith('(')) continue;
   const parts = []; let depth = 0, current = '';
   for (const char of selector) {
     if (char === '(') depth += 1;
