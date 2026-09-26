@@ -60,6 +60,23 @@ for (const [folder, size] of [['mdpi', 48], ['hdpi', 72], ['xhdpi', 96], ['xxhdp
 }
 targets.push(['android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png', 432, 432, adaptiveForeground(432), true]);
 
+// Noctra TV (base Jellyfin Android TV) : ressources remplacées dans l'APK.
+const transparentWordmark = (width, height) => page(`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center">
+  <img src="${uri(mark)}" style="width:${height * .92}px;height:${height * .92}px;margin-right:${height * .22}px">
+  <span style="font-size:${height * .66}px;font-weight:700;letter-spacing:-.02em;color:#eef1ff">Noctra</span></div>`);
+const densities = [['ldpi', .75], ['mdpi', 1], ['hdpi', 1.5], ['xhdpi', 2], ['xxhdpi', 3], ['xxxhdpi', 4]];
+for (const [folder, scale] of densities) {
+  const px = value => Math.round(value * scale);
+  targets.push([`androidtv/overlay/res/drawable-${folder}/app_logo.png`, px(252), px(72), transparentWordmark(px(252), px(58)), true]);
+  targets.push([`androidtv/overlay/res/drawable-${folder}/app_icon_foreground.png`, px(108), px(108), adaptiveForeground(px(108)), true]);
+  targets.push([`androidtv/overlay/res/drawable-${folder}/app_banner_foreground.png`, px(320), px(180), transparentWordmark(px(320), px(64)), true]);
+}
+for (const [folder, scale] of densities.slice(1)) {
+  const px = value => Math.round(value * scale);
+  targets.push([`androidtv/overlay/res/mipmap-${folder}/app_icon.png`, px(80), px(80), fullIcon(px(80)), false]);
+  targets.push([`androidtv/overlay/res/mipmap-${folder}/app_banner.png`, px(160), px(90), wordmark(px(160), px(90), px(32), px(25), px(8)), false]);
+}
+
 const browser = await playwright.chromium.launch();
 try {
   for (const [target, width, height, html, transparent] of targets) {

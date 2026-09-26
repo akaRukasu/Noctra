@@ -21,6 +21,15 @@ Installation, compatibilité et construction : [apps/README.md](apps/README.md).
 - **`/health`** répond avec l’en-tête CORS, pour que l’écran de connexion des applis puisse le lire. Aucune donnée sensible n’y figure.
 - Navigateurs web, PWA et PC : aucun changement de comportement. Le pont ne s’active que dans une appli ou sur le navigateur d’un téléviseur.
 
+## Noctra TV : appli native pour Android TV
+Sur vidéoprojecteur, l’interface web complète dans une WebView restait lente, la page de connexion revenait et la lecture ne démarrait pas. Android TV a donc désormais sa propre appli, **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli officielle Jellyfin pour Android TV (0.19.10, GPL-2.0), adaptée pour Noctra :
+- le serveur `https://akarukasu.merlion.usbx.me/jellyfin` est intégré : au démarrage, l’appli se connecte seule et ouvre directement la page d’authentification ;
+- nom, icône, bannière et logo sont ceux de Noctra ;
+- l’identifiant `com.noctra.tv` permet de l’installer à côté de l’appli Jellyfin officielle ;
+- l’interface est native, et la lecture passe par le lecteur vidéo d’Android (ExoPlayer).
+
+Le script `apps/scripts/build-androidtv.mjs` la construit sans SDK Android. Il vérifie l’empreinte SHA-256 de l’APK Jellyfin, puis vérifie chacune de ses modifications.
+
 ## Retours du premier essai sur Android TV (vidéoprojecteur)
 **Icônes remplacées par des carrés.** Les fichiers de la police Material Icons étaient corrompus depuis l’import de la base 200.0.107 : ils avaient été réécrits comme du texte. Par exemple, l’en-tête du `.woff2` annonce 126 911 octets pour un fichier de 226 346. Le navigateur rejetait donc la police partout. Sur PC, Noctra redessine la plupart des icônes en SVG, ce qui masquait le problème. Les quatre fichiers ont été restaurés à partir de `material-design-icons-iconfont` 6.7.0 : le `.woff` est identique octet pour octet. Leurs adresses changent (`?v=200.121`) pour contourner le cache.
 

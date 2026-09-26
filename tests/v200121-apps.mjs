@@ -115,9 +115,26 @@ assert.match(activity, /FLAG_KEEP_SCREEN_ON/);
 const gradleApp = await read('apps/android/app/build.gradle.kts');
 assert.match(gradleApp, /assets\.srcDir\("\.\.\/\.\.\/shared"\)/);
 assert.ok(!/dependencies \{/.test(gradleApp), 'Aucune dépendance Gradle');
-const androidBuild = await read('apps/scripts/build-android.mjs');
+const androidBuild = await read('apps/scripts/android-tools.mjs');
 assert.match(androidBuild, /if \(actual !== sha1\.trim\(\)\.split\(\/\\s\+\/\)\[0\]\) throw new Error/, 'Outils vérifiés par SHA-1');
 assert.match(androidBuild, /resources\.arsc doit rester non compressé/);
+
+// 5 bis. Noctra TV : Jellyfin Android TV adapté (serveur intégré, marque, identifiant).
+const androidtv = await read('apps/scripts/build-androidtv.mjs');
+assert.match(androidtv, /sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'/, 'APK Jellyfin vérifié');
+assert.match(androidtv, /const-string v5, "server_address"/, 'Adresse du serveur transmise à l’écran « Ajouter un serveur »');
+assert.match(androidtv, /const-class v2, Lorg\/jellyfin\/androidtv\/ui\/startup\/fragment\/ServerAddFragment;/);
+assert.match(androidtv, /'https:\/\/akarukasu\.merlion\.usbx\.me\/jellyfin'/);
+assert.match(androidtv, /\['package="org\.jellyfin\.androidtv"', `package="\$\{packageName\}"`\]/);
+assert.match(androidtv, /android:authorities="org\.jellyfin\.androidtv\.\$\{name\}"/);
+assert.match(androidtv, /if \(count !== expected\) throw new Error/, 'Chaque modification est vérifiée');
+for (const density of ['ldpi', 'mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+  for (const name of ['app_logo', 'app_icon_foreground', 'app_banner_foreground']) {
+    const png = await readFile(new URL(`apps/androidtv/overlay/res/drawable-${density}/${name}.png`, root));
+    assert.equal(png.subarray(1, 4).toString(), 'PNG', `${density}/${name}`);
+  }
+}
+assert.match(await read('apps/androidtv/README.md'), /GNU GPL v2/);
 
 // 6. iOS : WKWebView, messages limités au cadre principal et aux bonnes origines.
 const controller = await read('apps/ios/Noctra/WebViewController.swift');

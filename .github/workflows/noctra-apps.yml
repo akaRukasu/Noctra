@@ -87,6 +87,38 @@ jobs:
           path: dist/apps/Noctra-android.apk
           if-no-files-found: error
 
+  androidtv:
+    name: Noctra TV (Android TV, base Jellyfin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Clé de signature (facultative)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NOCTRA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.p12"
+            echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.p12" >> "$GITHUB_ENV"
+          fi
+      - name: APK Noctra TV
+        env:
+          NOCTRA_KEYSTORE_PASSWORD: ${{ secrets.NOCTRA_KEYSTORE_PASSWORD }}
+          NOCTRA_KEY_ALIAS: ${{ secrets.NOCTRA_KEY_ALIAS }}
+          NOCTRA_KEY_PASSWORD: ${{ secrets.NOCTRA_KEY_PASSWORD }}
+        run: node apps/scripts/build-androidtv.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-androidtv
+          path: dist/apps/Noctra-androidtv.apk
+          if-no-files-found: error
+
   ios:
     name: iOS (iPhone + iPad)
     runs-on: macos-latest
@@ -113,7 +145,7 @@ jobs:
   release:
     name: Release GitHub
     if: startsWith(github.ref, 'refs/tags/apps-v')
-    needs: [tv, android, ios]
+    needs: [tv, android, androidtv, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -127,7 +159,8 @@ jobs:
           name: Applications Noctra ${{ github.ref_name }}
           files: dist/*
           body: |
-            - **Noctra-android.apk** : téléphones, tablettes et Android TV (Google TV, Shield, Fire TV…).
+            - **Noctra-androidtv.apk** : Android TV, Google TV, Fire TV, vidéoprojecteurs (appli native, base Jellyfin).
+            - **Noctra-android.apk** : téléphones et tablettes Android.
             - **Noctra-ios-unsigned.ipa** : iPhone et iPad, à installer avec Sideloadly ou AltStore.
             - **com.noctra.media_…_all.ipk** : téléviseurs LG webOS (mode développeur).
             - **Noctra.wgt** : téléviseurs Samsung Tizen, à installer avec Apps2Samsung.

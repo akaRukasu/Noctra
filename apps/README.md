@@ -5,10 +5,16 @@ Noctra existe en applications pour :
 | Appareil | Fichier | Installation |
 |---|---|---|
 | Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
-| Android TV, Google TV, Shield, Fire TV | `Noctra-android.apk` (le même) | fichier APK |
+| Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad | `Noctra-ios-unsigned.ipa` | Sideloadly ou AltStore |
 | Téléviseurs LG (webOS) | `com.noctra.media_1.0.0_all.ipk` | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
+
+## Android TV : Noctra TV (appli native)
+
+Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli Jellyfin officielle pour Android TV adaptée pour Noctra : marque Noctra et serveur `akarukasu.merlion.usbx.me/jellyfin` intégré. On arrive directement sur la page d’authentification. L’interface est native et fluide, et la lecture passe par le lecteur vidéo d’Android. Les détails, la construction et la licence sont dans [androidtv/README.md](androidtv/README.md).
+
+L’interface web complète de Noctra dans une WebView (appli `Noctra-android.apk`) est trop lourde pour les boîtiers et vidéoprojecteurs Android. Elle reste l’appli recommandée sur téléphone et tablette.
 
 ## Fonctionnement
 
@@ -51,7 +57,8 @@ Pour publier une version dans l’onglet **Releases**, poussez une étiquette. P
 
 Sans GitHub, sur n’importe quel PC :
 - **Paquets TV** (Node.js seul, sans SDK) : `npm run apps:build` crée `dist/apps/*.ipk` et `dist/apps/Noctra.wgt`.
-- **APK Android** (Node.js + Java 17 ou plus récent, sans Android Studio ni SDK) : `npm run apps:android` crée `dist/apps/Noctra-android.apk`. Au premier lancement, le script télécharge ses outils depuis Maven Central, soit environ 160 Mo, et vérifie leur empreinte.
+- **APK Android** (Node.js + Java 17 ou plus récent, sans Android Studio ni SDK) : `npm run apps:android` crée `dist/apps/Noctra-android.apk`.
+- **Noctra TV** (même prérequis) : `npm run apps:androidtv` crée `dist/apps/Noctra-androidtv.apk` à partir de l’APK officiel de Jellyfin Android TV, téléchargé depuis GitHub et vérifié par son empreinte SHA-256. Au premier lancement, le script télécharge ses outils depuis Maven Central, soit environ 160 Mo, et vérifie leur empreinte.
 - **iOS** : il faut un Mac avec Xcode (`cd apps/ios && xcodegen generate`) ou GitHub Actions.
 
 ## Installer
@@ -60,11 +67,11 @@ Sans GitHub, sur n’importe quel PC :
 1. Copiez `Noctra-android.apk` sur le téléphone, ou téléchargez-le depuis GitHub.
 2. Ouvrez-le. Android demande d’autoriser l’installation d’applications inconnues pour le navigateur ou le gestionnaire de fichiers utilisé.
 
-### Android TV / Google TV / Fire TV
-Choisissez l’une de ces méthodes :
-- Installez l’appli **Downloader** (AFTVnews) sur la TV, puis ouvrez le lien de l’APK.
+### Android TV / Google TV / Fire TV (Noctra TV)
+Installez `Noctra-androidtv.apk` avec l’une de ces méthodes :
+- Installez l’appli **Downloader** (AFTVnews) sur la TV, puis ouvrez le lien de `Noctra-androidtv.apk`.
 - Utilisez **Send Files to TV** depuis votre téléphone.
-- Avec un PC : activez les *Options pour les développeurs* puis le *Débogage USB/réseau* sur la TV, et lancez `adb connect IP_DE_LA_TV` puis `adb install Noctra-android.apk`.
+- Avec un PC : activez les *Options pour les développeurs* puis le *Débogage USB/réseau* sur la TV, et lancez `adb connect IP_DE_LA_TV` puis `adb install Noctra-androidtv.apk`.
 
 Noctra apparaît ensuite dans la rangée des applications, avec sa bannière.
 
