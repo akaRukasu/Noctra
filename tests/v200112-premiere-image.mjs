@@ -25,7 +25,8 @@ assert.match(shell, /art\.style\.setProperty\('--noctra-art-url'/);
 // Poster entier sur fond flouté, paysage plein cadre, composition mobile dédiée.
 assert.match(css, /\.noctra-premiere-art::before \{[^}]*var\(--noctra-art-url/);
 assert.match(css, /\[data-shape="portrait"\],\[data-shape="square"\]\) \.noctra-premiere-picture \{[^}]*object-fit:contain!important/);
-const mobile = css.slice(css.lastIndexOf('@media (max-width:760px)'));
+const premiereBlock = css.slice(css.indexOf('200.0.112 — Affiche d'), css.indexOf('200.0.113 — Aurora Motion'));
+const mobile = premiereBlock.slice(premiereBlock.indexOf('@media (max-width:760px)'));
 assert.match(mobile, /height:60%!important/);
 assert.match(mobile, /height:30%!important/);
 

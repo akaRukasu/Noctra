@@ -796,3 +796,138 @@ html[data-noctra-skin="aurora"]:not(#na-skin) #na-cursor-light {
 @keyframes na-rise-soft {from {opacity:0;transform:translate3d(0,18px,0);} to {opacity:1;transform:none;}}
 @keyframes na-title-in {from {opacity:0;transform:translate3d(0,26px,0);clip-path:inset(0 0 100% 0);} to {opacity:1;transform:none;clip-path:inset(0 0 -20% 0);}}
 @keyframes na-toast-in {from {opacity:0;transform:translate3d(0,24px,0) scale(.92);} to {opacity:1;transform:none;}}
+
+/* ═══════════════ 200.0.114 — Fluidité, fiches cinéma, transitions ═══════════════ */
+
+/* ── Fluidité ── */
+/* Lumière ambiante : même rendu, calculée sur une image 4× plus petite
+   puis agrandie (16× moins de pixels à flouter à chaque changement). */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient > i {
+ inset:-12% auto auto -8%!important;width:29%!important;height:28%!important;transform-origin:0 0!important;
+ transform:scale(4) translateZ(0)!important;filter:blur(17px) saturate(1.7) brightness(.72)!important;
+}
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #na-ambient > i {filter:blur(12px) saturate(1.6) brightness(.7)!important;}
+}
+/* Écrans tactiles : pas de flou d'arrière-plan en défilement, ombres allégées. */
+@media (hover:none), (pointer:coarse) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready :is(#noctra-panel .noctra-library-card__content,.noctra-premiere .noctra-eyebrow) {
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:rgba(12,13,28,.82)!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind] :is(.noctra-library-card,.noctra-request-home-head,.noctra-download-hero,.noctra-arr-hero,.noctra-roulette-intro,.noctra-tv-player-card,.noctra-tv-navigation) {
+  box-shadow:0 12px 26px -18px rgba(0,0,0,.9)!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .cardImageContainer {box-shadow:0 8px 18px -14px rgba(0,0,0,.9)!important;}
+}
+/* Rangées isolées : un changement dans une rangée ne relance pas la mise en page de la page. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .homePage .homeSectionsContainer > .verticalSection {contain:layout style;}
+
+/* ── Médiathèques sur mobile : les noms longs tiennent dans l'encart ── */
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__content {
+  inset:auto 12px 12px!important;padding:11px 12px!important;column-gap:10px!important;grid-template-columns:minmax(0,1fr) auto!important;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__content > strong {
+  font-size:clamp(13.5px,4vw,15.5px)!important;line-height:1.2!important;white-space:normal!important;overflow:hidden!important;
+  display:-webkit-box!important;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:normal!important;word-break:normal!important;hyphens:auto;
+ }
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__meta i {font-size:11.5px!important;}
+ /* Le libellé « Explorer » laisse sa place au titre ; la flèche reste. */
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__action {font-size:0!important;gap:0!important;}
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #noctra-panel[data-noctra-panel-kind="libraries"] .noctra-library-card__action b {font-size:14px!important;width:32px!important;height:32px!important;display:grid!important;place-items:center!important;}
+}
+
+/* ── Fiches films et séries ── */
+/* Arrière-plan cinéma : fondu vers la page, vignettage et teinte Aurora. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemBackdrop {position:relative;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemBackdrop::after {
+ content:"";position:absolute;inset:0;pointer-events:none;
+ background:
+  linear-gradient(180deg,rgba(5,6,13,.15) 0%,rgba(5,6,13,.35) 45%,#05060d 100%),
+  radial-gradient(120% 90% at 50% 10%,transparent 40%,rgba(5,6,13,.65) 100%),
+  linear-gradient(115deg,rgba(139,92,246,.18),transparent 45%,rgba(56,189,248,.12));
+}
+/* Affiche : coins arrondis, anneau lumineux, ombre portée. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .detailImageContainer .cardImageContainer {
+ border-radius:22px!important;border:1px solid rgba(221,214,254,.28)!important;
+ box-shadow:0 40px 80px -30px rgba(0,0,0,.95),0 20px 60px -30px rgba(139,92,246,.75),0 0 0 1px rgba(255,255,255,.04)!important;
+}
+/* Informations : pastilles en verre. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemMiscInfo .mediaInfoItem {
+ border-radius:999px!important;padding:4px 11px!important;margin:3px 6px 3px 0!important;
+ background:rgba(15,17,34,.55)!important;border:1px solid rgba(221,214,254,.16)!important;color:#e7e3ff!important;font-weight:600!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemMiscInfo .starRatingContainer {color:#fde68a!important;border-color:rgba(253,230,138,.35)!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemMiscInfo .mediaInfoCriticRatingFresh {color:#86efac!important;border-color:rgba(134,239,172,.35)!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemMiscInfo .mediaInfoOfficialRating {color:#fda4af!important;border-color:rgba(253,164,175,.4)!important;}
+/* Boutons d'action : verre, halo au survol. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .mainDetailButtons .detailButton:not(.btnPlay) {
+ background:rgba(15,17,34,.55)!important;border:1px solid rgba(221,214,254,.2)!important;border-radius:16px!important;
+ transition:background-color .25s ease,border-color .25s ease,box-shadow .25s ease,translate .3s var(--na-ease)!important;
+}
+@media (hover:hover) and (pointer:fine) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .mainDetailButtons .detailButton:hover {
+  translate:0 -2px;border-color:rgba(221,214,254,.5)!important;box-shadow:0 12px 28px -12px rgba(167,139,250,.9)!important;
+ }
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .mainDetailButtons .btnPlay {
+ background:var(--na-grad-loop)!important;background-size:250% 100%!important;color:#140f2a!important;border-radius:16px!important;border:1px solid rgba(255,255,255,.4)!important;
+ box-shadow:0 14px 34px -12px rgba(167,139,250,.95),inset 0 1px rgba(255,255,255,.55)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .mainDetailButtons .btnPlay :is(.detailButton-icon,.detailButton-content,span) {color:#140f2a!important;background:transparent!important;box-shadow:none!important;}
+/* Accroche et résumé. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .tagline {
+ font-family:var(--na-display)!important;font-style:normal!important;letter-spacing:-.01em;
+ background:var(--na-grad);-webkit-background-clip:text;background-clip:text;color:transparent!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .overview:not(:empty) {
+ color:#d9d7ee!important;line-height:1.75!important;max-width:78ch;
+ padding:14px 18px!important;border-radius:18px;background:linear-gradient(135deg,rgba(26,24,48,.55),rgba(12,14,28,.35));
+ border:1px solid rgba(221,214,254,.1);box-shadow:inset 3px 0 rgba(196,181,253,.7);
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .itemDetailsGroup .label {
+ color:#a5a3c6!important;text-transform:uppercase;letter-spacing:.14em;font-size:11px!important;font-weight:700!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage :is(.itemGenres,.itemDetailsGroup) a {color:#e9e5ff!important;text-decoration:none!important;border-bottom:1px solid rgba(196,181,253,.35);}
+/* Partie basse : panneau en verre arrondi au lieu d'un bloc plein. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .detailPageSecondaryContainer {
+ background:linear-gradient(180deg,rgba(14,15,32,.78),rgba(7,8,18,.92))!important;border-radius:32px 32px 0 0!important;
+ border-top:1px solid rgba(221,214,254,.14)!important;box-shadow:0 -30px 80px -40px rgba(139,92,246,.45)!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .detailVerticalSection .sectionTitle {position:relative;padding-left:16px!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .detailVerticalSection .sectionTitle::before {
+ content:"";position:absolute;left:0;top:18%;bottom:18%;width:4px;border-radius:4px;background:var(--na-grad);box-shadow:0 0 12px rgba(196,181,253,.7);
+}
+/* Épisodes : lignes en verre, vignettes arrondies. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .listItem {
+ border-radius:20px!important;margin:0 0 10px!important;padding:10px!important;
+ background:linear-gradient(135deg,rgba(24,22,46,.6),rgba(12,14,28,.5))!important;border:1px solid rgba(221,214,254,.1)!important;
+ transition:border-color .25s ease,box-shadow .25s ease,background-color .25s ease!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .listItemImage {border-radius:14px!important;overflow:hidden;}
+@media (hover:hover) and (pointer:fine) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .listItem:hover {
+  border-color:rgba(221,214,254,.4)!important;box-shadow:0 16px 36px -22px rgba(139,92,246,.9)!important;
+ }
+}
+/* Distribution : portraits ronds. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .personCard .cardScalable .cardImageContainer {border-radius:50%!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .personCard .cardScalable {border-radius:50%!important;aspect-ratio:1;overflow:hidden;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage .personCard .cardPadder {padding-bottom:100%!important;}
+
+@media (prefers-reduced-motion:no-preference) {
+ /* Transitions de page : chaque page Jellyfin affichée entre en douceur. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing):not(.noctra-video-route) .mainAnimatedPages > .mainAnimatedPage:not(.hide) {
+  animation:na-page-in .55s var(--na-ease) backwards!important;
+ }
+ /* Fiche : entrée en cascade de l'affiche, du titre, des infos et des actions. */
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .detailImageContainer .card {animation:na-poster-in .9s var(--na-ease) .05s backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .nameContainer {animation:na-rise-soft .7s var(--na-ease) .12s backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .itemMiscInfo {animation:na-rise-soft .7s var(--na-ease) .2s backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .mainDetailButtons {animation:na-rise-soft .7s var(--na-ease) .28s backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .detailPagePrimaryContent {animation:na-rise-soft .8s var(--na-ease) .36s backwards!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) .itemDetailPage:not(.hide) .itemBackdrop {animation:na-backdrop-in 1.2s var(--na-ease) backwards!important;}
+}
+@keyframes na-page-in {from {opacity:0;transform:translate3d(0,18px,0);} to {opacity:1;transform:none;}}
+@keyframes na-poster-in {from {opacity:0;transform:translate3d(0,26px,0) scale(.94) rotateX(8deg);} to {opacity:1;transform:none;}}
+@keyframes na-backdrop-in {from {opacity:0;transform:scale(1.06);} to {opacity:1;transform:none;}}
