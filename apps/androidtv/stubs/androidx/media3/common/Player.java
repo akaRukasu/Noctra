@@ -11,7 +11,10 @@ public interface Player {
     void prepare();
     void setPlayWhenReady(boolean playWhenReady);
     void release();
+    void stop();
     int getPlaybackState();
     PlaybackException getPlayerError();
     boolean isPlaying();
+    void setVolume(float volume);
+    void seekToDefaultPosition();
 }

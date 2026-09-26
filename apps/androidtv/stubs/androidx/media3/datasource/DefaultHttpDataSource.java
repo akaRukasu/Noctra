@@ -9,5 +9,7 @@ public class DefaultHttpDataSource implements HttpDataSource {
         public Factory setDefaultRequestProperties(Map<String, String> properties) { throw new UnsupportedOperationException(); }
         public Factory setUserAgent(String userAgent) { throw new UnsupportedOperationException(); }
         public Factory setAllowCrossProtocolRedirects(boolean allow) { throw new UnsupportedOperationException(); }
+        public Factory setConnectTimeoutMs(int timeoutMs) { throw new UnsupportedOperationException(); }
+        public Factory setReadTimeoutMs(int timeoutMs) { throw new UnsupportedOperationException(); }
     }
 }

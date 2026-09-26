@@ -8,6 +8,11 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
+import android.graphics.drawable.GradientDrawable;
+import android.view.InputDevice;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -24,6 +29,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -31,13 +37,17 @@ import java.io.InputStream;
 
 /**
  * Accueil Noctra de l'appli Noctra TV : menu du haut (Accueil, Médiathèques,
- * TV en direct, Découvrir, Demandes, Roulette, Rechercher, Jellyfin).
+ * TV en direct, Découvrir, Demandes, Roulette, Rechercher, compte).
  *
  * L'interface (assets/noctra-tv) est servie par l'appli elle-même sous
  * NOCTRA_URL/tv-app/ : même origine que l'API Noctra et que Jellyfin, sans
  * rien installer sur le serveur. Les fiches, médiathèques et la lecture des
  * films et séries s'ouvrent dans les écrans natifs de Jellyfin ; les chaînes
- * TV dans NoctraPlayerActivity (ExoPlayer).
+ * TV dans NoctraPlayerActivity (ExoPlayer) ou NoctraMultiviewActivity.
+ *
+ * Lecteurs web des chaînes (sports…) : leurs boutons sont dans des pages
+ * externes, hors de portée des flèches. Pendant leur affichage, un curseur
+ * se déplace avec les flèches et OK envoie un vrai appui tactile.
  *
  * Canal natif : un MessagePort transmis au seul cadre principal, limité à
  * l'origine du serveur. Les lecteurs web des chaînes (iframes) n'y ont pas accès.
@@ -45,6 +55,7 @@ import java.io.InputStream;
 public class NoctraHomeActivity extends Activity {
 
     private static final int PLAYER_REQUEST = 7;
+    private static final int MULTIVIEW_REQUEST = 8;
 
     private FrameLayout root;
     private WebView webView;
@@ -55,6 +66,10 @@ public class NoctraHomeActivity extends Activity {
     private NoctraSession session;
     private String appBase;
     private Uri server;
+    private View cursor;
+    private boolean cursorMode;
+    private float cursorX;
+    private float cursorY;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,7 +111,9 @@ public class NoctraHomeActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " NoctraTV/" + NoctraConfig.VERSION);
+        // Signature d'un Chrome Android ordinaire : certains lecteurs web des
+        // chaînes refusent les WebView (« ; wv », « Version/4.0 »).
+        settings.setUserAgentString(settings.getUserAgentString().replace("; wv)", ")").replaceAll("Version/[\\d.]+ ", ""));
 
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
@@ -133,6 +150,7 @@ public class NoctraHomeActivity extends Activity {
                 customViewCallback = callback;
                 view.setBackgroundColor(Color.BLACK);
                 root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                if (cursor != null) cursor.bringToFront();
             }
 
             @Override
@@ -243,8 +261,18 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra("ItemId", id);
             if (action.equals("openLibrary")) intent.putExtra("ItemIsUserView", true);
             openJellyfin(intent);
-        } else if (action.equals("openJellyfin")) {
-            openJellyfin(new Intent());
+        } else if (action.equals("openSettings")) {
+            Intent intent = new Intent();
+            intent.setComponent(new ComponentName(this, "org.jellyfin.androidtv.ui.preference.PreferencesActivity"));
+            intent.putExtra("screen", "org.jellyfin.androidtv.ui.preference.screen.UserPreferencesScreen");
+            try {
+                startActivity(intent);
+            } catch (ActivityNotFoundException ignored) {
+            }
+        } else if (action.equals("multiview")) {
+            openMultiview(message.optJSONArray("items"));
+        } else if (action.equals("cursor")) {
+            setCursorMode(message.optBoolean("data", false));
         } else if (action.equals("play")) {
             String url = message.optString("url");
             if (!url.startsWith("https://") && !url.startsWith("http://")) return;
@@ -268,6 +296,125 @@ public class NoctraHomeActivity extends Activity {
         }
     }
 
+    private void openMultiview(JSONArray items) {
+        if (items == null || items.length() == 0) return;
+        int count = Math.min(4, items.length());
+        String[] urls = new String[count];
+        String[] titles = new String[count];
+        String[] subtitles = new String[count];
+        String[] mimes = new String[count];
+        boolean[] authorized = new boolean[count];
+        for (int i = 0; i < count; i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) return;
+            String url = item.optString("url");
+            if (!url.startsWith("https://") && !url.startsWith("http://")) return;
+            urls[i] = url;
+            titles[i] = item.optString("title");
+            subtitles[i] = item.optString("subtitle");
+            mimes[i] = item.optString("mime");
+            authorized[i] = sameOrigin(Uri.parse(url), server);
+        }
+        Intent intent = new Intent(this, NoctraMultiviewActivity.class);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_URLS, urls);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_TITLES, titles);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_SUBTITLES, subtitles);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_MIMES, mimes);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_AUTHORIZED, authorized);
+        intent.putExtra(NoctraMultiviewActivity.EXTRA_TOKEN, session.accessToken);
+        try {
+            startActivityForResult(intent, MULTIVIEW_REQUEST);
+        } catch (ActivityNotFoundException ignored) {
+        }
+    }
+
+    // ── Curseur des lecteurs web ───────────────────────────────────────────
+    private void setCursorMode(boolean enabled) {
+        cursorMode = enabled;
+        if (enabled && cursor == null) {
+            cursor = new View(this);
+            GradientDrawable dot = new GradientDrawable();
+            dot.setShape(GradientDrawable.OVAL);
+            dot.setColor(Color.argb(235, 242, 246, 244));
+            dot.setStroke(dp(3), Color.rgb(9, 10, 15));
+            cursor.setBackground(dot);
+            cursor.setClickable(false);
+            cursor.setFocusable(false);
+            root.addView(cursor, new FrameLayout.LayoutParams(dp(22), dp(22)));
+        }
+        if (cursor == null) return;
+        if (enabled) {
+            cursorX = root.getWidth() / 2f;
+            cursorY = root.getHeight() / 2f;
+            placeCursor();
+            cursor.bringToFront();
+            cursor.setVisibility(View.VISIBLE);
+        } else {
+            cursor.setVisibility(View.GONE);
+            webView.requestFocus();
+        }
+    }
+
+    private void placeCursor() {
+        cursor.setTranslationX(cursorX - dp(11));
+        cursor.setTranslationY(cursorY - dp(11));
+    }
+
+    private void touch(int action, float x, float y, long downTime) {
+        MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0);
+        event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        root.dispatchTouchEvent(event);
+        event.recycle();
+    }
+
+    private void tap() {
+        long downTime = SystemClock.uptimeMillis();
+        touch(MotionEvent.ACTION_DOWN, cursorX, cursorY, downTime);
+        touch(MotionEvent.ACTION_UP, cursorX, cursorY, downTime);
+    }
+
+    // Curseur au bord de l'écran : glissement pour faire défiler la page.
+    private void swipe(float dy) {
+        long downTime = SystemClock.uptimeMillis();
+        float x = cursorX;
+        float y = root.getHeight() / 2f;
+        touch(MotionEvent.ACTION_DOWN, x, y, downTime);
+        for (int i = 1; i <= 5; i++) touch(MotionEvent.ACTION_MOVE, x, y + dy * i / 5f, downTime);
+        touch(MotionEvent.ACTION_UP, x, y + dy, downTime);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (!cursorMode) return super.dispatchKeyEvent(event);
+        int code = event.getKeyCode();
+        boolean move = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+            || code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN;
+        boolean click = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER;
+        if (!move && !click) return super.dispatchKeyEvent(event);
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
+        if (click) {
+            if (event.getRepeatCount() == 0) tap();
+            return true;
+        }
+        float step = dp(14 + Math.min(event.getRepeatCount(), 16) * 4);
+        float width = root.getWidth();
+        float height = root.getHeight();
+        if (code == KeyEvent.KEYCODE_DPAD_LEFT) cursorX -= step;
+        else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) cursorX += step;
+        else if (code == KeyEvent.KEYCODE_DPAD_UP) cursorY -= step;
+        else cursorY += step;
+        if (cursorY < 0 && event.getRepeatCount() % 4 == 0) swipe(height / 3f);
+        if (cursorY > height && event.getRepeatCount() % 4 == 0) swipe(-height / 3f);
+        cursorX = Math.max(0, Math.min(width - 1, cursorX));
+        cursorY = Math.max(0, Math.min(height - 1, cursorY));
+        placeCursor();
+        return true;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     // Écrans Jellyfin : StartupActivity vérifie la session puis ouvre l'écran
     // demandé (NoctraRouting). Retour revient ensuite à l'accueil Noctra.
     private void openJellyfin(Intent intent) {
@@ -287,6 +434,7 @@ public class NoctraHomeActivity extends Activity {
             JSONObject message = new JSONObject();
             message.put("type", "playerClosed");
             message.put("ok", resultCode != NoctraPlayerActivity.RESULT_ERROR);
+            message.put("played", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_PLAYED, false));
             message.put("error", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_ERROR));
             send(message);
         } catch (Exception ignored) {

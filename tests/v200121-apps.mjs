@@ -140,7 +140,7 @@ assert.match(await read('apps/androidtv/README.md'), /GNU GPL v2/);
 //    (NoctraRouting), les écrans Jellyfin restent accessibles depuis l'accueil.
 assert.match(androidtv, /invoke-static \{v0\}, Lcom\/noctra\/tv\/NoctraRouting;->nextActivity\(Landroid\/content\/Context;\)Ljava\/lang\/Class;/);
 assert.match(androidtv, /invoke-static \{v0\}, Lcom\/noctra\/tv\/NoctraRouting;->nextActivityFlags\(Landroid\/content\/Context;\)I/);
-assert.match(androidtv, /activity\('NoctraHomeActivity'\) \+ activity\('NoctraPlayerActivity'\)/);
+assert.match(androidtv, /activity\('NoctraHomeActivity'\) \+ activity\('NoctraPlayerActivity'\) \+ activity\('NoctraMultiviewActivity'\)/);
 assert.match(androidtv, /android:exported="false"/, 'Écrans Noctra non exportés');
 assert.match(androidtv, /'assets', 'noctra-tv'/);
 assert.match(androidtv, /'https:\/\/akarukasu\.merlion\.usbx\.me\/noctra'/);
@@ -152,13 +152,30 @@ assert.match(home, /postWebMessage\(new WebMessage\("noctra-host"/, 'Canal natif
 assert.ok(!home.includes('addJavascriptInterface'), 'Pas d’objet Java exposé aux lecteurs web');
 assert.match(home, /if \(sameOrigin\(target, server\)\) intent\.putExtra\(NoctraPlayerActivity\.EXTRA_TOKEN/, 'Jeton limité au serveur Noctra');
 assert.match(home, /return !request\.getUrl\(\)\.toString\(\)\.startsWith\(appBase\);/, 'Le cadre principal reste sur l’accueil');
-const player = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
-assert.match(player, /new DefaultMediaSourceFactory\(http\)/);
-assert.ok(!/implements\s+Player\.Listener/.test(player), 'Aucune interface d’écoute Media3 (réduites par R8)');
+// Lecture des chaînes : tampon élargi, tentatives, retour au direct, reconnexions.
+const stream = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(stream, /new DefaultMediaSourceFactory\(http\)\s*\.setLoadErrorHandlingPolicy\(new DefaultLoadErrorHandlingPolicy\(6\)\)/);
+assert.match(stream, /\.setLoadControl\(buffer\)/);
+assert.match(stream, /error\.errorCode == BEHIND_LIVE_WINDOW && played/);
+assert.match(stream, /private static final int BEHIND_LIVE_WINDOW = 1002;/);
+assert.match(stream, /STALL_TIMEOUT_MS/);
+for (const file of ['NoctraStream', 'NoctraPlayerActivity', 'NoctraMultiviewActivity']) {
+  assert.ok(!/implements[^{]*Player\.Listener/.test(await read(`apps/androidtv/java/com/noctra/tv/${file}.java`)), 'Aucune interface d’écoute Media3 (réduites par R8)');
+}
+// Lecteurs web : curseur et vrais appuis tactiles, signature sans « wv ».
+assert.match(home, /root\.dispatchTouchEvent\(event\)/);
+assert.match(home, /replace\("; wv\)", "\)"\)/);
+assert.ok(!home.includes('"openJellyfin"'), 'Plus de bouton Jellyfin');
 const tvApp = await read('apps/androidtv/web/app.js');
 assert.ok(!/\?\.[\w([]|\?\?/.test(tvApp), 'Accueil TV en ES2017 (WebView anciennes)');
 assert.match(tvApp, /event\.source !== null/, 'Canal refusé aux iframes');
 assert.match(tvApp, /window\.NoctraTV = \{ back:/);
+assert.match(tvApp, /Authorization: 'MediaBrowser Client="Noctra TV"/, 'Jellyfin 10.11+ : en-tête Authorization');
+assert.ok(!/['"]X-Emby-Token['"]\s*:/.test(tvApp), 'Ancien en-tête refusé par Jellyfin (401)');
+assert.ok(!/Jellyfin'\)|'Jellyfin'|dans Jellyfin/.test(tvApp), 'Interface sans bouton ni libellé Jellyfin');
+assert.match(tvApp, /native\('multiview', \{ items: items \}\)/);
+assert.match(tvApp, /native\('cursor', \{ data: true \}\)/);
+assert.match(tvApp, /noctra-tv-server:/, 'Dernier serveur fonctionnel mémorisé');
 for (const route of ['/api/home/resume', '/api/tv/sources', '/api/tv/catalog?source=', '/api/jellyseerr/search?q=', '/api/jellyseerr/request', '/api/discovery?category=', '/api/roulette?']) {
   assert.ok(tvApp.includes(route), `Accueil TV : ${route}`);
 }

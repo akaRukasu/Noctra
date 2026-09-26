@@ -9,6 +9,7 @@ public interface ExoPlayer extends Player {
     final class Builder {
         public Builder(Context context) { }
         public Builder setMediaSourceFactory(MediaSource.Factory factory) { throw new UnsupportedOperationException(); }
+        public Builder setLoadControl(LoadControl loadControl) { throw new UnsupportedOperationException(); }
         public ExoPlayer build() { throw new UnsupportedOperationException(); }
     }
 }

@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 2;
+const noctraRevision = 3;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -174,7 +174,7 @@ await patch(smali('ui/startup/StartupActivity.smali'), [[
     move-result v0`
 ]]);
 const activity = name => `        <activity android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density" android:exported="false" android:name="com.noctra.tv.${name}" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"/>\n`;
-await patch(join(decoded, 'AndroidManifest.xml'), [['    </application>', activity('NoctraHomeActivity') + activity('NoctraPlayerActivity') + '    </application>']]);
+await patch(join(decoded, 'AndroidManifest.xml'), [['    </application>', activity('NoctraHomeActivity') + activity('NoctraPlayerActivity') + activity('NoctraMultiviewActivity') + '    </application>']]);
 await cp(join(appsRoot, 'androidtv', 'web'), join(decoded, 'assets', 'noctra-tv'), { recursive: true });
 
 // Code Java : compilé contre Android et des signatures Media3 (stubs, jamais

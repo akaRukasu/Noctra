@@ -12,7 +12,7 @@ Noctra existe en applications pour :
 
 ## Android TV : Noctra TV (appli native)
 
-Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli Jellyfin officielle pour Android TV adaptée pour Noctra : marque Noctra et serveur `akarukasu.merlion.usbx.me/jellyfin` intégré. On arrive directement sur la page d’authentification, puis sur l’accueil Noctra : médiathèques, TV en direct, Découvrir, Demandes, Roulette et recherche. L’interface est native et fluide, et la lecture passe par le lecteur vidéo d’Android. Les détails, la construction et la licence sont dans [androidtv/README.md](androidtv/README.md).
+Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli Jellyfin officielle pour Android TV adaptée pour Noctra : marque Noctra et serveur `akarukasu.merlion.usbx.me/jellyfin` intégré. On arrive directement sur la page d’authentification, puis sur l’accueil Noctra : médiathèques, TV en direct (avec le multiview), Découvrir, Demandes, Roulette et recherche. L’interface est native et fluide, et la lecture passe par le lecteur vidéo d’Android. Les détails, la construction et la licence sont dans [androidtv/README.md](androidtv/README.md).
 
 L’interface web complète de Noctra dans une WebView (appli `Noctra-android.apk`) est trop lourde pour les boîtiers et vidéoprojecteurs Android. Elle reste l’appli recommandée sur téléphone et tablette.
 

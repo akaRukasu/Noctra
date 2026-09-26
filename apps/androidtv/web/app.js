@@ -44,7 +44,9 @@
     requests: '<path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/>',
     roulette: '<path d="M12 3a9 9 0 1 0 9 9h-2.2A6.8 6.8 0 1 1 12 5.2V3zm0 5 5-4v8z"/>',
     search: '<path d="M10.5 4a6.5 6.5 0 0 1 5.2 10.4l4.4 4.4-1.4 1.4-4.4-4.4A6.5 6.5 0 1 1 10.5 4zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z"/>',
-    jellyfin: '<path d="M12 3c-3 0-9.5 11.3-8 14 1.4 2.6 14.6 2.6 16 0 1.5-2.7-5-14-8-14zm0 5.2c1.6 0 4.5 5.2 3.8 6.4-.7 1.2-6.9 1.2-7.6 0-.7-1.2 2.2-6.4 3.8-6.4z"/>',
+    settings: '<path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/>',
+    grid: '<path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/>',
+    check: '<path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/>',
     play: '<path d="M8 5v14l11-7z"/>',
     info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>'
   };
@@ -108,7 +110,8 @@
         .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
       if (query) url += (url.indexOf('?') < 0 ? '?' : '&') + query;
     }
-    return request(url, { headers: { 'X-Emby-Token': S.token } });
+    // Jellyfin 10.11+ refuse les anciens en-têtes (X-Emby-Token) : erreur 401.
+    return request(url, { headers: { Authorization: 'MediaBrowser Client="Noctra TV", Device="Android TV", DeviceId="noctra-tv-' + S.userId + '", Version="1", Token="' + S.token + '"' } });
   }
   function jfImage(id, type, tag, height) {
     if (!id) return '';
@@ -141,7 +144,7 @@
     if (S.ready || port) return;
     var params = new URLSearchParams(location.hash.slice(1));
     if (!params.get('token')) {
-      main.appendChild(h('div', { class: 'error', text: 'Session Jellyfin introuvable : ouvrez Noctra TV depuis le téléviseur.' }));
+      main.appendChild(h('div', { class: 'error', text: 'Session introuvable : ouvrez Noctra TV depuis le téléviseur.' }));
       return;
     }
     var base = location.pathname.replace(/\/tv-app\/.*$/, '');
@@ -161,16 +164,18 @@
     var own = String(data.jellyfinUrl || '').replace(/\/+$/, '');
     var remote = String(data.serverAddress || '').replace(/\/+$/, '');
     S.jf = own.indexOf(location.origin) === 0 || !remote ? own : remote;
-    document.getElementById('user').textContent = S.userName;
-    if (S.ready && !changed) return;
+    if (S.ready && !changed) { renderNav(); return; }
     S.ready = true;
     cache = {};
     // Cookie de session Noctra : nécessaire aux lecteurs web des chaînes (iframes).
     Promise.all([
-      api('/api/session').then(function (session) { S.isAdmin = Boolean(session && session.isAdmin); if (session && session.user && !S.userName) document.getElementById('user').textContent = session.user.name; }),
+      api('/api/session').then(function (session) {
+        S.isAdmin = Boolean(session && session.isAdmin);
+        if (session && session.user && !S.userName) { S.userName = session.user.name; renderNav(); }
+      }),
       api('/api/config').then(function (config) { S.config = (config && config.configured) || {}; })
     ]).catch(function (error) {
-      if (error.status === 401 || error.status === 403) toast('Session refusée par Noctra : reconnectez-vous dans Jellyfin.', true);
+      if (error.status === 401 || error.status === 403) toast('Session refusée par Noctra : reconnectez-vous depuis Compte › Paramètres.', true);
     });
     renderNav();
     go('home', {}, true, true);
@@ -201,8 +206,18 @@
       nav.appendChild(h('button', { class: 'nav f' + (section.iconOnly ? ' icon-only' : ''), 'data-section': section.name, 'aria-label': section.label, onclick: function () { go(section.name, {}, true); } },
         icon(section.icon), section.iconOnly ? null : section.label));
     });
-    nav.appendChild(h('button', { class: 'nav jellyfin f', onclick: function () { native('openJellyfin') || toast('Disponible dans l’appli Noctra TV.'); } },
-      icon('jellyfin'), 'Jellyfin'));
+    var account = document.getElementById('user');
+    clear(account);
+    account.appendChild(h('button', { class: 'nav account f', 'aria-label': 'Compte', onclick: accountMenu },
+      h('span', { class: 'avatar', text: (S.userName || '?').charAt(0).toUpperCase() }), S.userName || 'Compte'));
+  }
+  function accountMenu() {
+    var list = h('div', { class: 'list scroll' },
+      h('h2', null, S.userName || 'Compte', h('small', { text: 'Noctra TV' })),
+      h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
+      h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
+      h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
+    openLayer(h('div', { class: 'modal' }, list));
   }
   function markNav(name) {
     Array.prototype.forEach.call(document.querySelectorAll('#nav .nav'), function (node) {
@@ -236,6 +251,7 @@
     var section = sections.some(function (s) { return s.name === view.name; }) ? view.name : (view.params.section || 'home');
     markNav(section);
     clear(main);
+    main.classList.remove('with-multibar');
     main.scrollTop = 0;
     var token = ++renderToken;
     if (focusMenu) focus(document.querySelector('#nav .nav.active'));
@@ -392,7 +408,6 @@
     if (typeof node._onClose === 'function') node._onClose(silent);
     layer.removeChild(node);
     var previous = layerReturn.pop();
-    if (silent) return;
     if (previous && document.body.contains(previous)) focus(previous);
     else focusFirst();
   }
@@ -466,7 +481,7 @@
     }
   }
 
-  // ── Fiches (Jellyfin) ──────────────────────────────────────────────
+  // ── Fiches ─────────────────────────────────────────────────
   function itemTitle(item) {
     if (item.Type === 'Episode') return item.SeriesName || item.Name;
     return item.Name || 'Sans titre';
@@ -491,7 +506,7 @@
     return '';
   }
   function openItem(id) {
-    if (!native('openItem', { id: id })) toast('Fiche Jellyfin : disponible dans l’appli Noctra TV.');
+    if (!native('openItem', { id: id })) toast('Fiche : disponible dans l’appli Noctra TV.');
   }
   function itemCard(item, kind) {
     var wide = kind === 'wide';
@@ -574,7 +589,7 @@
     } else if (!native('openLibrary', { id: lib.Id })) toast('Disponible dans l’appli Noctra TV.');
   }
   views.libraries = function (params, alive) {
-    main.appendChild(head('Médiathèques', 'Parcourez vos films et séries, ou ouvrez une médiathèque dans Jellyfin.'));
+    main.appendChild(head('Médiathèques', 'Parcourez vos films et séries.'));
     var grid = h('div', { class: 'grid wides' });
     var status = loading();
     main.appendChild(status);
@@ -603,7 +618,7 @@
     var unplayed = Boolean(params.unplayed);
     var type = lib.CollectionType === 'movies' ? 'Movie' : lib.CollectionType === 'tvshows' ? 'Series' : lib.CollectionType === 'boxsets' ? 'BoxSet' : '';
     var count = h('span', { class: 'sub' });
-    main.appendChild(head(lib.Name, '', h('button', { class: 'btn f', onclick: function () { native('openLibrary', { id: lib.Id }) || toast('Disponible dans l’appli Noctra TV.'); } }, icon('jellyfin'), 'Ouvrir dans Jellyfin')));
+    main.appendChild(head(lib.Name, ''));
     var chips = h('div', { class: 'chips' });
     librarySorts.forEach(function (option) {
       chips.appendChild(chip(option.label, option.id === sort, function () { reopen({ sort: option.id }); }));
@@ -666,9 +681,10 @@
     { id: 'personal', label: 'Mes sources' }
   ];
   views.live = function (params, alive) {
-    main.appendChild(head('TV en direct', 'Choisissez une source de chaînes. Lecture en plein écran avec le lecteur natif quand le flux le permet.'));
+    main.appendChild(head('TV en direct', 'Choisissez une source de chaînes. Multiview : jusqu’à 4 chaînes à l’écran.'));
     var status = loading();
     main.appendChild(status);
+    renderMultiBar();
     return api('/api/tv/sources').then(function (data) {
       if (!alive()) return;
       status.remove();
@@ -701,9 +717,17 @@
     var source = params.source;
     var group = params.group || '';
     var query = params.query || '';
-    main.appendChild(head(source.name, source.description || ''));
+    var multiButton = h('button', { class: 'btn f' + (multi.on ? ' primary' : ''), onclick: function () {
+      multi.on = !multi.on;
+      multiButton.className = 'btn f' + (multi.on ? ' primary' : '');
+      multiButton.lastChild.textContent = multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview';
+      renderMultiBar();
+      if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (4 au maximum).');
+    } }, icon('grid'), multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview');
+    main.appendChild(head(source.name, source.description || '', multiButton));
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
+    renderMultiBar();
     var key = 'tv:' + source.id;
     var load = cache[key] ? Promise.resolve(cache[key]) : api('/api/tv/catalog?source=' + encodeURIComponent(source.id), { timeout: 45000 }).then(function (data) {
       cache[key] = data;
@@ -748,12 +772,18 @@
         });
         if (!list.length) { grid.appendChild(h('div', { class: 'empty', text: channels.length ? 'Aucune chaîne ne correspond.' : 'Aucune chaîne disponible.' })); return; }
         lazyGrid(grid, list, function (channel) {
-          return card({
+          var node = card({
             kind: 'channel', title: channel.name, sub: [channel.group, channel.provider].filter(Boolean).join(' · '),
             image: channel.logo ? absolute(channel.logo) : '',
             badge: channel.isLive ? 'LIVE' : '',
-            onSelect: function () { playChannel(channel, source); }
+            onSelect: function () {
+              if (multi.on) toggleMulti(channel, source);
+              else launchChannel(channel, source);
+            }
           });
+          node.setAttribute('data-channel', channelKey(channel, source));
+          markMulti(node);
+          return node;
         }, 72);
       }
       fill();
@@ -765,48 +795,158 @@
   function normalize(value) {
     return String(value || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   }
+  function channelKey(channel, source) {
+    return (source && source.id ? source.id : '') + ':' + channel.name;
+  }
 
-  // Lecture d'une chaîne : flux direct → lecteur natif ; page de lecteur → iframe.
-  var playback = null;
-  function playChannel(channel, source) {
-    var options;
-    if (channel.playbackType === 'stream' && channel.streamUrl) {
-      options = Promise.resolve([{ playbackType: 'stream', streamUrl: channel.streamUrl, label: 'Direct', transport: channel.transport }]);
-    } else if (channel.resolverUrl) {
-      toast('Recherche des serveurs de ' + channel.name + '…');
-      options = resolveOptions(channel.resolverUrl);
-    } else if (channel.embedUrl) {
-      options = Promise.resolve([{ playbackType: 'embed', url: channel.embedUrl, label: 'Lecteur web' }]);
-    } else {
-      options = Promise.resolve([]);
-    }
-    options.then(function (list) {
-      if (!list.length) { toast('Aucun flux disponible pour ' + channel.name + '.', true); return; }
-      playback = { channel: channel, source: source, options: list, index: 0, startedAt: 0 };
-      playOption();
-    }, function (error) { toast(error.message, true); });
+  // ── Serveurs d'une chaîne ──────────────────────────────────────────
+  function optionKind(option) {
+    if (option.streamUrl || option.playbackType === 'stream') return 'native';
+    if (option.resolveUrl && !option.url) return 'resolve';
+    return 'web';
+  }
+  function optionLabel(option, index) {
+    return option.label || (optionKind(option) === 'native' ? 'Flux direct' : 'Serveur ' + (index + 1));
   }
   function resolveOptions(url) {
     return api(url, { timeout: 30000 }).then(function (result) {
       var list = result && Array.isArray(result.options) ? result.options : (result && (result.streamUrl || result.url) ? [result] : []);
-      return list.filter(function (option) { return option && (option.streamUrl || option.url || option.resolveUrl); });
+      return list.filter(function (option) { return option && (option.streamUrl || option.url || option.resolveUrl); })
+        .map(function (option) { if (!option.resolveUrl && url) option.renewUrl = url; return option; });
     });
   }
+  function channelOptions(channel) {
+    if (channel.playbackType === 'stream' && channel.streamUrl) {
+      return Promise.resolve([{ playbackType: 'stream', streamUrl: channel.streamUrl, label: 'Flux direct', transport: channel.transport }]);
+    }
+    if (channel.resolverUrl) return resolveOptions(channel.resolverUrl);
+    if (channel.embedUrl) return Promise.resolve([{ playbackType: 'embed', url: channel.embedUrl, label: 'Lecteur web' }]);
+    return Promise.resolve([]);
+  }
+  // Serveur qui a fonctionné en dernier pour cette chaîne (mémorisé sur la TV).
+  function rememberedServer(key) {
+    try { return localStorage.getItem('noctra-tv-server:' + key) || ''; } catch (error) { return ''; }
+  }
+  function rememberServer(key, label) {
+    try { localStorage.setItem('noctra-tv-server:' + key, label); } catch (error) { /* stockage indisponible */ }
+  }
+  function rankOptions(options, key) {
+    var remembered = rememberedServer(key);
+    var weight = { native: 0, resolve: 1, web: 2 };
+    return options.map(function (option, index) { return { option: option, index: index }; }).sort(function (a, b) {
+      function score(entry) {
+        var option = entry.option;
+        if (remembered && optionLabel(option, entry.index) === remembered) return -10;
+        return weight[optionKind(option)] + (option.compatPage ? 3 : 0) + (option.manualOnly ? 4 : 0) + (option.fallback ? 0.5 : 0);
+      }
+      return score(a) - score(b) || a.index - b.index;
+    }).map(function (entry) { return entry.option; });
+  }
+
+  var playback = null;
+  function launchChannel(channel, source) {
+    var key = channelKey(channel, source);
+    var sheet = pickerSheet(channel, 'Recherche des serveurs…');
+    openLayer(sheet.node);
+    channelOptions(channel).then(function (list) {
+      if (!document.body.contains(sheet.node)) return;
+      if (!list.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
+      playback = { channel: channel, source: source, key: key, options: rankOptions(list, key), index: 0, failed: {}, startedAt: 0, renewed: false };
+      if (playback.options.length === 1) {
+        closeLayer(true);
+        playOption();
+      } else {
+        fillPicker(sheet, playback, 5);
+      }
+    }, function (error) {
+      if (document.body.contains(sheet.node)) sheet.status(error.message, true);
+    });
+  }
+
+  // Fenêtre de choix : serveurs classés (dernier serveur fonctionnel, puis
+  // lecteur natif, puis lecteurs web), lancement automatique du premier.
+  function pickerSheet(channel, text) {
+    var list = h('div', { class: 'servers' });
+    var note = h('div', { class: 'picker-status loading', text: text });
+    var logo = channel.logo ? image(absolute(channel.logo), '') : null;
+    var node = h('div', { class: 'modal' }, h('div', { class: 'picker' },
+      h('div', { class: 'picker-head' },
+        h('div', { class: 'picker-logo' }, logo),
+        h('div', null, h('h2', { text: channel.name }), h('div', { class: 'sub', text: [channel.group, channel.provider].filter(Boolean).join(' · ') }))),
+      note, list,
+      h('button', { class: 'btn f picker-close', text: 'Annuler', onclick: function () { closeLayer(); } })));
+    var timer = 0;
+    function stopCountdown() {
+      clearInterval(timer);
+      timer = 0;
+      document.removeEventListener('keydown', stopCountdown, true);
+      if (note.getAttribute('data-countdown')) { note.removeAttribute('data-countdown'); note.textContent = 'Choisissez un serveur.'; }
+    }
+    node._onClose = function () { stopCountdown(); };
+    return {
+      node: node, list: list, note: note,
+      status: function (message, bad) { note.className = 'picker-status' + (bad ? ' bad' : ''); note.textContent = message; },
+      countdown: function (seconds, action) {
+        var left = seconds;
+        note.className = 'picker-status';
+        note.setAttribute('data-countdown', '1');
+        note.textContent = 'Lecture automatique du premier serveur dans ' + left + ' s…';
+        // Toute touche interrompt le lancement automatique.
+        setTimeout(function () { document.addEventListener('keydown', stopCountdown, true); }, 0);
+        timer = setInterval(function () {
+          left--;
+          if (left <= 0) { stopCountdown(); action(); return; }
+          note.textContent = 'Lecture automatique du premier serveur dans ' + left + ' s…';
+        }, 1000);
+      }
+    };
+  }
+  function fillPicker(sheet, state, seconds) {
+    clear(sheet.list);
+    var remembered = rememberedServer(state.key);
+    var first = -1;
+    state.options.forEach(function (option, index) {
+      var kind = optionKind(option);
+      var failed = state.failed[index];
+      if (!failed && first < 0) first = index;
+      var tags = [h('span', { class: 'tag ' + kind, text: kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web' })];
+      if (remembered && optionLabel(option, index) === remembered) tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
+      else if (index === 0 && !failed) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
+      if (failed) tags.push(h('span', { class: 'tag bad', text: 'Échec' }));
+      sheet.list.appendChild(h('button', { class: 'server f' + (failed ? ' failed' : ''), 'data-index': index, onclick: function () {
+        closeLayer(true);
+        state.index = index;
+        playback = state;
+        playOption();
+      } }, h('b', { text: String(index + 1) }), h('span', { class: 'name', text: optionLabel(option, index) }), h('span', { class: 'tags' }, tags)));
+    });
+    var target = sheet.list.children[Math.max(0, first)];
+    if (target) focus(target);
+    if (first < 0) sheet.status('Aucun serveur ne fonctionne pour cette chaîne en ce moment. Vous pouvez en réessayer un.', true);
+    else if (seconds) sheet.countdown(seconds, function () { if (document.body.contains(sheet.node)) target.click(); });
+    else sheet.status('Choisissez un serveur.');
+  }
+  function showPicker(state, message, seconds) {
+    var sheet = pickerSheet(state.channel, '');
+    if (message) sheet.note.parentNode.insertBefore(h('div', { class: 'picker-status bad', text: message }), sheet.note);
+    openLayer(sheet.node);
+    fillPicker(sheet, state, seconds);
+  }
+
   function playOption() {
     var state = playback;
     if (!state) return;
     var option = state.options[state.index];
-    if (!option) {
-      playback = null;
-      toast('Aucun serveur ne fonctionne pour ' + state.channel.name + ' en ce moment.', true);
-      return;
-    }
-    var label = [state.channel.provider, option.label].filter(Boolean).join(' · ');
-    if (option.resolveUrl && !option.streamUrl && !option.url) {
+    if (!option) { playback = null; return; }
+    var label = [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
+    if (optionKind(option) === 'resolve') {
+      toast('Connexion à ' + optionLabel(option, state.index) + '…');
       resolveOptions(option.resolveUrl).then(function (list) {
+        if (!list.length) throw new Error('Serveur vide');
+        list.forEach(function (item) { item.renewUrl = option.resolveUrl; if (!item.label) item.label = option.label; });
         state.options.splice.apply(state.options, [state.index, 1].concat(list));
         playOption();
-      }, function () { nextOption(); });
+      }, function () { failOption(state, 'Ce serveur ne répond pas.'); });
       return;
     }
     state.startedAt = Date.now();
@@ -817,73 +957,177 @@
       }
       return;
     }
-    openEmbed(state, absolute(option.url), label);
+    openEmbed(state, option, label);
   }
-  function nextOption() {
-    if (!playback) return;
-    playback.index++;
-    if (playback.options[playback.index]) toast('Serveur suivant…');
-    playOption();
+  function failOption(state, message) {
+    state.failed[state.index] = true;
+    var next = -1;
+    state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
+    if (next < 0) {
+      playback = null;
+      showPicker(state, '', 0);
+      return;
+    }
+    showPicker(state, message, 4);
   }
-  // Sortie rapide du lecteur (image noire, mauvais flux…) : choix d'un autre serveur.
+  function succeeded(state) {
+    var option = state.options[state.index];
+    if (option) rememberServer(state.key, optionLabel(option, state.index));
+  }
   function quickExit(state) {
     return state.options.length > 1 && Date.now() - state.startedAt < 25000;
   }
   function playerClosed(result) {
     var state = playback;
     if (!state) return;
+    if (result.played) succeeded(state);
     if (result.ok) {
       playback = null;
-      if (quickExit(state)) serverPicker(state);
+      if (!result.played && quickExit(state)) showPicker(state, '', 0);
       return;
     }
-    if (result.error) toast(result.error, true);
-    nextOption();
+    // Coupure après une lecture réussie : nouveau lien (jeton neuf) du même serveur.
+    var option = state.options[state.index];
+    if (result.played && option && option.renewUrl && !state.renewed) {
+      state.renewed = true;
+      toast('Reconnexion au serveur…');
+      resolveOptions(option.renewUrl).then(function (list) {
+        var fresh = list.filter(function (item) { return optionKind(item) === 'native'; })[0] || list[0];
+        if (!fresh) throw new Error('vide');
+        fresh.renewUrl = option.renewUrl;
+        if (!fresh.label) fresh.label = option.label;
+        state.options[state.index] = fresh;
+        playOption();
+      }, function () { failOption(state, result.error || 'Le flux s’est interrompu.'); });
+      return;
+    }
+    failOption(state, result.error || 'Lecture impossible.');
   }
 
-  function openEmbed(state, url, label) {
-    var hint = h('div', { class: 'hint' }, h('b', { text: state.channel.name }), ' · ' + label + ' — Retour pour quitter',
-      state.options.length > 1 ? ' · ' + state.options.length + ' serveurs' : '');
-    var frame = h('iframe', { src: url, allow: 'autoplay; fullscreen; encrypted-media; picture-in-picture', allowfullscreen: true, referrerpolicy: 'no-referrer-when-downgrade' });
+  // Lecteur web (page du fournisseur) : curseur piloté par les flèches.
+  function openEmbed(state, option, label) {
+    var url = absolute(option.url);
+    var external = url.indexOf(location.origin + '/') !== 0;
+    var hint = h('div', { class: 'hint' }, h('b', { text: state.channel.name }), ' · ' + label,
+      h('div', { class: 'keys', text: '◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · Retour quitter' }));
+    var frame = h('iframe', { src: url, allow: 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *', allowfullscreen: true, scrolling: option.compatPage ? 'auto' : 'no' });
     var node = h('div', { class: 'embed' }, frame, hint);
+    var handedOff = false;
     function onState(event) {
       var data = event.data;
       if (!data || typeof data !== 'object' || event.source !== frame.contentWindow) return;
       if (!/^noctra-[a-z]+-state$/.test(String(data.type || ''))) return;
-      if (data.state === 'playing' || data.state === 'ready') hint.classList.add('gone');
+      if (data.state === 'playing' || data.state === 'ready') { hint.classList.add('gone'); succeeded(state); }
+      // Le pont du serveur a trouvé le flux vidéo : lecteur natif, plus stable.
+      if (data.state === 'media' && data.url && !handedOff && !external) {
+        handedOff = true;
+        state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: data.url, label: optionLabel(option, state.index) + ' · direct', renewUrl: option.renewUrl });
+        closeLayer(true);
+        state.index++;
+        playOption();
+        return;
+      }
       if (data.state === 'error' || data.state === 'stalled' || data.state === 'vip-missed') {
-        if (state.index + 1 < state.options.length) {
-          closeLayer();
-          nextOption();
-        } else toast('Ce lecteur ne répond pas.', true);
+        closeLayer(true);
+        failOption(state, data.message || 'Ce lecteur web ne répond pas.');
       }
     }
     window.addEventListener('message', onState);
     node._onClose = function (silent) {
       window.removeEventListener('message', onState);
       frame.src = 'about:blank';
+      native('cursor', { data: false });
       native('keepScreenOn', { data: false });
-      if (playback === state) {
+      if (playback === state && !silent) {
+        var quick = quickExit(state);
+        if (!quick) succeeded(state);
         playback = null;
-        if (!silent && quickExit(state)) setTimeout(function () { serverPicker(state); }, 0);
+        if (quick) setTimeout(function () { showPicker(state, '', 0); }, 0);
       }
     };
     native('keepScreenOn', { data: true });
     openLayer(node);
-    setTimeout(function () { hint.classList.add('gone'); }, 6000);
-    setTimeout(function () { try { frame.focus(); } catch (error) { /* lecteur externe */ } }, 400);
+    native('cursor', { data: true });
+    setTimeout(function () { hint.classList.add('gone'); }, 7000);
   }
-  function serverPicker(state) {
-    var list = h('div', { class: 'list scroll' }, h('h2', { text: state.channel.name + ' · autres serveurs' }));
-    state.options.forEach(function (option, index) {
-      list.appendChild(h('button', { class: 'btn f', onclick: function () {
-        closeLayer();
-        playback = { channel: state.channel, source: state.source, options: state.options, index: index, startedAt: 0 };
-        playOption();
-      } }, (index === state.index ? '▶ ' : '') + (option.label || ('Serveur ' + (index + 1))) + (option.streamUrl ? ' · direct' : '')));
+
+  // ── Multiview ──────────────────────────────────────────────────────
+  var multi = { on: false, items: [] };
+  function toggleMulti(channel, source) {
+    var key = channelKey(channel, source);
+    var index = -1;
+    multi.items.some(function (item, i) { if (item.key === key) { index = i; return true; } return false; });
+    if (index >= 0) multi.items.splice(index, 1);
+    else if (multi.items.length >= 4) { toast('4 chaînes au maximum dans le multiview.', true); return; }
+    else multi.items.push({ key: key, channel: channel, source: source });
+    Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
+    renderMultiBar();
+  }
+  function markMulti(node) {
+    var key = node.getAttribute('data-channel');
+    var position = -1;
+    multi.items.some(function (item, i) { if (item.key === key) { position = i; return true; } return false; });
+    var badge = node.querySelector('.multi-badge');
+    if (position < 0) { if (badge) badge.remove(); node.classList.remove('picked'); return; }
+    node.classList.add('picked');
+    if (!badge) { badge = h('span', { class: 'multi-badge' }); node.appendChild(badge); }
+    badge.textContent = String(position + 1);
+  }
+  function renderMultiBar() {
+    var bar = document.getElementById('multibar');
+    if (bar) bar.remove();
+    main.classList.remove('with-multibar');
+    if (!multi.on && !multi.items.length) return;
+    if (!current || (current.name !== 'live' && current.name !== 'liveSource')) return;
+    main.classList.add('with-multibar');
+    bar = h('div', { id: 'multibar', class: 'multibar' },
+      h('div', { class: 'multi-text' }, h('b', { text: 'Multiview' }), ' · ' + (multi.items.length
+        ? multi.items.map(function (item) { return item.channel.name; }).join(', ')
+        : 'choisissez 2 à 4 chaînes avec OK')),
+      h('button', { class: 'btn primary f', disabled: multi.items.length < 1, onclick: launchMulti }, icon('grid'), 'Lancer (' + multi.items.length + '/4)'),
+      h('button', { class: 'btn f', text: 'Vider', onclick: function () {
+        multi.items = [];
+        Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
+        renderMultiBar();
+      } }));
+    main.appendChild(bar);
+  }
+  // Seuls les flux directs peuvent partager l'écran (un lecteur natif par vignette).
+  function nativeStream(channel) {
+    return channelOptions(channel).then(function (options) {
+      var direct = options.filter(function (option) { return option.streamUrl && !option.manualOnly; })[0];
+      if (direct) return direct;
+      var resolvable = options.filter(function (option) { return optionKind(option) === 'resolve'; });
+      var chain = Promise.resolve(null);
+      resolvable.slice(0, 3).forEach(function (option) {
+        chain = chain.then(function (found) {
+          if (found) return found;
+          return resolveOptions(option.resolveUrl).then(function (list) {
+            return list.filter(function (item) { return item.streamUrl; })[0] || null;
+          }, function () { return null; });
+        });
+      });
+      return chain;
     });
-    list.appendChild(h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
-    openLayer(h('div', { class: 'modal' }, list));
+  }
+  function launchMulti() {
+    if (!multi.items.length) return;
+    toast('Préparation du multiview…');
+    var picked = multi.items.slice();
+    Promise.all(picked.map(function (item) {
+      return nativeStream(item.channel).catch(function () { return null; });
+    })).then(function (streams) {
+      var items = [];
+      var skipped = [];
+      streams.forEach(function (stream, i) {
+        var channel = picked[i].channel;
+        if (!stream) { skipped.push(channel.name); return; }
+        items.push({ url: absolute(stream.streamUrl), title: channel.name, subtitle: channel.provider || '', mime: stream.transport === 'ts' ? 'video/mp2t' : '' });
+      });
+      if (skipped.length) toast('Sans flux direct, ignorées : ' + skipped.join(', '), true);
+      if (!items.length) return;
+      if (!native('multiview', { items: items })) toast('Le multiview est disponible dans l’appli Noctra TV.', true);
+    });
   }
 
   // ── Demandes et découverte (Jellyseerr) ────────────────────────────
@@ -922,7 +1166,7 @@
     var actions = h('div', { class: 'actions' },
       jellyfinId ? h('button', { class: 'btn primary f', autofocus: true, onclick: function () { closeLayer(); openItem(jellyfinId); } }, icon('play'), 'Regarder') : null,
       status >= 5 ? null : requestButton,
-      h('button', { class: 'btn f', onclick: function () { closeLayer(); go('search', { section: 'search', query: title }); } }, icon('search'), 'Chercher dans Jellyfin'),
+      h('button', { class: 'btn f', onclick: function () { closeLayer(); go('search', { section: 'search', query: title }); } }, icon('search'), 'Chercher dans mes médiathèques'),
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
     if (jellyfinId) requestButton.removeAttribute('autofocus');
     var facts = h('div', { class: 'facts' },
@@ -1052,52 +1296,121 @@
   };
 
   // ── Roulette ───────────────────────────────────────────────────────
-  var roulette = { library: '', count: 3, rating: 0, unplayed: true };
+  // Rouleau d'affiches qui ralentit sur le titre tiré, puis grande révélation.
+  var roulette = { library: '', count: 1, rating: 0, unplayed: true };
+  try { var savedRoulette = JSON.parse(localStorage.getItem('noctra-tv-roulette') || 'null'); if (savedRoulette) roulette = savedRoulette; } catch (error) { /* réglages par défaut */ }
   views.roulette = function (params, alive) {
-    main.appendChild(head('Roulette', 'Laissez Noctra choisir quoi regarder ce soir.'));
-    var filters = h('div', { class: 'filters' });
-    var result = h('div', { class: 'draw' });
-    main.appendChild(filters);
-    var spin = h('button', { class: 'btn primary f spin', onclick: draw }, icon('roulette'), 'Lancer la roulette');
-    main.appendChild(h('div', null, spin));
-    main.appendChild(result);
+    var panel = h('aside', { class: 'roulette-panel' }, h('h1', { text: 'Roulette' }), h('p', { class: 'sub', text: 'Laissez Noctra choisir ce soir.' }));
+    var stage = h('section', { class: 'roulette-stage' });
+    var spin = h('button', { class: 'btn primary f roulette-go', 'data-start': true, onclick: draw }, icon('roulette'), 'Lancer la roulette');
+    main.appendChild(h('div', { class: 'roulette reveal-box' }, panel, stage));
+    idle();
 
-    function group(label, options, key) {
-      var chips = h('div', { class: 'chips' });
+    function setting(label, options, key) {
+      var chips = h('div', { class: 'segments' });
       options.forEach(function (option) {
-        chips.appendChild(chip(option[1], roulette[key] === option[0], function (event) {
+        chips.appendChild(h('button', { class: 'segment f' + (roulette[key] === option[0] ? ' on' : ''), text: option[1], onclick: function (event) {
           roulette[key] = option[0];
+          try { localStorage.setItem('noctra-tv-roulette', JSON.stringify(roulette)); } catch (error) { /* stockage indisponible */ }
           Array.prototype.forEach.call(chips.children, function (node) { node.classList.toggle('on', node === event.currentTarget); });
-        }));
+        } }));
       });
-      filters.appendChild(h('div', { class: 'label', text: label }));
-      filters.appendChild(chips);
+      panel.appendChild(h('div', { class: 'setting' }, h('div', { class: 'label', text: label }), chips));
     }
+    function idle() {
+      clear(stage);
+      stage.appendChild(h('div', { class: 'roulette-idle' },
+        h('div', { class: 'wheel' }, h('div', { class: 'wheel-core' }, icon('roulette'))),
+        h('h2', { text: 'Prêt pour le tirage ?' }),
+        h('p', { text: 'Réglez vos envies à gauche puis lancez la roulette.' })));
+    }
+    function poster(pick, className) {
+      var node = h('div', { class: className || 'reel-item' });
+      node.appendChild(h('div', { class: 'ph', text: pick.title }));
+      node.appendChild(image(jfImage(pick.id, 'Primary', '', 360), ''));
+      return node;
+    }
+
     function draw() {
-      clear(result);
-      result.appendChild(loading('La roulette tourne…'));
-      var query = 'count=' + roulette.count + '&rating=' + roulette.rating + (roulette.library ? '&library=' + encodeURIComponent(roulette.library) : '') + (roulette.unplayed ? '&unplayed=1' : '');
+      if (spin.disabled) return;
+      spin.disabled = true;
+      clear(stage);
+      stage.appendChild(loading('Préparation du tirage…'));
+      // Toujours 10 titres : de quoi remplir le rouleau ; les premiers sont tirés.
+      var query = 'count=10&rating=' + roulette.rating + (roulette.library ? '&library=' + encodeURIComponent(roulette.library) : '') + (roulette.unplayed ? '&unplayed=1' : '');
       api('/api/roulette?' + query).then(function (data) {
         if (!alive()) return;
-        clear(result);
-        var picks = (data && data.results) || [];
-        if (!picks.length) { result.appendChild(h('div', { class: 'empty', text: 'Aucun titre ne correspond à ces filtres.' })); return; }
-        picks.forEach(function (pick, index) {
-          var node = h('button', { class: 'pick f', style: 'animation-delay:' + (index * 0.12) + 's', onclick: function () { openItem(pick.id); } },
-            h('img', { src: jfImage(pick.id, 'Primary', '', 400), alt: '', onerror: function () { this.style.visibility = 'hidden'; } }),
-            h('div', { class: 'info' },
-              h('h3', { text: pick.title }),
-              h('div', { class: 'facts', text: [pick.year, pick.rating ? '★ ' + Number(pick.rating).toFixed(1) : '', pick.library].filter(Boolean).join(' · ') }),
-              pick.genres && pick.genres.length ? h('div', { class: 'sub', text: pick.genres.slice(0, 3).join(', ') }) : null,
-              pick.overview ? h('p', { text: pick.overview }) : null));
-          result.appendChild(node);
-        });
-        focus(result.querySelector('.f'));
+        var pool = (data && data.results) || [];
+        if (!pool.length) {
+          spin.disabled = false;
+          clear(stage);
+          stage.appendChild(h('div', { class: 'empty', text: 'Aucun titre ne correspond à ces réglages.' }));
+          return;
+        }
+        var winners = pool.slice(0, Math.min(roulette.count, pool.length));
+        roll(pool, winners);
       }, function (error) {
+        spin.disabled = false;
         if (!alive()) return;
-        clear(result);
-        result.appendChild(failure(error));
+        clear(stage);
+        stage.appendChild(failure(error));
       });
+    }
+    function roll(pool, winners) {
+      clear(stage);
+      var strip = h('div', { class: 'reel-strip' });
+      var landing = 26;
+      for (var i = 0; i < landing + 4; i++) {
+        var pick = i === landing ? winners[0] : pool[(i * 7 + 3) % pool.length];
+        strip.appendChild(poster(pick));
+      }
+      var reel = h('div', { class: 'reel' }, strip, h('div', { class: 'reel-marker' }));
+      stage.appendChild(h('div', { class: 'rolling' }, h('div', { class: 'kicker', text: 'La roulette tourne…' }), reel));
+      var items = strip.children;
+      var step = items[1].offsetLeft - items[0].offsetLeft;
+      var target = reel.clientWidth / 2 - items[0].offsetWidth / 2 - landing * step;
+      strip.style.transform = 'translate3d(0,0,0)';
+      // Deux images plus tard pour que la transition parte bien de 0.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          strip.style.transition = 'transform 3.6s cubic-bezier(.08,.7,.12,1)';
+          strip.style.transform = 'translate3d(' + Math.round(target) + 'px,0,0)';
+        });
+      });
+      setTimeout(function () {
+        if (!alive()) return;
+        items[landing].classList.add('winner');
+        setTimeout(function () { if (alive()) reveal(winners); }, 700);
+      }, 3700);
+    }
+    function reveal(winners) {
+      spin.disabled = false;
+      clear(stage);
+      var pick = winners[0];
+      var backdrop = image(S.jf + '/Items/' + pick.id + '/Images/Backdrop?maxWidth=1280&quality=80', '');
+      backdrop.className = 'reveal-backdrop';
+      var watch = h('button', { class: 'btn primary f', onclick: function () { openItem(pick.id); } }, icon('play'), 'Voir la fiche');
+      var card = h('div', { class: 'reveal' },
+        backdrop,
+        h('div', { class: 'reveal-body' },
+          poster(pick, 'reveal-poster'),
+          h('div', { class: 'reveal-info' },
+            h('div', { class: 'kicker', text: 'Ce soir, on regarde' }),
+            h('h2', { text: pick.title }),
+            h('div', { class: 'facts' },
+              [pick.year, pick.rating ? '★ ' + Number(pick.rating).toFixed(1) : '', pick.library].filter(Boolean).map(function (fact) { return h('span', { text: String(fact) }); })),
+            pick.genres && pick.genres.length ? h('div', { class: 'genres' }, pick.genres.slice(0, 4).map(function (genre) { return h('span', { text: genre }); })) : null,
+            pick.overview ? h('p', { text: pick.overview }) : null,
+            h('div', { class: 'actions' }, watch, h('button', { class: 'btn f', onclick: draw }, icon('roulette'), 'Relancer')))));
+      stage.appendChild(card);
+      if (winners.length > 1) {
+        stage.appendChild(h('div', { class: 'others' }, h('div', { class: 'label', text: 'Aussi tirés au sort' }),
+          h('div', { class: 'others-row' }, winners.slice(1).map(function (other) {
+            var node = h('button', { class: 'other f', onclick: function () { openItem(other.id); } }, poster(other, 'other-poster'), h('span', { text: other.title }));
+            return node;
+          }))));
+      }
+      focus(watch);
     }
 
     var libraries = cache.rouletteLibraries ? Promise.resolve(cache.rouletteLibraries) : api('/api/libraries').then(function (data) {
@@ -1108,14 +1421,16 @@
       if (!alive()) return;
       var options = [['', 'Toutes']];
       Object.keys(catalog).forEach(function (label) { if (catalog[label] && catalog[label].id) options.push([catalog[label].id, label]); });
-      group('Médiathèque', options, 'library');
-      group('Nombre de titres', [[1, '1'], [3, '3'], [5, '5']], 'count');
-      group('Note minimale', [[0, 'Toutes'], [6, '6+'], [7, '7+'], [8, '8+']], 'rating');
-      group('Déjà vus', [[true, 'Non vus seulement'], [false, 'Tout']], 'unplayed');
+      if (roulette.library && !options.some(function (option) { return option[0] === roulette.library; })) roulette.library = '';
+      setting('Médiathèque', options, 'library');
+      setting('Titres tirés', [[1, '1'], [3, '3'], [5, '5']], 'count');
+      setting('Note minimale', [[0, 'Toutes'], [6, '6+'], [7, '7+'], [8, '8+']], 'rating');
+      setting('Déjà vus', [[true, 'Non vus'], [false, 'Tout']], 'unplayed');
+      panel.appendChild(spin);
     });
   };
 
-  // ── Recherche (Jellyfin) ───────────────────────────────────────────
+  // ── Recherche ──────────────────────────────────────────────
   views.search = function (params, alive) {
     main.appendChild(head('Rechercher', 'Films, séries et épisodes de vos médiathèques.'));
     var results = h('div');
