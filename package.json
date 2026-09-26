@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.116",
+  "version": "200.0.117",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -90,7 +90,8 @@
     "test:v200113": "node tests/v200113-motion.mjs && npm run test:v200112",
     "test:v200114": "node tests/v200114-detail-fluidity.mjs && npm run test:v200113",
     "test:v200115": "node tests/v200115-chroma.mjs && npm run test:v200114",
-    "test:v200116": "node tests/v200116-fluidity-automation.mjs && npm run test:v200115"
+    "test:v200116": "node tests/v200116-fluidity-automation.mjs && npm run test:v200115",
+    "test:v200117": "node tests/v200117-subtitle-appearance.mjs && npm run test:v200116"
   },
   "engines": {
     "node": ">=20"

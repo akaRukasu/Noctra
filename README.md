@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.116 — fluidité et centre d’automatisation
+# Version actuelle : 200.0.117 — apparence des sous-titres sur iOS
+
+La partie « Apparence » des réglages de sous-titres est de nouveau disponible sur iPhone/iPad (iOS 27). Détails : [MISE-A-JOUR-V200117.md](MISE-A-JOUR-V200117.md). Validation : `npm run test:v200117`.
+
+# Historique : 200.0.116 — fluidité et centre d’automatisation
 
 Animations prises en charge par la carte graphique, plus aucun flou d’arrière-plan sur mobile, minuteur d’effets unique, et centre Radarr/Sonarr/Prowlarr intégré au design Aurora. Détails : [MISE-A-JOUR-V200116.md](MISE-A-JOUR-V200116.md). Validation : `npm run test:v200116` (versions 109 à 115 : fichiers `MISE-A-JOUR-V2001xx.md`).
 
