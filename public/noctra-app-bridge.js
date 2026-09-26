@@ -43,15 +43,28 @@
     || (!platform && /Web0S|Tizen|SMART-TV|SmartTV/i.test(ua));
   var version = (/NoctraApp\/([\d.]+)/.exec(ua) || [])[1] || '';
 
-  /* Canal vers l'appli native. Android : WebMessageListener « NoctraHost »
-     (l'appli vérifie l'origine et le cadre principal de chaque message, les
-     iframes des fournisseurs TV ne peuvent donc rien piloter). iOS :
-     WKScriptMessageHandler « noctra », avec la même vérification. */
+  /* Canal vers l'appli native.
+     Android : après le chargement de la page, l'appli transmet un MessagePort
+     au seul cadre principal (postWebMessage limité à l'origine du serveur) ;
+     un message venu d'une iframe (source non nulle) est ignoré, donc les
+     fournisseurs TV intégrés ne peuvent rien piloter. Les messages émis avant
+     l'arrivée du port sont mis en attente.
+     iOS : WKScriptMessageHandler « noctra », limité au cadre principal par l'appli. */
+  var hostPort = null;
+  var hostQueue = [];
+  window.addEventListener('message', function (event) {
+    if (hostPort || event.data !== 'noctra-host' || event.source || !event.ports || !event.ports[0]) return;
+    hostPort = event.ports[0];
+    var queued = hostQueue.splice(0, hostQueue.length);
+    for (var index = 0; index < queued.length; index += 1) hostPort.postMessage(queued[index]);
+  });
   function postNative(action, data) {
     var message = { action: action, data: data === undefined ? null : data };
     try {
-      if (window.NoctraHost && typeof window.NoctraHost.postMessage === 'function') {
-        window.NoctraHost.postMessage(JSON.stringify(message));
+      if (platform === 'android' || platform === 'androidtv') {
+        var text = JSON.stringify(message);
+        if (hostPort) hostPort.postMessage(text);
+        else if (hostQueue.length < 20) hostQueue.push(text);
         return true;
       }
       var handlers = window.webkit && window.webkit.messageHandlers;

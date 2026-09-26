@@ -49,7 +49,10 @@ Toutes les applis sont construites automatiquement par GitHub Actions (workflow 
 
 Pour publier une version dans l’onglet **Releases**, poussez une étiquette. Par exemple : `git tag apps-v1.0.0 && git push origin apps-v1.0.0`.
 
-Les paquets TV se construisent aussi sur n’importe quel PC équipé de Node.js, sans SDK : `npm run apps:build` crée `dist/apps/*.ipk` et `dist/apps/Noctra.wgt`.
+Sans GitHub, sur n’importe quel PC :
+- **Paquets TV** (Node.js seul, sans SDK) : `npm run apps:build` crée `dist/apps/*.ipk` et `dist/apps/Noctra.wgt`.
+- **APK Android** (Node.js + Java 17 ou plus récent, sans Android Studio ni SDK) : `npm run apps:android` crée `dist/apps/Noctra-android.apk`. Au premier lancement, le script télécharge ses outils depuis Maven Central, soit environ 160 Mo, et vérifie leur empreinte.
+- **iOS** : il faut un Mac avec Xcode (`cd apps/ios && xcodegen generate`) ou GitHub Actions.
 
 ## Installer
 
@@ -65,20 +68,15 @@ Choisissez l’une de ces méthodes :
 
 Noctra apparaît ensuite dans la rangée des applications, avec sa bannière.
 
-**Signature stable (recommandé).** Sans clé configurée, l’APK est signé avec une clé de débogage différente à chaque construction. Il faut alors désinstaller l’ancienne version avant d’installer la nouvelle, ce qui efface la connexion. Pour éviter cela, créez une clé une seule fois :
+**Signature et mises à jour.** Android n’installe une nouvelle version par-dessus l’ancienne que si les deux sont signées avec la même clé. Sinon, il faut désinstaller l’ancienne version, ce qui efface la connexion.
+- Lors d’une construction locale sans clé fournie, `npm run apps:android` crée une clé dans `dist/android-tools/noctra-release.p12`, avec son mot de passe dans `noctra-release.password`. Il la réutilise ensuite. Conservez ces deux fichiers.
+- Pour utiliser votre propre clé, définissez `NOCTRA_KEYSTORE_FILE` (fichier `.p12` ou `.jks`), `NOCTRA_KEYSTORE_PASSWORD`, `NOCTRA_KEY_ALIAS` et, si besoin, `NOCTRA_KEY_PASSWORD`.
+- Pour que GitHub Actions signe avec la même clé, ajoutez dans GitHub → *Settings* → *Secrets and variables* → *Actions* :
+  - `NOCTRA_KEYSTORE_BASE64` : le fichier de clé encodé (`base64 -w0 noctra-release.p12`) ;
+  - `NOCTRA_KEYSTORE_PASSWORD` : son mot de passe ;
+  - `NOCTRA_KEY_ALIAS` : `noctra`.
 
-```bash
-keytool -genkeypair -v -keystore noctra.jks -alias noctra -keyalg RSA -keysize 4096 -validity 36500
-base64 -w0 noctra.jks > noctra.jks.b64
-```
-
-Ajoutez ensuite dans GitHub → *Settings* → *Secrets and variables* → *Actions* :
-- `NOCTRA_KEYSTORE_BASE64` : le contenu de `noctra.jks.b64` ;
-- `NOCTRA_KEYSTORE_PASSWORD` : le mot de passe de la clé ;
-- `NOCTRA_KEY_ALIAS` : `noctra` ;
-- `NOCTRA_KEY_PASSWORD` : le mot de passe de l’alias, s’il diffère du précédent.
-
-Conservez `noctra.jks` en lieu sûr et ne l’ajoutez jamais au dépôt.
+Ne mettez jamais la clé dans le dépôt.
 
 ### iPhone et iPad
 Sans compte développeur payant, Apple n’autorise l’installation que par *sideloading*. L’IPA n’est pas signée : l’outil la signe avec votre identifiant Apple.
@@ -124,14 +122,15 @@ apps/
   shared/launcher/   écran de connexion commun (HTML/CSS/JS ES5)
   webos/             appinfo.json, icônes et écran de démarrage LG
   tizen/             config.xml et icône Samsung
-  android/           projet Gradle (Kotlin) : un APK téléphone + Android TV
+  android/           projet Android (Java, classes du système uniquement) : un APK téléphone + Android TV,
+                     construit par scripts/build-android.mjs ou par Android Studio (Gradle)
   ios/               projet XcodeGen (Swift, WKWebView)
-  scripts/           build-tv.mjs (IPK + WGT sans SDK), render-icons.mjs
+  scripts/           build-tv.mjs (IPK + WGT sans SDK), build-android.mjs (APK sans SDK), render-icons.mjs
 public/noctra-app-bridge.js   pont côté serveur, chargé avant le moteur Jellyfin
 ```
 
 ## Limites connues
 
-- Ces applis ont été testées dans Chromium en simulant chaque plateforme (agent utilisateur, touches Retour 461 et 10009, 1920 px, mise en page TV). Les APK et IPA sont compilés par GitHub Actions. Elles restent à essayer sur de vrais téléviseurs et téléphones.
+- Ces applis ont été testées dans Chromium en simulant chaque plateforme (agent utilisateur, touches Retour 461 et 10009, 1920 px, mise en page TV). L’APK a été construit et vérifié (signature v2, alignement, manifeste, lecture par apktool), mais pas lancé sur un appareil. L’IPA ne se compile que sur macOS. Les applis restent à essayer sur de vrais téléviseurs et téléphones.
 - Il n’y a pas de lecture hors ligne ni de téléchargement de films dans l’appli iOS.
 - Les touches média des télécommandes Samsung dépendent du modèle (voir plus haut).

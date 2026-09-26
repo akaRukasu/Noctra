@@ -35,11 +35,24 @@
   }
 
   // ── Hôte natif ──────────────────────────────────────────────────────────
+  // Android : MessagePort transmis par l'appli à la page (voir
+  // public/noctra-app-bridge.js) ; iOS : gestionnaire de messages « noctra ».
+  var hostPort = null;
+  var hostQueue = [];
+  window.addEventListener('message', function (event) {
+    if (hostPort || event.data !== 'noctra-host' || event.source || !event.ports || !event.ports[0]) return;
+    hostPort = event.ports[0];
+    var queued = hostQueue.splice(0, hostQueue.length);
+    for (var index = 0; index < queued.length; index += 1) hostPort.postMessage(queued[index]);
+  });
+
   function postNative(action, data) {
     var message = { action: action, data: data === undefined ? null : data };
     try {
-      if (window.NoctraHost && typeof window.NoctraHost.postMessage === 'function') {
-        window.NoctraHost.postMessage(JSON.stringify(message));
+      if (platform === 'android' || platform === 'androidtv') {
+        var text = JSON.stringify(message);
+        if (hostPort) hostPort.postMessage(text);
+        else hostQueue.push(text);
         return true;
       }
       var handlers = window.webkit && window.webkit.messageHandlers;

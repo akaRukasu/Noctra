@@ -3,12 +3,12 @@
 ## Les applications
 Le dossier `apps/` contient cinq applications construites sur le modèle des applis Jellyfin. Un écran de connexion commun vérifie l’adresse du serveur Noctra, puis ouvre l’interface du serveur en plein écran.
 
-- **Android et Android TV** : un seul APK (Kotlin, WebView). Il apparaît dans le lanceur Android TV avec sa bannière. Il gère la touche Retour, la vidéo plein écran, l’envoi de fichiers, les téléchargements et garde l’écran allumé pendant la lecture.
+- **Android et Android TV** : un seul APK (Java, WebView, sans bibliothèque externe). Il se construit sans Android Studio ni SDK avec `npm run apps:android`. Il apparaît dans le lanceur Android TV avec sa bannière. Il gère la touche Retour, la vidéo plein écran, l’envoi de fichiers, les téléchargements et garde l’écran allumé pendant la lecture.
 - **iOS** : WKWebView (Swift, XcodeGen). Il permet la lecture en arrière-plan, l’image dans l’image, AirPlay et le geste de retour.
 - **LG webOS** : paquet `.ipk`.
 - **Samsung Tizen** : paquet `.wgt`, installé avec Apps2Samsung.
 
-Installation, compatibilité et construction : [apps/README.md](apps/README.md). GitHub Actions construit les quatre fichiers (workflow « Applications Noctra »).
+Installation, compatibilité et construction : [apps/README.md](apps/README.md). GitHub Actions peut aussi construire les quatre fichiers (workflow « Applications Noctra »). L’IPA iOS n’est possible que sur macOS.
 
 ## Côté serveur
 - **`public/noctra-app-bridge.js`** est chargé avant le moteur Jellyfin. Il reconnaît l’appli (`?noctraApp=` ou agent utilisateur `NoctraApp/x (plateforme)`) et fait le reste :
@@ -29,4 +29,10 @@ Installation, compatibilité et construction : [apps/README.md](apps/README.md).
   - mise en page TV sur webOS, Tizen et Android TV, mise en page mobile sur téléphone Android ;
   - la touche Retour ferme le panneau Noctra sans que le moteur Jellyfin revienne aussi en arrière ;
   - les flèches restent dans le panneau ouvert.
+- APK construit hors ligne puis vérifié :
+  - signature v2 validée par apksig ;
+  - `resources.arsc` non compressé et aligné ;
+  - manifeste lu par aapt2 : Android 7+, cible Android 14, entrée Android TV et bannière ;
+  - décodage complet par apktool.
+- Canal appli ↔ page testé dans Chromium : un port venu d’une iframe est ignoré, et les messages envoyés avant l’arrivée du port sont transmis ensuite.
 - Les applis restent à essayer sur de vrais appareils.

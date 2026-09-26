@@ -96,7 +96,8 @@
     "test:v200119": "node tests/v200119-fluidity-premiere.mjs && npm run test:v200118",
     "test:v200120": "node tests/v200120-native-scroll-intro-shaka.mjs && npm run test:v200119",
     "test:v200121": "node tests/v200121-apps.mjs && npm run test:v200120",
-    "apps:build": "node apps/scripts/build-tv.mjs"
+    "apps:build": "node apps/scripts/build-tv.mjs",
+    "apps:android": "node apps/scripts/build-android.mjs"
   },
   "engines": {
     "node": ">=20"

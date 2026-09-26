@@ -61,28 +61,26 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Clé de signature (facultative)
         env:
           KEYSTORE_BASE64: ${{ secrets.NOCTRA_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.jks"
-            echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.jks" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.p12"
+            echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.p12" >> "$GITHUB_ENV"
           else
-            echo "::notice::Aucune clé NOCTRA_KEYSTORE_BASE64 : APK signé avec une clé de débogage (voir apps/README.md)."
+            echo "::notice::Aucune clé NOCTRA_KEYSTORE_BASE64 : APK signé avec une clé temporaire (voir apps/README.md)."
           fi
+      # Même construction que sur un PC : apps/scripts/build-android.mjs.
       - name: APK
-        working-directory: apps/android
         env:
           NOCTRA_KEYSTORE_PASSWORD: ${{ secrets.NOCTRA_KEYSTORE_PASSWORD }}
           NOCTRA_KEY_ALIAS: ${{ secrets.NOCTRA_KEY_ALIAS }}
           NOCTRA_KEY_PASSWORD: ${{ secrets.NOCTRA_KEY_PASSWORD }}
-        run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
-          mkdir -p ../../dist/apps
-          cp app/build/outputs/apk/release/app-release.apk ../../dist/apps/Noctra-android.apk
+        run: node apps/scripts/build-android.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: noctra-android
