@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
+# Version actuelle : 200.0.121 — survol fluide, fiches fiables, réglages en colonne
+
+Survol des affiches 100× moins coûteux, « Voir la fiche » / « Reprendre » fiables à chaque clic, réglages PC en une colonne, 15 s de réserve au démarrage TV, intro allongée. Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
+
+# Historique : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
 
 Molette native rétablie sur PC, intro Noctra seul écran de démarrage, fenêtre du direct Shaka élargie à 120 s (tolérance 7 s → 91 s). Détails : [MISE-A-JOUR-V200120.md](MISE-A-JOUR-V200120.md). Validation : `npm run test:v200120`.
 

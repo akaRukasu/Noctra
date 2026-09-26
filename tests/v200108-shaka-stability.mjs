@@ -27,7 +27,7 @@ assert.equal(config.manifest.retryParameters.stallTimeout, 8000);
 assert.equal(config.abr.switchInterval, 12);
 assert.ok(config.abr.bandwidthUpgradeTarget < 0.85, 'Montée en qualité plus prudente que le défaut');
 assert.equal(config.streaming.bufferingGoal, 45, 'Réserve inchangée');
-assert.equal(config.streaming.rebufferingGoal, 3, 'Seuil de reprise inchangé');
+assert.equal(config.streaming.rebufferingGoal, 15, 'Réserve de démarrage (200.0.121)');
 
 const events = [], statuses = [];
 p.deps.recordTvDiagnostic = (event, details) => events.push({ event, ...details });

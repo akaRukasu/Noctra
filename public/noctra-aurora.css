@@ -1347,3 +1347,19 @@ html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro.na-intro-leave {opacity:
  html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro b {animation:na-intro-word .7s var(--na-ease) .12s both!important;}
 }
 @keyframes na-intro-failsafe {to {opacity:0;visibility:hidden;}}
+
+/* ═══════════════ 200.0.121 — Survol léger, réglages en une colonne ═══════════════ */
+/* Relief : la perspective n'est plus posée sur toutes les affiches de la page
+   (chacune devenait un contexte 3D), seulement sur celle survolée, sans
+   preserve-3d. Le reflet s'allume fixe au survol (le script ne le déplace plus). */
+@media (hover:hover) and (pointer:fine) {
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card {perspective:none!important;}
+ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) body.noctra-ready:not(.noctra-playing) :is(.homePage,.libraryPage,.searchPage,.itemDetailPage) .card:is(:hover,:focus-within) .cardBox {
+  transform:perspective(900px) translateY(-6px) rotateX(var(--na-rx,0deg)) rotateY(var(--na-ry,0deg))!important;transform-style:flat!important;
+ }
+}
+/* Réglages (menu du profil) : une seule colonne centrée, comme sur mobile. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #myPreferencesMenuPage .readOnlyContent {
+ grid-template-columns:minmax(0,1fr)!important;max-width:720px!important;margin-inline:auto!important;gap:16px!important;
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready #myPreferencesMenuPage .readOnlyContent > .verticalSection {grid-row:auto!important;grid-column:1!important;margin:0!important;}

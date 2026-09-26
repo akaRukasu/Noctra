@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.120';
+  const NOCTRA_BUILD_VERSION = '200.0.121';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2059,8 +2059,11 @@
     const image = client?.getImageUrl?.(imageId, { type: imageType, maxWidth: premiereImageWidth(), quality: 90 }) || appPath('/api/jellyfin/image/' + encodeURIComponent(item.Id));
     const action = name => ({ click: () => {
       // Use this bundled client's native action handler, preserving resume ticks and player choice.
-      let runtime;
-      window.webpackChunk.push([['noctra-premiere-actions'], {}, require => { runtime = require; }]);
+      // 200.0.121 : require webpack mémorisé (homeWebpackRequire). L'ancien
+      // identifiant de chunk fixe n'était exécuté par webpack qu'une fois : dès
+      // le deuxième clic, « Reprendre » / « Voir la fiche » affichaient « Le
+      // lecteur est encore en cours de chargement ».
+      const runtime = homeWebpackRequire();
       if (!runtime) { toast('Le lecteur est encore en cours de chargement. Réessayez dans un instant.'); return; }
       runtime.e(12011).then(() => {
         const button = document.createElement('button');
@@ -9453,7 +9456,10 @@
           // 200.0.110 : 15 s sans octet avant relance (10 s en 108 coupait des
           // segments que le relais partageait encore) ; 45 s pour les gros
           // segments qui progressent. Les variantes écartées reviennent plus vite.
-          streaming: { bufferingGoal: 45, rebufferingGoal: 3, bufferBehind: 15, segmentPrefetchLimit: 1,
+          // 200.0.121 : démarrage avec 15 s de réserve (2,5 segments) au lieu de
+          // 3 s ; le diagnostic 200.0.120 montrait deux coupures dans les 20
+          // premières secondes après un départ à 7,5 s de réserve.
+          streaming: { bufferingGoal: 45, rebufferingGoal: 15, bufferBehind: 15, segmentPrefetchLimit: 1,
             lowLatencyMode: false, maxDisabledTime: 15,
             retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
           // Les horodatages PROGRAM-DATE-TIME des flux IPTV sont souvent
@@ -9478,8 +9484,10 @@
         });
         video.addEventListener('playing', () => {
           if (videoEventSignal.aborted || tvShaka !== player) return;
-          player.configure({ streaming: { segmentPrefetchLimit: 2 } });
-          recordTvDiagnostic('shaka-continuity-prefetch', { segments: 2 });
+          // Après la première image : reprise après coupure à partir de 6 s
+          // (un segment) au lieu de 3 s, pour ne pas repartir sur une réserve vide.
+          player.configure({ streaming: { segmentPrefetchLimit: 2, rebufferingGoal: 6 } });
+          recordTvDiagnostic('shaka-continuity-prefetch', { segments: 2, reserve: 6 });
         }, { once: true, signal: videoEventSignal });
         // Keep download failures before Shaka exhausts its own retries. Never
         // copy request URLs, response bodies or error.data into the diagnostic.
@@ -9556,7 +9564,7 @@
             reportShakaFailure('error-' + (error?.code || 0));
           }
         });
-        installTvShakaContinuity(player, video, videoEventSignal, 3, reserve => recordTvDiagnostic('shaka-reserve-adjusted', { reserve }));
+        installTvShakaContinuity(player, video, videoEventSignal, 6, reserve => recordTvDiagnostic('shaka-reserve-adjusted', { reserve }));
         player.addEventListener('buffering', event => {
           if (videoEventSignal.aborted) return;
           recordTvDiagnostic('shaka-buffering', {

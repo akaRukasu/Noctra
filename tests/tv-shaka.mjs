@@ -14,7 +14,7 @@ await p.deps.tvDirectRestart();
 assert.equal(old.destroyed,true);assert.equal(p.deps.tvHls,null);
 const shaka=p.deps.tvShaka;
 assert.ok(shaka instanceof Shaka);assert.equal(shaka.url,'/media/original');assert.equal(p.video.paused,false);
-assert.equal(shaka.config.streaming.rebufferingGoal,3);
+assert.equal(shaka.config.streaming.rebufferingGoal,15,'200.0.121 : démarrage avec 15 s de réserve');
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,1,'First image takes priority over parallel prefetch');
 assert.equal(shaka.config.streaming.bufferingGoal,45);
 const diagnosticEvents=[];
@@ -51,7 +51,7 @@ assert.equal(diagnosticEvents.at(-1).event,'shaka-media-source-recovered');
 assert.ok(!JSON.stringify(diagnosticEvents).includes('secret'),'No request or error payload leaks');
 p.video.dispatchEvent(new Event('playing'));
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,2,'Restore continuity prefetch after first playback');
-assert.equal(shaka.config.streaming.rebufferingGoal,3,'Startup optimization retains the safety reserve');
+assert.equal(shaka.config.streaming.rebufferingGoal,6,'200.0.121 : reprise après coupure à partir de 6 s');
 for(let i=0;i<4;i++){p.video.dispatchEvent(new Event('waiting'));p.video.dispatchEvent(new Event('playing'));}
 assert.equal(p.video.paused,false,'No HLS managed rebuffer pause over Shaka');
 p.deps.tvEnginePreference='hls';await p.deps.tvDirectRestart();
@@ -105,7 +105,7 @@ for(let i=0;i<2;i++){buffering(true);now+=6000;buffering(false);now+=10000;}
 buffering(true);await new Promise(r=>setImmediate(r));
 assert.equal(unstable.deps.tvHls,null,'Repeated stalls must not switch engines');
 assert.equal(unstable.deps.tvShaka,unstablePlayer);
-assert.equal(unstablePlayer.config.streaming.rebufferingGoal,9);
+assert.equal(unstablePlayer.config.streaming.rebufferingGoal,12,'200.0.121 : 6 s + 2 coupures × 3 s');
 console.log('Shaka repeated stalls: adaptive reserve without engine switch passed');
 
 for (const provider of ['WiTV', 'Northlive']) {
