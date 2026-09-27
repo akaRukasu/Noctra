@@ -71,7 +71,7 @@ h1, h2, h3, p { margin: 0; }
 #main {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1;
   overflow-y: auto; overflow-x: hidden; padding: calc(var(--header) + .4rem) 0 3rem;
-  scrollbar-width: none;
+  scrollbar-width: none; will-change: scroll-position;
 }
 .scroll::-webkit-scrollbar, .track::-webkit-scrollbar { display: none; }
 .page-head { padding: .6rem 2.5rem 1rem; display: flex; align-items: flex-end; flex-wrap: wrap; }
@@ -137,7 +137,7 @@ h1, h2, h3, p { margin: 0; }
 .field:focus-within { border-color: var(--text); box-shadow: 0 0 0 .15rem var(--text); }
 
 /* ── Rangées et cartes ───────────────────────────────────────────── */
-.row { margin-bottom: 1.1rem; }
+.row { margin-bottom: 1.1rem; contain: layout style; }
 .row h2 { padding: 0 2.5rem .55rem; font-size: 1.2rem; font-weight: 750; }
 .row h2 small { color: var(--muted); font-weight: 500; font-size: .85rem; margin-left: .6rem; }
 .track {
@@ -358,20 +358,47 @@ h1, h2, h3, p { margin: 0; }
 .home-heading h1 span { color: var(--accent); }
 .home-heading .note { color: var(--muted); font-size: .9rem; }
 
-.premiere-slot { min-height: 20rem; margin: 0 2.5rem 1.4rem; }
+.premiere-slot { min-height: 21.5rem; margin: 0 2.5rem 1.4rem; }
 .premiere {
-  position: relative; height: 20rem; border-radius: 1.4rem; overflow: hidden;
+  position: relative; height: 21.5rem; border-radius: 1.4rem; overflow: hidden;
   background: #11141d; border: 1px solid var(--line);
 }
-.premiere-art { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
-.premiere-picture { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .6s ease-out; }
-.premiere-picture.shown { opacity: 1; }
+.premiere-art { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; background: #0b0e1d; }
+/* Chaque image est une « diapositive » : fond flouté d'elle-même (couleurs de
+   l'image jusque sous le texte, jamais de bande vide) + image nette à droite,
+   fondue vers la gauche au lieu d'être assombrie en entier. */
+.premiere-slide {
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; opacity: 0;
+  transition: opacity .7s ease-out; will-change: opacity;
+}
+.premiere-slide.shown { opacity: 1; }
+.premiere-ambient {
+  position: absolute; top: -12%; right: -12%; bottom: -12%; left: -12%;
+  background-position: center; background-size: cover; background-repeat: no-repeat;
+  filter: blur(10px) saturate(1.3); opacity: .5;
+}
+.premiere-picture {
+  position: absolute; top: 0; right: 0; width: 76%; height: 100%;
+  object-fit: cover; object-position: center 28%;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .55) 18%, #000 42%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .55) 18%, #000 42%);
+}
+.premiere-slide.portrait .premiere-picture {
+  top: 7%; right: 3.5%; width: auto; max-width: 34%; height: 86%;
+  object-fit: contain; object-position: center; border-radius: 1rem;
+  -webkit-mask-image: none; mask-image: none;
+  box-shadow: 0 1.6rem 3rem -1rem rgba(0, 0, 0, .85), 0 0 0 1px rgba(255, 255, 255, .08);
+}
 .premiere-shade {
   position: absolute; top: 0; right: 0; bottom: 0; left: 0;
-  background: linear-gradient(90deg, rgba(9, 10, 15, .97) 22%, rgba(9, 10, 15, .62) 52%, rgba(9, 10, 15, .1) 80%),
-              linear-gradient(0deg, rgba(9, 10, 15, .85), rgba(9, 10, 15, 0) 45%);
+  background: linear-gradient(90deg, rgba(9, 10, 15, .78) 0%, rgba(9, 10, 15, .42) 34%, rgba(9, 10, 15, 0) 62%),
+              linear-gradient(0deg, rgba(9, 10, 15, .7), rgba(9, 10, 15, 0) 42%);
 }
-.premiere-copy { position: absolute; left: 2.2rem; bottom: 1.8rem; width: 30rem; }
+.premiere-copy { text-shadow: 0 2px 14px rgba(0, 0, 0, .55); }
+.premiere h2.has-logo { overflow: visible; height: 5.2rem; }
+.premiere-logo { display: block; max-width: 24rem; max-height: 5.2rem; object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, .6)); }
+.premiere-copy { position: absolute; left: 2.2rem; bottom: 1.8rem; width: 36rem; }
+.premiere-actions .btn { white-space: nowrap; }
 .premiere .eyebrow { color: var(--accent); font-size: .78rem; font-weight: 800; letter-spacing: .14em; }
 .premiere-label { display: block; margin-top: .3rem; color: #cfd6e2; font-size: .9rem; }
 .premiere h2 { font-size: 2.3rem; line-height: 1.08; font-weight: 800; margin-top: .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

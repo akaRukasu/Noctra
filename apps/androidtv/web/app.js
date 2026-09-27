@@ -219,8 +219,9 @@
 
   // Retour depuis une fiche ou une lecture : reprises et « À suivre » à jour.
   function appResumed() {
-    forget('resume'); forget('nextup');
-    if (current && current.name === 'home' && !layer.firstChild) {
+    forget('resume'); forget('nextup'); forget('item:');
+    // Fiche aussi : position de reprise et « Vu » après le lecteur Jellyfin.
+    if (current && (current.name === 'home' || current.name === 'item') && !layer.firstChild) {
       remember(current);
       show(false);
     }
@@ -750,6 +751,12 @@
       return syncPost('SetNewQueue', { PlayingQueue: [item.Id], PlayingItemPosition: 0, StartPositionTicks: ticks })
         .then(function () { toast('SyncPlay : lecture lancée pour le groupe.'); }, function (error) { toast(error.message, true); });
     }
+    // Hors groupe : lecteur Jellyfin (langue audio, sous-titres, qualité…
+    // modifiables pendant la lecture) ; à sa fermeture, retour ici.
+    if (!options.sync && !options.noctraPlayer) {
+      var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
+      if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks })) return Promise.resolve();
+    }
     var load = item.MediaSources ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id);
     return load.then(function (full) {
       var source = (full.MediaSources || [])[0];
@@ -940,7 +947,9 @@
   }
 
   function titlePage(item, alive) {
-    var actions = playButtons(item).concat(trackButtons(item), flagButtons(item));
+    // Pistes audio et sous-titres : choisies dans le lecteur Jellyfin
+    // (trackButtons ne sert qu'hors de l'appli, avec le lecteur Noctra).
+    var actions = playButtons(item).concat(port ? [] : trackButtons(item), flagButtons(item));
     if (item.Type === 'Episode' && item.SeriesId) actions.push(h('button', { class: 'btn f', onclick: function () { openItem(item.SeriesId); } }, icon('library'), 'Voir la série'));
     main.appendChild(detailHeader(item, actions));
     add(main, peopleRow(item));
@@ -1352,9 +1361,17 @@
   };
 
   function backdropUrl(item, width) {
-    if (item.BackdropImageTags && item.BackdropImageTags.length) return S.jf + '/Items/' + item.Id + '/Images/Backdrop?maxWidth=' + width + '&quality=80&tag=' + item.BackdropImageTags[0];
-    if (item.ParentBackdropItemId) return S.jf + '/Items/' + item.ParentBackdropItemId + '/Images/Backdrop?maxWidth=' + width + '&quality=80' + (item.ParentBackdropImageTags ? '&tag=' + item.ParentBackdropImageTags[0] : '');
-    return wideImage(item);
+    if (item.BackdropImageTags && item.BackdropImageTags.length) return S.jf + '/Items/' + item.Id + '/Images/Backdrop?maxWidth=' + width + '&quality=90&tag=' + item.BackdropImageTags[0];
+    if (item.ParentBackdropItemId) return S.jf + '/Items/' + item.ParentBackdropItemId + '/Images/Backdrop?maxWidth=' + width + '&quality=90' + (item.ParentBackdropImageTags && item.ParentBackdropImageTags[0] ? '&tag=' + item.ParentBackdropImageTags[0] : '');
+    // Sans image large : affiche en bonne définition (présentée entière).
+    return jfImage(item.Type === 'Episode' && item.SeriesId ? item.SeriesId : item.Id, 'Primary', item.Type === 'Episode' ? item.SeriesPrimaryImageTag : item.ImageTags && item.ImageTags.Primary, 720);
+  }
+  // Largeur réelle de l'écran (densité comprise) : image nette sur un
+  // téléviseur 1080p sans télécharger plus que nécessaire.
+  function premiereWidth() {
+    var ratio = Math.min(Math.max(Number(window.devicePixelRatio) || 1, 1), 3);
+    var width = Math.max(window.innerWidth || 0, (window.screen && window.screen.width) || 0) * ratio;
+    return Math.max(1280, Math.min(1920, Math.round(width / 160) * 160));
   }
   function premiere(items) {
     items = items.slice(0, 12);
@@ -1392,25 +1409,55 @@
         ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + (item.Name || '')
         : String(item.ProductionYear || '');
       count.textContent = (index + 1) + ' / ' + items.length;
-      var src = backdropUrl(item, 1280);
+      showLogo(item);
+      var src = backdropUrl(item, premiereWidth());
       if (art.getAttribute('data-src') === src) return;
       art.setAttribute('data-src', src);
-      // Fondu enchaîné, uniquement une fois l'image prête (pas d'écran vide).
+      // Fondu enchaîné, uniquement une fois l'image téléchargée et décodée
+      // hors du fil principal (ni écran vide ni saccade pendant le fondu).
       var picture = new Image();
       picture.decoding = 'async';
-      picture.onload = function () {
-        if (art.getAttribute('data-src') !== src) return;
-        var previous = art.lastElementChild;
+      var shown = false;
+      function reveal() {
+        if (shown || art.getAttribute('data-src') !== src) return;
+        shown = true;
+        // Affiche verticale (pas d'image large) : entière, à droite, sur un
+        // fond flouté d'elle-même, comme sur PC ; jamais recadrée en bandeau.
+        var portrait = picture.naturalWidth && picture.naturalHeight && picture.naturalWidth / picture.naturalHeight < 1.25;
+        var ambient = h('div', { class: 'premiere-ambient', style: 'background-image:url("' + src.replace(/maxWidth=\d+/, 'maxWidth=48').replace(/maxHeight=\d+/, 'maxHeight=64').replace(/quality=\d+/, 'quality=60').replace(/"/g, '%22') + '")' });
+        var slide = h('div', { class: 'premiere-slide' + (portrait ? ' portrait' : '') }, ambient, picture);
         picture.className = 'premiere-picture';
-        art.appendChild(picture);
+        var previous = art.lastElementChild;
+        art.appendChild(slide);
         requestAnimationFrame(function () {
-          picture.classList.add('shown');
-          if (previous) setTimeout(function () { if (previous.parentNode) previous.parentNode.removeChild(previous); }, 700);
+          requestAnimationFrame(function () { slide.classList.add('shown'); });
+          if (previous) setTimeout(function () { if (previous.parentNode) previous.parentNode.removeChild(previous); }, 750);
         });
+      }
+      picture.onload = function () {
+        if (picture.decode) picture.decode().then(reveal, reveal); else reveal();
       };
       picture.src = src;
       var following = items[(index + 1) % items.length];
-      if (following) { var preload = new Image(); preload.src = backdropUrl(following, 1280); }
+      if (following) { var preload = new Image(); preload.decoding = 'async'; preload.src = backdropUrl(following, premiereWidth()); }
+    }
+    // Logo du film ou de la série à la place du titre, quand Jellyfin en a un.
+    function showLogo(item) {
+      var logoId = item.ImageTags && item.ImageTags.Logo ? item.Id : item.ParentLogoItemId;
+      var logoTag = item.ImageTags && item.ImageTags.Logo ? item.ImageTags.Logo : item.ParentLogoImageTag;
+      title.classList.remove('has-logo');
+      if (!logoId) return;
+      var logo = new Image();
+      logo.decoding = 'async';
+      logo.alt = itemTitle(item);
+      logo.className = 'premiere-logo';
+      logo.onload = function () {
+        if (items[index] !== item) return;
+        clear(title);
+        title.appendChild(logo);
+        title.classList.add('has-logo');
+      };
+      logo.src = S.jf + '/Items/' + logoId + '/Images/Logo?maxHeight=160&quality=90' + (logoTag ? '&tag=' + encodeURIComponent(logoTag) : '');
     }
     function step(delta) {
       index = (index + delta + items.length) % items.length;
@@ -1576,7 +1623,7 @@
     { id: 'personal', label: 'Mes sources' }
   ];
   views.live = function (params, alive) {
-    main.appendChild(head('TV en direct', 'Choisissez une source de chaînes. Multiview : jusqu’à 4 chaînes à l’écran.'));
+    main.appendChild(head('TV en direct', 'Choisissez une source de chaînes. Multiview : jusqu’à 12 chaînes à l’écran.'));
     var status = loading();
     main.appendChild(status);
     renderMultiBar();
@@ -1618,7 +1665,7 @@
       multiButton.className = 'btn f' + (multi.on ? ' primary' : '');
       multiButton.lastChild.textContent = multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview';
       renderMultiBar();
-      if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (4 au maximum).');
+      if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (' + MULTI_MAX + ' au maximum).');
     } }, icon('grid'), multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview');
     main.appendChild(head(params.title || source.name, params.title ? source.name : (source.description || ''), multiButton));
     var status = loading('Chargement des chaînes…');
@@ -1631,6 +1678,7 @@
       cache[key] = data;
       return data;
     });
+    catalogSources[key] = { source: source, label: params.title ? source.name + ' · ' + params.title : source.name };
     return load.then(function (data) {
       if (!alive()) return;
       status.remove();
@@ -1942,6 +1990,8 @@
     if (result.playing) succeeded(state);
     var quick = !result.playing && quickExit(state);
     playback = null;
+    // Erreur constatée par le lecteur (réponse 403, serveur injoignable…) : affichée avec les autres serveurs.
+    if (!result.playing && result.error) { state.failed[state.index] = true; showPicker(state, result.error, 0); return; }
     if (quick) showPicker(state, '', 0);
   }
   function openEmbedFrame(state, option, label) {
@@ -1994,13 +2044,17 @@
   }
 
   // ── Multiview ──────────────────────────────────────────────────────
+  // Jusqu'à 12 chaînes : la définition de chaque vignette est réduite à sa
+  // taille et un décodeur de secours prend le relais au-delà des décodeurs
+  // matériels du téléviseur.
+  var MULTI_MAX = 12;
   var multi = { on: false, items: [] };
   function toggleMulti(channel, source) {
     var key = channelKey(channel, source);
     var index = -1;
     multi.items.some(function (item, i) { if (item.key === key) { index = i; return true; } return false; });
     if (index >= 0) multi.items.splice(index, 1);
-    else if (multi.items.length >= 4) { toast('4 chaînes au maximum dans le multiview.', true); return; }
+    else if (multi.items.length >= MULTI_MAX) { toast(MULTI_MAX + ' chaînes au maximum dans le multiview.', true); return; }
     else multi.items.push({ key: key, channel: channel, source: source });
     Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
     renderMultiBar();
@@ -2009,9 +2063,9 @@
   // Après chaque ajout : lancer tout de suite, sans devoir faire défiler
   // toute la liste jusqu'à la barre du bas.
   function multiSheet() {
-    var full = multi.items.length >= 4;
+    var full = multi.items.length >= MULTI_MAX;
     var list = h('div', { class: 'list scroll' },
-      h('h2', null, 'Multiview · ' + multi.items.length + '/4', h('small', { text: multi.items.map(function (item) { return item.channel.name; }).join(', ') })),
+      h('h2', null, 'Multiview · ' + multi.items.length + '/' + MULTI_MAX, h('small', { text: multi.items.map(function (item) { return item.channel.name; }).join(', ') })),
       h('button', { class: 'btn primary f', autofocus: full || null, onclick: function () { closeLayer(); launchMulti(); } }, icon('grid'), 'Lancer le multiview (' + multi.items.length + ' chaîne' + (multi.items.length > 1 ? 's' : '') + ')'),
       full ? null : h('button', { class: 'btn f', autofocus: true, onclick: function () { closeLayer(); } }, icon('requests'), 'Ajouter une autre chaîne'),
       h('button', { class: 'btn f', text: 'Vider la sélection', onclick: function () {
@@ -2042,8 +2096,8 @@
     bar = h('div', { id: 'multibar', class: 'multibar' },
       h('div', { class: 'multi-text' }, h('b', { text: 'Multiview' }), ' · ' + (multi.items.length
         ? multi.items.map(function (item) { return item.channel.name; }).join(', ')
-        : 'choisissez 2 à 4 chaînes avec OK')),
-      h('button', { class: 'btn primary f', disabled: multi.items.length < 1, onclick: launchMulti }, icon('grid'), 'Lancer (' + multi.items.length + '/4)'),
+        : 'choisissez 2 à ' + MULTI_MAX + ' chaînes avec OK')),
+      h('button', { class: 'btn primary f', disabled: multi.items.length < 1, onclick: launchMulti }, icon('grid'), 'Lancer (' + multi.items.length + '/' + MULTI_MAX + ')'),
       h('button', { class: 'btn f', text: 'Vider', onclick: function () {
         multi.items = [];
         Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), markMulti);
@@ -2065,6 +2119,28 @@
     // Serveurs directs d'abord.
     return list.filter(function (item) { return item.url; }).concat(list.filter(function (item) { return !item.url; }));
   }
+  // Catalogue pour « Ajouter une chaîne » dans le multiview : chaînes des
+  // sources déjà ouvertes (flux direct ou serveurs à demander au serveur Noctra).
+  var catalogSources = {};
+  function multiCatalog() {
+    var list = [];
+    Object.keys(catalogSources).forEach(function (key) {
+      var data = cache[key];
+      var entry = catalogSources[key];
+      ((data && data.channels) || []).forEach(function (channel) {
+        if (list.length >= 4000) return;
+        var stream = channel.playbackType === 'stream' && channel.streamUrl ? absolute(channel.streamUrl) : '';
+        var resolver = !stream && channel.resolverUrl ? absolute(channel.resolverUrl) : '';
+        if (!stream && !resolver) return;
+        list.push({
+          title: channel.name, subtitle: channel.provider || '',
+          group: entry.label + (channel.group ? ' · ' + channel.group : ''),
+          stream: stream, resolver: resolver, mime: channel.transport === 'ts' ? 'video/mp2t' : ''
+        });
+      });
+    });
+    return list;
+  }
   function launchMulti() {
     if (!multi.items.length) return;
     toast('Préparation du multiview…');
@@ -2081,7 +2157,7 @@
       });
       if (skipped.length) toast('Sans flux direct, ignorées : ' + skipped.join(', '), true);
       if (!items.length) return;
-      if (!native('multiview', { items: items })) toast('Le multiview est disponible dans l’appli Noctra TV.', true);
+      if (!native('multiview', { items: items, catalog: multiCatalog() })) toast('Le multiview est disponible dans l’appli Noctra TV.', true);
     });
   }
 

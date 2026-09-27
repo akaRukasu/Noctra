@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.InputDevice;
@@ -18,12 +19,14 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebMessage;
 import android.webkit.WebMessagePort;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -34,8 +37,15 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Lecteur web des chaînes (pages des fournisseurs : sports…), dans son propre
@@ -48,6 +58,12 @@ import java.io.InputStream;
  * Les flèches déplacent un curseur, OK envoie un vrai appui tactile (lecture,
  * plein écran), Retour quitte. Quand le pont du serveur Noctra trouve le flux
  * vidéo, il est renvoyé à l'accueil qui le lit avec le lecteur natif.
+ *
+ * Pour se comporter comme sur PC (où ces lecteurs fonctionnent) : identité de
+ * navigateur de bureau, fenêtres surgissantes acceptées (certains lecteurs ne
+ * démarrent qu'après l'ouverture de leur publicité ; elle reste vide et
+ * invisible), et page ouverte en entier quand elle refuse d'être intégrée
+ * (automatique, ou OK maintenu). Une erreur du serveur du lecteur est affichée.
  */
 public class NoctraWebPlayerActivity extends Activity {
 
@@ -75,6 +91,10 @@ public class NoctraWebPlayerActivity extends Activity {
     private float cursorY;
     private boolean playing;
     private boolean finished;
+    private String source;
+    private boolean direct;
+    private String diagnostic;
+    private final List<WebView> popups = new ArrayList<WebView>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -91,6 +111,7 @@ public class NoctraWebPlayerActivity extends Activity {
             return;
         }
         appBase = NoctraConfig.NOCTRA_URL + "/tv-app/";
+        source = url;
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -102,7 +123,7 @@ public class NoctraWebPlayerActivity extends Activity {
         String title = intent.getStringExtra(EXTRA_TITLE);
         String subtitle = intent.getStringExtra(EXTRA_SUBTITLE);
         hint.setText((title == null ? "" : title) + (subtitle == null || subtitle.isEmpty() ? "" : "  ·  " + subtitle)
-            + "\n◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · Retour quitter");
+            + "\n◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · OK maintenu : page entière · Retour quitter");
         hint.setTextColor(Color.rgb(242, 246, 244));
         hint.setTextSize(15);
         hint.setPadding(dp(18), dp(12), dp(18), dp(12));
@@ -158,8 +179,9 @@ public class NoctraWebPlayerActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setSupportMultipleWindows(false);
-        settings.setUserAgentString(settings.getUserAgentString().replace("; wv)", ")").replaceAll("Version/[\\d.]+ ", ""));
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setUserAgentString(desktopUserAgent(settings.getUserAgentString()));
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(webView, true);
@@ -175,12 +197,30 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
-                return !request.getUrl().toString().startsWith(appBase);
+                String target = request.getUrl().toString();
+                if (target.startsWith(appBase)) return false;
+                // Page entière : redirections et pages du même site seulement.
+                return !(direct && (request.isRedirect() || sameHost(request.getUrl(), Uri.parse(source))));
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 if (url != null && url.startsWith(appBase)) offerChannel();
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (!isSourceDocument(request)) return;
+                int status = response.getStatusCode();
+                report("Le serveur du lecteur a répondu « erreur " + status + " »"
+                    + (status == 403 ? " (accès refusé)" : status == 404 ? " (lecteur introuvable)" : status >= 500 ? " (serveur en panne)" : "")
+                    + ". Essayez un autre serveur.");
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (!isSourceDocument(request)) return;
+                report("Le lecteur est injoignable (" + error.getDescription() + "). Essayez un autre serveur.");
             }
 
             @Override
@@ -222,8 +262,118 @@ public class NoctraWebPlayerActivity extends Activity {
             public Bitmap getDefaultVideoPoster() {
                 return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
             }
+
+            // Fenêtre surgissante (souvent la publicité qui débloque le
+            // lecteur) : une fenêtre existe pour la page, mais rien n'y est
+            // chargé ni affiché.
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                try {
+                    WebView popup = new WebView(NoctraWebPlayerActivity.this);
+                    popup.getSettings().setJavaScriptEnabled(false);
+                    popup.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                            return true;
+                        }
+
+                        @Override
+                        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                            return new WebResourceResponse("text/html", "utf-8", new ByteArrayInputStream(new byte[0]));
+                        }
+                    });
+                    popups.add(popup);
+                    while (popups.size() > 4) destroy(popups.remove(0));
+                    WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                    transport.setWebView(popup);
+                    resultMsg.sendToTarget();
+                    return true;
+                } catch (Throwable error) {
+                    return false;
+                }
+            }
+
+            @Override
+            public void onCloseWindow(WebView window) {
+                if (popups.remove(window)) destroy(window);
+            }
+
+            // Page qui refuse d'être intégrée (X-Frame-Options, CSP) : elle
+            // est ouverte en entier, comme un onglet.
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                String text = message == null ? null : message.message();
+                if (text != null && !direct && text.startsWith("Refused to") && (text.contains("X-Frame-Options") || text.contains("frame-ancestors"))) {
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            openDirect();
+                        }
+                    });
+                }
+                return false;
+            }
         };
         webView.setWebChromeClient(chromeClient);
+    }
+
+    /** Identité du navigateur de bureau (même version de Chrome que la WebView). */
+    static String desktopUserAgent(String original) {
+        Matcher chrome = Pattern.compile("Chrome/([\\d.]+)").matcher(original == null ? "" : original);
+        String version = chrome.find() ? chrome.group(1) : "124.0.0.0";
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + version + " Safari/537.36";
+    }
+
+    static boolean sameHost(Uri a, Uri b) {
+        if (a == null || b == null || a.getHost() == null || b.getHost() == null) return false;
+        String left = a.getHost().toLowerCase();
+        String right = b.getHost().toLowerCase();
+        return left.equals(right) || left.endsWith("." + right) || right.endsWith("." + left);
+    }
+
+    private boolean isSourceDocument(WebResourceRequest request) {
+        if (request == null || request.getUrl() == null) return false;
+        String url = request.getUrl().toString();
+        return request.isForMainFrame() ? direct && sameHost(request.getUrl(), Uri.parse(source)) : url.equals(source);
+    }
+
+    /** Erreur du lecteur : affichée à l'écran et transmise à l'accueil à la sortie. */
+    private void report(final String message) {
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (finished || playing || hint == null) return;
+                diagnostic = message;
+                hint.setText(message + "\nRetour : choisir un autre serveur · OK maintenu : page entière");
+                hint.animate().cancel();
+                hint.setAlpha(1f);
+            }
+        });
+    }
+
+    /** La page du fournisseur, en entier (sans le cadre Noctra), comme sur un onglet de PC. */
+    private void openDirect() {
+        if (direct || finished || webView == null) return;
+        direct = true;
+        Map<String, String> headers = new HashMap<String, String>();
+        Uri server = Uri.parse(NoctraConfig.NOCTRA_URL);
+        // Même provenance que depuis la page Noctra sur PC.
+        if (!sameHost(Uri.parse(source), server)) headers.put("Referer", server.getScheme() + "://" + server.getAuthority() + "/");
+        webView.loadUrl(source, headers);
+        if (hint != null) {
+            hint.setText("Page du lecteur ouverte en entier · ◀ ▲ ▼ ▶ curseur · OK cliquer · Retour quitter");
+            hint.animate().cancel();
+            hint.setAlpha(1f);
+            hint.animate().alpha(0f).setStartDelay(5000).setDuration(500).start();
+        }
+    }
+
+    private static void destroy(WebView view) {
+        try {
+            view.stopLoading();
+            view.destroy();
+        } catch (Throwable ignored) {
+        }
     }
 
     private WebResourceResponse asset(String url) {
@@ -319,6 +469,8 @@ public class NoctraWebPlayerActivity extends Activity {
         try {
             if (click) {
                 if (event.getRepeatCount() == 0) tap();
+                // OK maintenu (≈ 1 s) : page du lecteur en entier.
+                else if (event.getRepeatCount() == 12 && !direct) openDirect();
                 return true;
             }
             float step = dp(14 + Math.min(event.getRepeatCount(), 16) * 4);
@@ -348,6 +500,7 @@ public class NoctraWebPlayerActivity extends Activity {
         finished = true;
         Intent data = new Intent();
         data.putExtra(EXTRA_PLAYING, playing);
+        if (error == null && !playing) error = diagnostic;
         if (error != null) data.putExtra(EXTRA_ERROR, error);
         if (media != null) data.putExtra(EXTRA_MEDIA, media);
         setResult(ok ? RESULT_OK : RESULT_ERROR, data);
@@ -372,6 +525,8 @@ public class NoctraWebPlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        for (WebView popup : popups) destroy(popup);
+        popups.clear();
         if (hostPort != null) {
             try { hostPort.close(); } catch (Throwable ignored) { }
         }

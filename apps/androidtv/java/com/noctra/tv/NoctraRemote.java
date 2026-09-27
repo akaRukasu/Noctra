@@ -8,8 +8,8 @@ import java.util.UUID;
 /**
  * Contrôle à distance (« Lire sur… » depuis un téléphone ou un PC) : la
  * commande reçue par Jellyfin (SocketHandler, patch de build-androidtv.mjs)
- * ouvre la lecture ou la fiche dans Noctra, et non dans les écrans Jellyfin
- * qui ne sont plus affichés.
+ * ouvre le lecteur Jellyfin directement (NoctraPlayback), ou la fiche Noctra,
+ * et non l'accueil Jellyfin qui n'est plus affiché.
  */
 public final class NoctraRemote {
     static final String EXTRA_PLAY_ITEM = "noctra_remote_play";
@@ -18,12 +18,10 @@ public final class NoctraRemote {
 
     private NoctraRemote() { }
 
+    /** « Lire sur… » : lecteur Jellyfin, ouvert directement, retour à Noctra à la fin. */
     public static void play(Context context, UUID itemId, Long startTicks) {
         if (context == null || itemId == null) return;
-        Intent intent = intent(context);
-        intent.putExtra(EXTRA_PLAY_ITEM, itemId.toString().replace("-", ""));
-        if (startTicks != null) intent.putExtra(EXTRA_START_TICKS, startTicks.longValue());
-        context.startActivity(intent);
+        NoctraPlayback.play(context, itemId, startTicks);
     }
 
     public static void show(Context context, UUID itemId) {

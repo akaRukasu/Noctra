@@ -173,7 +173,8 @@ assert.match(tvApp, /window\.NoctraTV = \{ back:/);
 assert.match(tvApp, /Authorization: 'MediaBrowser Client="Noctra TV"/, 'Jellyfin 10.11+ : en-tête Authorization');
 assert.ok(!/['"]X-Emby-Token['"]\s*:/.test(tvApp), 'Ancien en-tête refusé par Jellyfin (401)');
 assert.ok(!/Jellyfin'\)|'Jellyfin'|dans Jellyfin/.test(tvApp), 'Interface sans bouton ni libellé Jellyfin');
-assert.match(tvApp, /native\('multiview', \{ items: items \}\)/);
+assert.match(tvApp, /native\('multiview', \{ items: items, catalog: multiCatalog\(\) \}\)/);
+assert.match(tvApp, /var MULTI_MAX = 12;/, 'Multiview : 12 chaînes');
 assert.match(tvApp, /native\('cursor', \{ data: true \}\)/);
 assert.match(tvApp, /noctra-tv-server:/, 'Dernier serveur fonctionnel mémorisé');
 // Accueil comme sur PC : carrousel « Continuer à regarder », pas de rangée Reprendre, médiathèques 2 × 2.
@@ -203,7 +204,7 @@ assert.match(tvApp, /native\('webPlayer', \{/);
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraRemote;->play\(Landroid\/content\/Context;Ljava\/util\/UUID;Ljava\/lang\/Long;\)V/);
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraRemote;->show\(Landroid\/content\/Context;Ljava\/util\/UUID;\)V/);
 assert.match(tvApp, /function remoteCommand\(data\)/);
-// Fiches et lecture Noctra (HLS Jellyfin, suivi de lecture), sans écran Jellyfin.
+// Fiches Noctra ; lecteur Noctra (HLS Jellyfin, suivi de lecture) pour SyncPlay.
 assert.match(tvApp, /views\.item = function/);
 assert.match(tvApp, /'\/Videos\/' \+ item\.Id \+ '\/master\.m3u8\?'/);
 assert.ok(!tvApp.includes("native('openItem'"), 'Fiches affichées par Noctra');
@@ -214,7 +215,28 @@ assert.match(home, /private Uri jellyfinOrigin\(Uri target\)/, 'Jeton Jellyfin l
 assert.match(tvApp, /'\/api\/tv\/catalog\?ref=' \+ encodeURIComponent\(ref\)/);
 assert.match(tvApp, /function multiSheet\(\)/);
 const multiview = await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivity.java');
-for (const label of ['Écouter cette chaîne', 'Mettre en avant', 'Changer de serveur']) assert.ok(multiview.includes(label), label);
+for (const label of ['Écouter cette chaîne', 'Mettre en avant', 'Changer de serveur', 'Ajouter une chaîne', 'Retirer cette chaîne']) assert.ok(multiview.includes(label), label);
+assert.match(multiview, /static final int MAX_TILES = 12;/);
+assert.match(multiview, /tile\.stream\.setMaxVideoSize\(tile\.maxWidth, tile\.maxHeight\)/, 'Définition limitée à la vignette');
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /NoctraMultiviewActivity\.catalog = /);
+assert.match(stream, /fallback\.setBoolean\(factory, true\)/, 'Décodeur de secours');
+assert.match(stream, /setExtensionRendererMode\(DefaultRenderersFactory\.EXTENSION_RENDERER_MODE_ON\)/, 'Décodeurs audio FFmpeg');
+// Lecteur web : identité de bureau, fenêtres surgissantes, page entière, erreurs affichées.
+assert.match(webPlayer, /Windows NT 10\.0; Win64; x64/);
+assert.match(webPlayer, /public boolean onCreateWindow\(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg\)/);
+assert.match(webPlayer, /text\.contains\("X-Frame-Options"\) \|\| text\.contains\("frame-ancestors"\)/);
+assert.match(webPlayer, /public void onReceivedHttpError/);
+// Contenu du serveur : lecteur Jellyfin (pistes audio, sous-titres), retour à Noctra à sa fermeture.
+assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks \}\)/);
+assert.match(androidtv, /\.method public closePlayer\(\)V/);
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->close\(Landroid\/app\/Activity;\)Z/);
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->home\(Landroid\/app\/Activity;\)V/);
+const playbackJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java');
+assert.match(playbackJava, /helper\.retrieveAndPlay\(itemId, false, positionTicks, context\)/);
+// Carrousel d'accueil : image à la définition de l'écran, décodée avant le fondu, affiche verticale entière.
+assert.match(tvApp, /function premiereWidth\(\)/);
+assert.match(tvApp, /picture\.decode\(\)\.then\(reveal, reveal\)/);
+assert.match(await read('apps/androidtv/web/app.css'), /\.premiere-slide\.portrait \.premiere-picture/);
 // SyncPlay (absent de Jellyfin Android TV) : protocole Jellyfin, horloge du serveur, lecteur piloté par le groupe.
 for (const call of ["syncPost('Join'", "syncPost('New'", "syncPost('Leave')", "syncPost('SetNewQueue'", "syncPost('Ready'", "syncPost('Buffering'", "syncPost('Pause')", "syncPost('Unpause')", "syncPost('Seek'"]) {
   assert.ok(tvApp.includes(call), call);

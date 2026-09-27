@@ -370,7 +370,23 @@ public class NoctraHomeActivity extends Activity {
             } catch (ActivityNotFoundException ignored) {
             }
         } else if (action.equals("multiview")) {
+            JSONArray catalog = message.optJSONArray("catalog");
+            NoctraMultiviewActivity.catalog = catalog == null ? null : catalog.toString();
             openMultiview(message.optJSONArray("items"));
+        } else if (action.equals("jellyfinPlay")) {
+            // Film ou épisode du serveur : lecteur Jellyfin (pistes, sous-titres…).
+            java.util.UUID id = NoctraPlayback.uuid(message.optString("itemId"));
+            if (id == null) return;
+            Long position = message.has("positionTicks") && !message.isNull("positionTicks") ? Long.valueOf(message.optLong("positionTicks")) : null;
+            if (!NoctraPlayback.play(this, id, position)) {
+                try {
+                    JSONObject error = new JSONObject();
+                    error.put("type", "nativeError");
+                    error.put("message", "le lecteur Jellyfin n’a pas pu démarrer");
+                    send(error);
+                } catch (Exception ignored) {
+                }
+            }
         } else if (action.equals("playerCommand")) {
             NoctraPlayerBus.toPlayer(message);
         } else if (action.equals("webPlayer")) {

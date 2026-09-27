@@ -21,4 +21,6 @@ public interface Player {
     long getCurrentPosition();
     long getDuration();
     void seekTo(long positionMs);
+    TrackSelectionParameters getTrackSelectionParameters();
+    void setTrackSelectionParameters(TrackSelectionParameters parameters);
 }

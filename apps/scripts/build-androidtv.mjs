@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 6;
+const noctraRevision = 7;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -216,6 +216,80 @@ await patch(smali('data/eventhandling/SocketHandler.smali'), [[
     sget-object p0, Lkotlin/Unit;->INSTANCE:Lkotlin/Unit;
 
     return-object p0`
+]]);
+
+// Lecteur Jellyfin ouvert depuis Noctra (NoctraPlayback) : à sa fermeture,
+// retour à l'accueil Noctra au lieu de l'accueil Jellyfin.
+const closeCheck = label => `
+    invoke-static {v0}, Lcom/noctra/tv/NoctraPlayback;->close(Landroid/app/Activity;)Z
+
+    move-result v0
+
+    if-eqz v0, :${label}
+
+    return-void
+
+    :${label}
+`;
+const fragmentActivity = owner => `
+    invoke-virtual {p0}, ${owner};->getActivity()Landroidx/fragment/app/FragmentActivity;
+
+    move-result-object v0
+`;
+const overlay = 'Lorg/jellyfin/androidtv/ui/playback/CustomPlaybackOverlayFragment';
+await patch(smali('ui/playback/CustomPlaybackOverlayFragment.smali'), [
+  [
+    `.method public closePlayer()V
+    .locals 2
+`,
+    `.method public closePlayer()V
+    .locals 2
+${fragmentActivity(overlay)}${closeCheck('noctra_jellyfin_screens')}`
+  ],
+  // Lecteur réellement ouvert : un retour ultérieur à l'accueil Jellyfin
+  // (fin de lecture → « À suivre » → retour) ramène à Noctra.
+  [
+    `.method public onCreate(Landroid/os/Bundle;)V
+    .locals 3
+
+    .line 144
+    invoke-super {p0, p1}, Landroidx/fragment/app/Fragment;->onCreate(Landroid/os/Bundle;)V
+`,
+    `.method public onCreate(Landroid/os/Bundle;)V
+    .locals 3
+
+    .line 144
+    invoke-super {p0, p1}, Landroidx/fragment/app/Fragment;->onCreate(Landroid/os/Bundle;)V
+${fragmentActivity(overlay)}
+    invoke-static {v0}, Lcom/noctra/tv/NoctraPlayback;->started(Landroid/app/Activity;)V
+`
+  ]
+]);
+await patch(smali('ui/home/HomeFragment.smali'), [[
+  `# virtual methods
+`,
+  `# virtual methods
+.method public onResume()V
+    .locals 1
+
+    invoke-super {p0}, Landroidx/fragment/app/Fragment;->onResume()V
+${fragmentActivity('Lorg/jellyfin/androidtv/ui/home/HomeFragment')}
+    invoke-static {v0}, Lcom/noctra/tv/NoctraPlayback;->home(Landroid/app/Activity;)V
+
+    return-void
+.end method
+
+`
+]]);
+await patch(smali('ui/browsing/MainActivity$backPressedCallback$1.smali'), [[
+  `.method public handleOnBackPressed()V
+    .locals 1
+`,
+  `.method public handleOnBackPressed()V
+    .locals 1
+
+    iget-object v0, p0, Lorg/jellyfin/androidtv/ui/browsing/MainActivity$backPressedCallback$1;->this$0:Lorg/jellyfin/androidtv/ui/browsing/MainActivity;
+${closeCheck('noctra_jellyfin_back')}`
 ]]);
 
 // Code Java : compilé contre Android et des signatures Media3 (stubs, jamais

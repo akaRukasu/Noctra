@@ -14,6 +14,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.media3.ui.PlayerView;
 
@@ -25,21 +26,33 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Multiview : 2 à 4 chaînes en direct à l'écran, chacune avec son lecteur
- * (NoctraStream, tampon réduit).
+ * Multiview : jusqu'à 12 chaînes en direct à l'écran, chacune avec son lecteur
+ * (NoctraStream, tampon réduit, définition limitée à la taille de sa vignette
+ * et décodeur de secours quand ceux du téléviseur sont tous occupés).
  *
  * OK sur une vignette ouvre son menu : écouter cette chaîne (le son reste sur
  * elle même en se déplaçant), la mettre en avant (grande vignette, les autres
- * en colonne), plein écran, changer de serveur. Un flux qui tombe passe seul
- * au serveur suivant de la chaîne.
+ * sur le côté), plein écran, changer de serveur, retirer la chaîne, ou en
+ * ajouter une autre (catalogue des sources déjà ouvertes dans l'accueil).
+ * Un flux qui tombe passe seul au serveur suivant de la chaîne.
  */
 public class NoctraMultiviewActivity extends Activity {
 
     static final String EXTRA_ITEMS = "noctra_items";
     static final String EXTRA_TOKEN = "noctra_token";
+    static final int MAX_TILES = 12;
+
+    /**
+     * Chaînes proposées par « Ajouter une chaîne » : [{title, subtitle, group,
+     * stream, mime, resolver}], posé par l'accueil juste avant l'ouverture
+     * (même processus ; trop volumineux pour l'Intent).
+     */
+    static volatile String catalog;
 
     private static final int ACCENT = Color.rgb(112, 217, 194);
     private static final int GAP = 6;
@@ -66,6 +79,8 @@ public class NoctraMultiviewActivity extends Activity {
         NoctraStream stream;
         String title;
         String subtitle;
+        int maxWidth;
+        int maxHeight;
         final List<Option> options = new ArrayList<Option>();
         final List<Integer> failed = new ArrayList<Integer>();
         int current = -1;
@@ -117,7 +132,7 @@ public class NoctraMultiviewActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(5, 6, 9));
         setContentView(root);
-        for (int i = 0; i < Math.min(4, items.length()); i++) {
+        for (int i = 0; i < items.length() && tiles.size() < MAX_TILES; i++) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
             Tile tile = createTile(item.optString("title"), item.optString("subtitle"));
@@ -216,7 +231,10 @@ public class NoctraMultiviewActivity extends Activity {
     }
 
     private void refreshLabels() {
+        float size = tiles.size() > 6 ? 12 : tiles.size() > 4 ? 13 : 15;
         for (Tile tile : tiles) {
+            tile.label.setTextSize(size);
+            tile.status.setTextSize(size);
             Option option = tile.current >= 0 && tile.current < tile.options.size() ? tile.options.get(tile.current) : null;
             String server = option == null || tile.options.size() < 2 ? "" : "  ·  " + option.label;
             tile.label.setText((tile == audio ? "♪  " : "") + tile.title + (tile.subtitle.isEmpty() ? "" : "  ·  " + tile.subtitle) + server);
@@ -225,49 +243,69 @@ public class NoctraMultiviewActivity extends Activity {
     }
 
     // ── Disposition : grille, écran mis en avant, plein écran ──────────────
+    // Grille : 1, 2 (côte à côte, 16:9), 2 × 2, 3 × 2, 3 × 3 puis 4 × 3 ;
+    // dernière rangée incomplète centrée. Mis en avant : grande vignette à
+    // gauche, les autres sur une ou deux colonnes à droite.
     private void arrange() {
         int width = root.getWidth();
         int height = root.getHeight();
         if (width == 0 || height == 0) return;
         int gap = dp(GAP);
         int count = tiles.size();
+        boolean side = featured != null && count > 1;
+        int others = count - 1;
+        int sideColumns = others > 4 ? 2 : 1;
+        int mainWidth = Math.round(width * (sideColumns == 2 ? 0.6f : 0.7f));
+        int columns = count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+        int rows = (count + columns - 1) / columns;
         for (int i = 0; i < count; i++) {
             Tile tile = tiles.get(i);
             int x, y, w, h;
+            boolean large = false;
             if (zoomed != null) {
                 boolean visible = tile == zoomed;
                 tile.frame.setVisibility(visible ? View.VISIBLE : View.GONE);
                 x = 0; y = 0; w = width; h = height;
-            } else if (featured != null && count > 1) {
+                large = visible;
+            } else if (side) {
                 tile.frame.setVisibility(View.VISIBLE);
-                int mainWidth = Math.round(width * 0.7f);
                 if (tile == featured) {
                     x = gap; y = gap; w = mainWidth - gap * 2; h = height - gap * 2;
+                    large = true;
                 } else {
-                    int others = count - 1;
                     int position = 0;
                     for (Tile other : tiles) {
                         if (other == tile) break;
                         if (other != featured) position++;
                     }
-                    int slot = (height - gap) / Math.max(others, 1);
-                    x = mainWidth; y = gap + position * slot; w = width - mainWidth - gap; h = slot - gap;
+                    int sideRows = (others + sideColumns - 1) / sideColumns;
+                    int slotW = (width - mainWidth) / sideColumns;
+                    int slotH = (height - gap) / Math.max(sideRows, 1);
+                    x = mainWidth + (position % sideColumns) * slotW; y = gap + (position / sideColumns) * slotH;
+                    w = slotW - gap; h = slotH - gap;
                 }
             } else {
                 tile.frame.setVisibility(View.VISIBLE);
-                int columns = count == 1 ? 1 : 2;
-                int rows = count <= 2 ? 1 : 2;
                 int cellW = (width - gap) / columns;
                 int cellH = (height - gap) / rows;
                 if (count == 2) cellH = Math.min(height - gap * 2, Math.round((cellW - gap) * 9f / 16f) + gap);
                 int top = count == 2 ? (height - cellH) / 2 : 0;
-                x = gap + (i % columns) * cellW; y = top + gap + (i / columns) * cellH;
+                int row = i / columns;
+                int inRow = row == rows - 1 ? count - row * columns : columns;
+                int shift = (columns - inRow) * cellW / 2;
+                x = gap + shift + (i % columns) * cellW; y = top + gap + row * cellH;
                 w = cellW - gap; h = cellH - gap;
+                large = count == 1;
             }
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(Math.max(1, w), Math.max(1, h));
             params.leftMargin = x;
             params.topMargin = y;
             tile.frame.setLayoutParams(params);
+            // Définition adaptée à la vignette (flux HLS à plusieurs qualités) :
+            // moins de débit et de décodage, donc plus de chaînes simultanées.
+            tile.maxWidth = large ? Integer.MAX_VALUE : Math.max(640, w * 3 / 2);
+            tile.maxHeight = large ? Integer.MAX_VALUE : Math.max(360, h * 3 / 2);
+            if (tile.stream != null) tile.stream.setMaxVideoSize(tile.maxWidth, tile.maxHeight);
         }
     }
 
@@ -288,6 +326,12 @@ public class NoctraMultiviewActivity extends Activity {
             labels.add("Changer de serveur (" + tile.options.size() + ")");
             actions.add(new Runnable() { @Override public void run() { servers(tile); } });
         }
+        if (tiles.size() < MAX_TILES && !channels().isEmpty()) {
+            labels.add("＋  Ajouter une chaîne (" + tiles.size() + "/" + MAX_TILES + ")");
+            actions.add(new Runnable() { @Override public void run() { addChannel(); } });
+        }
+        labels.add(tiles.size() > 1 ? "✕  Retirer cette chaîne" : "✕  Retirer cette chaîne et quitter");
+        actions.add(new Runnable() { @Override public void run() { removeTile(tile); } });
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(tile.title)
             .setItems(labels.toArray(new String[0]), new DialogInterface.OnClickListener() {
@@ -316,6 +360,176 @@ public class NoctraMultiviewActivity extends Activity {
                 }
             })
             .show();
+    }
+
+    // ── Ajouter et retirer des chaînes ─────────────────────────────────────
+    private List<JSONObject> channelList;
+
+    private List<JSONObject> channels() {
+        if (channelList != null) return channelList;
+        channelList = new ArrayList<JSONObject>();
+        try {
+            JSONArray list = new JSONArray(catalog == null ? "[]" : catalog);
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject channel = list.optJSONObject(i);
+                if (channel != null && (!channel.optString("stream").isEmpty() || !channel.optString("resolver").isEmpty())) channelList.add(channel);
+            }
+        } catch (Exception ignored) {
+        }
+        return channelList;
+    }
+
+    private boolean present(JSONObject channel) {
+        for (Tile tile : tiles) {
+            if (tile.title.equals(channel.optString("title")) && tile.subtitle.equals(channel.optString("subtitle"))) return true;
+        }
+        return false;
+    }
+
+    /** Catalogue : d'abord le groupe (source, bouquet, catégorie), puis la chaîne. */
+    private void addChannel() {
+        final Map<String, List<JSONObject>> groups = new LinkedHashMap<String, List<JSONObject>>();
+        for (JSONObject channel : channels()) {
+            if (present(channel)) continue;
+            String group = channel.optString("group", "Chaînes");
+            if (!groups.containsKey(group)) groups.put(group, new ArrayList<JSONObject>());
+            groups.get(group).add(channel);
+        }
+        if (groups.isEmpty()) {
+            Toast.makeText(this, "Toutes les chaînes disponibles sont déjà affichées.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (groups.size() == 1) {
+            pickChannel(groups.keySet().iterator().next(), groups.values().iterator().next());
+            return;
+        }
+        final List<String> names = new ArrayList<String>(groups.keySet());
+        String[] labels = new String[names.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = names.get(i) + "  (" + groups.get(names.get(i)).size() + ")";
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Ajouter une chaîne")
+            .setItems(labels, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    pickChannel(names.get(which), groups.get(names.get(which)));
+                }
+            })
+            .show();
+    }
+
+    private void pickChannel(String group, final List<JSONObject> list) {
+        String[] labels = new String[list.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = list.get(i).optString("title", "Chaîne " + (i + 1));
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(group)
+            .setItems(labels, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    addTile(list.get(which));
+                }
+            })
+            .show();
+    }
+
+    private void addTile(final JSONObject channel) {
+        if (tiles.size() >= MAX_TILES) return;
+        final Tile tile = createTile(channel.optString("title"), channel.optString("subtitle"));
+        tiles.add(tile);
+        root.addView(tile.frame);
+        zoomed = null;
+        arrange();
+        refreshLabels();
+        tile.frame.requestFocus();
+        String stream = channel.optString("stream");
+        if (!stream.isEmpty()) {
+            Option option = new Option();
+            option.label = "Flux direct";
+            option.url = stream;
+            option.resolve = "";
+            option.mime = channel.optString("mime");
+            tile.options.add(option);
+            play(tile, 0);
+            return;
+        }
+        // Serveurs de la chaîne demandés au serveur Noctra.
+        showStatus(tile, "Recherche des serveurs…");
+        final String resolver = channel.optString("resolver");
+        final String mime = channel.optString("mime");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final List<Option> found = options(resolver, mime);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || !tiles.contains(tile)) return;
+                        if (found.isEmpty()) {
+                            removeTile(tile);
+                            Toast.makeText(NoctraMultiviewActivity.this, channel.optString("title") + " : aucun flux direct (lecteur web seulement).", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        tile.options.addAll(found);
+                        play(tile, 0);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void removeTile(Tile tile) {
+        tile.generation++;
+        if (tile.stream != null) tile.stream.release();
+        tile.stream = null;
+        int index = tiles.indexOf(tile);
+        tiles.remove(tile);
+        root.removeView(tile.frame);
+        if (tiles.isEmpty()) {
+            finish();
+            return;
+        }
+        if (featured == tile) featured = null;
+        if (zoomed == tile) zoomed = null;
+        if (audio == tile) audio = tiles.get(0);
+        arrange();
+        refreshLabels();
+        tiles.get(Math.max(0, Math.min(index, tiles.size() - 1))).frame.requestFocus();
+    }
+
+    /** Serveurs d'une chaîne (réponse du résolveur Noctra) utilisables dans une vignette. */
+    private List<Option> options(String address, String mime) {
+        List<Option> direct = new ArrayList<Option>();
+        List<Option> automatic = new ArrayList<Option>();
+        JSONObject result = fetch(address);
+        if (result == null) return direct;
+        try {
+            URL base = new URL(address);
+            JSONArray list = result.optJSONArray("options");
+            if (list == null) list = new JSONArray().put(result);
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject item = list.optJSONObject(i);
+                if (item == null || item.optBoolean("manualOnly", false)) continue;
+                String stream = item.optString("streamUrl", "");
+                String resolve = item.optString("resolveUrl", "");
+                String page = item.optString("url", "");
+                Option option = new Option();
+                option.label = item.optString("label", "");
+                option.url = "";
+                option.resolve = "";
+                option.mime = "ts".equals(item.optString("transport")) ? "video/mp2t" : mime;
+                if (!stream.isEmpty()) {
+                    option.url = new URL(base, stream).toString();
+                    if (option.label.isEmpty()) option.label = "Flux direct";
+                    direct.add(option);
+                } else if (!resolve.isEmpty() && page.isEmpty()) {
+                    option.resolve = new URL(base, resolve).toString();
+                    if (option.label.isEmpty()) option.label = "Serveur " + (i + 1);
+                    automatic.add(option);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        direct.addAll(automatic);
+        return direct;
     }
 
     // ── Lecture et changement de serveur ───────────────────────────────────
@@ -367,10 +581,33 @@ public class NoctraMultiviewActivity extends Activity {
         boolean ours = NoctraHomeActivity.sameOrigin(Uri.parse(url), Uri.parse(NoctraConfig.NOCTRA_URL));
         tile.stream = new NoctraStream(this, tile.view, tile, url, mime, ours ? token : null, true);
         tile.stream.setVolume(tile == audio ? 1f : 0f);
+        if (tile.maxWidth > 0) tile.stream.setMaxVideoSize(tile.maxWidth, tile.maxHeight);
         tile.stream.start();
     }
 
     private String resolve(String address) {
+        JSONObject result = fetch(address);
+        if (result == null) return null;
+        try {
+            URL target = new URL(address);
+            JSONArray options = result.optJSONArray("options");
+            if (options == null) {
+                String direct = result.optString("streamUrl", "");
+                return direct.isEmpty() ? null : new URL(target, direct).toString();
+            }
+            for (int i = 0; i < options.length(); i++) {
+                JSONObject option = options.optJSONObject(i);
+                if (option == null || option.optBoolean("manualOnly", false)) continue;
+                String stream = option.optString("streamUrl", "");
+                if (!stream.isEmpty()) return new URL(target, stream).toString();
+            }
+            return null;
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
+    private JSONObject fetch(String address) {
         HttpURLConnection connection = null;
         try {
             URL target = new URL(address);
@@ -387,19 +624,7 @@ public class NoctraMultiviewActivity extends Activity {
             int read;
             while ((read = input.read(chunk)) != -1) buffer.write(chunk, 0, read);
             input.close();
-            JSONObject result = new JSONObject(buffer.toString("UTF-8"));
-            JSONArray options = result.optJSONArray("options");
-            if (options == null) {
-                String direct = result.optString("streamUrl", "");
-                return direct.isEmpty() ? null : new URL(target, direct).toString();
-            }
-            for (int i = 0; i < options.length(); i++) {
-                JSONObject option = options.optJSONObject(i);
-                if (option == null || option.optBoolean("manualOnly", false)) continue;
-                String stream = option.optString("streamUrl", "");
-                if (!stream.isEmpty()) return new URL(target, stream).toString();
-            }
-            return null;
+            return new JSONObject(buffer.toString("UTF-8"));
         } catch (Exception error) {
             return null;
         } finally {

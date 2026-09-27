@@ -9,6 +9,7 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
@@ -78,6 +79,8 @@ final class NoctraStream {
     private int reconnects;
     private float volume = 1f;
     private boolean playWhenReady = true;
+    private int maxWidth;
+    private int maxHeight;
 
     private final Runnable poll = new Runnable() {
         @Override
@@ -183,6 +186,41 @@ final class NoctraStream {
         return playWhenReady;
     }
 
+    /** Résolution maximale (vignette du multiview) : moins de travail pour le décodeur. */
+    void setMaxVideoSize(int width, int height) {
+        maxWidth = width;
+        maxHeight = height;
+        applyMaxVideoSize();
+    }
+
+    private void applyMaxVideoSize() {
+        if (player == null || maxWidth <= 0 || maxHeight <= 0) return;
+        try {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon().setMaxVideoSize(maxWidth, maxHeight).build());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // Décodeur de secours : si les décodeurs matériels sont tous occupés
+    // (multiview), un autre décodeur (logiciel) prend le relais. Le réglage
+    // existe dans l'APK Jellyfin mais sans accesseur : il est activé directement.
+    // Décodeurs FFmpeg de l'APK (AC3, E-AC3, DTS…) en renfort des décodeurs
+    // du téléviseur : plus de chaînes muettes faute de décodeur audio.
+    private DefaultRenderersFactory renderers() {
+        DefaultRenderersFactory factory = new DefaultRenderersFactory(context);
+        try {
+            factory.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+        } catch (Throwable ignored) {
+        }
+        try {
+            java.lang.reflect.Field fallback = DefaultRenderersFactory.class.getDeclaredField("enableDecoderFallback");
+            fallback.setAccessible(true);
+            fallback.setBoolean(factory, true);
+        } catch (Throwable ignored) {
+        }
+        return factory;
+    }
+
     void setVolume(float value) {
         volume = value;
         if (player != null) {
@@ -206,11 +244,12 @@ final class NoctraStream {
         DefaultLoadControl buffer = compact
             ? new DefaultLoadControl.Builder().setBufferDurationsMs(12000, 30000, 2000, 4000).build()
             : new DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 2500, 6000).build();
-        ExoPlayer exoPlayer = new ExoPlayer.Builder(context)
+        ExoPlayer exoPlayer = new ExoPlayer.Builder(context, renderers())
             .setMediaSourceFactory(sources)
             .setLoadControl(buffer)
             .build();
         player = exoPlayer;
+        applyMaxVideoSize();
         MediaItem.Builder item = new MediaItem.Builder().setUri(url);
         String mime = attempts.get(attempt);
         if (!mime.isEmpty()) item.setMimeType(mime);
