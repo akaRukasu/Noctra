@@ -1825,6 +1825,9 @@
   }
   // Code pays en tête du nom : « FR: », « FR| », « [FR] », « (UK) », « FR - », « FR TF1 »…
   function leadingCode(name) {
+    // Pays en toutes lettres : « FRANCE: TF1 », « France | TF1 ».
+    var word = /^\s*[\[(|]?\s*([A-Za-z]{4,12})\s*[\])|]?\s*[:|\-–]\s*/.exec(String(name || ''));
+    if (word && COUNTRY_WORDS[word[1].toLowerCase()]) return { country: COUNTRY_WORDS[word[1].toLowerCase()], length: word[0].length };
     var match = /^\s*[\[(|]?\s*([A-Za-z]{2,3})\s*[\])|]?\s*([^\w\sÀ-ɏ]+|\s)\s*/.exec(String(name || ''));
     if (!match) return null;
     var code = match[1];
@@ -1857,16 +1860,25 @@
   // Nom de rapprochement, tolérant aux écritures des sources :
   // « beIN Sport 1 » = « BEIN SPORTS 1 » = « beIN Sports 1 France »,
   // « BFM TV » = « BFMTV », « 13ème Rue » = « 13e rue », « C+ Sport » = « Canal+ Sport ».
+  // Mots sans importance pour reconnaître une chaîne (qualité, variante, lien…).
+  var NOISE_WORDS = { channel: 1, live: 1, direct: 1, officiel: 1, official: 1, hq: 1, lq: 1, h264: 1, h265: 1, x264: 1, x265: 1, fps: 1, '60fps': 1, '50fps': 1,
+    '1080': 1, '1080p': 1, '720': 1, '720p': 1, '2160p': 1, premium: 1, multi: 1, audio: 1, vf: 1, vff: 1, vostfr: 1, stream: 1, server: 1, serveur: 1, source: 1,
+    link: 1, lien: 1, alt: 1, backup: 1, secours: 1, mirror: 1, hevc: 1, uhd: 1, fhd: 1, hd: 1, sd: 1, '4k': 1, '8k': 1, tnt: 1 };
+  // Anciens noms et écritures courantes → un seul nom.
+  var NAME_ALIASES = { hd1: 'tf1seriesfilms', tf1seriefilm: 'tf1seriesfilms', nt1: 'tfx', numero23: 'rmcstory', d8: 'c8', d17: 'cstar', itele: 'cnews',
+    lequipe21: 'lequipe', lequipetv: 'lequipe', franceinfotv: 'franceinfo', lcpan: 'lcp', lcpassembleenationale: 'lcp', artefrance: 'arte',
+    canal: 'canalplus', canalplusfrance: 'canalplus', eurosport: 'eurosport1', beinsport: 'beinsport1', rmcsport: 'rmcsport1', tv5: 'tv5monde', france24fr: 'france24' };
   function unifiedName(name) {
     var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word) {
       if (word === 'sports') return 'sport';
-      if (word === 'channel') return '';
+      if (NOISE_WORDS[word]) return '';
       return word.replace(/^(\d+)(?:eme|e|er|ere)$/, '$1');
     }).filter(Boolean);
     if (words.length > 1 && words[words.length - 1] === 'tv') words.pop();
     var key = words.join('');
     if (key.length > 4 && /tv$/.test(key) && !/^(?:tv|mtv|btv)/.test(key)) key = key.slice(0, -2);
-    return key.replace(/^cplus/, 'canalplus').replace(/^beinsport(?=\d|max|$)/, 'beinsport');
+    key = key.replace(/^cplus/, 'canalplus').replace(/^beinsports?/, 'beinsport');
+    return NAME_ALIASES[key] || key;
   }
   // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
   // pas la version française) ; une chaîne sans pays connu rejoint la française.
@@ -1946,8 +1958,16 @@
       }
       sources.forEach(function (source) { enqueue(source); });
       function build() {
-        var channels = mergeChannels(results.filter(Boolean));
-        return { channels: channels, count: channels.length };
+        var parts = results.filter(Boolean);
+        var channels = mergeChannels(parts);
+        // Apport de chaque source (chaînes gardées, bouquets compris) et sources encore attendues.
+        var counts = {};
+        parts.forEach(function (part) {
+          var kept = part.channels.filter(function (channel) { return channel && channel.name && playable(channel) && !isEvent(channel); }).length;
+          counts[part.source.name] = (counts[part.source.name] || 0) + kept;
+        });
+        var pending = sources.filter(function (source) { return counts[source.name] === undefined && failed.indexOf(source.name) < 0; }).map(function (source) { return source.name; });
+        return { channels: channels, count: channels.length, coverage: counts, pending: pending, failedSources: failed.slice() };
       }
       var finished = new Promise(function (resolve) {
         function pump() {
@@ -2019,12 +2039,12 @@
     });
   }
   // Chaîne réunie : les serveurs « automatiques » de chaque source sont
-  // demandés tout de suite (8 s au plus chacun), pour classer l'ensemble des
+  // demandés tout de suite (5 s au plus chacun), pour classer l'ensemble des
   // serveurs par fiabilité ; un serveur qui ne répond pas à temps reste proposé.
   function expandOptions(options) {
     return Promise.all(options.map(function (option) {
       if (optionKind(option) !== 'resolve') return Promise.resolve([option]);
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 8000); });
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 5000); });
       return Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
         if (!list || !list.length) return [option];
         return list.map(function (item) {
@@ -2263,6 +2283,12 @@
         fill();
       });
       if (countryRow) main.appendChild(countryRow);
+      if (source.id === ALL_SOURCE.id && data.coverage) {
+        var names = Object.keys(data.coverage).sort(function (a, b) { return data.coverage[b] - data.coverage[a]; });
+        main.appendChild(h('p', { class: 'live-hint coverage', text: 'Sources réunies : ' + names.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
+          + (data.pending && data.pending.length ? ' — en attente : ' + data.pending.join(', ') : '')
+          + (data.failedSources && data.failedSources.length ? ' — indisponibles : ' + data.failedSources.join(', ') : '') }));
+      }
       main.appendChild(field.node);
       // Filtres : toutes, favoris de la source, catégories (avec leur nombre de chaînes).
       if (names.length > 1 || favoriteCount) {
@@ -2915,7 +2941,7 @@
     }
     state.startedAt = Date.now();
     if (option.streamUrl) {
-      var mime = option.transport === 'ts' || state.channel.transport === 'ts' ? 'video/mp2t' : '';
+      var mime = option.mime || (option.transport === 'ts' || state.channel.transport === 'ts' ? 'video/mp2t' : '');
       state.playId = playId();
       var request = { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null, epg: epgPayload(state), playSessionId: state.playId };
       // Zapping : même lecteur, nouveau flux.
@@ -3112,7 +3138,7 @@
     if (result.media) {
       // Flux trouvé (pont du serveur, ou liste HLS demandée par la page) :
       // lecture native avec les en-têtes de la page, plus stable.
-      state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, headers: result.headers || null, sniffedFrom: entry.option, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl });
+      state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, headers: result.headers || null, mime: result.mediaHls ? 'application/x-mpegURL' : '', sniffedFrom: entry.option, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl, provider: entry.option.provider, _prefix: entry.option._prefix });
       state.index++;
       playOption();
       return;

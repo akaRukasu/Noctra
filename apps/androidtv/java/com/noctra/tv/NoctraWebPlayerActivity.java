@@ -66,6 +66,15 @@ import java.util.regex.Pattern;
  * vidéo de la page sur les téléviseurs. Si le lecteur natif échoue, l'accueil
  * rouvre ce lecteur web sans repérage (EXTRA_SNIFF).
  *
+ * Listes HLS déguisées (sans « .m3u8 » dans l'adresse : .txt, .css, /playlist…) :
+ * tant que le flux n'est pas trouvé, les requêtes de données des cadres
+ * (XHR/fetch) sont faites par l'appli, qui reconnaît une liste de lecture à
+ * son contenu (« #EXTM3U ») et la confie au lecteur natif. La vidéo lue par
+ * le moteur web du téléviseur saccade souvent ; le lecteur natif, non.
+ *
+ * Onglets publicitaires : mis en pause dès le retour au lecteur, puis fermés
+ * 45 s plus tard (ils consomment le processeur pendant la lecture).
+ *
  * Sites bloqués par le DNS du fournisseur d'accès (sites de sport en France) :
  * détectés (NoctraDns.blocked) puis chargés via OkHttp et le DNS sécurisé,
  * y compris le flux transmis au lecteur natif (en-tête interne x-noctra-doh).
@@ -94,6 +103,8 @@ public class NoctraWebPlayerActivity extends Activity {
     private static final int TAB_MS = 8000;
     static final String EXTRA_ERROR = "noctra_error";
     static final String EXTRA_MEDIA = "noctra_media";
+    /** Flux transmis : liste HLS (même sans « .m3u8 » dans l'adresse). */
+    static final String EXTRA_MEDIA_HLS = "noctra_media_hls";
     static final String EXTRA_PLAYING = "noctra_playing";
     static final int RESULT_ERROR = RESULT_FIRST_USER;
 
@@ -133,6 +144,17 @@ public class NoctraWebPlayerActivity extends Activity {
     private volatile boolean secureDns;
     private String noctraHost;
     private String engineVersion = "";
+    private int probes;
+    private static final int MAX_PROBES = 80;
+    private final Runnable closePopups = new Runnable() {
+        @Override
+        public void run() {
+            // Onglets publicitaires refermés : plus de travail en arrière-plan pendant la lecture.
+            for (WebView popup : new ArrayList<WebView>(popups)) {
+                if (popup != tab) closeWindow(popup);
+            }
+        }
+    };
     private boolean engineTooOld;
 
     /** Régies publicitaires lourdes, bloquées en mode allégé (après un arrêt du moteur web). */
@@ -275,6 +297,8 @@ public class NoctraWebPlayerActivity extends Activity {
                 }
                 WebResourceResponse local = asset(request.getUrl().toString());
                 if (local != null) return local;
+                WebResourceResponse probed = probePlaylist(request);
+                if (probed != null) return probed;
                 return viaSecureDns(request);
             }
 
@@ -441,6 +465,44 @@ public class NoctraWebPlayerActivity extends Activity {
                 }
             });
         }
+        return fetch(request, NoctraDns.client(), false);
+    }
+
+    /**
+     * Requête de données d'un cadre (XHR/fetch) avant que le flux soit trouvé :
+     * faite par l'appli pour lire le début de la réponse ; une liste de lecture
+     * HLS (« #EXTM3U ») est confiée au lecteur natif.
+     */
+    private WebResourceResponse probePlaylist(WebResourceRequest request) {
+        if (!sniff || handedOff || probes >= MAX_PROBES || request.isForMainFrame()) return null;
+        Uri url = request.getUrl();
+        String scheme = url.getScheme();
+        String host = url.getHost();
+        if (host == null || !("https".equals(scheme) || "http".equals(scheme)) || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+        if (host.equalsIgnoreCase(noctraHost) || isAd(url) || url.toString().startsWith(appBase)) return null;
+        Map<String, String> sent = request.getRequestHeaders();
+        String accept = "";
+        boolean range = false;
+        if (sent != null) {
+            for (Map.Entry<String, String> entry : sent.entrySet()) {
+                if (entry.getKey() == null) continue;
+                if (entry.getKey().equalsIgnoreCase("Accept") && entry.getValue() != null) accept = entry.getValue().toLowerCase();
+                if (entry.getKey().equalsIgnoreCase("Range")) range = true;
+            }
+        }
+        // Données seulement (XHR/fetch : « */* ») : ni page, ni image, ni style, ni média.
+        if (range || !(accept.isEmpty() || accept.startsWith("*/*"))) return null;
+        String path = url.getPath() == null ? "" : url.getPath().toLowerCase();
+        if (path.matches(".*\\.(?:js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|ts|m4s|aac|mp4|m4a|webm|mp3|wasm|map)$")) return null;
+        probes++;
+        boolean blocked = NoctraDns.blocked(host);
+        return fetch(request, blocked ? NoctraDns.client() : NoctraDns.plainClient(), true);
+    }
+
+    /** Requête faite par OkHttp (cookies de la WebView conservés) ; probe : liste HLS reconnue à son contenu. */
+    private WebResourceResponse fetch(WebResourceRequest request, okhttp3.OkHttpClient client, boolean probe) {
+        Uri url = request.getUrl();
+        String host = url.getHost();
         okhttp3.Response response = null;
         try {
             String address = url.toString();
@@ -456,7 +518,7 @@ public class NoctraWebPlayerActivity extends Activity {
             if (userAgent != null && (sent == null || !sent.containsKey("User-Agent"))) builder.header("User-Agent", userAgent);
             String cookies = CookieManager.getInstance().getCookie(address);
             if (cookies != null && !cookies.isEmpty()) builder.header("Cookie", cookies);
-            response = NoctraDns.client().newCall(builder.build()).execute();
+            response = client.newCall(builder.build()).execute();
             for (String cookie : response.headers("Set-Cookie")) CookieManager.getInstance().setCookie(address, cookie);
             int code = response.code();
             // Redirections suivies par OkHttp ; un 3xx restant ne peut pas être rendu à la WebView.
@@ -480,12 +542,31 @@ public class NoctraWebPlayerActivity extends Activity {
             String reason = response.message();
             if (reason == null || reason.trim().isEmpty()) reason = code < 400 ? "OK" : "Error";
             InputStream stream = body == null ? new ByteArrayInputStream(new byte[0]) : body.byteStream();
+            if (probe && code < 400) {
+                java.io.BufferedInputStream buffered = new java.io.BufferedInputStream(stream, 8192);
+                buffered.mark(64);
+                byte[] head = new byte[32];
+                int read = 0;
+                while (read < head.length) {
+                    int count = buffered.read(head, read, head.length - read);
+                    if (count < 0) break;
+                    read += count;
+                }
+                buffered.reset();
+                String start = new String(head, 0, Math.max(0, read), "UTF-8").replace("\uFEFF", "").trim();
+                if (start.startsWith("#EXTM3U") && !handedOff) {
+                    NoctraWebLog.add(this, "Liste HLS reconnue à son contenu : " + host);
+                    handOff(request);
+                }
+                stream = buffered;
+            }
             return new WebResourceResponse(mime, charset, code, reason, headers, stream);
         } catch (Throwable error) {
             if (response != null) {
                 try { response.close(); } catch (Throwable ignored) { }
             }
-            NoctraWebLog.add(this, "DNS sécurisé en échec : " + host + " (" + error.getClass().getSimpleName() + ")");
+            // Échec : la WebView refait la requête elle-même.
+            if (!probe) NoctraWebLog.add(this, "DNS sécurisé en échec : " + host + " (" + error.getClass().getSimpleName() + ")");
             return null;
         }
     }
@@ -497,7 +578,10 @@ public class NoctraWebPlayerActivity extends Activity {
         if (!"https".equals(scheme) && !"http".equals(scheme)) return false;
         if (url.toString().startsWith(appBase)) return false;
         String path = url.getPath().toLowerCase();
-        return path.endsWith(".m3u8") || path.endsWith(".m3u") || path.contains(".m3u8/");
+        String query = url.getEncodedQuery() == null ? "" : url.getEncodedQuery().toLowerCase();
+        // « .m3u8 » dans le chemin ou dans les paramètres (?file=…/index.m3u8).
+        return path.endsWith(".m3u8") || path.endsWith(".m3u") || path.contains(".m3u8")
+            || (query.contains(".m3u8") && !query.contains(".m3u8.") && !path.matches(".*\\.(?:js|html?|php|css)$"));
     }
 
     /** Flux trouvé : transmis au lecteur natif avec les en-têtes de la page. */
@@ -534,6 +618,7 @@ public class NoctraWebPlayerActivity extends Activity {
                 Intent data = new Intent();
                 data.putExtra(EXTRA_PLAYING, playing);
                 data.putExtra(EXTRA_MEDIA, media);
+                data.putExtra(EXTRA_MEDIA_HLS, true);
                 data.putExtra(EXTRA_HEADERS, headers.toString());
                 setResult(RESULT_OK, data);
                 finish();
@@ -670,6 +755,8 @@ public class NoctraWebPlayerActivity extends Activity {
         if (tab != null) closeTab();
         NoctraWebLog.add(this, "Onglet ouvert par le lecteur");
         tab = popup;
+        handler.removeCallbacks(closePopups);
+        try { popup.onResume(); } catch (Throwable ignored) { }
         root.addView(popup, 1, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         webView.setVisibility(View.INVISIBLE);
         popup.requestFocus();
@@ -688,6 +775,12 @@ public class NoctraWebPlayerActivity extends Activity {
         if (tab == null) return;
         root.removeView(tab);
         tab = null;
+        // Onglets en pause (animations, vidéos publicitaires), refermés 45 s plus tard.
+        for (WebView popup : popups) {
+            try { popup.onPause(); } catch (Throwable ignored) { }
+        }
+        handler.removeCallbacks(closePopups);
+        handler.postDelayed(closePopups, 45000);
         webView.setVisibility(View.VISIBLE);
         webView.requestFocus();
         if (hint != null) {

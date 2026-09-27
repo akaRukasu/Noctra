@@ -69,6 +69,21 @@ final class NoctraDns implements Dns {
         return client;
     }
 
+    private static OkHttpClient plain;
+
+    /** Client HTTP ordinaire (DNS du système), pour les sites non bloqués. */
+    static synchronized OkHttpClient plainClient() {
+        if (plain == null) {
+            plain = new OkHttpClient.Builder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .connectTimeout(12, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .build();
+        }
+        return plain;
+    }
+
     static List<InetAddress> secure(String host) {
         if (host == null || host.isEmpty()) return new ArrayList<InetAddress>();
         synchronized (resolved) {

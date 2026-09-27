@@ -618,6 +618,7 @@ public class NoctraHomeActivity extends Activity {
                 message.put("ok", resultCode == RESULT_OK);
                 message.put("playing", data != null && data.getBooleanExtra(NoctraWebPlayerActivity.EXTRA_PLAYING, false));
                 message.put("media", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_MEDIA));
+                message.put("mediaHls", data != null && data.getBooleanExtra(NoctraWebPlayerActivity.EXTRA_MEDIA_HLS, false));
                 String mediaHeaders = data == null ? null : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_HEADERS);
                 if (mediaHeaders != null) message.put("headers", new JSONObject(mediaHeaders));
                 message.put("error", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_ERROR));
