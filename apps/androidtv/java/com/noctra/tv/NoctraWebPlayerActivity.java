@@ -99,6 +99,8 @@ public class NoctraWebPlayerActivity extends Activity {
     static final String EXTRA_REFERRER = "noctra_referrer";
     static final String EXTRA_SNIFF = "noctra_sniff";
     static final String EXTRA_HEADERS = "noctra_headers";
+    /** Mode allégé dès le départ (nouvel essai après un arrêt du lecteur). */
+    static final String EXTRA_LITE = "noctra_lite";
     /** Durée d'affichage d'une page ouverte par le lecteur (souvent sa publicité). */
     private static final int TAB_MS = 8000;
     static final String EXTRA_ERROR = "noctra_error";
@@ -166,8 +168,18 @@ public class NoctraWebPlayerActivity extends Activity {
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adnxs.com", "popads.net", "popcash.net",
         "propellerads.com", "adsterra.com", "exoclick.com", "juicyads.com", "a-ads.com", "adcash.com", "hilltopads.net",
         "clickadu.com", "onclickads.net", "monetag.com", "histats.com", "adskeeper.com", "mgid.com", "taboola.com",
-        "outbrain.com", "revcontent.com", "trafficjunky.net", "yandex.ru", "mc.yandex.ru", "adservice.google.com"
+        "outbrain.com", "revcontent.com", "trafficjunky.net", "yandex.ru", "mc.yandex.ru", "adservice.google.com",
+        "acscdn.com", "protrafficinspector.com", "googletagmanager.com", "google-analytics.com", "clarity.ms", "hotjar.com",
+        "profitablegatecpm.com", "highperformanceformat.com", "effectiveratecpm.com", "adsco.re", "tsyndicate.com", "realsrv.com",
+        "magsrv.com", "pemsrv.com", "a-mo.net", "dtscout.com", "bidgear.com", "ad-maven.com", "admaven.com", "onclckmn.com"
     };
+
+    /**
+     * Bibliothèque publicitaire remplacée en mode allégé par une version vide :
+     * pas de fenêtres publicitaires (mémoire), sans casser la page qui l'appelle.
+     */
+    private static final String ACLIB_STUB = "window.aclib=window.aclib||{runPop:function(){},runAutoTag:function(){},runBanner:function(){},"
+        + "runInPagePush:function(){},runVideoSlider:function(){},runInterstitial:function(){},runNative:function(){}};";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -202,6 +214,7 @@ public class NoctraWebPlayerActivity extends Activity {
         noctraHost = Uri.parse(NoctraConfig.NOCTRA_URL).getHost();
         source = url;
         sniff = intent.getBooleanExtra(EXTRA_SNIFF, true);
+        boolean liteStart = intent.getBooleanExtra(EXTRA_LITE, false);
         referrer = intent.getStringExtra(EXTRA_REFERRER);
         if (referrer == null || referrer.isEmpty()) referrer = "strict-origin-when-cross-origin";
 
@@ -254,6 +267,15 @@ public class NoctraWebPlayerActivity extends Activity {
         }, 8000);
 
         configure();
+        if (Build.VERSION.SDK_INT < 26) NoctraWebLog.add(this, "Android " + Build.VERSION.RELEASE + " : moteur web dans le processus du lecteur");
+        if (liteStart) {
+            // Nouvel essai après un arrêt : page du lecteur seule, publicités bloquées.
+            lite = true;
+            NoctraWebLog.add(this, "Essai allégé (publicités et pistage bloqués, page seule)");
+            openDirect();
+            if (hint != null) hint.setText("Nouvel essai allégé (publicités bloquées)…");
+            return;
+        }
         Uri.Builder page = Uri.parse(appBase + "player.html").buildUpon();
         Uri.Builder fragment = new Uri.Builder()
             .appendQueryParameter("src", url)
@@ -300,6 +322,8 @@ public class NoctraWebPlayerActivity extends Activity {
                 if (sniff && !handedOff && isStream(request.getUrl())) handOff(request);
                 if (lite && isAd(request.getUrl())) {
                     blocked++;
+                    String adPath = request.getUrl().getPath() == null ? "" : request.getUrl().getPath().toLowerCase();
+                    if (adPath.contains("aclib")) return new WebResourceResponse("text/javascript", "utf-8", new ByteArrayInputStream(ACLIB_STUB.getBytes()));
                     return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
                 }
                 WebResourceResponse local = asset(request.getUrl().toString());
@@ -487,7 +511,8 @@ public class NoctraWebPlayerActivity extends Activity {
         String scheme = url.getScheme();
         String host = url.getHost();
         if (host == null || !("https".equals(scheme) || "http".equals(scheme)) || !"GET".equalsIgnoreCase(request.getMethod())) return null;
-        if (host.equalsIgnoreCase(noctraHost) || url.toString().startsWith(appBase) || isAd(url)) return null;
+        // Scripts publicitaires compris (aclib…) : la page en dépend, ils doivent aussi être adaptés.
+        if (host.equalsIgnoreCase(noctraHost) || url.toString().startsWith(appBase)) return null;
         // Cadre principal : seulement la page du fournisseur ouverte en entier.
         if (request.isForMainFrame() && !(direct && sameHost(url, Uri.parse(source)))) return null;
         Map<String, String> sent = request.getRequestHeaders();
@@ -591,8 +616,16 @@ public class NoctraWebPlayerActivity extends Activity {
                     || ((path.endsWith(".js") || path.endsWith(".mjs")) && (lowerMime.startsWith("text/plain") || lowerMime.equals("application/octet-stream")));
                 boolean page = lowerMime.equals("text/html") || lowerMime.equals("application/xhtml+xml");
                 if (script || page) {
-                    byte[] data = readAll(stream, 16 * 1024 * 1024);
-                    if (data != null) {
+                    // Mémoire limitée (moteur web dans le même processus sur Android 7) : 4 Mo au plus.
+                    java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                    if (!readInto(stream, buffer, 4 * 1024 * 1024)) {
+                        // Trop gros : transmis tel quel (début déjà lu + suite).
+                        return new WebResourceResponse(mime, charset, code, reason, headers,
+                            new java.io.SequenceInputStream(new ByteArrayInputStream(buffer.toByteArray()), stream));
+                    }
+                    byte[] data = buffer.toByteArray();
+                    buffer = null;
+                    {
                         String text = new String(data, charset == null ? "UTF-8" : charset);
                         String result = script ? NoctraJsCompat.script(text) : NoctraJsCompat.html(text);
                         // Page redirigée : adresses relatives résolues depuis sa vraie adresse.
@@ -609,7 +642,6 @@ public class NoctraWebPlayerActivity extends Activity {
                         if (!result.equals(text) && adapted++ < 6) NoctraWebLog.add(this, "Adapté au moteur ancien : " + host + (path.length() > 40 ? path.substring(path.length() - 40) : path));
                         return new WebResourceResponse(mime, "UTF-8", code, reason, headers, new ByteArrayInputStream(result.getBytes("UTF-8")));
                     }
-                    return null;
                 }
             }
             if (probe && code < 400) {
@@ -641,20 +673,16 @@ public class NoctraWebPlayerActivity extends Activity {
         }
     }
 
-    /** Contenu entier (au plus max octets), ou null s'il est trop gros. */
-    private static byte[] readAll(InputStream input, int max) throws IOException {
-        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+    /** Lit tout le contenu (true), ou s'arrête au-delà de max octets (false, flux laissé ouvert). */
+    private static boolean readInto(InputStream input, java.io.ByteArrayOutputStream buffer, int max) throws IOException {
         byte[] chunk = new byte[16384];
         int read;
         while ((read = input.read(chunk)) != -1) {
             buffer.write(chunk, 0, read);
-            if (buffer.size() > max) {
-                input.close();
-                return null;
-            }
+            if (buffer.size() > max) return false;
         }
         input.close();
-        return buffer.toByteArray();
+        return true;
     }
 
     /** Liste de lecture HLS demandée par la page ou un de ses cadres (hors publicités et Noctra). */
@@ -858,7 +886,7 @@ public class NoctraWebPlayerActivity extends Activity {
             hint.setAlpha(1f);
         }
         handler.removeCallbacks(backToPlayer);
-        handler.postDelayed(backToPlayer, TAB_MS);
+        handler.postDelayed(backToPlayer, lite ? 3000 : TAB_MS);
     }
 
     /** Retour au lecteur ; la page ouverte reste chargée tant que le lecteur ne la ferme pas. */

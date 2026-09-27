@@ -428,6 +428,8 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_COMPAT, message.optBoolean("compat", false));
             // Même cadre que sur PC : bac à sable et référent propres au fournisseur.
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_SNIFF, message.optBoolean("sniff", true));
+            // Nouvel essai après un arrêt du lecteur : mode allégé dès le départ.
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_LITE, message.optBoolean("lite", false));
             if (message.has("sandbox") && !message.isNull("sandbox")) intent.putExtra(NoctraWebPlayerActivity.EXTRA_SANDBOX, message.optString("sandbox"));
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_REFERRER, message.optString("referrer", "strict-origin-when-cross-origin"));
             // Le jeton ne sert qu'aux lecteurs préparés par le serveur Noctra.

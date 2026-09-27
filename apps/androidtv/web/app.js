@@ -3152,7 +3152,7 @@
   function openEmbed(state, option, label) {
     var url = absolute(option.url);
     var frame = frameConfig(state.channel, option, url);
-    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff })) {
+    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff, lite: Boolean(option.lite) })) {
       webPlayback = { state: state, option: option };
       return;
     }
@@ -3176,6 +3176,14 @@
       // lecture native avec les en-têtes de la page, plus stable.
       state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, headers: result.headers || null, mime: result.mediaHls ? 'application/x-mpegURL' : '', sniffedFrom: entry.option, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl, provider: entry.option.provider, _prefix: entry.option._prefix });
       state.index++;
+      playOption();
+      return;
+    }
+    // Arrêt du lecteur (mémoire du téléviseur, moteur web dans le même processus
+    // sur Android 7) : nouvel essai du même serveur en mode allégé, une fois.
+    if (result.crashed && !entry.option.lite) {
+      entry.option.lite = true;
+      toast('Le lecteur web s’est arrêté : nouvel essai allégé (publicités bloquées)…');
       playOption();
       return;
     }
