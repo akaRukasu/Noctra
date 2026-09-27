@@ -321,7 +321,7 @@ h1, h2, h3, p { margin: 0; }
 
 /* ── Choix du serveur ─────────────────────────────────────────────── */
 .picker {
-  width: 44rem; max-height: 40rem; overflow-y: auto; padding: 1.6rem; border-radius: 1.4rem;
+  width: 44rem; max-height: 40rem; max-height: min(40rem, 90vh); overflow-y: auto; padding: 1.6rem; border-radius: 1.4rem;
   background: var(--surface); border: 1px solid var(--line); display: grid; grid-gap: .8rem;
 }
 .picker-head { display: grid; grid-template-columns: 6rem 1fr; grid-gap: 1.1rem; align-items: center; }

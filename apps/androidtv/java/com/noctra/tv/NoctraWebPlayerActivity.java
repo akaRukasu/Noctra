@@ -554,7 +554,7 @@ public class NoctraWebPlayerActivity extends Activity {
                 }
                 buffered.reset();
                 String start = new String(head, 0, Math.max(0, read), "UTF-8").replace("\uFEFF", "").trim();
-                if (start.startsWith("#EXTM3U") && !handedOff) {
+                if (start.startsWith("#EXTM3U") && !handedOff && !isAdVideo(url)) {
                     NoctraWebLog.add(this, "Liste HLS reconnue à son contenu : " + host);
                     handOff(request);
                 }
@@ -573,7 +573,7 @@ public class NoctraWebPlayerActivity extends Activity {
 
     /** Liste de lecture HLS demandée par la page ou un de ses cadres (hors publicités et Noctra). */
     private boolean isStream(Uri url) {
-        if (url == null || url.getPath() == null || isAd(url)) return false;
+        if (url == null || url.getPath() == null || isAd(url) || isAdVideo(url)) return false;
         String scheme = url.getScheme();
         if (!"https".equals(scheme) && !"http".equals(scheme)) return false;
         if (url.toString().startsWith(appBase)) return false;
@@ -624,6 +624,12 @@ public class NoctraWebPlayerActivity extends Activity {
                 finish();
             }
         });
+    }
+
+    /** Vidéo publicitaire (pré-roll, VAST…) : ce n'est pas la chaîne. */
+    private static boolean isAdVideo(Uri url) {
+        String text = url == null ? "" : url.toString().toLowerCase();
+        return text.matches(".*(?:^|[/._=?&-])(?:ads?|vast|vpaid|vmap|preroll|pre-roll|advert[a-z]*|adserver|pubads|imasdk|doubleclick|adtag|sponsor)(?:[/._=?&-]|$).*");
     }
 
     private static boolean isAd(Uri url) {
@@ -881,12 +887,28 @@ public class NoctraWebPlayerActivity extends Activity {
         touch(MotionEvent.ACTION_UP, cursorX, cursorY, downTime);
     }
 
-    private void swipe(float dy) {
-        long downTime = SystemClock.uptimeMillis();
-        float y = root.getHeight() / 2f;
-        touch(MotionEvent.ACTION_DOWN, cursorX, y, downTime);
-        for (int i = 1; i <= 5; i++) touch(MotionEvent.ACTION_MOVE, cursorX, y + dy * i / 5f, downTime);
-        touch(MotionEvent.ACTION_UP, cursorX, y + dy, downTime);
+    /**
+     * Défilement de la page au bord de l'écran : molette de souris à la position
+     * du curseur, et non un glissement tactile (que beaucoup de lecteurs
+     * prennent pour « chaîne suivante / précédente »).
+     */
+    private void scrollPage(boolean down) {
+        View target = tab != null ? tab : webView;
+        if (target == null) return;
+        MotionEvent.PointerProperties[] properties = { new MotionEvent.PointerProperties() };
+        properties[0].id = 0;
+        properties[0].toolType = MotionEvent.TOOL_TYPE_MOUSE;
+        MotionEvent.PointerCoords[] coords = { new MotionEvent.PointerCoords() };
+        coords[0].x = cursorX;
+        coords[0].y = Math.max(1, Math.min(root.getHeight() - 2, cursorY));
+        coords[0].setAxisValue(MotionEvent.AXIS_VSCROLL, down ? -1f : 1f);
+        long now = SystemClock.uptimeMillis();
+        MotionEvent event = MotionEvent.obtain(now, now, MotionEvent.ACTION_SCROLL, 1, properties, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0);
+        try {
+            target.dispatchGenericMotionEvent(event);
+        } finally {
+            event.recycle();
+        }
     }
 
     @Override
@@ -911,8 +933,8 @@ public class NoctraWebPlayerActivity extends Activity {
             else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) cursorX += step;
             else if (code == KeyEvent.KEYCODE_DPAD_UP) cursorY -= step;
             else cursorY += step;
-            if (cursorY < 0 && event.getRepeatCount() % 4 == 0) swipe(height / 3f);
-            if (cursorY > height && event.getRepeatCount() % 4 == 0) swipe(-height / 3f);
+            if (cursorY < 0 && event.getRepeatCount() % 3 == 0) scrollPage(false);
+            if (cursorY > height && event.getRepeatCount() % 3 == 0) scrollPage(true);
             cursorX = Math.max(0, Math.min(width - 1, cursorX));
             cursorY = Math.max(0, Math.min(height - 1, cursorY));
             placeCursor();

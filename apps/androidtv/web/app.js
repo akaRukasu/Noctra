@@ -1841,8 +1841,10 @@
     var raw = String(name || '')
       .replace(/\uD83C[\uDDE6-\uDDFF]/g, ' ')
       .replace(/[ʰ-˿ᴀ-ᶿ⁰-₟℀-⅏]/g, ' ')
-      .replace(/[─-◿☀-➿]/g, ' ')
-      .trim();
+      .replace(/[─-◿☀-➿]/g, ' ');
+    // Lettres « stylisées » (𝗧𝗙𝟭, ＴＦ１…) ramenées aux lettres ordinaires.
+    try { raw = raw.normalize('NFKC'); } catch (error) { /* moteur ancien */ }
+    raw = raw.trim();
     var lead = leadingCode(raw);
     if (lead) raw = raw.slice(lead.length);
     var clean = raw
@@ -1851,6 +1853,7 @@
       .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
       .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip|multi ?audio)\b/gi, ' ')
       .replace(/[|•·▎┃]+/g, ' ')
+      .replace(/(^|\s)\++(?=\s|$)/g, ' ')
       .replace(/\s+/g, ' ').trim();
     return clean || String(name || '').trim();
   }
@@ -1927,6 +1930,25 @@
         if (channel.isLive) unified.isLive = true;
         if (channel.group) unified._groups[channel.group] = (unified._groups[channel.group] || 0) + 1;
       });
+    });
+    // Même chaîne, mots dans un autre ordre (« Sport 360 Canal+ ») : réunies aussi.
+    var byWords = {};
+    list = list.filter(function (unified) {
+      var parts = unified._key.split(':');
+      var country = parts.length > 1 ? parts[0] + ':' : '';
+      // Mots triés, nombres dans leur ordre (« France 2 3 » ≠ « France 3 2 »).
+      var words = brandName(unified._entries[0].channel.name).split(' ').filter(function (word) { return word && !NOISE_WORDS[word]; })
+        .map(function (word) { return word === 'sports' ? 'sport' : word; });
+      var tokens = words.filter(function (word) { return !/^\d+$/.test(word); }).sort().join(' ') + '|' + words.filter(function (word) { return /^\d+$/.test(word); }).join(' ');
+      if (tokens === '|') return true;
+      var twin = byWords[country + tokens];
+      if (!twin) { byWords[country + tokens] = unified; return true; }
+      unified._entries.forEach(function (entry) { twin._entries.push(entry); });
+      Object.keys(unified._groups).forEach(function (group) { twin._groups[group] = (twin._groups[group] || 0) + unified._groups[group]; });
+      if (!twin.logo) twin.logo = unified.logo;
+      if (!twin.now && unified.now) { twin.now = unified.now; twin.next = unified.next; }
+      if (!twin.country) twin.country = unified.country;
+      return false;
     });
     list.forEach(function (unified) {
       var groups = Object.keys(unified._groups);
@@ -2797,7 +2819,7 @@
       } }, icon('star'), isFavorite(channel, source) ? 'Retirer des favoris' : 'Ajouter aux favoris');
       if (isFavorite(channel, source)) favorite.classList.add('on');
     }
-    var node = h('div', { class: 'modal' }, h('div', { class: 'picker' },
+    var node = h('div', { class: 'modal' }, h('div', { class: 'picker scroll' },
       h('div', { class: 'picker-head' },
         h('div', { class: 'picker-logo' }, logo),
         h('div', null, h('h2', { text: channel.name }), h('div', { class: 'sub', text: [channel.group, channel.provider].filter(Boolean).join(' · ') }), epgLines(channel))),

@@ -154,7 +154,7 @@ assert.match(home, /if \(sameOrigin\(target, server\)\) intent\.putExtra\(Noctra
 assert.match(home, /return !request\.getUrl\(\)\.toString\(\)\.startsWith\(appBase\);/, 'Le cadre principal reste sur l’accueil');
 // Lecture des chaînes : tampon élargi, tentatives, retour au direct, reconnexions.
 const stream = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
-assert.match(stream, /new DefaultMediaSourceFactory\(http\)\s*\.setLoadErrorHandlingPolicy\(new DefaultLoadErrorHandlingPolicy\(6\)\)/);
+assert.match(stream, /new DefaultMediaSourceFactory\(data\)\s*\.setLoadErrorHandlingPolicy\(new DefaultLoadErrorHandlingPolicy\(6\)\)/);
 assert.match(stream, /\.setLoadControl\(buffer\)/);
 assert.match(stream, /error\.errorCode == BEHIND_LIVE_WINDOW && played/);
 assert.match(stream, /private static final int BEHIND_LIVE_WINDOW = 1002;/);
@@ -320,6 +320,12 @@ assert.match(tvApp, /var NAME_ALIASES = \{/);
 assert.match(webPlayerJava, /private WebResourceResponse probePlaylist\(WebResourceRequest request\)/);
 assert.match(webPlayerJava, /start\.startsWith\("#EXTM3U"\)/);
 assert.match(webPlayerJava, /handler\.postDelayed\(closePopups, 45000\);/);
+assert.match(webPlayerJava, /private void scrollPage\(boolean down\)/);
+assert.ok(!webPlayerJava.includes('swipe('), 'Plus de glissement tactile au bord (changement de chaîne)');
+assert.match(webPlayerJava, /private static boolean isAdVideo\(Uri url\)/);
+assert.match(streamJava, /new NoctraCleanDataSource\.Factory\(http\)/);
+assert.match(tvApp, /class: 'picker scroll'/);
+assert.match(tvApp, /raw = raw\.normalize\('NFKC'\)/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
 assert.match(tvApp, /function isEvent\(channel\) \{/);
 assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');

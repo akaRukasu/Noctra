@@ -261,7 +261,9 @@ final class NoctraStream {
                 .setReadTimeoutMs(20000)
                 .setDefaultRequestProperties(headers);
         }
-        DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(http)
+        // Direct : segments « déguisés » (faux en-tête d'image) nettoyés avant lecture.
+        DataSource.Factory data = live ? new NoctraCleanDataSource.Factory(http) : http;
+        DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(data)
             .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(6));
         DefaultLoadControl buffer = compact
             ? new DefaultLoadControl.Builder().setBufferDurationsMs(12000, 30000, 2000, 4000).build()
