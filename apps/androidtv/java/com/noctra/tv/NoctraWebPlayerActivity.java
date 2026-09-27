@@ -1023,6 +1023,31 @@ public class NoctraWebPlayerActivity extends Activity {
     private void placeCursor() {
         cursor.setTranslationX(cursorX - dp(11));
         cursor.setTranslationY(cursorY - dp(11));
+        showCursor();
+    }
+
+    /** Curseur immobile depuis 3 s : il disparaît (la vidéo reste dégagée). */
+    private static final long CURSOR_IDLE_MS = 3000;
+    private boolean cursorHidden;
+    private final Runnable hideCursor = new Runnable() {
+        @Override
+        public void run() {
+            if (cursor == null) return;
+            cursorHidden = true;
+            cursor.animate().cancel();
+            cursor.animate().alpha(0f).setDuration(400).start();
+        }
+    };
+
+    private void showCursor() {
+        if (cursor == null) return;
+        handler.removeCallbacks(hideCursor);
+        if (cursorHidden || cursor.getAlpha() < 1f) {
+            cursor.animate().cancel();
+            cursor.setAlpha(1f);
+        }
+        cursorHidden = false;
+        handler.postDelayed(hideCursor, CURSOR_IDLE_MS);
     }
 
     private void touch(int action, float x, float y, long downTime) {
@@ -1075,6 +1100,12 @@ public class NoctraWebPlayerActivity extends Activity {
         if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
         try {
             if (click) {
+                // Curseur caché : OK le fait seulement réapparaître (pas de clic à l'aveugle).
+                if (cursorHidden && event.getRepeatCount() == 0) {
+                    showCursor();
+                    return true;
+                }
+                showCursor();
                 if (event.getRepeatCount() == 0) tap();
                 // OK maintenu (≈ 1 s) : page du lecteur en entier.
                 else if (event.getRepeatCount() == 12 && !direct) openDirect();

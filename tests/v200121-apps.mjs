@@ -343,6 +343,7 @@ assert.match(webPlayerJava, /private static final String ACLIB_STUB = /);
 assert.match(webPlayerJava, /\|\| \(htmlMime && !document\);/, 'Scripts PHP servis en text/html adaptés comme scripts');
 assert.match(webPlayerJava, /code == 403 \|\| code == 429 \|\| code == 503/);
 assert.match(webPlayerJava, /Onglet publicitaire ignoré/);
+assert.match(webPlayerJava, /private static final long CURSOR_IDLE_MS = 3000;/, 'Curseur caché après 3 s sans mouvement');
 assert.match(tvApp, /var WEB_MODE_KEY = 'noctra-tv-webmode-v1';/);
 // Identité iptv-org (nom officiel, pays), serveurs des autres sources, lancement immédiat.
 assert.match(tvApp, /if \(!idCountry \|\| idCountry === \(country \|\| 'fr'\)\) union\(idKey, nameKey\);/);
