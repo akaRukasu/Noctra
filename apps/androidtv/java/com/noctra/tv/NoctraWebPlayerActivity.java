@@ -452,7 +452,7 @@ public class NoctraWebPlayerActivity extends Activity {
                 // Script du lecteur illisible par ce moteur web (syntaxe trop récente) :
                 // cause des erreurs suivantes (« … is not defined »), et seul remède
                 // durable : mettre à jour le moteur web du téléviseur.
-                if (text != null && !engineTooOld && text.contains("SyntaxError")
+                if (text != null && !engineTooOld && text.contains("SyntaxError") && !text.contains("token '<'") && !text.contains("token <")
                     && NoctraWebEngine.major(engineVersion) > 0 && NoctraWebEngine.major(engineVersion) < NoctraWebEngine.RECOMMENDED_MAJOR) {
                     engineTooOld = true;
                     NoctraWebLog.add(NoctraWebPlayerActivity.this, "Moteur web trop ancien pour ce lecteur (Chrome " + NoctraWebEngine.major(engineVersion) + ")");
@@ -609,12 +609,29 @@ public class NoctraWebPlayerActivity extends Activity {
             String reason = response.message();
             if (reason == null || reason.trim().isEmpty()) reason = code < 400 ? "OK" : "Error";
             InputStream stream = body == null ? new ByteArrayInputStream(new byte[0]) : body.byteStream();
+            // Refus, défi anti-robots (Cloudflare…), erreur : la WebView refait la
+            // requête elle-même (son identité de navigateur est acceptée).
+            if (mode == MODE_COMPAT && (code == 403 || code == 429 || code == 503 || response.header("cf-mitigated") != null)) {
+                response.close();
+                return null;
+            }
             if (mode == MODE_COMPAT && code < 400) {
                 String lowerMime = mime.toLowerCase();
                 String path = url.getPath() == null ? "" : url.getPath().toLowerCase();
+                String accept = "";
+                if (sent != null) {
+                    for (Map.Entry<String, String> entry : sent.entrySet()) {
+                        if (entry.getKey() != null && entry.getValue() != null && entry.getKey().equalsIgnoreCase("Accept")) accept = entry.getValue().toLowerCase();
+                    }
+                }
+                // Demande d'une page (cadre) ou d'une donnée/d'un script (« */* ») ?
+                boolean document = request.isForMainFrame() || accept.contains("text/html");
+                boolean htmlMime = lowerMime.equals("text/html") || lowerMime.equals("application/xhtml+xml");
                 boolean script = lowerMime.contains("javascript") || lowerMime.contains("ecmascript")
-                    || ((path.endsWith(".js") || path.endsWith(".mjs")) && (lowerMime.startsWith("text/plain") || lowerMime.equals("application/octet-stream")));
-                boolean page = lowerMime.equals("text/html") || lowerMime.equals("application/xhtml+xml");
+                    || ((path.endsWith(".js") || path.endsWith(".mjs")) && (lowerMime.startsWith("text/plain") || lowerMime.equals("application/octet-stream")))
+                    // Scripts servis par une page PHP marquée « text/html » (fréquent sur ces sites).
+                    || (htmlMime && !document);
+                boolean page = htmlMime && document;
                 if (script || page) {
                     // Mémoire limitée (moteur web dans le même processus sur Android 7) : 4 Mo au plus.
                     java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
@@ -627,6 +644,11 @@ public class NoctraWebPlayerActivity extends Activity {
                     buffer = null;
                     {
                         String text = new String(data, charset == null ? "UTF-8" : charset);
+                        String trimmed = text.replace("\uFEFF", "").trim();
+                        // Contenu qui n'est pas du code (fragment HTML, JSON demandé par la page…) : tel quel.
+                        if (script && !page && trimmed.startsWith("<")) {
+                            return new WebResourceResponse(mime, charset, code, reason, headers, new ByteArrayInputStream(data));
+                        }
                         String result = script ? NoctraJsCompat.script(text) : NoctraJsCompat.html(text);
                         // Page redirigée : adresses relatives résolues depuis sa vraie adresse.
                         String finalUrl = null;

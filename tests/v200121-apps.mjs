@@ -340,6 +340,8 @@ assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraDns.java'), /"j
 assert.match(tvApp, /if \(result\.crashed && !entry\.option\.lite\) \{/);
 assert.match(webPlayerJava, /static final String EXTRA_LITE = "noctra_lite";/);
 assert.match(webPlayerJava, /private static final String ACLIB_STUB = /);
+assert.match(webPlayerJava, /\|\| \(htmlMime && !document\);/, 'Scripts PHP servis en text/html adaptés comme scripts');
+assert.match(webPlayerJava, /code == 403 \|\| code == 429 \|\| code == 503/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
 assert.match(tvApp, /function isEvent\(channel\) \{/);
 assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');

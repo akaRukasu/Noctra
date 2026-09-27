@@ -3167,7 +3167,8 @@
     var log = result.log ? '\nJournal du lecteur :\n' + result.log : '';
     // Script du lecteur illisible (SyntaxError) sur un moteur web ancien :
     // la cause réelle est expliquée en premier, avec son remède.
-    if (!result.playing && engineOutdated() && /SyntaxError|trop ancien/.test(String(result.log || '') + ' ' + String(result.error || ''))) {
+    // (« Unexpected token '<' » : une page reçue à la place d'un script, pas un problème de moteur.)
+    if (!result.playing && engineOutdated() && /SyntaxError(?!: Unexpected token '<')|trop ancien/.test(String(result.log || '') + ' ' + String(result.error || ''))) {
       log = '\nCause probable : le moteur web du téléviseur (Chrome ' + S.engine.major + ') est trop ancien pour ce lecteur, malgré l’adaptation automatique de ses scripts. '
         + 'Choisissez un serveur « Lecteur natif »' + (S.engine.package ? ', ou mettez à jour « Android System WebView » (bouton ci-dessous) si le téléviseur le permet.' : '.') + log;
     }
