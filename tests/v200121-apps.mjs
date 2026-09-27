@@ -347,6 +347,9 @@ assert.match(tvApp, /var WEB_MODE_KEY = 'noctra-tv-webmode-v1';/);
 // Identité iptv-org (nom officiel, pays), serveurs des autres sources, lancement immédiat.
 assert.match(tvApp, /if \(!idCountry \|\| idCountry === \(country \|\| 'fr'\)\) union\(idKey, nameKey\);/);
 assert.match(tvApp, /function unifiedTwin\(channel\) \{/);
+assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
+assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
+assert.match(tvApp, /var inPage = root === document && !isMenu\(from\) && main\.contains\(from\);/, '▲ reste dans la page avant la barre d’onglets');
 assert.match(tvApp, /if \(playback\.options\.length === 1 \|\| trusted\) \{/);
 assert.match(serverCode, /iptvOrgName: match\.name \|\| channel\.iptvOrgName \|\| ''/);
 assert.match(serverCode, /Chaînes des bouquets \(Movix, Vavoo…\) : logos et identité iptv-org/);

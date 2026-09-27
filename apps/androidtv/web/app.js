@@ -478,7 +478,10 @@
     var best = gridNeighbour(from, direction);
     // Rangée, groupe de boutons : on regarde d'abord les voisins immédiats.
     if (!best && horizontal && from.parentElement) best = nearest(from, a, from.parentElement.querySelectorAll('.f'), direction);
-    if (!best) best = nearest(from, a, root.querySelectorAll('.f'), direction);
+    // Dans la page, on reste dans la page : la barre d'onglets (fixe en haut de
+    // l'écran) n'est atteinte qu'une fois arrivé tout en haut du contenu.
+    var inPage = root === document && !isMenu(from) && main.contains(from);
+    if (!best) best = nearest(from, a, (inPage ? main : root).querySelectorAll('.f'), direction);
     if (!best && direction === 'up' && root === document && !isMenu(from)) best = document.querySelector('#nav .nav.active') || document.querySelector('#nav .f');
     if (!best) return;
     // Retour dans une rangée déjà parcourue : dernier élément choisi.
@@ -1755,6 +1758,58 @@
   // une seule liste (une carte par chaîne). Au lancement, la fenêtre des
   // serveurs propose ceux de toutes les sources de la chaîne, classés par
   // fiabilité (historique de santé) : le plus stable démarre en premier.
+  // ── Logos de secours ──
+  // Chaînes sans logo (bouquets Movix, Vavoo…) : logos de la collection libre
+  // tv-logo/tv-logos (chaînes françaises), liste chargée une fois par semaine.
+  var LOGO_INDEX_KEY = 'noctra-tv-logo-index-v1';
+  var LOGO_BASE = 'https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@main/countries/france/';
+  var logoIndex = null;
+  var logoIndexLoading = null;
+  function buildLogoIndex(files) {
+    var index = {};
+    files.forEach(function (file) {
+      if (!/\.png$/i.test(file)) return;
+      var base = file.replace(/\.png$/i, '').replace(/-fr$/i, '').replace(/-french(?=-|$)/gi, '').replace(/-/g, ' ');
+      var key = unifiedName(base);
+      if (key && !index[key]) index[key] = LOGO_BASE + file;
+    });
+    return index;
+  }
+  function loadLogoIndex() {
+    if (logoIndex) return Promise.resolve(logoIndex);
+    if (logoIndexLoading) return logoIndexLoading;
+    try {
+      var stored = JSON.parse(localStorage.getItem(LOGO_INDEX_KEY) || 'null');
+      if (stored && stored.files && Date.now() - stored.at < 7 * 86400000) {
+        logoIndex = buildLogoIndex(stored.files);
+        return Promise.resolve(logoIndex);
+      }
+    } catch (error) { /* liste à recharger */ }
+    logoIndexLoading = fetch('https://api.github.com/repos/tv-logo/tv-logos/contents/countries/france', { credentials: 'omit' })
+      .then(function (response) { if (!response.ok) throw new Error('logos ' + response.status); return response.json(); })
+      .then(function (list) {
+        var files = (Array.isArray(list) ? list : []).map(function (item) { return item && item.name; }).filter(Boolean);
+        try { localStorage.setItem(LOGO_INDEX_KEY, JSON.stringify({ at: Date.now(), files: files })); } catch (error) { /* stockage plein */ }
+        logoIndex = buildLogoIndex(files);
+        return logoIndex;
+      })
+      .catch(function () { logoIndex = {}; return logoIndex; })
+      .then(function (index) { logoIndexLoading = null; return index; });
+    return logoIndexLoading;
+  }
+  // Attente courte : l'affichage ne dépend jamais de la collection de logos.
+  function logoIndexReady(ms) {
+    return Promise.race([loadLogoIndex(), new Promise(function (resolve) { setTimeout(function () { resolve(logoIndex); }, ms || 2500); })]);
+  }
+  // Logo de la chaîne, ou logo de secours pour une chaîne française sans logo.
+  function channelLogo(channel) {
+    if (channel.logo) return absolute(channel.logo);
+    if (!logoIndex || !channel.name) return '';
+    var country = channel._entries ? channel.country : channelCountry(channel);
+    if (country && country !== 'fr') return '';
+    return logoIndex[unifiedName(channel.iptvOrgName || channel.name)] || logoIndex[unifiedName(channel.name)] || '';
+  }
+
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
   var unifiedCache = null;
   var unifiedLoading = null;
@@ -2191,7 +2246,7 @@
   function storedChannelCard(entry) {
     var node = card({
       kind: 'channel', title: entry.name, sub: entry.sourceName + (entry.group ? ' · ' + entry.group : ''),
-      image: entry.logo ? absolute(entry.logo) : '',
+      image: channelLogo(entry),
       onSelect: function () { openStoredChannel(entry); }
     });
     // Programme en cours, par le guide du serveur (identifiant ou nom).
@@ -2233,6 +2288,7 @@
 
   views.live = function (params, alive) {
     favoriteMode = false;
+    loadLogoIndex();
     // Dernière chaîne regardée : relancée d'un appui, comme la touche « retour chaîne » d'une box.
     var last = storedChannels(RECENTS_KEY)[0];
     var resume = last ? h('span', { class: 'head-actions' }, h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } },
@@ -2320,7 +2376,8 @@
     var loadList = source.id === ALL_SOURCE.id
       ? loadUnified(function (done, total) { if (alive()) status.textContent = 'Réunion des chaînes de toutes les sources… ' + done + ' / ' + total; })
       : loadCatalog(source, ref, params.title);
-    return loadList.then(function (data) {
+    return Promise.all([loadList, logoIndexReady(2500)]).then(function (results) {
+      var data = results[0];
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
@@ -2444,7 +2501,7 @@
             node = card({
               kind: 'channel', title: channel.name,
               sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [channel.group, channel.provider].filter(Boolean).join(' · '),
-              image: channel.logo ? absolute(channel.logo) : '',
+              image: channelLogo(channel),
               badge: [isFavorite(channel, source) ? '★' : '', channel.isLive ? 'LIVE' : ''].filter(Boolean).join(' '),
               progress: guide.now ? epgProgress(guide.now) : 0,
               onSelect: select
@@ -2580,7 +2637,8 @@
   function fillGuideRow(node, channel) {
     var guide = epgLive(channel);
     clear(node);
-    var logo = h('span', { class: 'guide-logo' }, channel.logo ? image(absolute(channel.logo), '') : h('b', { text: String(channel.name || '?').slice(0, 3) }));
+    var logoUrl = channelLogo(channel);
+    var logo = h('span', { class: 'guide-logo' }, logoUrl ? image(logoUrl, '') : h('b', { text: String(channel.name || '?').slice(0, 3) }));
     var now = guide.now
       ? h('span', { class: 'guide-now' },
         h('small', { text: 'En ce moment · ' + hhmm(guide.now.start) + (guide.now.stop ? ' – ' + hhmm(guide.now.stop) : '') }),
@@ -2881,7 +2939,8 @@
   function pickerSheet(channel, text, source, ctx) {
     var list = h('div', { class: 'servers' });
     var note = h('div', { class: 'picker-status loading', text: text });
-    var logo = channel.logo ? image(absolute(channel.logo), '') : null;
+    var logoUrl = channelLogo(channel);
+    var logo = logoUrl ? image(logoUrl, '') : null;
     // Favori : la chaîne apparaît en tête de « TV en direct ».
     var favorite = null;
     if (source && source.id) {
@@ -3241,7 +3300,11 @@
     // Moteur web ancien : ces lecteurs lourds ne tiennent qu'en mode allégé.
     var lite = Boolean(option.lite) || mode.lite || (engineOutdated() && /DLStreams|DaddyLive/i.test(provider));
     option._lite = lite;
-    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff && !mode.noSniff, lite: lite })) {
+    // Pages externes : la vidéo reste dans le lecteur web (le relais automatique
+    // vers le lecteur natif échouait et faisait changer de lecteur trop vite).
+    // Les lecteurs préparés par le serveur Noctra transmettent toujours leur flux.
+    var sniff = Boolean(option.sniff) && !option.noSniff && !mode.noSniff;
+    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: sniff, lite: lite })) {
       webPlayback = { state: state, option: option };
       return;
     }
