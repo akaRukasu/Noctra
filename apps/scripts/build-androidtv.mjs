@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 15;
+const noctraRevision = 16;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -239,11 +239,32 @@ const fragmentActivity = owner => `
 const overlay = 'Lorg/jellyfin/androidtv/ui/playback/CustomPlaybackOverlayFragment';
 await patch(smali('ui/playback/CustomPlaybackOverlayFragment.smali'), [
   [
+    // Après le contrôle « navigating » de Jellyfin : pendant le passage à
+    // l'épisode suivant (écran « À suivre »), onStop appelle closePlayer, qui
+    // ne doit rien faire ; seule une vraie fermeture ramène à Noctra.
     `.method public closePlayer()V
     .locals 2
+
+    .line 1310
+    iget-boolean v0, p0, ${overlay};->navigating:Z
+
+    if-eqz v0, :cond_0
+
+    return-void
+
+    :cond_0
 `,
     `.method public closePlayer()V
     .locals 2
+
+    .line 1310
+    iget-boolean v0, p0, ${overlay};->navigating:Z
+
+    if-eqz v0, :cond_0
+
+    return-void
+
+    :cond_0
 ${fragmentActivity(overlay)}${closeCheck('noctra_jellyfin_screens')}`
   ],
   // Lecteur réellement ouvert : un retour ultérieur à l'accueil Jellyfin

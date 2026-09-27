@@ -229,6 +229,7 @@ assert.match(webPlayer, /public void onReceivedHttpError/);
 // Contenu du serveur : lecteur Jellyfin (pistes audio, sous-titres), retour à Noctra à sa fermeture.
 assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks \}\)/);
 assert.match(androidtv, /\.method public closePlayer\(\)V/);
+assert.match(androidtv, /:cond_0\n\$\{fragmentActivity\(overlay\)\}\$\{closeCheck\('noctra_jellyfin_screens'\)\}/, 'Retour à Noctra après le contrôle « navigating » (épisode suivant)');
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->close\(Landroid\/app\/Activity;\)Z/);
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->home\(Landroid\/app\/Activity;Ljava\/lang\/Object;\)V/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java'), /if \(opened\(activity\) && resumed\(fragment\)\) activity\.finish\(\);/, 'Épisode suivant : pas de fermeture pendant la transition vers « À suivre »');
