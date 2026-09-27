@@ -1252,6 +1252,9 @@
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
     if (event.event === 'zapTo') { zapTo(Number(event.index) || 0); return; }
     if (event.event === 'channels') { sendChannels(false); return; }
+    if (event.event === 'servers') { sendServers(); return; }
+    if (event.event === 'server') { pickServer(Number(event.index) || 0); return; }
+    if (event.event === 'failed') { playerFailed(event); return; }
     if (!vodPlayback || !vodPlayback.sync || !sync.group) return;
     if (event.event === 'state') {
       if (event.action === 'ready') sendReady(event.positionMs, event.playing);
@@ -1790,7 +1793,7 @@
           node.setAttribute('data-channel', channelKey(channel, source));
           markMulti(node);
           // Guide absent du catalogue : demandé au serveur (quelques requêtes à la fois).
-          if (!channel.now && !channel.next && channel.iptvOrgId) {
+          if (needsEpg(channel)) {
             loadEpg(channel).then(function () {
               if (!node.parentNode) return;
               if (node.classList.contains('guide-row')) { fillGuideRow(node, channel); markMulti(node); }
@@ -1831,27 +1834,62 @@
   }
   var epgPending = [];
   var epgRunning = 0;
+  // Guide à (re)demander : aucun programme en cours (absent du catalogue, ou
+  // périmé si le catalogue a été chargé il y a longtemps), dernier essai
+  // vieux de plus de 10 minutes.
+  function needsEpg(channel) {
+    if (epgLive(channel).now) return false;
+    if (channel._epgAt && Date.now() - channel._epgAt < 600000) return false;
+    return epgKeys(channel).length > 0;
+  }
+  // Identifiants essayés dans l'ordre : iptv-org, EPG de la source, puis le nom
+  // nettoyé (« FR: TF1 HD » → « TF1 »), reconnu par les noms du guide XMLTV.
+  function epgKeys(channel) {
+    var keys = [];
+    function push(value) {
+      value = String(value || '').replace(/\s+/g, ' ').trim();
+      if (value && value.length > 1 && keys.indexOf(value) < 0) keys.push(value);
+    }
+    push(channel.iptvOrgId);
+    push(channel.epgId);
+    var name = String(channel.name || '')
+      .replace(/^\s*(?:[A-Z]{2,3}|VIP|4K)\s*[:|\-–]\s*/i, '')
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+      .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|live|direct)\b/gi, ' ')
+      .replace(/\s+/g, ' ').trim();
+    push(name);
+    push(name.replace(/\s+(?:France|FR|FRA)$/i, ''));
+    return keys.slice(0, 4);
+  }
   function loadEpg(channel) {
-    if (channel.now || channel.next || !channel.iptvOrgId) return Promise.resolve(channel);
+    if (!needsEpg(channel)) return Promise.resolve(channel);
     if (!channel._epg) {
       channel._epg = new Promise(function (resolve) { epgPending.push({ channel: channel, resolve: resolve }); });
       pumpEpg();
     }
     return channel._epg;
   }
+  function fetchEpg(keys, index) {
+    if (index >= keys.length) return Promise.resolve(null);
+    return memo('epg:' + keys[index], 300000, function () {
+      return api('/api/tv/programme?id=' + encodeURIComponent(keys[index]), { timeout: 12000 });
+    }).then(function (data) {
+      return data && (data.now || data.next) ? data : fetchEpg(keys, index + 1);
+    }, function () { return fetchEpg(keys, index + 1); });
+  }
   function pumpEpg() {
     while (epgRunning < 3 && epgPending.length) {
       var job = epgPending.shift();
       epgRunning++;
       (function (job) {
-        memo('epg:' + job.channel.iptvOrgId, 120000, function () {
-          return api('/api/tv/programme?id=' + encodeURIComponent(job.channel.iptvOrgId), { timeout: 12000 });
-        }).then(function (data) {
+        fetchEpg(epgKeys(job.channel), 0).then(function (data) {
           if (data && data.now) job.channel.now = data.now;
           if (data && data.next) job.channel.next = data.next;
-        }, function () { /* sans guide */ }).then(function () {
+        }).then(function () {
           epgRunning--;
           job.channel._epgDone = true;
+          job.channel._epgAt = Date.now();
+          delete job.channel._epg;
           job.resolve(job.channel);
           pumpEpg();
         });
@@ -1887,7 +1925,7 @@
         h('small', { text: 'En ce moment · ' + hhmm(guide.now.start) + (guide.now.stop ? ' – ' + hhmm(guide.now.stop) : '') }),
         h('strong', { text: guide.now.title }),
         h('span', { class: 'guide-bar' }, h('i', { style: 'width:' + Math.max(2, epgProgress(guide.now)) + '%' })))
-      : h('span', { class: 'guide-now missing' }, h('small', { text: channel.iptvOrgId && !channel._epgDone ? 'Guide des programmes…' : 'Programme non communiqué' }), h('strong', { text: channel.description || [channel.group, channel.provider].filter(Boolean).join(' · ') }));
+      : h('span', { class: 'guide-now missing' }, h('small', { text: !channel._epgDone && epgKeys(channel).length ? 'Guide des programmes…' : 'Programme non communiqué' }), h('strong', { text: channel.description || [channel.group, channel.provider].filter(Boolean).join(' · ') }));
     var next = guide.next
       ? h('span', { class: 'guide-next' }, h('small', { text: 'Ensuite · ' + hhmm(guide.next.start) }), h('strong', { text: guide.next.title }))
       : h('span', { class: 'guide-next' });
@@ -1900,7 +1938,7 @@
     var guide = epgLive(state.channel);
     var list = state.list || [];
     var at = list.indexOf(state.channel);
-    return { now: guide.now, next: guide.next, position: at >= 0 ? (at + 1) + ' / ' + list.length : '', zap: list.length > 1 };
+    return { now: guide.now, next: guide.next, position: at >= 0 ? (at + 1) + ' / ' + list.length : '', zap: list.length > 1, managed: true };
   }
   function playId() { return 'live-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -1919,7 +1957,7 @@
     if (!state || !state.list) return;
     var list = state.list;
     native('playerCommand', {
-      command: 'channels', update: Boolean(update), current: list.indexOf(state.channel),
+      command: 'channels', mode: 'channels', update: Boolean(update), current: list.indexOf(state.channel),
       title: (state.source && state.source.name ? state.source.name + ' · ' : '') + list.length + ' chaîne' + (list.length > 1 ? 's' : ''),
       items: list.slice(0, 3000).map(function (channel) {
         return { name: channel.name, sub: [channel.group, channel.provider].filter(Boolean).join(' · '), now: epgLive(channel).now };
@@ -1927,7 +1965,7 @@
     });
     if (update) return;
     var at = Math.max(0, list.indexOf(state.channel));
-    var around = list.slice(Math.max(0, at - 15), at + 30).filter(function (channel) { return !channel.now && !channel.next && channel.iptvOrgId; });
+    var around = list.slice(Math.max(0, at - 15), at + 30).filter(needsEpg);
     if (around.length) Promise.all(around.map(loadEpg)).then(function () { if (playback === state) sendChannels(true); });
   }
   function zapTo(target) {
@@ -2064,7 +2102,7 @@
       if (guide.next) box.appendChild(h('div', { class: 'next', text: 'Ensuite · ' + hhmm(guide.next.start) + ' · ' + guide.next.title }));
     }
     render();
-    if (!channel.now && !channel.next && channel.iptvOrgId) loadEpg(channel).then(render);
+    if (needsEpg(channel)) loadEpg(channel).then(render);
     return box;
   }
   function pickerSheet(channel, text) {
@@ -2149,7 +2187,7 @@
         state.options.splice.apply(state.options, [state.index, 1].concat(list));
         if (playback === state) playOption(load);
       }, function () {
-        if (load && playback === state) native('playerCommand', { command: 'stop' });
+        if (load && playback === state) { playerFailed({ message: 'Ce serveur ne répond pas.' }); return; }
         failOption(state, 'Ce serveur ne répond pas.');
       });
       return;
@@ -2167,10 +2205,11 @@
       return;
     }
     // Chaîne sans flux direct : le lecteur natif se ferme, le lecteur web s'ouvre.
-    if (load) native('playerCommand', { command: 'stop' });
+    // (fermeture de ce lecteur ignorée : nouvel identifiant de lecture).
+    if (load) { state.playId = playId(); native('playerCommand', { command: 'stop' }); }
     openEmbed(state, option, label);
   }
-  function failOption(state, message) {
+  function markFailed(state) {
     state.failed[state.index] = true;
     // Flux repéré mais illisible en natif : son lecteur web reste proposé, sans repérage.
     var failedOption = state.options[state.index];
@@ -2178,6 +2217,73 @@
       failedOption.sniffedFrom.noSniff = true;
       state.options.forEach(function (option, index) { if (option === failedOption.sniffedFrom) delete state.failed[index]; });
     }
+  }
+  // Serveur tombé pendant la lecture : lien neuf du même serveur s'il avait
+  // fonctionné, sinon serveur suivant, chargé dans le lecteur ouvert.
+  function playerFailed(event) {
+    var state = playback;
+    if (!state) return;
+    var option = state.options[state.index];
+    if (event.played && option && option.renewUrl && !state.renewed) {
+      state.renewed = true;
+      native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(option, state.index), epg: epgPayload(state), message: 'Reconnexion au serveur…' });
+      resolveOptions(option.renewUrl).then(function (list) {
+        if (playback !== state) return;
+        var fresh = list.filter(function (item) { return optionKind(item) === 'native'; })[0] || list[0];
+        if (!fresh) throw new Error('vide');
+        fresh.renewUrl = option.renewUrl;
+        if (!fresh.label) fresh.label = option.label;
+        state.options[state.index] = fresh;
+        playOption(true);
+      }).catch(function () { if (playback === state) playerFailed({ message: event.message }); });
+      return;
+    }
+    markFailed(state);
+    var next = -1;
+    for (var step = 1; step <= state.options.length; step++) {
+      var index = (state.index + step) % state.options.length;
+      if (!state.failed[index]) { next = index; break; }
+    }
+    if (next < 0) {
+      // Plus aucun serveur : le lecteur se ferme (fermeture ignorée) et la fenêtre des serveurs s'affiche.
+      state.playId = playId();
+      native('playerCommand', { command: 'stop' });
+      playback = null;
+      showPicker(state, event.message || 'Aucun serveur ne fonctionne pour cette chaîne en ce moment.', 0);
+      return;
+    }
+    state.index = next;
+    state.renewed = false;
+    native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(state.options[next], next), epg: epgPayload(state), message: 'Serveur indisponible · essai de ' + optionLabel(state.options[next], next) + '…' });
+    playOption(true);
+  }
+  // Panneau « Serveurs » du lecteur : serveurs de la chaîne en cours.
+  function sendServers() {
+    var state = playback;
+    if (!state) return;
+    native('playerCommand', {
+      command: 'servers', mode: 'servers', current: state.index, title: state.channel.name + ' · serveurs',
+      items: state.options.map(function (option, index) {
+        var kind = optionKind(option);
+        return {
+          name: optionLabel(option, index),
+          sub: [kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web',
+            index === state.index ? 'en cours' : '', state.failed[index] ? 'échec' : ''].filter(Boolean).join(' · ')
+        };
+      })
+    });
+  }
+  function pickServer(index) {
+    var state = playback;
+    if (!state || !state.options[index] || index === state.index) return;
+    state.index = index;
+    state.renewed = false;
+    delete state.failed[index];
+    native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(state.options[index], index), epg: epgPayload(state), message: 'Connexion à ' + optionLabel(state.options[index], index) + '…' });
+    playOption(true);
+  }
+  function failOption(state, message) {
+    markFailed(state);
     var next = -1;
     state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
     if (next < 0) {

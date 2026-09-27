@@ -248,7 +248,9 @@ assert.match(webPlayer, /headers\.put\("Referer", entry\.getValue\(\)\)/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /liveStream\(url, intent\.getStringExtra\(EXTRA_MIME\), intent\.getStringExtra\(EXTRA_HEADERS\)/);
 assert.match(tvApp, /failedOption\.sniffedFrom\.noSniff = true;/);
 // Guide des programmes (en cours, suivant, avancement) et zapping depuis le lecteur.
-assert.match(tvApp, /'\/api\/tv\/programme\?id=' \+ encodeURIComponent\(job\.channel\.iptvOrgId\)/);
+assert.match(tvApp, /'\/api\/tv\/programme\?id=' \+ encodeURIComponent\(keys\[index\]\)/);
+assert.match(tvApp, /function epgKeys\(channel\)/, 'Guide aussi retrouvé par le nom de la chaîne');
+assert.match(tvApp, /function needsEpg\(channel\)/, 'Guide périmé redemandé');
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
 assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
 assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);
@@ -258,8 +260,13 @@ assert.match(livePlayer, /action\.equals\("load"\) && !vod/);
 assert.match(livePlayer, /private void renderGuide\(\)/);
 // Panneau des chaînes dans le lecteur (bouton « Chaînes », ◀, Menu, Guide).
 assert.match(livePlayer, /getIdentifier\("exo_basic_controls", "id", getPackageName\(\)\)/);
-assert.match(livePlayer, /private void openPanel\(\)/);
-assert.match(livePlayer, /action\.equals\("channels"\) && !vod/);
+assert.match(livePlayer, /private void openPanel\(String mode\)/);
+// Serveurs pendant la lecture : panneau, choix manuel, bascule automatique sans quitter le lecteur.
+assert.match(livePlayer, /controlButton\("⇄  Serveurs", "servers"\)/);
+assert.match(livePlayer, /event\.put\("event", "failed"\)/);
+assert.match(tvApp, /if \(event\.event === 'failed'\) \{ playerFailed\(event\); return; \}/);
+assert.match(tvApp, /if \(event\.event === 'server'\) \{ pickServer\(Number\(event\.index\) \|\| 0\); return; \}/);
+assert.match(livePlayer, /\(action\.equals\("channels"\) \|\| action\.equals\("servers"\)\) && !vod/);
 assert.match(tvApp, /if \(event\.event === 'channels'\) \{ sendChannels\(false\); return; \}/);
 assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{ zapTo\(Number\(event\.index\) \|\| 0\); return; \}/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
