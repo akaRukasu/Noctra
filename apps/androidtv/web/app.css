@@ -615,3 +615,5 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .nw-tile-status { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); text-align: center; font-size: .9rem; text-shadow: 0 1px 6px #000; }
 
 .guide-num { display: inline-block; min-width: 2.1rem; margin-right: .45rem; padding: .05rem .35rem; border-radius: .35rem; background: rgba(255, 255, 255, .08); color: var(--muted); font-style: normal; font-size: .8rem; font-weight: 800; text-align: center; }
+.tile.source-tile.all-tile { grid-column: span 2; background: linear-gradient(120deg, rgba(112, 217, 194, .16), var(--surface) 70%); border-color: rgba(112, 217, 194, .35); }
+.tile.source-tile.all-tile strong { font-size: 1.25rem; }

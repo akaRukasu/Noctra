@@ -1750,9 +1750,174 @@
   function sourcesList() {
     return memo('tv-sources', 300000, function () { return api('/api/tv/sources').then(function (data) { return (data && data.sources) || []; }); });
   }
+  // ── Toutes les chaînes ─────────────────────────────────────────────
+  // Beaucoup de sources proposent les mêmes chaînes : elles sont réunies en
+  // une seule liste (une carte par chaîne). Au lancement, la fenêtre des
+  // serveurs propose ceux de toutes les sources de la chaîne, classés par
+  // fiabilité (historique de santé) : le plus stable démarre en premier.
+  var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
+  var UNIFIED_SECTIONS = ['channels', 'personal'];
+  var unifiedCache = null;
+  var unifiedLoading = null;
+  // « FR: TF1 HD », « [FR] TF1 (backup) » → « TF1 ».
+  function cleanChannelName(name) {
+    var clean = String(name || '')
+      .replace(/^\s*(?:\[[^\]]*\]|\([^)]*\))\s*/, '')
+      .replace(/^\s*(?:[A-Z]{2,3}|VIP|4K)\s*[:|\-–]\s*/i, '')
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+      .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip)\b/gi, ' ')
+      .replace(/[|•·]+/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    return clean || String(name || '').trim();
+  }
+  function unifiedKey(name) {
+    return normalize(cleanChannelName(name).replace(/\+/g, ' plus ')).replace(/\s+(?:france|fr|fra)$/, '').trim();
+  }
+  function playable(channel) {
+    return Boolean((channel.playbackType === 'stream' && channel.streamUrl) || channel.resolverUrl || channel.embedUrl || channel.externalUrl);
+  }
+  function mergeChannels(loaded) {
+    var byKey = {};
+    var list = [];
+    loaded.forEach(function (part) {
+      part.channels.forEach(function (channel) {
+        if (!channel || !channel.name || !playable(channel)) return;
+        var key = unifiedKey(channel.name) || normalize(channel.name);
+        var unified = byKey[key];
+        if (!unified) {
+          unified = byKey[key] = { name: cleanChannelName(channel.name), logo: channel.logo || '', group: '', _groups: {}, _entries: [], _key: key };
+          list.push(unified);
+        }
+        unified._entries.push({ channel: channel, source: part.source });
+        if (!unified.logo && channel.logo) unified.logo = channel.logo;
+        if (!unified.iptvOrgId && channel.iptvOrgId) unified.iptvOrgId = channel.iptvOrgId;
+        if (!unified.epgId && channel.epgId) unified.epgId = channel.epgId;
+        if (!unified.now && channel.now && channel.now.title) { unified.now = channel.now; unified.next = channel.next; }
+        if (channel.isLive) unified.isLive = true;
+        if (channel.group) unified._groups[channel.group] = (unified._groups[channel.group] || 0) + 1;
+      });
+    });
+    list.forEach(function (unified) {
+      var groups = Object.keys(unified._groups);
+      groups.sort(function (a, b) { return unified._groups[b] - unified._groups[a]; });
+      unified.group = groups[0] || '';
+      var names = [];
+      unified._entries.forEach(function (entry) { if (names.indexOf(entry.source.name) < 0) names.push(entry.source.name); });
+      unified._sources = names;
+      unified.provider = names.length > 2 ? names.length + ' sources' : names.join(' · ');
+    });
+    list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }); });
+    return list;
+  }
+  // Catalogues des sources de chaînes (3 à la fois), réunis ; gardés 10 min.
+  function loadUnified(onProgress) {
+    if (unifiedCache && Date.now() - unifiedCache.at < 600000) return Promise.resolve(unifiedCache.data);
+    if (unifiedLoading) return unifiedLoading;
+    unifiedLoading = sourcesList().then(function (sources) {
+      var wanted = sources.filter(function (source) { return UNIFIED_SECTIONS.indexOf(source.section || 'channels') >= 0; });
+      var results = [];
+      var failed = [];
+      var queue = wanted.map(function (source, index) { return { source: source, index: index }; });
+      var done = 0;
+      var running = 0;
+      return new Promise(function (resolve) {
+        function pump() {
+          if (!queue.length && !running) { resolve(); return; }
+          while (running < 3 && queue.length) {
+            (function (job) {
+              running++;
+              loadCatalog(job.source).then(function (data) {
+                results[job.index] = { source: job.source, channels: (data && data.channels) || [] };
+              }, function () { failed.push(job.source.name); }).then(function () {
+                running--;
+                done++;
+                if (onProgress) { try { onProgress(done, wanted.length); } catch (error) { /* affichage */ } }
+                pump();
+              });
+            })(queue.shift());
+          }
+        }
+        pump();
+      }).then(function () {
+        var channels = mergeChannels(results.filter(Boolean));
+        var data = { channels: channels, count: channels.length, sources: wanted.length - failed.length,
+          warning: failed.length ? 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.' : '' };
+        unifiedCache = { at: Date.now(), data: data };
+        return data;
+      });
+    });
+    unifiedLoading.then(function () { unifiedLoading = null; }, function () { unifiedLoading = null; });
+    return unifiedLoading;
+  }
+  // Serveurs d'une chaîne réunie : ceux de chaque source, préfixés du nom de
+  // la source ; les serveurs « automatiques » ne sont demandés qu'au lancement.
+  function unifiedOptions(channel) {
+    return Promise.all(channel._entries.map(function (entry) {
+      var single = entry.channel.resolverUrl && !(entry.channel.playbackType === 'stream' && entry.channel.streamUrl) && !liveWatchOfficial(entry.channel, entry.source)
+        ? Promise.resolve([{ playbackType: 'resolver', resolveUrl: entry.channel.resolverUrl, label: 'serveurs' }])
+        : channelOptions(entry.channel, entry.source);
+      return single.then(function (options) {
+        return options.map(function (option) {
+          var copy = {};
+          Object.keys(option).forEach(function (key) { copy[key] = option[key]; });
+          copy._prefix = entry.source.name;
+          copy.label = entry.source.name + (option.label && option.label !== 'serveurs' ? ' · ' + option.label : optionKind(option) === 'resolve' ? ' · automatique' : '');
+          copy.provider = option.provider || entry.channel.provider || entry.source.name;
+          if (!copy.transport && entry.channel.transport) copy.transport = entry.channel.transport;
+          if (entry.channel.noSandbox) copy.noSandbox = true;
+          if (entry.channel.liveWatchDocsEmbed && !copy.referrer) copy.referrer = 'no-referrer';
+          return copy;
+        });
+      }, function () { return []; });
+    })).then(function (lists) {
+      return lists.reduce(function (all, list) { return all.concat(list); }, []);
+    });
+  }
+  // Chaîne réunie : les serveurs « automatiques » de chaque source sont
+  // demandés tout de suite (8 s au plus chacun), pour classer l'ensemble des
+  // serveurs par fiabilité ; un serveur qui ne répond pas à temps reste proposé.
+  function expandOptions(options) {
+    return Promise.all(options.map(function (option) {
+      if (optionKind(option) !== 'resolve') return Promise.resolve([option]);
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 8000); });
+      return Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
+        if (!list || !list.length) return [option];
+        return list.map(function (item) {
+          item.renewUrl = option.resolveUrl;
+          if (!item.label) item.label = option.label;
+          return inheritSource(item, option);
+        });
+      });
+    })).then(function (lists) { return lists.reduce(function (all, list) { return all.concat(list); }, []); });
+  }
+  function serverList(channel, source, key) {
+    return channelOptions(channel, source).then(function (options) {
+      return channel._entries ? expandOptions(options) : options;
+    }).then(function (options) { return rankOptions(options, key, channel.provider); });
+  }
+  // Serveurs obtenus d'un serveur « automatique » d'une source réunie : même préfixe.
+  function inheritSource(item, parent) {
+    if (!parent || !parent._prefix) return item;
+    item._prefix = parent._prefix;
+    if (!item.provider) item.provider = parent.provider;
+    if (!item.transport && parent.transport) item.transport = parent.transport;
+    var label = item.label || '';
+    if (label.indexOf(parent._prefix + ' · ') !== 0) item.label = parent._prefix + ' · ' + (label || 'Serveur');
+    return item;
+  }
+
   // Favori ou chaîne récente : source, puis chaîne retrouvée par son nom.
   function openStoredChannel(entry) {
     toast('Ouverture de ' + entry.name + '…');
+    if (entry.sourceId === ALL_SOURCE.id) {
+      loadUnified().then(function (data) {
+        var wanted = unifiedKey(entry.name);
+        var found = data.channels.filter(function (channel) { return channel._key === wanted; })[0];
+        if (!found) { toast(entry.name + ' n’est plus proposée par les sources.', true); return; }
+        launchChannel(found, ALL_SOURCE, data.channels, {});
+      }).catch(function (error) { toast(error.message || 'Chaîne indisponible.', true); });
+      return;
+    }
     sourcesList().then(function (sources) {
       var source = sources.filter(function (item) { return item.id === entry.sourceId; })[0];
       if (!source) throw new Error('La source « ' + (entry.sourceName || entry.sourceId) + ' » n’existe plus sur le serveur.');
@@ -1784,12 +1949,13 @@
   var sourceSectionInfo = {
     channels: { icon: 'antenna', text: 'Chaînes françaises et internationales' },
     sports: { icon: 'trophy', text: 'Matchs et événements en direct' },
-    personal: { icon: 'library', text: 'Listes M3U et sources ajoutées sur le serveur' }
+    personal: { icon: 'library', text: 'Listes M3U et sources ajoutées sur le serveur' },
+    all: { icon: 'live', text: '' }
   };
   function sourceTile(source, sectionId) {
     var info = sourceSectionInfo[sectionId] || { icon: 'live' };
     var favorites = storedChannels(FAVORITES_KEY).filter(function (item) { return item.sourceId === source.id; }).length;
-    return h('button', { class: 'tile source-tile f', onclick: function () { go('liveSource', { section: 'live', source: source }); } },
+    return h('button', { class: 'tile source-tile f' + (source === ALL_SOURCE ? ' all-tile' : ''), onclick: function () { go('liveSource', { section: 'live', source: source }); } },
       h('span', { class: 'tile-icon' }, icon(info.icon)),
       h('span', { class: 'tile-text' },
         h('strong', { text: source.name }),
@@ -1839,6 +2005,13 @@
         var key = source.section || 'channels';
         (groups[key] = groups[key] || []).push(source);
       });
+      // Toutes les chaînes réunies : en tête des sources.
+      var channelSources = sources.filter(function (source) { return UNIFIED_SECTIONS.indexOf(source.section || 'channels') >= 0; });
+      if (channelSources.length > 1) {
+        main.appendChild(h('section', { class: 'row' },
+          h('h2', null, 'Toutes les chaînes', h('small', { text: channelSources.length + ' sources réunies · une carte par chaîne · la source la plus stable d’abord' })),
+          h('div', { class: 'grid tiles' }, sourceTile(ALL_SOURCE, 'all'))));
+      }
       var order = sourceSections.map(function (s) { return s.id; });
       Object.keys(groups).forEach(function (key) { if (order.indexOf(key) < 0) order.push(key); });
       order.forEach(function (key) {
@@ -1890,7 +2063,10 @@
     renderMultiBar();
     var ctx = { ref: ref, title: params.title };
     // Les bouquets (Northlive, Movix…) renvoient des groupes à ouvrir un par un (?ref=).
-    return loadCatalog(source, ref, params.title).then(function (data) {
+    var loadList = source.id === ALL_SOURCE.id
+      ? loadUnified(function (done, total) { if (alive()) status.textContent = 'Réunion des chaînes de toutes les sources… ' + done + ' / ' + total; })
+      : loadCatalog(source, ref, params.title);
+    return loadList.then(function (data) {
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
@@ -2183,10 +2359,10 @@
     loadEpg(channel).then(function () {
       if (playback === next) native('playerCommand', { command: 'guide', epg: epgPayload(next) });
     });
-    channelOptions(channel, state.source).then(function (options) {
+    serverList(channel, state.source, key).then(function (options) {
       if (playback !== next) return;
       if (!options.length) throw new Error('Aucun flux disponible pour ' + channel.name + '.');
-      next.options = rankOptions(options, key, channel.provider);
+      next.options = options;
       playOption(true);
     }).catch(function (error) {
       if (playback !== next) return;
@@ -2242,6 +2418,7 @@
     }, function () { return [direct]; });
   }
   function channelOptions(channel, source) {
+    if (channel._entries) return unifiedOptions(channel);
     var official = liveWatchOfficial(channel, source);
     if (official) return official;
     if (channel.playbackType === 'stream' && channel.streamUrl) {
@@ -2321,13 +2498,14 @@
     var verdict = '';
     [own, family].forEach(function (entry, level) {
       if (!entry) return;
-      var weight = level === 0 ? 1 : 0.5;
+      // La famille (toutes chaînes du même fournisseur) compte moins que le serveur lui-même.
+      var weight = level === 0 ? 1 : 0.3;
       var rate = (entry.ok + 1) / (entry.ok + entry.fail + 2);
       score += (rate - 0.5) * 2 * weight;
       var failedRecently = entry.f && now - entry.f < HEALTH_RECENT_MS && (!entry.o || entry.f > entry.o);
       if (failedRecently) score -= 2 * weight;
       if (level === 0 && failedRecently) verdict = 'recent-fail';
-      else if (!verdict && entry.fail >= 2 && rate < 0.45) verdict = 'unstable';
+      else if (!verdict && level === 0 && entry.fail >= 2 && rate < 0.45) verdict = 'unstable';
       else if (!verdict && level === 0 && entry.ok >= 2 && rate >= 0.75) verdict = 'good';
     });
     return { score: score, verdict: verdict };
@@ -2380,10 +2558,11 @@
     if (source && source.id) rememberRecent(channel, source, ctx);
     var sheet = pickerSheet(channel, 'Recherche des serveurs…', source, ctx);
     openLayer(sheet.node);
-    channelOptions(channel, source).then(function (options) {
+    if (channel._entries) sheet.status('Recherche des serveurs de ' + channel._sources.length + ' source' + (channel._sources.length > 1 ? 's' : '') + '…');
+    serverList(channel, source, key).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
-      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: rankOptions(options, key, channel.provider), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
+      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: options, index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
       if (playback.options.length === 1) {
         closeLayer(true);
         playOption();
@@ -2546,12 +2725,19 @@
     if (!state) return;
     var option = state.options[state.index];
     if (!option) { playback = null; return; }
-    var label = [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
+    // Chaîne réunie : le nom du serveur contient déjà sa source.
+    var label = state.channel._entries ? optionLabel(option, state.index) : [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
     if (optionKind(option) === 'resolve') {
       toast('Connexion à ' + optionLabel(option, state.index) + '…');
       resolveOptions(option.resolveUrl).then(function (list) {
         if (!list.length) throw new Error('Serveur vide');
-        list.forEach(function (item) { item.renewUrl = option.resolveUrl; if (!item.label) item.label = option.label; });
+        list.forEach(function (item) {
+          item.renewUrl = option.resolveUrl;
+          if (!item.label) item.label = option.label;
+          inheritSource(item, option);
+        });
+        // Serveurs obtenus : le plus fiable d'abord.
+        list = rankOptions(list, state.key, state.channel.provider);
         state.options.splice.apply(state.options, [state.index, 1].concat(list));
         if (playback === state) playOption(load);
       }, function () {
@@ -2602,6 +2788,7 @@
         if (!fresh) throw new Error('vide');
         fresh.renewUrl = option.renewUrl;
         if (!fresh.label) fresh.label = option.label;
+        inheritSource(fresh, option);
         state.options[state.index] = fresh;
         playOption(true);
       }).catch(function () { if (playback === state) playerFailed({ message: event.message }); });
@@ -2697,6 +2884,7 @@
         if (!fresh) throw new Error('vide');
         fresh.renewUrl = option.renewUrl;
         if (!fresh.label) fresh.label = option.label;
+        inheritSource(fresh, option);
         state.options[state.index] = fresh;
         playOption();
       }, function () { failOption(state, result.error || 'Le flux s’est interrompu.'); });
@@ -2925,7 +3113,10 @@
     toast('Préparation du multiview…');
     var picked = multi.items.slice();
     Promise.all(picked.map(function (item) {
-      return channelOptions(item.channel, item.source).then(function (options) { return multiviewOptions(options, item.channel); }, function () { return []; });
+      // Serveurs classés par fiabilité (le multiview commence par le plus stable).
+      return serverList(item.channel, item.source, item.key).then(function (options) {
+        return multiviewOptions(options, item.channel);
+      }, function () { return []; });
     })).then(function (lists) {
       var items = [];
       var skipped = [];

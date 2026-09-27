@@ -308,6 +308,11 @@ const multiJava = await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewA
 assert.match(multiJava, /private void scheduleRetry\(final Tile tile\)/);
 assert.match(multiJava, /\}, i \* 400L\);/);
 assert.match(webHost, /Tous les serveurs en échec : nouvel essai/);
+// Toutes les chaînes : sources réunies, serveurs de toutes les sources classés par fiabilité.
+assert.match(tvApp, /var ALL_SOURCE = \{ id: 'all'/);
+assert.match(tvApp, /if \(channel\._entries\) return unifiedOptions\(channel\);/);
+assert.match(tvApp, /function expandOptions\(options\) \{/);
+assert.match(tvApp, /function serverList\(channel, source, key\) \{/);
 // Numéros de chaîne (0-9) pendant la lecture.
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /KeyEvent\.KEYCODE_0/);
 assert.match(webHost, /sendNumber: function \(\) \{/);
