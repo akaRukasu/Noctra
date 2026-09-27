@@ -1854,6 +1854,8 @@
       .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip|multi ?audio)\b/gi, ' ')
       .replace(/[|•·▎┃]+/g, ' ')
       .replace(/(^|\s)\++(?=\s|$)/g, ' ')
+      // Variantes d'une même chaîne dans certaines listes : « BEIN SPORTS 1 .b », « .c », « .s »…
+      .replace(/\s+\.[A-Za-z0-9]{1,3}(?=\s|$)/g, ' ')
       .replace(/\s+/g, ' ').trim();
     return clean || String(name || '').trim();
   }
@@ -2039,7 +2041,20 @@
   // Serveurs d'une chaîne réunie : ceux de chaque source, préfixés du nom de
   // la source ; les serveurs « automatiques » ne sont demandés qu'au lancement.
   function unifiedOptions(channel) {
+    // Plusieurs variantes d'une même source (« .b », « .c »…) : nom de source distinct pour chacune.
+    var perSource = {};
+    channel._entries.forEach(function (entry) { perSource[entry.source.name] = (perSource[entry.source.name] || 0) + 1; });
+    var seen = {};
     return Promise.all(channel._entries.map(function (entry) {
+      var sourceLabel = entry.source.name;
+      if (perSource[entry.source.name] > 1) {
+        var variant = /\.([A-Za-z0-9]{1,3})\s*$/.exec(String(entry.channel.name || '').trim());
+        if (variant) sourceLabel += ' · variante ' + variant[1].toLowerCase();
+        else {
+          seen[entry.source.name] = (seen[entry.source.name] || 0) + 1;
+          if (seen[entry.source.name] > 1) sourceLabel += ' · ' + seen[entry.source.name];
+        }
+      }
       var single = entry.channel.resolverUrl && !(entry.channel.playbackType === 'stream' && entry.channel.streamUrl) && !liveWatchOfficial(entry.channel, entry.source)
         ? Promise.resolve([{ playbackType: 'resolver', resolveUrl: entry.channel.resolverUrl, label: 'serveurs' }])
         : channelOptions(entry.channel, entry.source);
@@ -2047,8 +2062,8 @@
         return options.map(function (option) {
           var copy = {};
           Object.keys(option).forEach(function (key) { copy[key] = option[key]; });
-          copy._prefix = entry.source.name;
-          copy.label = entry.source.name + (option.label && option.label !== 'serveurs' ? ' · ' + option.label : optionKind(option) === 'resolve' ? ' · automatique' : '');
+          copy._prefix = sourceLabel;
+          copy.label = sourceLabel + (option.label && option.label !== 'serveurs' ? ' · ' + option.label : optionKind(option) === 'resolve' ? ' · automatique' : '');
           copy.provider = option.provider || entry.channel.provider || entry.source.name;
           if (!copy.transport && entry.channel.transport) copy.transport = entry.channel.transport;
           if (entry.channel.noSandbox) copy.noSandbox = true;

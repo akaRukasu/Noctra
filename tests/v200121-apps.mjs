@@ -326,6 +326,8 @@ assert.match(webPlayerJava, /private static boolean isAdVideo\(Uri url\)/);
 assert.match(streamJava, /new NoctraCleanDataSource\.Factory\(http\)/);
 assert.match(tvApp, /class: 'picker scroll'/);
 assert.match(tvApp, /raw = raw\.normalize\('NFKC'\)/);
+assert.ok(tvApp.includes("« BEIN SPORTS 1 .b »"), 'Variantes « .b », « .c » réunies');
+assert.match(tvApp, /sourceLabel \+= ' · variante '/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
 assert.match(tvApp, /function isEvent\(channel\) \{/);
 assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');
