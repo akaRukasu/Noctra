@@ -286,6 +286,15 @@ assert.match(tvApp, /var smooth = !repeating && now - \(scroller\._movedAt \|\| 
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
 assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
 assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);
+// TV en direct : favoris et chaînes récentes (retrouvées dans le catalogue du moment), filtres avec nombres.
+assert.match(tvApp, /var FAVORITES_KEY = 'noctra-tv-favorites-v1';/);
+assert.match(tvApp, /if \(source && source\.id\) rememberRecent\(channel, source, ctx\);/);
+assert.match(tvApp, /function openStoredChannel\(entry\) \{/);
+assert.match(tvApp, /if \(favoriteMode\) \{ toggleFavorite\(channel, source, ctx\); refreshFavoriteMarks\(channel, source\); \}/);
+assert.match(tvApp, /favorite = h\('button', \{ class: 'btn f picker-fav'/);
+// Pont web : fin d'épisode détectée même sans « ended » (épisode suivant automatique).
+assert.match(webHost, /Player\.endTimer = setTimeout\(function \(\) \{/);
+assert.match(tvApp, /if \(entry && result\.ended && entry\.item\.Type === 'Episode'\) \{ nextEpisode\(entry\.item\); return; \}/);
 const livePlayer = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
 assert.match(livePlayer, /KeyEvent\.KEYCODE_CHANNEL_UP/);
 assert.match(livePlayer, /action\.equals\("load"\) && !vod/);

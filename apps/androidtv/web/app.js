@@ -57,6 +57,10 @@
     next: '<path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6z"/>',
     tag: '<path d="M3 3h8l10 10-8 8L3 11zm4.5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>',
     play: '<path d="M8 5v14l11-7z"/>',
+    star: '<path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 17l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>',
+    history: '<path d="M13 4a8 8 0 1 1-7.4 11h2.2A6 6 0 1 0 7 8.4L9.6 11H3V4.4l2.2 2.2A8 8 0 0 1 13 4zm-1 4h2v4.6l3.2 1.9-1 1.7L12 13.7z"/>',
+    trophy: '<path d="M7 3h10v2h3v3a5 5 0 0 1-4.3 4.9A5 5 0 0 1 13 15.9V18h3v2H8v-2h3v-2.1a5 5 0 0 1-2.7-3A5 5 0 0 1 4 8V5h3zm0 4H6v1a3 3 0 0 0 1.4 2.5A5 5 0 0 1 7 9zm10 0v2c0 .5-.1 1-.2 1.5A3 3 0 0 0 18 8V7z"/>',
+    antenna: '<path d="M3 8h18v12H3zm2 2v8h14v-8zM8 3l4 4 4-4 1.4 1.4L14.8 7h-5.6L6.6 4.4z"/>',
     info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>'
   };
   function icon(name) {
@@ -1685,15 +1689,137 @@
     { id: 'sports', label: 'Sport' },
     { id: 'personal', label: 'Mes sources' }
   ];
+  // Chaînes favorites et récemment regardées (mémorisées sur la TV, comme les
+  // favoris du PC) : la source et le nom suffisent ; à l'ouverture, la chaîne
+  // est retrouvée dans le catalogue du moment (liens toujours frais).
+  var FAVORITES_KEY = 'noctra-tv-favorites-v1';
+  var RECENTS_KEY = 'noctra-tv-recents-v1';
+  function storedChannels(key) {
+    try { var list = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(list) ? list.filter(function (item) { return item && item.sourceId && item.name; }) : []; } catch (error) { return []; }
+  }
+  function saveChannels(key, list) {
+    try { localStorage.setItem(key, JSON.stringify(list.slice(0, key === RECENTS_KEY ? 16 : 300))); } catch (error) { /* stockage indisponible */ }
+  }
+  function channelRecord(channel, source, ctx) {
+    return {
+      key: channelKey(channel, source), sourceId: source.id, sourceName: source.name || '', ref: (ctx && ctx.ref) || '', refTitle: (ctx && ctx.title) || '',
+      name: channel.name, logo: channel.logo || '', group: channel.group || '', provider: channel.provider || '',
+      iptvOrgId: channel.iptvOrgId || '', epgId: channel.epgId || '', at: Date.now()
+    };
+  }
+  function isFavorite(channel, source) {
+    var key = channelKey(channel, source);
+    return storedChannels(FAVORITES_KEY).some(function (item) { return item.key === key; });
+  }
+  function toggleFavorite(channel, source, ctx) {
+    var list = storedChannels(FAVORITES_KEY);
+    var key = channelKey(channel, source);
+    var index = -1;
+    list.some(function (item, i) { if (item.key === key) { index = i; return true; } return false; });
+    if (index >= 0) { list.splice(index, 1); toast(channel.name + ' retirée des favoris.'); }
+    else { list.unshift(channelRecord(channel, source, ctx)); toast(channel.name + ' ajoutée aux favoris.'); }
+    saveChannels(FAVORITES_KEY, list);
+    return index < 0;
+  }
+  function rememberRecent(channel, source, ctx) {
+    var key = channelKey(channel, source);
+    var list = storedChannels(RECENTS_KEY).filter(function (item) { return item.key !== key; });
+    list.unshift(channelRecord(channel, source, ctx));
+    saveChannels(RECENTS_KEY, list);
+  }
+  // Catalogue d'une source ou d'un bouquet (mis en cache pour la session).
+  function loadCatalog(source, ref, title) {
+    var key = ref ? 'tv-ref:' + ref : 'tv:' + source.id;
+    var path = ref ? '/api/tv/catalog?ref=' + encodeURIComponent(ref) : '/api/tv/catalog?source=' + encodeURIComponent(source.id);
+    catalogSources[key] = { source: source, label: title ? source.name + ' · ' + title : source.name };
+    return cache[key] ? Promise.resolve(cache[key]) : api(path, { timeout: 45000 }).then(function (data) {
+      cache[key] = data;
+      return data;
+    });
+  }
+  function sourcesList() {
+    return memo('tv-sources', 300000, function () { return api('/api/tv/sources').then(function (data) { return (data && data.sources) || []; }); });
+  }
+  // Favori ou chaîne récente : source, puis chaîne retrouvée par son nom.
+  function openStoredChannel(entry) {
+    toast('Ouverture de ' + entry.name + '…');
+    sourcesList().then(function (sources) {
+      var source = sources.filter(function (item) { return item.id === entry.sourceId; })[0];
+      if (!source) throw new Error('La source « ' + (entry.sourceName || entry.sourceId) + ' » n’existe plus sur le serveur.');
+      return loadCatalog(source, entry.ref, entry.refTitle).then(function (data) {
+        var channels = (data && data.channels) || [];
+        var wanted = normalize(entry.name);
+        var found = channels.filter(function (channel) {
+          return normalize(channel.name) === wanted && (!entry.provider || !channel.provider || normalize(channel.provider) === normalize(entry.provider));
+        })[0] || channels.filter(function (channel) { return normalize(channel.name) === wanted; })[0];
+        if (!found) {
+          toast(entry.name + ' n’est plus proposée par ' + source.name + ' : voici ses chaînes.', true);
+          go('liveSource', { section: 'live', source: source, ref: entry.ref, title: entry.refTitle || undefined });
+          return;
+        }
+        launchChannel(found, source, channels, { ref: entry.ref, title: entry.refTitle });
+      });
+    }).catch(function (error) { toast(error.message || 'Chaîne indisponible.', true); });
+  }
+  function storedChannelCard(entry) {
+    var node = card({
+      kind: 'channel', title: entry.name, sub: entry.sourceName + (entry.group ? ' · ' + entry.group : ''),
+      image: entry.logo ? absolute(entry.logo) : '',
+      onSelect: function () { openStoredChannel(entry); }
+    });
+    // Programme en cours, par le guide du serveur (identifiant ou nom).
+    loadEpg(entry).then(function () { if (node.parentNode) updateCardEpg(node, entry); });
+    return node;
+  }
+  var sourceSectionInfo = {
+    channels: { icon: 'antenna', text: 'Chaînes françaises et internationales' },
+    sports: { icon: 'trophy', text: 'Matchs et événements en direct' },
+    personal: { icon: 'library', text: 'Listes M3U et sources ajoutées sur le serveur' }
+  };
+  function sourceTile(source, sectionId) {
+    var info = sourceSectionInfo[sectionId] || { icon: 'live' };
+    var favorites = storedChannels(FAVORITES_KEY).filter(function (item) { return item.sourceId === source.id; }).length;
+    return h('button', { class: 'tile source-tile f', onclick: function () { go('liveSource', { section: 'live', source: source }); } },
+      h('span', { class: 'tile-icon' }, icon(info.icon)),
+      h('span', { class: 'tile-text' },
+        h('strong', { text: source.name }),
+        h('span', { class: 'desc', text: source.description || source.provider || '' }),
+        favorites ? h('span', { class: 'tile-tag', text: '★ ' + favorites + ' favori' + (favorites > 1 ? 's' : '') }) : null));
+  }
+
+  // Mode « Modifier les favoris » d'une source : OK ajoute ou retire la chaîne.
+  var favoriteMode = false;
+  // Étoile des chaînes affichées (grille, guide) après un changement de favori.
+  function refreshFavoriteMarks(channel, source) {
+    var key = channelKey(channel, source);
+    var on = isFavorite(channel, source);
+    Array.prototype.forEach.call(main.querySelectorAll('[data-channel]'), function (node) {
+      if (node.getAttribute('data-channel') !== key) return;
+      node.classList.toggle('favorite', on);
+      var badge = node.querySelector('.badge');
+      var text = [on ? '★' : '', channel.isLive ? 'LIVE' : ''].filter(Boolean).join(' ');
+      if (!badge && text && node.classList.contains('card')) { badge = h('span', { class: 'badge' }); node.insertBefore(badge, node.firstChild); }
+      if (badge) { badge.textContent = text; badge.style.display = text ? '' : 'none'; }
+    });
+  }
+
   views.live = function (params, alive) {
-    main.appendChild(head('TV en direct', 'Choisissez une source de chaînes. Multiview : jusqu’à 12 chaînes à l’écran.'));
+    favoriteMode = false;
+    main.appendChild(head('TV en direct', 'Favoris et chaînes récentes en un clic, puis les sources par univers. Dans une chaîne : ▲ ▼ pour zapper, ◀ la liste, ▶ les serveurs.'));
+    // Accès rapide : favoris puis chaînes récemment regardées.
+    var favorites = storedChannels(FAVORITES_KEY);
+    var recents = storedChannels(RECENTS_KEY).filter(function (item) {
+      return !favorites.some(function (favorite) { return favorite.key === item.key; });
+    });
+    if (favorites.length) add(main, row('Favoris', favorites.map(storedChannelCard), favorites.length + ' chaîne' + (favorites.length > 1 ? 's' : '')));
+    if (recents.length) add(main, row('Récemment regardées', recents.slice(0, 12).map(storedChannelCard)));
+    if (!favorites.length) main.appendChild(h('p', { class: 'live-hint', text: '☆ Astuce : dans la fenêtre d’une chaîne, « Ajouter aux favoris » la place ici pour y revenir en un clic.' }));
     var status = loading();
     main.appendChild(status);
     renderMultiBar();
-    return api('/api/tv/sources').then(function (data) {
+    return sourcesList().then(function (sources) {
       if (!alive()) return;
       status.remove();
-      var sources = (data && data.sources) || [];
       var groups = {};
       sources.forEach(function (source) {
         var key = source.section || 'channels';
@@ -1704,17 +1830,17 @@
       order.forEach(function (key) {
         if (!groups[key]) return;
         var label = (sourceSections.filter(function (s) { return s.id === key; })[0] || { label: key }).label;
+        var info = sourceSectionInfo[key];
         var grid = h('div', { class: 'grid tiles' });
-        groups[key].forEach(function (source) {
-          grid.appendChild(h('button', { class: 'tile f', onclick: function () { go('liveSource', { section: 'live', source: source }); } },
-            h('strong', { text: source.name }), h('span', { text: source.description || source.provider || '' })));
-        });
-        main.appendChild(h('section', { class: 'row' }, h('h2', { text: label }), grid));
+        groups[key].forEach(function (source) { grid.appendChild(sourceTile(source, key)); });
+        main.appendChild(h('section', { class: 'row' },
+          h('h2', null, label, h('small', { text: groups[key].length + ' source' + (groups[key].length > 1 ? 's' : '') + (info && info.text ? ' · ' + info.text : '') })),
+          grid));
       });
       if (!sources.length) main.appendChild(h('div', { class: 'empty', text: 'Aucune source TV configurée sur le serveur Noctra.' }));
     }, function (error) {
       if (!alive()) return;
-      status.replaceWith(failure(error, function () { go('live', {}, true); }));
+      status.replaceWith(failure(error, function () { forget('tv-sources'); go('live', {}, true); }));
     });
   };
 
@@ -1736,23 +1862,25 @@
       guideButton.className = 'btn f' + (guideMode ? ' primary' : '');
       if (typeof refill === 'function') refill();
     } }, icon('live'), 'Guide des programmes');
+    var favButton = h('button', { class: 'btn f' + (favoriteMode ? ' primary' : ''), onclick: function () {
+      favoriteMode = !favoriteMode;
+      favButton.className = 'btn f' + (favoriteMode ? ' primary' : '');
+      favButton.lastChild.textContent = favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Modifier les favoris';
+      if (favoriteMode) toast('OK ajoute ou retire une chaîne des favoris. Rappuyez sur « Favoris » pour terminer.');
+    } }, icon('star'), favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Modifier les favoris');
     var refill = null;
-    main.appendChild(head(params.title || source.name, params.title ? source.name : (source.description || ''), h('span', { class: 'head-actions' }, guideButton, multiButton)));
+    var heading = head(params.title || source.name, params.title ? source.name : (source.description || ''), h('span', { class: 'head-actions' }, guideButton, favButton, multiButton));
+    main.appendChild(heading);
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
     renderMultiBar();
+    var ctx = { ref: ref, title: params.title };
     // Les bouquets (Northlive, Movix…) renvoient des groupes à ouvrir un par un (?ref=).
-    var key = ref ? 'tv-ref:' + ref : 'tv:' + source.id;
-    var path = ref ? '/api/tv/catalog?ref=' + encodeURIComponent(ref) : '/api/tv/catalog?source=' + encodeURIComponent(source.id);
-    var load = cache[key] ? Promise.resolve(cache[key]) : api(path, { timeout: 45000 }).then(function (data) {
-      cache[key] = data;
-      return data;
-    });
-    catalogSources[key] = { source: source, label: params.title ? source.name + ' · ' + params.title : source.name };
-    return load.then(function (data) {
+    return loadCatalog(source, ref, params.title).then(function (data) {
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
+      if (channels.length) heading.querySelector('h1').appendChild(h('small', { class: 'head-count', text: channels.length + ' chaîne' + (channels.length > 1 ? 's' : '') }));
       var bouquets = ((data && data.groups) || []).filter(function (item) { return item && item.ref; });
       if (data && data.warning) main.appendChild(h('div', { class: 'empty', text: data.warning }));
       if (bouquets.length) {
@@ -1768,7 +1896,10 @@
       }
       var counts = {};
       channels.forEach(function (channel) { var g = channel.group || ''; if (g) counts[g] = (counts[g] || 0) + 1; });
-      var names = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 24);
+      var allNames = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b, 'fr'); });
+      var names = allNames.slice(0, 16);
+      var FAVORITES_GROUP = '★';
+      var favoriteCount = channels.filter(function (channel) { return isFavorite(channel, source); }).length;
       var field = searchField('Rechercher une chaîne…', query, function (value) {
         if (value === query) return;
         current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value };
@@ -1776,10 +1907,31 @@
         fill();
       });
       main.appendChild(field.node);
-      if (names.length > 1) {
+      // Filtres : toutes, favoris de la source, catégories (avec leur nombre de chaînes).
+      if (names.length > 1 || favoriteCount) {
         var chips = h('div', { class: 'chips' });
-        chips.appendChild(chip('Toutes', !group, function () { pickGroup(''); }));
-        names.forEach(function (name) { chips.appendChild(chip(name, group === name, function () { pickGroup(name); })); });
+        var groupChip = function (value, label) {
+          var node = chip(label, group === value, function () { pickGroup(value); });
+          node.setAttribute('data-group', value);
+          return node;
+        };
+        chips.appendChild(groupChip('', 'Toutes · ' + channels.length));
+        if (favoriteCount) chips.appendChild(groupChip(FAVORITES_GROUP, '★ Favoris · ' + favoriteCount));
+        if (names.length > 1) names.forEach(function (name) { chips.appendChild(groupChip(name, name + ' · ' + counts[name])); });
+        if (group && group !== FAVORITES_GROUP && names.indexOf(group) < 0) chips.appendChild(groupChip(group, group + ' · ' + (counts[group] || 0)));
+        if (allNames.length > names.length) {
+          chips.appendChild(chip('Toutes les catégories (' + allNames.length + ')…', false, function () {
+            var list = h('div', { class: 'list scroll' }, h('h2', { text: 'Catégories' }));
+            allNames.forEach(function (name) {
+              list.appendChild(h('button', { class: 'btn f' + (group === name ? ' primary' : ''), onclick: function () {
+                closeLayer();
+                if (!chips.querySelector('[data-group="' + name.replace(/"/g, '\\"') + '"]')) chips.insertBefore(groupChip(name, name + ' · ' + counts[name]), chips.lastChild);
+                pickGroup(name);
+              } }, name + ' · ' + counts[name]));
+            });
+            openLayer(h('div', { class: 'modal' }, list));
+          }));
+        }
         main.appendChild(chips);
       }
       var grid = h('div', { class: guideMode ? 'guide-list' : 'grid channels' });
@@ -1789,7 +1941,7 @@
         group = name;
         current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query };
         Array.prototype.forEach.call(main.querySelectorAll('.chips .chip'), function (node) {
-          node.classList.toggle('on', node.textContent === (name || 'Toutes'));
+          node.classList.toggle('on', node.getAttribute('data-group') === name);
         });
         fill();
       }
@@ -1798,13 +1950,15 @@
         resetEpgQueue();
         var needle = normalize(query);
         var list = channels.filter(function (channel) {
-          return (!group || channel.group === group) && (!needle || normalize(channel.name).indexOf(needle) >= 0);
+          var inGroup = !group || (group === FAVORITES_GROUP ? isFavorite(channel, source) : channel.group === group);
+          return inGroup && (!needle || normalize(channel.name).indexOf(needle) >= 0);
         });
         if (!list.length) { grid.appendChild(h('div', { class: 'empty', text: channels.length ? 'Aucune chaîne ne correspond.' : 'Aucune chaîne disponible.' })); return; }
         lazyGrid(grid, list, function (channel) {
           function select() {
-            if (multi.on) toggleMulti(channel, source);
-            else launchChannel(channel, source, list);
+            if (favoriteMode) { toggleFavorite(channel, source, ctx); refreshFavoriteMarks(channel, source); }
+            else if (multi.on) toggleMulti(channel, source);
+            else launchChannel(channel, source, list, ctx);
           }
           var node;
           if (guideMode) {
@@ -1815,12 +1969,13 @@
               kind: 'channel', title: channel.name,
               sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [channel.group, channel.provider].filter(Boolean).join(' · '),
               image: channel.logo ? absolute(channel.logo) : '',
-              badge: channel.isLive ? 'LIVE' : '',
+              badge: [isFavorite(channel, source) ? '★' : '', channel.isLive ? 'LIVE' : ''].filter(Boolean).join(' '),
               progress: guide.now ? epgProgress(guide.now) : 0,
               onSelect: select
             });
           }
           node.setAttribute('data-channel', channelKey(channel, source));
+          if (isFavorite(channel, source)) node.classList.add('favorite');
           markMulti(node);
           // Guide absent du catalogue : demandé au serveur (quelques requêtes à la fois).
           if (needsEpg(channel)) {
@@ -2100,15 +2255,16 @@
   }
 
   var playback = null;
-  function launchChannel(channel, source, list) {
+  function launchChannel(channel, source, list, ctx) {
     var key = channelKey(channel, source);
     loadEpg(channel);
-    var sheet = pickerSheet(channel, 'Recherche des serveurs…');
+    if (source && source.id) rememberRecent(channel, source, ctx);
+    var sheet = pickerSheet(channel, 'Recherche des serveurs…', source, ctx);
     openLayer(sheet.node);
     channelOptions(channel, source).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
-      playback = { channel: channel, source: source, key: key, options: rankOptions(options, key), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
+      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: rankOptions(options, key), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
       if (playback.options.length === 1) {
         closeLayer(true);
         playOption();
@@ -2135,16 +2291,29 @@
     if (needsEpg(channel)) loadEpg(channel).then(render);
     return box;
   }
-  function pickerSheet(channel, text) {
+  function pickerSheet(channel, text, source, ctx) {
     var list = h('div', { class: 'servers' });
     var note = h('div', { class: 'picker-status loading', text: text });
     var logo = channel.logo ? image(absolute(channel.logo), '') : null;
+    // Favori : la chaîne apparaît en tête de « TV en direct ».
+    var favorite = null;
+    if (source && source.id) {
+      favorite = h('button', { class: 'btn f picker-fav', onclick: function () {
+        var on = toggleFavorite(channel, source, ctx);
+        favorite.lastChild.textContent = on ? 'Retirer des favoris' : 'Ajouter aux favoris';
+        favorite.classList.toggle('on', on);
+        refreshFavoriteMarks(channel, source);
+      } }, icon('star'), isFavorite(channel, source) ? 'Retirer des favoris' : 'Ajouter aux favoris');
+      if (isFavorite(channel, source)) favorite.classList.add('on');
+    }
     var node = h('div', { class: 'modal' }, h('div', { class: 'picker' },
       h('div', { class: 'picker-head' },
         h('div', { class: 'picker-logo' }, logo),
         h('div', null, h('h2', { text: channel.name }), h('div', { class: 'sub', text: [channel.group, channel.provider].filter(Boolean).join(' · ') }), epgLines(channel))),
       note, list,
-      h('button', { class: 'btn f picker-close', text: 'Annuler', onclick: function () { closeLayer(); } })));
+      h('div', { class: 'picker-actions' },
+        h('button', { class: 'btn f picker-close', text: 'Annuler', onclick: function () { closeLayer(); } }),
+        favorite)));
     var timer = 0;
     function stopCountdown() {
       clearInterval(timer);
@@ -2197,7 +2366,7 @@
     else sheet.status('Choisissez un serveur.');
   }
   function showPicker(state, message, seconds) {
-    var sheet = pickerSheet(state.channel, '');
+    var sheet = pickerSheet(state.channel, '', state.source, state.ctx);
     if (message) sheet.note.parentNode.insertBefore(h('div', { class: 'picker-status bad', text: message }), sheet.note);
     openLayer(sheet.node);
     fillPicker(sheet, state, seconds);

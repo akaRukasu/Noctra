@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.0';
+  var VERSION = '1.1.1';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   var BASE = location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
   var JF = String(params.get('jellyfin') || location.origin + '/jellyfin').replace(/\/+$/, '');
@@ -450,6 +450,18 @@
         Player.showSubtitles();
       });
       video.addEventListener('timeupdate', Player.renderTime);
+      // Fin de film ou d'épisode : certains téléviseurs n'envoient pas
+      // « ended » à la fin d'un flux HLS (image figée sur la dernière seconde).
+      video.addEventListener('timeupdate', function () {
+        if (!m.vod || !Player.played || !isFinite(video.duration) || !video.duration) return;
+        var atEnd = video.currentTime >= video.duration - 0.6;
+        if (!atEnd) { clearTimeout(Player.endTimer); Player.endTimer = 0; return; }
+        if (Player.endTimer) return;
+        Player.endTimer = setTimeout(function () {
+          Player.endTimer = 0;
+          if (Player.video === video && video.currentTime >= video.duration - 0.6 && !video.seeking) Player.finish(true, null, false, true);
+        }, 2500);
+      });
       Player.startApplied = false;
       Player.resumeAt = -1;
       if (m.vod && m.jellyfin && session) Player.report = new Report(m);
@@ -806,7 +818,8 @@
       var m = Player.m, video = Player.video;
       var position = Player.position();
       if (ended && video && video.duration && isFinite(video.duration)) position = Math.floor(video.duration * 1000);
-      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer].forEach(clearTimeout);
+      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer, Player.endTimer].forEach(clearTimeout);
+      Player.endTimer = 0;
       clearInterval(Player.progressTimer);
       if (Player.report) { Player.report.stop(position, Player.played); Player.report = null; }
       Player.engine.destroy();
