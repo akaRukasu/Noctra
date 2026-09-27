@@ -3000,6 +3000,8 @@
     var failedOption = state.options[state.index];
     if (failedOption && failedOption.sniffedFrom) {
       failedOption.sniffedFrom.noSniff = true;
+      // Relais vers le lecteur natif en échec pour ce site : évité les prochaines fois.
+      rememberWebMode(failedOption.sniffedFrom.url, 'noSniff');
       state.options.forEach(function (option, index) { if (option === failedOption.sniffedFrom) delete state.failed[index]; });
     }
   }
@@ -3149,10 +3151,38 @@
     var trusted = TRUSTED_EMBED_HOSTS.indexOf(target.hostname.toLowerCase()) >= 0 || ['LiveWatch', 'WiTV', 'OHA', 'Streamed', 'Volkamax'].indexOf(provider) >= 0;
     return { sandbox: trusted ? null : DEFAULT_SANDBOX, referrer: referrer };
   }
+  // Ce qui a marché pour chaque site de lecteur web, mémorisé sur la TV :
+  // mode allégé (lecture réussie ainsi) et relais vers le lecteur natif
+  // à éviter (échoué pour ce site). Retenu 14 jours.
+  var WEB_MODE_KEY = 'noctra-tv-webmode-v1';
+  function webHost(url) {
+    try { return new URL(absolute(url), location.href).hostname.replace(/^www\./, ''); } catch (error) { return ''; }
+  }
+  function webModes() {
+    try { return JSON.parse(localStorage.getItem(WEB_MODE_KEY) || '{}') || {}; } catch (error) { return {}; }
+  }
+  function webMode(url) {
+    var entry = webModes()[webHost(url)] || {};
+    var fresh = function (at) { return at && Date.now() - at < 14 * 86400000; };
+    return { lite: fresh(entry.lite), noSniff: fresh(entry.noSniff) };
+  }
+  function rememberWebMode(url, key) {
+    var host = webHost(url);
+    if (!host) return;
+    var modes = webModes();
+    modes[host] = modes[host] || {};
+    modes[host][key] = Date.now();
+    try { localStorage.setItem(WEB_MODE_KEY, JSON.stringify(modes)); } catch (error) { /* stockage indisponible */ }
+  }
   function openEmbed(state, option, label) {
     var url = absolute(option.url);
     var frame = frameConfig(state.channel, option, url);
-    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff, lite: Boolean(option.lite) })) {
+    var mode = webMode(url);
+    var provider = option.provider || state.channel.provider || '';
+    // Moteur web ancien : ces lecteurs lourds ne tiennent qu'en mode allégé.
+    var lite = Boolean(option.lite) || mode.lite || (engineOutdated() && /DLStreams|DaddyLive/i.test(provider));
+    option._lite = lite;
+    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff && !mode.noSniff, lite: lite })) {
       webPlayback = { state: state, option: option };
       return;
     }
@@ -3182,7 +3212,7 @@
     }
     // Arrêt du lecteur (mémoire du téléviseur, moteur web dans le même processus
     // sur Android 7) : nouvel essai du même serveur en mode allégé, une fois.
-    if (result.crashed && !entry.option.lite) {
+    if (result.crashed && !entry.option._lite) {
       entry.option.lite = true;
       toast('Le lecteur web s’est arrêté : nouvel essai allégé (publicités bloquées)…');
       playOption();
@@ -3190,8 +3220,12 @@
     }
     if (result.crashed) { failOption(state, 'Le lecteur web s’est arrêté' + (result.error ? ' : ' + result.error : '.') + log); return; }
     if (!result.ok) { failOption(state, (result.error || 'Ce lecteur web ne répond pas.') + log); return; }
-    if (result.playing) succeeded(state);
-    var quick = !result.playing && quickExit(state);
+    // Regardé plus d'une minute puis quitté normalement : ce serveur fonctionne
+    // (et, en mode allégé, ce mode est retenu pour ce site).
+    var watched = result.ok && !result.error && Date.now() - state.startedAt > 60000;
+    if (result.playing || watched) succeeded(state);
+    if (watched && entry.option._lite) rememberWebMode(entry.option.url, 'lite');
+    var quick = !result.playing && !watched && quickExit(state);
     playback = null;
     // Erreur constatée par le lecteur (réponse 403, serveur injoignable…) : affichée avec les autres serveurs.
     if (!result.playing && result.error) { state.failed[state.index] = true; showPicker(state, result.error + log, 0); return; }

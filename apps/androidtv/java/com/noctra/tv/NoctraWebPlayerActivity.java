@@ -147,6 +147,7 @@ public class NoctraWebPlayerActivity extends Activity {
     private String noctraHost;
     private String engineVersion = "";
     private int probes;
+    private int ignoredTabs;
     /** Moteur web ancien : scripts et pages adaptés (NoctraJsCompat). */
     private boolean compat;
     private int adapted;
@@ -425,10 +426,27 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 try {
-                    WebView popup = createTab();
+                    final WebView popup = createTab();
                     WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
                     transport.setWebView(popup);
                     resultMsg.sendToTarget();
+                    if (lite) {
+                        // Mode allégé : onglet publicitaire ouvert sans être montré, puis refermé
+                        // (la page le croit ouvert ; la vidéo reste à l'écran, sans coupure noire).
+                        try {
+                            popup.getSettings().setJavaScriptEnabled(false);
+                            popup.getSettings().setLoadsImagesAutomatically(false);
+                        } catch (Throwable ignored) { }
+                        ignoredTabs++;
+                        if (ignoredTabs <= 3) NoctraWebLog.add(NoctraWebPlayerActivity.this, "Onglet publicitaire ignoré");
+                        handler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                closeWindow(popup);
+                            }
+                        }, 2000);
+                        return true;
+                    }
                     showTab(popup);
                     return true;
                 } catch (Throwable error) {
@@ -903,7 +921,7 @@ public class NoctraWebPlayerActivity extends Activity {
         webView.setVisibility(View.INVISIBLE);
         popup.requestFocus();
         if (hint != null) {
-            hint.setText("Page ouverte par le lecteur · retour au lecteur dans " + (TAB_MS / 1000) + " s · Retour : revenir maintenant");
+            hint.setText("Page ouverte par le lecteur · retour au lecteur dans " + ((lite ? 3000 : TAB_MS) / 1000) + " s · Retour : revenir maintenant");
             hint.animate().cancel();
             hint.setAlpha(1f);
         }
