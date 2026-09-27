@@ -13,6 +13,10 @@
   var sameOrigin = false;
   try { sameOrigin = new URL(src, location.href).origin === location.origin; } catch (error) { sameOrigin = false; }
   if (params.get('compat') === '1') frame.setAttribute('scrolling', 'auto');
+  // Cadre identique à celui du PC : référent (LiveWatch : aucun) et bac à
+  // sable propres au fournisseur (absent pour les lecteurs qui le refusent).
+  frame.referrerPolicy = params.get('referrer') || 'strict-origin-when-cross-origin';
+  if (params.has('sandbox')) frame.setAttribute('sandbox', params.get('sandbox'));
 
   function send(message) {
     if (port) port.postMessage(JSON.stringify(message));
@@ -37,7 +41,10 @@
       send({ state: 'error', message: data.message || 'Ce lecteur web ne répond pas.' });
     }
   });
-  frame.addEventListener('load', function () { wait.style.display = 'none'; });
+  frame.addEventListener('load', function () {
+    wait.style.display = 'none';
+    if (frame.getAttribute('src')) send({ state: 'loaded' });
+  });
 
   // Lecteurs préparés par le serveur Noctra : cookie de session nécessaire.
   var ready = sameOrigin && token

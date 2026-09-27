@@ -235,7 +235,17 @@ const playbackJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybac
 assert.match(playbackJava, /helper\.retrieveAndPlay\(itemId, false, positionTicks, context\)/);
 // Carrousel d'accueil : image à la définition de l'écran, décodée avant le fondu, affiche verticale entière.
 assert.match(tvApp, /function premiereWidth\(\)/);
-assert.match(tvApp, /picture\.decode\(\)\.then\(reveal, reveal\)/);
+assert.match(tvApp, /Promise\.all\(\[loadImage\(backdropUrl\(item, premiereWidth\(\)\), 8000\), loadImage\(logoUrl\(item\), 2500\)\]\)/, 'Image et logo affichés ensemble');
+// Lecteur web : cadre comme sur PC, embed officiel LiveWatch sans référent, journal et navigation sécurisée.
+assert.match(tvApp, /function frameConfig\(channel, option, url\)/);
+assert.match(tvApp, /referrer: 'no-referrer'/);
+assert.match(tvApp, /sandbox: frame\.sandbox, referrer: frame\.referrer/);
+assert.match(await read('apps/androidtv/web/player.js'), /frame\.referrerPolicy = params\.get\('referrer'\)/);
+assert.match(webPlayer, /settings\.setSafeBrowsingEnabled\(false\)/);
+assert.match(webPlayer, /callback\.proceed\(false\)/);
+assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);
+assert.match(tvApp, /showPicker\(state, message \|\| '', 0\)/, 'Raison de l’échec affichée même sans autre serveur');
 assert.match(await read('apps/androidtv/web/app.css'), /\.premiere-slide\.portrait \.premiere-picture/);
 // SyncPlay (absent de Jellyfin Android TV) : protocole Jellyfin, horloge du serveur, lecteur piloté par le groupe.
 for (const call of ["syncPost('Join'", "syncPost('New'", "syncPost('Leave')", "syncPost('SetNewQueue'", "syncPost('Ready'", "syncPost('Buffering'", "syncPost('Pause')", "syncPost('Unpause')", "syncPost('Seek'"]) {

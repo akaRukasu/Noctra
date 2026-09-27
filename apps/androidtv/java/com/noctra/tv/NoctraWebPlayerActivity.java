@@ -23,6 +23,7 @@ import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.SafeBrowsingResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.WebMessage;
 import android.webkit.WebMessagePort;
@@ -60,9 +61,12 @@ import java.util.regex.Pattern;
  * vidéo, il est renvoyé à l'accueil qui le lit avec le lecteur natif.
  *
  * Pour se comporter comme sur PC (où ces lecteurs fonctionnent) : identité de
- * navigateur de bureau, fenêtres surgissantes acceptées (certains lecteurs ne
- * démarrent qu'après l'ouverture de leur publicité ; elle reste vide et
- * invisible), et page ouverte en entier quand elle refuse d'être intégrée
+ * navigateur de bureau ; cadre configuré comme sur PC (bac à sable et référent
+ * propres à chaque fournisseur, ex. aucun référent pour LiveWatch) ; une page
+ * ouverte par le lecteur (souvent l'étape publicitaire qui débloque la chaîne)
+ * s'affiche comme un nouvel onglet — le lecteur passe en arrière-plan comme
+ * sur PC — puis on revient seul au lecteur après quelques secondes (ou avec
+ * Retour) ; page ouverte en entier quand elle refuse d'être intégrée
  * (automatique, ou OK maintenu). Une erreur du serveur du lecteur est affichée.
  */
 public class NoctraWebPlayerActivity extends Activity {
@@ -72,6 +76,10 @@ public class NoctraWebPlayerActivity extends Activity {
     static final String EXTRA_SUBTITLE = "noctra_subtitle";
     static final String EXTRA_TOKEN = "noctra_token";
     static final String EXTRA_COMPAT = "noctra_compat";
+    static final String EXTRA_SANDBOX = "noctra_sandbox";
+    static final String EXTRA_REFERRER = "noctra_referrer";
+    /** Durée d'affichage d'une page ouverte par le lecteur (souvent sa publicité). */
+    private static final int TAB_MS = 8000;
     static final String EXTRA_ERROR = "noctra_error";
     static final String EXTRA_MEDIA = "noctra_media";
     static final String EXTRA_PLAYING = "noctra_playing";
@@ -94,7 +102,27 @@ public class NoctraWebPlayerActivity extends Activity {
     private String source;
     private boolean direct;
     private String diagnostic;
+    private String referrer;
+    private WebView tab;
+    private final Runnable backToPlayer = new Runnable() {
+        @Override
+        public void run() {
+            closeTab();
+        }
+    };
     private final List<WebView> popups = new ArrayList<WebView>();
+    private int crashes;
+    private boolean lite;
+    private int consoleErrors;
+    private int blocked;
+
+    /** Régies publicitaires lourdes, bloquées en mode allégé (après un arrêt du moteur web). */
+    private static final String[] AD_HOSTS = {
+        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adnxs.com", "popads.net", "popcash.net",
+        "propellerads.com", "adsterra.com", "exoclick.com", "juicyads.com", "a-ads.com", "adcash.com", "hilltopads.net",
+        "clickadu.com", "onclickads.net", "monetag.com", "histats.com", "adskeeper.com", "mgid.com", "taboola.com",
+        "outbrain.com", "revcontent.com", "trafficjunky.net", "yandex.ru", "mc.yandex.ru", "adservice.google.com"
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -106,16 +134,34 @@ public class NoctraWebPlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Intent intent = getIntent();
         String url = intent.getStringExtra(EXTRA_URL);
+        NoctraWebLog.start(this, intent.getStringExtra(EXTRA_TITLE) + " · " + url);
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread thread, Throwable error) {
+                StackTraceElement[] stack = error.getStackTrace();
+                NoctraWebLog.add(NoctraWebPlayerActivity.this, "Plantage : " + error + (stack.length > 0 ? " @ " + stack[0] : ""));
+                if (previous != null) previous.uncaughtException(thread, error);
+            }
+        });
         if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
             finishWith(false, "Adresse du lecteur invalide.", null);
             return;
         }
         appBase = NoctraConfig.NOCTRA_URL + "/tv-app/";
         source = url;
+        referrer = intent.getStringExtra(EXTRA_REFERRER);
+        if (referrer == null || referrer.isEmpty()) referrer = "strict-origin-when-cross-origin";
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
-        webView = new WebView(this);
+        try {
+            webView = new WebView(this);
+        } catch (Throwable error) {
+            NoctraWebLog.add(this, "Moteur web indisponible : " + error);
+            finishWith(false, "Le moteur web du téléviseur est indisponible (" + error.getClass().getSimpleName() + ").", null);
+            return;
+        }
         webView.setBackgroundColor(Color.BLACK);
         root.addView(webView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -157,13 +203,14 @@ public class NoctraWebPlayerActivity extends Activity {
 
         configure();
         Uri.Builder page = Uri.parse(appBase + "player.html").buildUpon();
-        String fragment = new Uri.Builder()
+        Uri.Builder fragment = new Uri.Builder()
             .appendQueryParameter("src", url)
             .appendQueryParameter("token", intent.getStringExtra(EXTRA_TOKEN) == null ? "" : intent.getStringExtra(EXTRA_TOKEN))
             .appendQueryParameter("base", NoctraConfig.NOCTRA_URL)
             .appendQueryParameter("compat", intent.getBooleanExtra(EXTRA_COMPAT, false) ? "1" : "0")
-            .build().getEncodedQuery();
-        webView.loadUrl(page.build().toString() + "#" + fragment);
+            .appendQueryParameter("referrer", referrer);
+        if (intent.hasExtra(EXTRA_SANDBOX)) fragment.appendQueryParameter("sandbox", intent.getStringExtra(EXTRA_SANDBOX));
+        webView.loadUrl(page.build().toString() + "#" + fragment.build().getEncodedQuery());
     }
 
     private void configure() {
@@ -182,6 +229,14 @@ public class NoctraWebPlayerActivity extends Activity {
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setUserAgentString(desktopUserAgent(settings.getUserAgentString()));
+        // Navigation sécurisée de la WebView : elle bloque (page blanche) les
+        // sites de streaming qu'elle juge douteux, que l'utilisateur ouvre ici
+        // volontairement, comme sur son PC.
+        if (Build.VERSION.SDK_INT >= 26) {
+            try { settings.setSafeBrowsingEnabled(false); } catch (Throwable ignored) { }
+            // Moteur web du lecteur gardé en priorité (moins d'arrêts faute de mémoire).
+            try { webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); } catch (Throwable ignored) { }
+        }
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(webView, true);
@@ -189,7 +244,17 @@ public class NoctraWebPlayerActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (lite && isAd(request.getUrl())) {
+                    blocked++;
+                    return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                }
                 return asset(request.getUrl().toString());
+            }
+
+            @Override
+            public void onSafeBrowsingHit(WebView view, WebResourceRequest request, int threatType, SafeBrowsingResponse callback) {
+                NoctraWebLog.add(NoctraWebPlayerActivity.this, "Navigation sécurisée ignorée : " + request.getUrl().getHost());
+                callback.proceed(false);
             }
 
             // Le cadre principal reste la page du lecteur : publicités et
@@ -206,12 +271,14 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 if (url != null && url.startsWith(appBase)) offerChannel();
+                else if (url != null) NoctraWebLog.add(NoctraWebPlayerActivity.this, "Page chargée : " + Uri.parse(url).getHost());
             }
 
             @Override
             public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                 if (!isSourceDocument(request)) return;
                 int status = response.getStatusCode();
+                NoctraWebLog.add(NoctraWebPlayerActivity.this, "Réponse " + status + " : " + request.getUrl().getHost());
                 report("Le serveur du lecteur a répondu « erreur " + status + " »"
                     + (status == 403 ? " (accès refusé)" : status == 404 ? " (lecteur introuvable)" : status >= 500 ? " (serveur en panne)" : "")
                     + ". Essayez un autre serveur.");
@@ -220,15 +287,21 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (!isSourceDocument(request)) return;
+                NoctraWebLog.add(NoctraWebPlayerActivity.this, "Injoignable : " + request.getUrl().getHost() + " (" + error.getDescription() + ")");
                 report("Le lecteur est injoignable (" + error.getDescription() + "). Essayez un autre serveur.");
             }
 
             @Override
-            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            public boolean onRenderProcessGone(final WebView view, RenderProcessGoneDetail detail) {
+                final boolean crashed = Build.VERSION.SDK_INT >= 26 && detail != null && detail.didCrash();
+                NoctraWebLog.add(NoctraWebPlayerActivity.this, crashed ? "Moteur web planté" : "Moteur web arrêté par le système (mémoire)");
                 handler.post(new Runnable() {
                     @Override
                     public void run() {
-                        finishWith(false, "Le lecteur web s'est arrêté (mémoire du téléviseur saturée).", null);
+                        if (view != webView) return;
+                        // Premier arrêt : nouvel essai allégé (page seule, régies bloquées).
+                        if (++crashes == 1 && !finished) restart();
+                        else finishWith(false, crashed ? "Le moteur web du téléviseur a planté sur ce lecteur." : "Le lecteur web s'est arrêté (mémoire du téléviseur saturée).", null);
                     }
                 });
                 return true;
@@ -263,30 +336,16 @@ public class NoctraWebPlayerActivity extends Activity {
                 return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
             }
 
-            // Fenêtre surgissante (souvent la publicité qui débloque le
-            // lecteur) : une fenêtre existe pour la page, mais rien n'y est
-            // chargé ni affiché.
+            // Fenêtre ouverte par le lecteur (souvent l'étape publicitaire
+            // qui débloque la chaîne) : affichée comme un nouvel onglet.
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 try {
-                    WebView popup = new WebView(NoctraWebPlayerActivity.this);
-                    popup.getSettings().setJavaScriptEnabled(false);
-                    popup.setWebViewClient(new WebViewClient() {
-                        @Override
-                        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                            return true;
-                        }
-
-                        @Override
-                        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                            return new WebResourceResponse("text/html", "utf-8", new ByteArrayInputStream(new byte[0]));
-                        }
-                    });
-                    popups.add(popup);
-                    while (popups.size() > 4) destroy(popups.remove(0));
+                    WebView popup = createTab();
                     WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
                     transport.setWebView(popup);
                     resultMsg.sendToTarget();
+                    showTab(popup);
                     return true;
                 } catch (Throwable error) {
                     return false;
@@ -295,7 +354,7 @@ public class NoctraWebPlayerActivity extends Activity {
 
             @Override
             public void onCloseWindow(WebView window) {
-                if (popups.remove(window)) destroy(window);
+                closeWindow(window);
             }
 
             // Page qui refuse d'être intégrée (X-Frame-Options, CSP) : elle
@@ -303,6 +362,9 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
                 String text = message == null ? null : message.message();
+                if (text != null && message.messageLevel() == ConsoleMessage.MessageLevel.ERROR && consoleErrors++ < 8) {
+                    NoctraWebLog.add(NoctraWebPlayerActivity.this, "Erreur de la page : " + text);
+                }
                 if (text != null && !direct && text.startsWith("Refused to") && (text.contains("X-Frame-Options") || text.contains("frame-ancestors"))) {
                     handler.post(new Runnable() {
                         @Override
@@ -315,6 +377,34 @@ public class NoctraWebPlayerActivity extends Activity {
             }
         };
         webView.setWebChromeClient(chromeClient);
+    }
+
+    private static boolean isAd(Uri url) {
+        String host = url == null || url.getHost() == null ? "" : url.getHost().toLowerCase();
+        for (String ad : AD_HOSTS) {
+            if (host.equals(ad) || host.endsWith("." + ad)) return true;
+        }
+        return false;
+    }
+
+    /** Nouvel essai après un arrêt du moteur web : WebView neuve, page seule, sans régies. */
+    private void restart() {
+        for (WebView popup : popups) destroy(popup);
+        popups.clear();
+        tab = null;
+        handler.removeCallbacks(backToPlayer);
+        if (customView != null) chromeClient.onHideCustomView();
+        root.removeView(webView);
+        destroy(webView);
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.BLACK);
+        root.addView(webView, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        configure();
+        lite = true;
+        direct = false;
+        NoctraWebLog.add(this, "Nouvel essai allégé");
+        openDirect();
+        if (hint != null) hint.setText("Le moteur web s'est arrêté · nouvel essai allégé (publicités bloquées)…");
     }
 
     /** Identité du navigateur de bureau (même version de Chrome que la WebView). */
@@ -355,10 +445,11 @@ public class NoctraWebPlayerActivity extends Activity {
     private void openDirect() {
         if (direct || finished || webView == null) return;
         direct = true;
+        NoctraWebLog.add(this, "Page entière");
         Map<String, String> headers = new HashMap<String, String>();
         Uri server = Uri.parse(NoctraConfig.NOCTRA_URL);
         // Même provenance que depuis la page Noctra sur PC.
-        if (!sameHost(Uri.parse(source), server)) headers.put("Referer", server.getScheme() + "://" + server.getAuthority() + "/");
+        if (!sameHost(Uri.parse(source), server) && !"no-referrer".equals(referrer)) headers.put("Referer", server.getScheme() + "://" + server.getAuthority() + "/");
         webView.loadUrl(source, headers);
         if (hint != null) {
             hint.setText("Page du lecteur ouverte en entier · ◀ ▲ ▼ ▶ curseur · OK cliquer · Retour quitter");
@@ -366,6 +457,88 @@ public class NoctraWebPlayerActivity extends Activity {
             hint.setAlpha(1f);
             hint.animate().alpha(0f).setStartDelay(5000).setDuration(500).start();
         }
+    }
+
+    // ── Onglets ouverts par le lecteur ─────────────────────────────────────
+    private WebView createTab() {
+        final WebView popup = new WebView(this);
+        popup.setBackgroundColor(Color.BLACK);
+        WebSettings settings = popup.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setSupportMultipleWindows(false);
+        settings.setUserAgentString(webView.getSettings().getUserAgentString());
+        popup.setWebViewClient(new WebViewClient() {
+            // Liens vers une appli (intent:, market:…) ignorés.
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String scheme = request.getUrl().getScheme();
+                return !("http".equals(scheme) || "https".equals(scheme));
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        closeWindow(popup);
+                    }
+                });
+                return true;
+            }
+        });
+        popup.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onCloseWindow(WebView window) {
+                closeWindow(window);
+            }
+        });
+        popups.add(popup);
+        while (popups.size() > 4) {
+            WebView oldest = popups.remove(0);
+            if (oldest == tab) closeTab();
+            destroy(oldest);
+        }
+        return popup;
+    }
+
+    /** Onglet au premier plan : le lecteur passe en arrière-plan, comme sur PC. */
+    private void showTab(WebView popup) {
+        if (tab != null) closeTab();
+        NoctraWebLog.add(this, "Onglet ouvert par le lecteur");
+        tab = popup;
+        root.addView(popup, 1, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        webView.setVisibility(View.INVISIBLE);
+        popup.requestFocus();
+        if (hint != null) {
+            hint.setText("Page ouverte par le lecteur · retour au lecteur dans " + (TAB_MS / 1000) + " s · Retour : revenir maintenant");
+            hint.animate().cancel();
+            hint.setAlpha(1f);
+        }
+        handler.removeCallbacks(backToPlayer);
+        handler.postDelayed(backToPlayer, TAB_MS);
+    }
+
+    /** Retour au lecteur ; la page ouverte reste chargée tant que le lecteur ne la ferme pas. */
+    private void closeTab() {
+        handler.removeCallbacks(backToPlayer);
+        if (tab == null) return;
+        root.removeView(tab);
+        tab = null;
+        webView.setVisibility(View.VISIBLE);
+        webView.requestFocus();
+        if (hint != null) {
+            hint.setText("Retour au lecteur · OK sur la vidéo pour lancer la lecture");
+            hint.animate().cancel();
+            hint.setAlpha(1f);
+            hint.animate().alpha(0f).setStartDelay(3000).setDuration(500).start();
+        }
+    }
+
+    private void closeWindow(WebView window) {
+        if (window == tab) closeTab();
+        if (popups.remove(window)) destroy(window);
     }
 
     private static void destroy(WebView view) {
@@ -415,7 +588,10 @@ public class NoctraWebPlayerActivity extends Activity {
         try {
             JSONObject message = new JSONObject(raw);
             String state = message.optString("state");
-            if (state.equals("playing")) {
+            if (state.equals("loaded")) {
+                NoctraWebLog.add(this, "Cadre du lecteur chargé");
+            } else if (state.equals("playing")) {
+                if (!playing) NoctraWebLog.add(this, "Lecture en cours");
                 playing = true;
                 if (hint != null) hint.animate().alpha(0f).setDuration(400).start();
             } else if (state.equals("media")) {
@@ -501,6 +677,7 @@ public class NoctraWebPlayerActivity extends Activity {
         Intent data = new Intent();
         data.putExtra(EXTRA_PLAYING, playing);
         if (error == null && !playing) error = diagnostic;
+        NoctraWebLog.add(this, "Fin : " + (error != null ? error : ok ? "fermé" : "échec") + (blocked > 0 ? " · " + blocked + " publicités bloquées" : ""));
         if (error != null) data.putExtra(EXTRA_ERROR, error);
         if (media != null) data.putExtra(EXTRA_MEDIA, media);
         setResult(ok ? RESULT_OK : RESULT_ERROR, data);
@@ -509,6 +686,10 @@ public class NoctraWebPlayerActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (tab != null) {
+            closeTab();
+            return;
+        }
         if (customView != null) {
             chromeClient.onHideCustomView();
             return;

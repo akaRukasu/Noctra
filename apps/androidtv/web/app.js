@@ -1401,63 +1401,90 @@
       h('p', { class: 'eyebrow', text: 'CONTINUER À REGARDER' }), label, title, subtitle,
       h('div', { class: 'premiere-actions' }, play, details, items.length > 1 ? prev : null, items.length > 1 ? count : null, items.length > 1 ? next : null)));
 
+    var copy = node.lastChild;
+    // Image large et logo préparés ensemble (téléchargés et décodés), puis
+    // affichés dans la même image que le texte : rien n'apparaît en décalé.
+    // Le titre suivant est préparé à l'avance pour un changement immédiat.
+    var prepared = {};
+    function logoUrl(item) {
+      var logoId = item.ImageTags && item.ImageTags.Logo ? item.Id : item.ParentLogoItemId;
+      var logoTag = item.ImageTags && item.ImageTags.Logo ? item.ImageTags.Logo : item.ParentLogoImageTag;
+      return logoId ? S.jf + '/Items/' + logoId + '/Images/Logo?maxHeight=160&quality=90' + (logoTag ? '&tag=' + encodeURIComponent(logoTag) : '') : '';
+    }
+    function loadImage(url, limit) {
+      if (!url) return Promise.resolve(null);
+      return new Promise(function (resolve) {
+        var picture = new Image();
+        var done = false;
+        function finish(value) { if (!done) { done = true; resolve(value); } }
+        picture.decoding = 'async';
+        picture.onload = function () {
+          if (picture.decode) picture.decode().then(function () { finish(picture); }, function () { finish(picture); });
+          else finish(picture);
+        };
+        picture.onerror = function () { finish(null); };
+        if (limit) setTimeout(function () { finish(null); }, limit);
+        picture.src = url;
+      });
+    }
+    function prepare(item) {
+      var key = item.Id;
+      if (!prepared[key]) {
+        // Logo : attendu au plus 2,5 s, sinon le titre en texte.
+        prepared[key] = Promise.all([loadImage(backdropUrl(item, premiereWidth()), 8000), loadImage(logoUrl(item), 2500)]);
+        prepared[key].then(function (loaded) {
+          // Une image en erreur sera redemandée au prochain passage.
+          if (!loaded[0]) delete prepared[key];
+        });
+      }
+      return prepared[key];
+    }
+    var generation = 0;
     function render() {
       var item = items[index];
+      var turn = ++generation;
+      count.textContent = (index + 1) + ' / ' + items.length;
+      prepare(item).then(function (loaded) {
+        if (turn !== generation || !document.body.contains(node)) return;
+        show(item, loaded[0], loaded[1]);
+        var following = items[(index + 1) % items.length];
+        if (following && following !== item) prepare(following);
+      });
+    }
+    function show(item, picture, logo) {
       label.textContent = item.Type === 'Episode' ? 'L’histoire continue' : 'Reprendre la lecture';
-      title.textContent = itemTitle(item);
       subtitle.textContent = item.Type === 'Episode'
         ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + (item.Name || '')
         : String(item.ProductionYear || '');
-      count.textContent = (index + 1) + ' / ' + items.length;
-      showLogo(item);
-      var src = backdropUrl(item, premiereWidth());
+      clear(title);
+      title.classList.toggle('has-logo', Boolean(logo));
+      if (logo) {
+        // Élément déjà décodé, réutilisé tel quel (pas de nouveau décodage).
+        logo.className = 'premiere-logo';
+        logo.alt = itemTitle(item);
+        title.appendChild(logo);
+      } else {
+        title.textContent = itemTitle(item);
+      }
+      copy.classList.remove('fresh');
+      void copy.offsetWidth;
+      copy.classList.add('fresh');
+      if (!picture) return;
+      var src = picture.src;
       if (art.getAttribute('data-src') === src) return;
       art.setAttribute('data-src', src);
-      // Fondu enchaîné, uniquement une fois l'image téléchargée et décodée
-      // hors du fil principal (ni écran vide ni saccade pendant le fondu).
-      var picture = new Image();
-      picture.decoding = 'async';
-      var shown = false;
-      function reveal() {
-        if (shown || art.getAttribute('data-src') !== src) return;
-        shown = true;
-        // Affiche verticale (pas d'image large) : entière, à droite, sur un
-        // fond flouté d'elle-même, comme sur PC ; jamais recadrée en bandeau.
-        var portrait = picture.naturalWidth && picture.naturalHeight && picture.naturalWidth / picture.naturalHeight < 1.25;
-        var ambient = h('div', { class: 'premiere-ambient', style: 'background-image:url("' + src.replace(/maxWidth=\d+/, 'maxWidth=48').replace(/maxHeight=\d+/, 'maxHeight=64').replace(/quality=\d+/, 'quality=60').replace(/"/g, '%22') + '")' });
-        var slide = h('div', { class: 'premiere-slide' + (portrait ? ' portrait' : '') }, ambient, picture);
-        picture.className = 'premiere-picture';
-        var previous = art.lastElementChild;
-        art.appendChild(slide);
-        requestAnimationFrame(function () {
-          requestAnimationFrame(function () { slide.classList.add('shown'); });
-          if (previous) setTimeout(function () { if (previous.parentNode) previous.parentNode.removeChild(previous); }, 750);
-        });
-      }
-      picture.onload = function () {
-        if (picture.decode) picture.decode().then(reveal, reveal); else reveal();
-      };
-      picture.src = src;
-      var following = items[(index + 1) % items.length];
-      if (following) { var preload = new Image(); preload.decoding = 'async'; preload.src = backdropUrl(following, premiereWidth()); }
-    }
-    // Logo du film ou de la série à la place du titre, quand Jellyfin en a un.
-    function showLogo(item) {
-      var logoId = item.ImageTags && item.ImageTags.Logo ? item.Id : item.ParentLogoItemId;
-      var logoTag = item.ImageTags && item.ImageTags.Logo ? item.ImageTags.Logo : item.ParentLogoImageTag;
-      title.classList.remove('has-logo');
-      if (!logoId) return;
-      var logo = new Image();
-      logo.decoding = 'async';
-      logo.alt = itemTitle(item);
-      logo.className = 'premiere-logo';
-      logo.onload = function () {
-        if (items[index] !== item) return;
-        clear(title);
-        title.appendChild(logo);
-        title.classList.add('has-logo');
-      };
-      logo.src = S.jf + '/Items/' + logoId + '/Images/Logo?maxHeight=160&quality=90' + (logoTag ? '&tag=' + encodeURIComponent(logoTag) : '');
+      // Affiche verticale (pas d'image large) : entière, à droite, sur un
+      // fond flouté d'elle-même, comme sur PC ; jamais recadrée en bandeau.
+      var portrait = picture.naturalWidth && picture.naturalHeight && picture.naturalWidth / picture.naturalHeight < 1.25;
+      var ambient = h('div', { class: 'premiere-ambient', style: 'background-image:url("' + src.replace(/maxWidth=\d+/, 'maxWidth=48').replace(/maxHeight=\d+/, 'maxHeight=64').replace(/quality=\d+/, 'quality=60').replace(/"/g, '%22') + '")' });
+      picture.className = 'premiere-picture';
+      var slide = h('div', { class: 'premiere-slide' + (portrait ? ' portrait' : '') }, ambient, picture);
+      var previous = art.lastElementChild;
+      art.appendChild(slide);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { slide.classList.add('shown'); });
+        if (previous) setTimeout(function () { if (previous.parentNode) previous.parentNode.removeChild(previous); }, 750);
+      });
     }
     function step(delta) {
       index = (index + delta + items.length) % items.length;
@@ -1773,7 +1800,35 @@
         .map(function (option) { if (!option.resolveUrl && url) option.renewUrl = url; return option; });
     });
   }
-  function channelOptions(channel) {
+  // Comme sur PC : les sources LiveWatch à lecteur officiel (Sports, Football
+  // Live, BossTV, JackTV, Matchs du jour, NorthTV, FrameTV) ouvrent l'embed
+  // officiel de la chaîne, sans référent ; NorthTV passe par le relais préparé
+  // par le serveur quand le VIP est actif.
+  var LIVEWATCH_OFFICIAL = ['livewatch-north', 'livewatch-frame', 'livewatch-sports', 'livewatch-football', 'livewatch-bosstv', 'livewatch-jacktv', 'livewatch-daily'];
+  function liveWatchOfficial(channel, source) {
+    var sourceId = String((source && source.id) || '');
+    if (LIVEWATCH_OFFICIAL.indexOf(sourceId) < 0) return null;
+    if (channel.playbackType === 'resolver' && channel.resolverUrl) return null;
+    var official = [channel.vipFallbackUrl, channel.externalUrl, channel.embedUrl].filter(function (value) { return /^https?:\/\//i.test(String(value || '').trim()); })[0];
+    if (!official) return null;
+    official = String(official).trim();
+    var provider = (source && source.name) || channel.provider || 'LiveWatch';
+    var north = null;
+    try {
+      var parsed = new URL(official);
+      var match = /^(?:www\.)?livewatch\.top$/i.test(parsed.hostname) && parsed.pathname.match(/^\/embed\/north\/([^/]+)\/?$/i);
+      if (match && sourceId === 'livewatch-north' && channel.liveWatchSameOriginBridge) north = decodeURIComponent(match[1]);
+    } catch (error) { /* adresse officielle telle quelle */ }
+    var direct = { playbackType: 'embed', url: official, label: provider + ' · lecteur officiel', provider: provider, referrer: 'no-referrer' };
+    if (!north) return Promise.resolve([direct]);
+    return api('/api/tv/livewatch/prepare/north/' + encodeURIComponent(north), { timeout: 15000 }).then(function (prepared) {
+      if (!prepared || !prepared.embedUrl) throw new Error('relais vide');
+      return [{ playbackType: 'embed', url: prepared.embedUrl, label: provider + ' · relais officiel', provider: provider, compatPage: true }, direct];
+    }, function () { return [direct]; });
+  }
+  function channelOptions(channel, source) {
+    var official = liveWatchOfficial(channel, source);
+    if (official) return official;
     if (channel.playbackType === 'stream' && channel.streamUrl) {
       return Promise.resolve([{ playbackType: 'stream', streamUrl: channel.streamUrl, label: 'Flux direct', transport: channel.transport }]);
     }
@@ -1806,7 +1861,7 @@
     var key = channelKey(channel, source);
     var sheet = pickerSheet(channel, 'Recherche des serveurs…');
     openLayer(sheet.node);
-    channelOptions(channel).then(function (list) {
+    channelOptions(channel, source).then(function (list) {
       if (!document.body.contains(sheet.node)) return;
       if (!list.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
       playback = { channel: channel, source: source, key: key, options: rankOptions(list, key), index: 0, failed: {}, startedAt: 0, renewed: false };
@@ -1923,7 +1978,8 @@
     state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
     if (next < 0) {
       playback = null;
-      showPicker(state, '', 0);
+      // Dernier serveur en échec : sa raison reste affichée (photo utile au diagnostic).
+      showPicker(state, message || '', 0);
       return;
     }
     showPicker(state, message, 4);
@@ -1966,8 +2022,32 @@
   // (processus à part, curseur piloté par les flèches) ; un plantage de la
   // page ne ferme plus l'appli. Dans un navigateur (essais) : iframe.
   var webPlayback = null;
+  // Cadre du lecteur web configuré exactement comme sur PC (configureTvIframe) :
+  // certains lecteurs refusent tout bac à sable, d'autres n'acceptent pas de
+  // référent ; les pages tierces préparées par Noctra restent isolées.
+  var TRUSTED_EMBED_HOSTS = ['livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119'];
+  var DEFAULT_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
+  function frameConfig(channel, option, url) {
+    var provider = option.provider || channel.provider || '';
+    var referrer = option.referrer || (channel.liveWatchDocsEmbed ? 'no-referrer' : 'strict-origin-when-cross-origin');
+    var target = null;
+    try { target = new URL(url, location.href); } catch (error) { return { sandbox: DEFAULT_SANDBOX, referrer: referrer }; }
+    var local = target.origin === location.origin;
+    if (['BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].indexOf(provider) >= 0) {
+      if (!local && /^https?:$/.test(target.protocol)) return { sandbox: null, referrer: referrer };
+      if (local) return { sandbox: DEFAULT_SANDBOX, referrer: referrer };
+    }
+    if (channel.noSandbox || option.noSandbox || provider === 'Alternative') return { sandbox: null, referrer: referrer };
+    if (local && /\/api\/tv\/(?:embed\/|oha\/embed\/|livewatch\/(?:embed\/|vip\/[^/]+\/embed(?:$|\/)))/.test(target.pathname)) {
+      return { sandbox: 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation', referrer: referrer };
+    }
+    var trusted = TRUSTED_EMBED_HOSTS.indexOf(target.hostname.toLowerCase()) >= 0 || ['LiveWatch', 'WiTV', 'OHA', 'Streamed', 'Volkamax'].indexOf(provider) >= 0;
+    return { sandbox: trusted ? null : DEFAULT_SANDBOX, referrer: referrer };
+  }
   function openEmbed(state, option, label) {
-    if (native('webPlayer', { url: absolute(option.url), title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage) })) {
+    var url = absolute(option.url);
+    var frame = frameConfig(state.channel, option, url);
+    if (native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer })) {
       webPlayback = { state: state, option: option };
       return;
     }
@@ -1978,6 +2058,8 @@
     webPlayback = null;
     if (!entry || playback !== entry.state) return;
     var state = entry.state;
+    // Journal du lecteur affiché avec l'erreur : la cause exacte, visible à l'écran.
+    var log = result.log ? '\nJournal du lecteur :\n' + result.log : '';
     if (result.media) {
       // Flux trouvé par le pont du serveur : lecture native, plus stable.
       state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl });
@@ -1985,21 +2067,23 @@
       playOption();
       return;
     }
-    if (result.crashed) { failOption(state, 'Le lecteur web s’est arrêté. Essayez un autre serveur.'); return; }
-    if (!result.ok) { failOption(state, result.error || 'Ce lecteur web ne répond pas.'); return; }
+    if (result.crashed) { failOption(state, 'Le lecteur web s’est arrêté' + (result.error ? ' : ' + result.error : '.') + log); return; }
+    if (!result.ok) { failOption(state, (result.error || 'Ce lecteur web ne répond pas.') + log); return; }
     if (result.playing) succeeded(state);
     var quick = !result.playing && quickExit(state);
     playback = null;
     // Erreur constatée par le lecteur (réponse 403, serveur injoignable…) : affichée avec les autres serveurs.
-    if (!result.playing && result.error) { state.failed[state.index] = true; showPicker(state, result.error, 0); return; }
-    if (quick) showPicker(state, '', 0);
+    if (!result.playing && result.error) { state.failed[state.index] = true; showPicker(state, result.error + log, 0); return; }
+    if (quick) showPicker(state, log ? log.slice(1) : '', 0);
   }
   function openEmbedFrame(state, option, label) {
     var url = absolute(option.url);
     var external = url.indexOf(location.origin + '/') !== 0;
     var hint = h('div', { class: 'hint' }, h('b', { text: state.channel.name }), ' · ' + label,
       h('div', { class: 'keys', text: '◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · Retour quitter' }));
-    var frame = h('iframe', { src: url, allow: 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *', allowfullscreen: true, scrolling: option.compatPage ? 'auto' : 'no' });
+    var config = frameConfig(state.channel, option, url);
+    var frame = h('iframe', { referrerpolicy: config.referrer, sandbox: config.sandbox, allow: 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *', allowfullscreen: true, scrolling: option.compatPage ? 'auto' : 'no' });
+    frame.src = url;
     var node = h('div', { class: 'embed' }, frame, hint);
     var handedOff = false;
     function onState(event) {
@@ -2146,7 +2230,7 @@
     toast('Préparation du multiview…');
     var picked = multi.items.slice();
     Promise.all(picked.map(function (item) {
-      return channelOptions(item.channel).then(function (options) { return multiviewOptions(options, item.channel); }, function () { return []; });
+      return channelOptions(item.channel, item.source).then(function (options) { return multiviewOptions(options, item.channel); }, function () { return []; });
     })).then(function (lists) {
       var items = [];
       var skipped = [];

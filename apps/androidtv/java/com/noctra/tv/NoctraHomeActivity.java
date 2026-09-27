@@ -397,6 +397,9 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_TITLE, message.optString("title"));
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_SUBTITLE, message.optString("subtitle"));
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_COMPAT, message.optBoolean("compat", false));
+            // Même cadre que sur PC : bac à sable et référent propres au fournisseur.
+            if (message.has("sandbox") && !message.isNull("sandbox")) intent.putExtra(NoctraWebPlayerActivity.EXTRA_SANDBOX, message.optString("sandbox"));
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_REFERRER, message.optString("referrer", "strict-origin-when-cross-origin"));
             // Le jeton ne sert qu'aux lecteurs préparés par le serveur Noctra.
             if (sameOrigin(Uri.parse(url), server)) intent.putExtra(NoctraWebPlayerActivity.EXTRA_TOKEN, session.accessToken);
             startActivityForResult(intent, WEBPLAYER_REQUEST);
@@ -580,6 +583,8 @@ public class NoctraHomeActivity extends Activity {
                 message.put("playing", data != null && data.getBooleanExtra(NoctraWebPlayerActivity.EXTRA_PLAYING, false));
                 message.put("media", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_MEDIA));
                 message.put("error", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_ERROR));
+                // Fin du journal du lecteur web (y compris après un arrêt brutal de son processus).
+                message.put("log", NoctraWebLog.tail(this, 4));
                 send(message);
             } catch (Exception ignored) {
             }
