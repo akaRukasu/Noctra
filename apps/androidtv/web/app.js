@@ -571,9 +571,15 @@
   }
 
   // ── Éléments d'interface ───────────────────────────────────────────
+  // src : une adresse, ou une liste d'adresses essayées dans l'ordre (logos).
   function image(src, alt) {
-    var img = h('img', { src: src, alt: alt || '', loading: 'lazy', decoding: 'async' });
-    img.addEventListener('error', function () { img.style.visibility = 'hidden'; });
+    var list = Array.isArray(src) ? src.filter(Boolean) : [src];
+    var at = 0;
+    var img = h('img', { src: list[0], alt: alt || '', loading: 'lazy', decoding: 'async' });
+    img.addEventListener('error', function () {
+      if (++at < list.length) { img.src = list[at]; return; }
+      img.style.visibility = 'hidden';
+    });
     return img;
   }
   function card(options) {
@@ -1711,6 +1717,7 @@
     try { var list = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(list) ? list.filter(function (item) { return item && item.sourceId && item.name; }) : []; } catch (error) { return []; }
   }
   function saveChannels(key, list) {
+    delete storedIndex[key];
     try { localStorage.setItem(key, JSON.stringify(list.slice(0, key === RECENTS_KEY ? 16 : 300))); } catch (error) { /* stockage indisponible */ }
   }
   function channelRecord(channel, source, ctx) {
@@ -1720,9 +1727,29 @@
       iptvOrgId: channel.iptvOrgId || '', epgId: channel.epgId || '', at: Date.now()
     };
   }
+  // Favoris et chaînes récentes mémorisés (clés et noms rapprochés) : relus
+  // une seule fois tant qu'ils ne changent pas (listes de milliers de chaînes).
+  var storedIndex = {};
+  function storedMatch(listKey, channel, source) {
+    var index = storedIndex[listKey];
+    if (!index) {
+      index = { keys: {}, names: {} };
+      storedChannels(listKey).forEach(function (item) { index.keys[item.key] = 1; index.names[unifiedName(item.name)] = 1; });
+      storedIndex[listKey] = index;
+    }
+    if (index.keys[channelKey(channel, source)]) return true;
+    // Chaîne réunie : favorite depuis n'importe quelle source.
+    if (channel._entries) {
+      if (index.names[unifiedName(channel.name)]) return true;
+      return channel._entries.some(function (entry) { return index.keys[channelKey(entry.channel, entry.source)] || index.names[unifiedName(entry.channel.name)]; });
+    }
+    return false;
+  }
   function isFavorite(channel, source) {
-    var key = channelKey(channel, source);
-    return storedChannels(FAVORITES_KEY).some(function (item) { return item.key === key; });
+    return storedMatch(FAVORITES_KEY, channel, source);
+  }
+  function isRecent(channel, source) {
+    return storedMatch(RECENTS_KEY, channel, source);
   }
   function toggleFavorite(channel, source, ctx) {
     var list = storedChannels(FAVORITES_KEY);
@@ -1801,13 +1828,38 @@
   function logoIndexReady(ms) {
     return Promise.race([loadLogoIndex(), new Promise(function (resolve) { setTimeout(function () { resolve(logoIndex); }, ms || 2500); })]);
   }
-  // Logo de la chaîne, ou logo de secours pour une chaîne française sans logo.
+  // Noms de fichiers de la collection tv-logos : « canal-plus-sport-360-fr.png ».
+  var LOGO_SLUG_FIXES = { cnews: 'c-news', cstar: 'c-star', bfm: 'bfm-tv', bfmtv: 'bfm-tv', 'france-info': 'franceinfo', 'lequipe-21': 'lequipe',
+    'lequipe-tv': 'lequipe', eurosport: 'eurosport-1', 'tv5-monde': 'tv5monde', 'la-chaine-lequipe': 'lequipe', 'd8': 'c8', 'd17': 'c-star',
+    'nt1': 'tfx', 'hd1': 'tf1-series-films', 'numero-23': 'rmc-story', 'cine-plus': 'cine-plus-premier', 'bein-sport': 'bein-sports' };
+  function logoSlugs(name) {
+    var slug = normalize(cleanChannelName(name).replace(/\+/g, ' plus ').replace(/&/g, ' and ').replace(/['’]/g, ''))
+      .replace(/\b(?:hd|fhd|uhd|sd|4k|tv hd)\b/g, ' ').replace(/\s+(?:france|fr|fra)$/, '').trim().replace(/\s+/g, '-');
+    if (!slug) return [];
+    slug = slug.replace(/^c-plus-/, 'canal-plus-').replace(/^bein-sport-/, 'bein-sports-').replace(/-sport-(\d)/, '-sport-$1');
+    var fixed = LOGO_SLUG_FIXES[slug] || slug;
+    var list = [];
+    // beIN Sports 1/2/3 : fichiers « -french ».
+    if (/^bein-sports-\d$/.test(fixed)) list.push(fixed + '-french');
+    list.push(fixed);
+    if (fixed.indexOf('-') >= 0) list.push(fixed.replace(/-/g, ''));
+    return list.filter(function (item, index) { return list.indexOf(item) === index; }).map(function (item) { return LOGO_BASE + item + '-fr.png'; });
+  }
+  // Logo de la chaîne (celui de la source d'abord), puis logos de secours
+  // pour une chaîne française : essayés dans l'ordre jusqu'à ce qu'un s'affiche.
   function channelLogo(channel) {
-    if (channel.logo) return absolute(channel.logo);
-    if (!logoIndex || !channel.name) return '';
+    var list = [];
+    if (channel.logo) list.push(absolute(channel.logo));
+    if (channel._entries) channel._entries.forEach(function (entry) { if (entry.channel.logo) list.push(absolute(entry.channel.logo)); });
     var country = channel._entries ? channel.country : channelCountry(channel);
-    if (country && country !== 'fr') return '';
-    return logoIndex[unifiedName(channel.iptvOrgName || channel.name)] || logoIndex[unifiedName(channel.name)] || '';
+    if (channel.name && (!country || country === 'fr')) {
+      var known = logoIndex && (logoIndex[unifiedName(channel.iptvOrgName || channel.name)] || logoIndex[unifiedName(channel.name)]);
+      if (known) list.push(known);
+      logoSlugs(channel.iptvOrgName || channel.name).forEach(function (url) { list.push(url); });
+      if (channel.iptvOrgName && channel.iptvOrgName !== channel.name) logoSlugs(channel.name).forEach(function (url) { list.push(url); });
+    }
+    list = list.filter(function (item, index) { return list.indexOf(item) === index; }).slice(0, 6);
+    return list.length ? list : '';
   }
 
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
@@ -2243,16 +2295,7 @@
       });
     }).catch(function (error) { toast(error.message || 'Chaîne indisponible.', true); });
   }
-  function storedChannelCard(entry) {
-    var node = card({
-      kind: 'channel', title: entry.name, sub: entry.sourceName + (entry.group ? ' · ' + entry.group : ''),
-      image: channelLogo(entry),
-      onSelect: function () { openStoredChannel(entry); }
-    });
-    // Programme en cours, par le guide du serveur (identifiant ou nom).
-    loadEpg(entry).then(function () { if (node.parentNode) updateCardEpg(node, entry); });
-    return node;
-  }
+
   var sourceSectionInfo = {
     channels: { icon: 'antenna', text: 'Chaînes françaises et internationales' },
     sports: { icon: 'trophy', text: 'Matchs et événements en direct' },
@@ -2286,60 +2329,48 @@
     });
   }
 
+  // « TV en direct » s'ouvre directement sur les chaînes (toutes sources
+  // réunies, françaises par défaut) ; « Sources » permet d'en choisir une.
   views.live = function (params, alive) {
     favoriteMode = false;
     loadLogoIndex();
-    // Dernière chaîne regardée : relancée d'un appui, comme la touche « retour chaîne » d'une box.
-    var last = storedChannels(RECENTS_KEY)[0];
-    var resume = last ? h('span', { class: 'head-actions' }, h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } },
-      icon('play'), 'Reprendre ' + last.name)) : null;
-    main.appendChild(head('TV en direct', 'Favoris et chaînes récentes en un clic, puis les sources par univers. Dans une chaîne : ▲ ▼ ou les chiffres pour zapper, ◀ la liste, ▶ les serveurs.', resume));
-    // Accès rapide : favoris puis chaînes récemment regardées.
-    var favorites = storedChannels(FAVORITES_KEY);
-    var recents = storedChannels(RECENTS_KEY).filter(function (item) {
-      return !favorites.some(function (favorite) { return favorite.key === item.key; });
-    });
-    if (favorites.length) add(main, row('Favoris', favorites.map(storedChannelCard), favorites.length + ' chaîne' + (favorites.length > 1 ? 's' : '')));
-    if (recents.length) add(main, row('Récemment regardées', recents.slice(0, 12).map(storedChannelCard)));
-    if (!favorites.length) main.appendChild(h('p', { class: 'live-hint', text: '☆ Astuce : dans la fenêtre d’une chaîne, « Ajouter aux favoris » la place ici pour y revenir en un clic.' }));
+    var merged = {};
+    Object.keys(params || {}).forEach(function (key) { merged[key] = params[key]; });
+    merged.section = 'live';
+    merged.source = ALL_SOURCE;
+    merged.home = true;
+    return views.liveSource(merged, alive);
+  };
+  // Fenêtre « Sources » : une source précise, par univers.
+  function sourcesSheet() {
+    var box = h('div', { class: 'sources-sheet scroll' }, h('h2', null, 'Sources', h('small', { text: 'Choisissez une source pour voir ses chaînes' })));
     var status = loading();
-    main.appendChild(status);
-    renderMultiBar();
-    return sourcesList().then(function (sources) {
-      if (!alive()) return;
+    box.appendChild(status);
+    openLayer(h('div', { class: 'modal' }, box));
+    sourcesList().then(function (sources) {
       status.remove();
       var groups = {};
-      sources.forEach(function (source) {
-        var key = source.section || 'channels';
-        (groups[key] = groups[key] || []).push(source);
-      });
-      // Toutes les chaînes réunies : en tête des sources.
-      // Catalogue réuni chargé en arrière-plan : chaque chaîne profite des
-      // serveurs des autres sources, même ouverte depuis une seule source.
-      if (sources.length > 1 && !unifiedCache) setTimeout(function () { loadUnified().catch(function () { /* facultatif */ }); }, 2500);
-      if (sources.length > 1) {
-        main.appendChild(h('section', { class: 'row' },
-          h('h2', null, 'Toutes les chaînes', h('small', { text: sources.length + ' sources réunies · chaînes françaises par défaut · la source la plus stable d’abord' })),
-          h('div', { class: 'grid tiles' }, sourceTile(ALL_SOURCE, 'all'))));
-      }
-      var order = sourceSections.map(function (s) { return s.id; });
+      sources.forEach(function (source) { var key = source.section || 'channels'; (groups[key] = groups[key] || []).push(source); });
+      var order = sourceSections.map(function (section) { return section.id; });
       Object.keys(groups).forEach(function (key) { if (order.indexOf(key) < 0) order.push(key); });
       order.forEach(function (key) {
         if (!groups[key]) return;
-        var label = (sourceSections.filter(function (s) { return s.id === key; })[0] || { label: key }).label;
+        var label = (sourceSections.filter(function (section) { return section.id === key; })[0] || { label: key }).label;
         var info = sourceSectionInfo[key];
         var grid = h('div', { class: 'grid tiles' });
-        groups[key].forEach(function (source) { grid.appendChild(sourceTile(source, key)); });
-        main.appendChild(h('section', { class: 'row' },
-          h('h2', null, label, h('small', { text: groups[key].length + ' source' + (groups[key].length > 1 ? 's' : '') + (info && info.text ? ' · ' + info.text : '') })),
-          grid));
+        groups[key].forEach(function (source) {
+          var tile = sourceTile(source, key);
+          tile.addEventListener('click', function () { closeLayer(true); }, true);
+          grid.appendChild(tile);
+        });
+        box.appendChild(h('section', { class: 'sources-group' },
+          h('h3', null, label, h('small', { text: groups[key].length + ' source' + (groups[key].length > 1 ? 's' : '') + (info && info.text ? ' · ' + info.text : '') })), grid));
       });
-      if (!sources.length) main.appendChild(h('div', { class: 'empty', text: 'Aucune source TV configurée sur le serveur Noctra.' }));
-    }, function (error) {
-      if (!alive()) return;
-      status.replaceWith(failure(error, function () { forget('tv-sources'); go('live', {}, true); }));
-    });
-  };
+      if (!sources.length) box.appendChild(h('div', { class: 'empty', text: 'Aucune source TV configurée sur le serveur Noctra.' }));
+      var first = box.querySelector('.f');
+      if (first) focus(first);
+    }, function (error) { status.replaceWith(failure(error)); });
+  }
 
   views.liveSource = function (params, alive) {
     var source = params.source;
@@ -2366,7 +2397,19 @@
       if (favoriteMode) toast('OK ajoute ou retire une chaîne des favoris. Rappuyez sur « Favoris » pour terminer.');
     } }, icon('star'), favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Modifier les favoris');
     var refill = null;
-    var heading = head(params.title || source.name, params.title ? source.name : (source.description || ''), h('span', { class: 'head-actions' }, guideButton, favButton, multiButton));
+    var actions = h('span', { class: 'head-actions' });
+    if (params.home) {
+      // Dernière chaîne regardée : relancée d'un appui (« retour chaîne »).
+      var last = storedChannels(RECENTS_KEY)[0];
+      if (last) actions.appendChild(h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } }, icon('play'), 'Reprendre ' + last.name));
+      actions.appendChild(h('button', { class: 'btn f', onclick: sourcesSheet }, icon('antenna'), 'Sources'));
+    }
+    actions.appendChild(guideButton);
+    actions.appendChild(favButton);
+    actions.appendChild(multiButton);
+    var heading = params.home
+      ? head('TV en direct', 'Toutes les chaînes de vos sources réunies · la source la plus stable d’abord · ▲ ▼ ou les chiffres pour zapper, ◀ la liste, ▶ les serveurs', actions)
+      : head(params.title || source.name, params.title ? source.name : (source.description || ''), actions);
     main.appendChild(heading);
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
@@ -2392,7 +2435,7 @@
         countryRow = h('div', { class: 'chips country-chips' });
         var countryChip = function (value, label, count) {
           return chip(label + ' · ' + count, country === value, function () {
-            current.params = { section: 'live', source: source, country: value };
+            current.params = { section: 'live', source: source, country: value, home: params.home };
             show(false);
           });
         };
@@ -2423,22 +2466,24 @@
       var names = allNames.slice(0, 16);
       var FAVORITES_GROUP = '★';
       var favoriteCount = channels.filter(function (channel) { return isFavorite(channel, source); }).length;
+      var RECENTS_GROUP = '⏱';
+      var recentCount = source.id === ALL_SOURCE.id ? channels.filter(function (channel) { return isRecent(channel, source); }).length : 0;
       var field = searchField('Rechercher une chaîne…', query, function (value) {
         if (value === query) return;
-        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value, country: params.country };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value, country: params.country, home: params.home };
         query = value;
         fill();
       });
       if (countryRow) main.appendChild(countryRow);
       if (source.id === ALL_SOURCE.id && data.coverage) {
-        var names = Object.keys(data.coverage).sort(function (a, b) { return data.coverage[b] - data.coverage[a]; });
-        main.appendChild(h('p', { class: 'live-hint coverage', text: 'Sources réunies : ' + names.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
+        var coverageNames = Object.keys(data.coverage).sort(function (a, b) { return data.coverage[b] - data.coverage[a]; });
+        main.appendChild(h('p', { class: 'live-hint coverage', text: 'Sources réunies : ' + coverageNames.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
           + (data.pending && data.pending.length ? ' — en attente : ' + data.pending.join(', ') : '')
           + (data.failedSources && data.failedSources.length ? ' — indisponibles : ' + data.failedSources.join(', ') : '') }));
       }
       main.appendChild(field.node);
       // Filtres : toutes, favoris de la source, catégories (avec leur nombre de chaînes).
-      if (names.length > 1 || favoriteCount) {
+      if (names.length > 1 || favoriteCount || recentCount) {
         var chips = h('div', { class: 'chips' });
         var groupChip = function (value, label) {
           var node = chip(label, group === value, function () { pickGroup(value); });
@@ -2447,8 +2492,9 @@
         };
         chips.appendChild(groupChip('', 'Toutes · ' + channels.length));
         if (favoriteCount) chips.appendChild(groupChip(FAVORITES_GROUP, '★ Favoris · ' + favoriteCount));
+        if (recentCount) chips.appendChild(groupChip(RECENTS_GROUP, 'Récentes · ' + recentCount));
         if (names.length > 1) names.forEach(function (name) { chips.appendChild(groupChip(name, name + ' · ' + counts[name])); });
-        if (group && group !== FAVORITES_GROUP && names.indexOf(group) < 0) chips.appendChild(groupChip(group, group + ' · ' + (counts[group] || 0)));
+        if (group && group !== FAVORITES_GROUP && group !== RECENTS_GROUP && names.indexOf(group) < 0) chips.appendChild(groupChip(group, group + ' · ' + (counts[group] || 0)));
         if (allNames.length > names.length) {
           chips.appendChild(chip('Toutes les catégories (' + allNames.length + ')…', false, function () {
             var list = h('div', { class: 'list scroll' }, h('h2', { text: 'Catégories' }));
@@ -2469,7 +2515,7 @@
       refill = function () { grid.className = guideMode ? 'guide-list' : 'grid channels'; fill(); };
       function pickGroup(name) {
         group = name;
-        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query, country: params.country };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query, country: params.country, home: params.home };
         Array.prototype.forEach.call(main.querySelectorAll('.chips .chip'), function (node) {
           node.classList.toggle('on', node.getAttribute('data-group') === name);
         });
@@ -2480,7 +2526,7 @@
         resetEpgQueue();
         var needle = normalize(query);
         var list = channels.filter(function (channel) {
-          var inGroup = !group || (group === FAVORITES_GROUP ? isFavorite(channel, source) : channel.group === group);
+          var inGroup = !group || (group === FAVORITES_GROUP ? isFavorite(channel, source) : group === RECENTS_GROUP ? isRecent(channel, source) : channel.group === group);
           return inGroup && (!needle || normalize(channel.name).indexOf(needle) >= 0);
         });
         if (!list.length) { grid.appendChild(h('div', { class: 'empty', text: channels.length ? 'Aucune chaîne ne correspond.' : 'Aucune chaîne disponible.' })); return; }
@@ -2568,16 +2614,26 @@
       value = String(value || '').replace(/\s+/g, ' ').trim();
       if (value && value.length > 1 && keys.indexOf(value) < 0) keys.push(value);
     }
+    function clean(name) {
+      return cleanChannelName(name)
+        .replace(/\b(?:live|direct)\b/gi, ' ')
+        .replace(/\s+/g, ' ').trim();
+    }
+    // Chaîne réunie : identifiants et noms de toutes ses sources.
+    var entries = channel._entries ? channel._entries.map(function (entry) { return entry.channel; }) : [channel];
     push(channel.iptvOrgId);
-    push(channel.epgId);
-    var name = String(channel.name || '')
-      .replace(/^\s*(?:[A-Z]{2,3}|VIP|4K)\s*[:|\-–]\s*/i, '')
-      .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
-      .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|live|direct)\b/gi, ' ')
-      .replace(/\s+/g, ' ').trim();
-    push(name);
-    push(name.replace(/\s+(?:France|FR|FRA)$/i, ''));
-    return keys.slice(0, 4);
+    entries.forEach(function (item) { push(item.iptvOrgId); push(item.epgId); });
+    var names = [];
+    [channel.iptvOrgName, channel.name].concat(entries.map(function (item) { return item.iptvOrgName; }), entries.map(function (item) { return item.name; }))
+      .forEach(function (name) { var value = clean(name || ''); if (value && names.indexOf(value) < 0) names.push(value); });
+    names.forEach(function (name) {
+      push(name);
+      push(name.replace(/\s+(?:France|FR|FRA)$/i, ''));
+      // Écritures du guide XMLTV : « beIN SPORTS 1 », « Canal+ Sport ».
+      if (/\bsport\b/i.test(name)) push(name.replace(/\bsport\b/i, 'sports'));
+      if (/^C\+\s/i.test(name)) push(name.replace(/^C\+/i, 'Canal+'));
+    });
+    return keys.slice(0, 6);
   }
   function loadEpg(channel) {
     if (!needsEpg(channel)) return Promise.resolve(channel);

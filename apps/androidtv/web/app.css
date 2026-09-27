@@ -617,3 +617,9 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .guide-num { display: inline-block; min-width: 2.1rem; margin-right: .45rem; padding: .05rem .35rem; border-radius: .35rem; background: rgba(255, 255, 255, .08); color: var(--muted); font-style: normal; font-size: .8rem; font-weight: 800; text-align: center; }
 .tile.source-tile.all-tile { grid-column: span 2; background: linear-gradient(120deg, rgba(112, 217, 194, .16), var(--surface) 70%); border-color: rgba(112, 217, 194, .35); }
 .tile.source-tile.all-tile strong { font-size: 1.25rem; }
+.sources-sheet { width: 64rem; max-width: 92vw; max-height: 86vh; overflow-y: auto; padding: 1.6rem; border-radius: 1.4rem; background: var(--surface); border: 1px solid var(--line); }
+.sources-sheet h2 { font-size: 1.5rem; margin-bottom: .8rem; }
+.sources-sheet h2 small, .sources-group h3 small { display: block; color: var(--muted); font-size: .85rem; font-weight: 600; margin-top: .2rem; }
+.sources-group { margin-top: 1.1rem; }
+.sources-group h3 { font-size: 1.1rem; margin-bottom: .6rem; }
+.sources-sheet .grid.tiles { padding: 0; }

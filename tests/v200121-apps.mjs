@@ -348,6 +348,10 @@ assert.match(tvApp, /var WEB_MODE_KEY = 'noctra-tv-webmode-v1';/);
 // Identité iptv-org (nom officiel, pays), serveurs des autres sources, lancement immédiat.
 assert.match(tvApp, /if \(!idCountry \|\| idCountry === \(country \|\| 'fr'\)\) union\(idKey, nameKey\);/);
 assert.match(tvApp, /function unifiedTwin\(channel\) \{/);
+assert.match(tvApp, /merged\.source = ALL_SOURCE;/, 'TV en direct s’ouvre sur les chaînes réunies');
+assert.match(tvApp, /function sourcesSheet\(\) \{/);
+assert.match(tvApp, /function logoSlugs\(name\) \{/);
+assert.match(tvApp, /var coverageNames = /, 'Catégories non écrasées par la ligne des sources');
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
 assert.match(tvApp, /var inPage = root === document && !isMenu\(from\) && main\.contains\(from\);/, '▲ reste dans la page avant la barre d’onglets');
