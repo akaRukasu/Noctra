@@ -145,6 +145,10 @@ public class NoctraWebPlayerActivity extends Activity {
     private String noctraHost;
     private String engineVersion = "";
     private int probes;
+    /** Moteur web ancien : scripts et pages adaptés (NoctraJsCompat). */
+    private boolean compat;
+    private int adapted;
+    private static final int COMPAT_BELOW = 100;
     private static final int MAX_PROBES = 80;
     private final Runnable closePopups = new Runnable() {
         @Override
@@ -178,6 +182,9 @@ public class NoctraWebPlayerActivity extends Activity {
         NoctraWebLog.start(this, intent.getStringExtra(EXTRA_TITLE) + " · " + url);
         engineVersion = NoctraWebEngine.version(this);
         NoctraWebLog.add(this, "Moteur web : " + NoctraWebEngine.describe(this));
+        int major = NoctraWebEngine.major(engineVersion);
+        compat = major > 0 && major < COMPAT_BELOW;
+        if (compat) NoctraWebLog.add(this, "Mode compatibilité : scripts récents adaptés à Chrome " + major);
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
@@ -297,6 +304,8 @@ public class NoctraWebPlayerActivity extends Activity {
                 }
                 WebResourceResponse local = asset(request.getUrl().toString());
                 if (local != null) return local;
+                WebResourceResponse adaptedResponse = compat ? compatFetch(request) : null;
+                if (adaptedResponse != null) return adaptedResponse;
                 WebResourceResponse probed = probePlaylist(request);
                 if (probed != null) return probed;
                 return viaSecureDns(request);
@@ -465,7 +474,35 @@ public class NoctraWebPlayerActivity extends Activity {
                 }
             });
         }
-        return fetch(request, NoctraDns.client(), false);
+        return fetch(request, NoctraDns.client(), MODE_PROXY);
+    }
+
+    /**
+     * Moteur web ancien : pages et scripts des lecteurs téléchargés par l'appli
+     * et adaptés (NoctraJsCompat) avant d'arriver au moteur web. Les images,
+     * styles, polices et médias passent directement.
+     */
+    private WebResourceResponse compatFetch(WebResourceRequest request) {
+        Uri url = request.getUrl();
+        String scheme = url.getScheme();
+        String host = url.getHost();
+        if (host == null || !("https".equals(scheme) || "http".equals(scheme)) || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+        if (host.equalsIgnoreCase(noctraHost) || url.toString().startsWith(appBase) || isAd(url)) return null;
+        // Cadre principal : seulement la page du fournisseur ouverte en entier.
+        if (request.isForMainFrame() && !(direct && sameHost(url, Uri.parse(source)))) return null;
+        Map<String, String> sent = request.getRequestHeaders();
+        String accept = "";
+        if (sent != null) {
+            for (Map.Entry<String, String> entry : sent.entrySet()) {
+                if (entry.getKey() == null || entry.getValue() == null) continue;
+                if (entry.getKey().equalsIgnoreCase("Accept")) accept = entry.getValue().toLowerCase();
+                if (entry.getKey().equalsIgnoreCase("Range")) return null;
+            }
+        }
+        if (accept.startsWith("image/") || accept.startsWith("text/css") || accept.startsWith("video/") || accept.startsWith("audio/")) return null;
+        String path = url.getPath() == null ? "" : url.getPath().toLowerCase();
+        if (path.matches(".*\\.(?:png|jpe?g|gif|webp|svg|ico|bmp|avif|woff2?|ttf|otf|eot|css|ts|m4s|aac|mp4|m4a|webm|mp3|wasm|map|vtt|srt)$")) return null;
+        return fetch(request, NoctraDns.blocked(host) ? NoctraDns.client() : NoctraDns.plainClient(), MODE_COMPAT);
     }
 
     /**
@@ -496,11 +533,16 @@ public class NoctraWebPlayerActivity extends Activity {
         if (path.matches(".*\\.(?:js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|ts|m4s|aac|mp4|m4a|webm|mp3|wasm|map)$")) return null;
         probes++;
         boolean blocked = NoctraDns.blocked(host);
-        return fetch(request, blocked ? NoctraDns.client() : NoctraDns.plainClient(), true);
+        return fetch(request, blocked ? NoctraDns.client() : NoctraDns.plainClient(), MODE_PROBE);
     }
 
     /** Requête faite par OkHttp (cookies de la WebView conservés) ; probe : liste HLS reconnue à son contenu. */
-    private WebResourceResponse fetch(WebResourceRequest request, okhttp3.OkHttpClient client, boolean probe) {
+    private static final int MODE_PROXY = 0;
+    private static final int MODE_PROBE = 1;
+    private static final int MODE_COMPAT = 2;
+
+    private WebResourceResponse fetch(WebResourceRequest request, okhttp3.OkHttpClient client, int mode) {
+        boolean probe = mode != MODE_PROXY && sniff && !handedOff;
         Uri url = request.getUrl();
         String host = url.getHost();
         okhttp3.Response response = null;
@@ -542,6 +584,34 @@ public class NoctraWebPlayerActivity extends Activity {
             String reason = response.message();
             if (reason == null || reason.trim().isEmpty()) reason = code < 400 ? "OK" : "Error";
             InputStream stream = body == null ? new ByteArrayInputStream(new byte[0]) : body.byteStream();
+            if (mode == MODE_COMPAT && code < 400) {
+                String lowerMime = mime.toLowerCase();
+                String path = url.getPath() == null ? "" : url.getPath().toLowerCase();
+                boolean script = lowerMime.contains("javascript") || lowerMime.contains("ecmascript")
+                    || ((path.endsWith(".js") || path.endsWith(".mjs")) && (lowerMime.startsWith("text/plain") || lowerMime.equals("application/octet-stream")));
+                boolean page = lowerMime.equals("text/html") || lowerMime.equals("application/xhtml+xml");
+                if (script || page) {
+                    byte[] data = readAll(stream, 16 * 1024 * 1024);
+                    if (data != null) {
+                        String text = new String(data, charset == null ? "UTF-8" : charset);
+                        String result = script ? NoctraJsCompat.script(text) : NoctraJsCompat.html(text);
+                        // Page redirigée : adresses relatives résolues depuis sa vraie adresse.
+                        String finalUrl = null;
+                        try { finalUrl = response.request().url().toString(); } catch (Throwable ignored) { }
+                        if (page && finalUrl != null && !finalUrl.equals(address)) result = NoctraJsCompat.base(result, finalUrl);
+                        if (page) {
+                            // Politique de sécurité des scripts intégrés : leur empreinte change.
+                            headers.remove("Content-Security-Policy");
+                            headers.remove("content-security-policy");
+                            headers.remove("Content-Security-Policy-Report-Only");
+                            headers.remove("content-security-policy-report-only");
+                        }
+                        if (!result.equals(text) && adapted++ < 6) NoctraWebLog.add(this, "Adapté au moteur ancien : " + host + (path.length() > 40 ? path.substring(path.length() - 40) : path));
+                        return new WebResourceResponse(mime, "UTF-8", code, reason, headers, new ByteArrayInputStream(result.getBytes("UTF-8")));
+                    }
+                    return null;
+                }
+            }
             if (probe && code < 400) {
                 java.io.BufferedInputStream buffered = new java.io.BufferedInputStream(stream, 8192);
                 buffered.mark(64);
@@ -566,9 +636,25 @@ public class NoctraWebPlayerActivity extends Activity {
                 try { response.close(); } catch (Throwable ignored) { }
             }
             // Échec : la WebView refait la requête elle-même.
-            if (!probe) NoctraWebLog.add(this, "DNS sécurisé en échec : " + host + " (" + error.getClass().getSimpleName() + ")");
+            if (mode == MODE_PROXY) NoctraWebLog.add(this, "DNS sécurisé en échec : " + host + " (" + error.getClass().getSimpleName() + ")");
             return null;
         }
+    }
+
+    /** Contenu entier (au plus max octets), ou null s'il est trop gros. */
+    private static byte[] readAll(InputStream input, int max) throws IOException {
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        byte[] chunk = new byte[16384];
+        int read;
+        while ((read = input.read(chunk)) != -1) {
+            buffer.write(chunk, 0, read);
+            if (buffer.size() > max) {
+                input.close();
+                return null;
+            }
+        }
+        input.close();
+        return buffer.toByteArray();
     }
 
     /** Liste de lecture HLS demandée par la page ou un de ses cadres (hors publicités et Noctra). */

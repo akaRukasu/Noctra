@@ -10,6 +10,7 @@ public class Response implements Closeable {
     public final String header(String name) { throw new UnsupportedOperationException(); }
     public final List<String> headers(String name) { throw new UnsupportedOperationException(); }
     public final Headers headers() { throw new UnsupportedOperationException(); }
+    public final Request request() { throw new UnsupportedOperationException(); }
     public final ResponseBody body() { throw new UnsupportedOperationException(); }
     public void close() { throw new UnsupportedOperationException(); }
 }

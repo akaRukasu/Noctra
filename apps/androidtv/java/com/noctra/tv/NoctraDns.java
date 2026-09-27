@@ -136,8 +136,17 @@ final class NoctraDns implements Dns {
     }
 
     /** Site bloqué par le DNS du fournisseur d'accès ? (résultat mémorisé 10 min) */
+    /** Grands réseaux de diffusion (plusieurs hébergeurs selon le DNS) : jamais bloqués par les FAI. */
+    private static final String[] CDN_HOSTS = { "jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com", "googleapis.com", "gstatic.com",
+        "google.com", "jquery.com", "bootstrapcdn.com", "cloudflare.com", "cloudfront.net", "akamaihd.net", "akamaized.net",
+        "fastly.net", "jwpcdn.com", "jwplayer.com", "youtube.com", "ytimg.com", "fontawesome.com", "cloudflareinsights.com" };
+
     static boolean blocked(String host) {
         if (host == null || host.isEmpty() || host.matches("[\\d.]+") || host.indexOf(':') >= 0) return false;
+        String lower = host.toLowerCase();
+        for (String cdn : CDN_HOSTS) {
+            if (lower.equals(cdn) || lower.endsWith("." + cdn)) return false;
+        }
         synchronized (verdicts) {
             Object[] entry = verdicts.get(host);
             if (entry != null && System.currentTimeMillis() - (Long) entry[0] < TTL_MS) return (Boolean) entry[1];

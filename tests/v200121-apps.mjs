@@ -328,6 +328,14 @@ assert.match(tvApp, /class: 'picker scroll'/);
 assert.match(tvApp, /raw = raw\.normalize\('NFKC'\)/);
 assert.ok(tvApp.includes("« BEIN SPORTS 1 .b »"), 'Variantes « .b », « .c » réunies');
 assert.match(tvApp, /sourceLabel \+= ' · variante '/);
+// Moteur web ancien (Chrome 83…) : scripts et pages des lecteurs adaptés par l'appli.
+const jsCompat = await read('apps/androidtv/java/com/noctra/tv/NoctraJsCompat.java');
+assert.match(jsCompat, /out\.append\("static __noctra_static"\)/);
+assert.match(jsCompat, /closers\.add\(new Closer\(depth\)\)/);
+assert.match(jsCompat, /d\(Object,'hasOwn'/);
+assert.match(webPlayerJava, /WebResourceResponse adaptedResponse = compat \? compatFetch\(request\) : null;/);
+assert.match(webPlayerJava, /NoctraJsCompat\.base\(result, finalUrl\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraDns.java'), /"jsdelivr\.net"/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
 assert.match(tvApp, /function isEvent\(channel\) \{/);
 assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');

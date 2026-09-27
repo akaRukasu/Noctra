@@ -2,6 +2,7 @@ package okhttp3;
 
 /** Signatures de compilation seulement : la vraie classe vient de l'APK Jellyfin. */
 public class Request {
+    public final HttpUrl url() { throw new UnsupportedOperationException(); }
     public static class Builder {
         public Builder() { }
         public Builder url(String url) { throw new UnsupportedOperationException(); }
