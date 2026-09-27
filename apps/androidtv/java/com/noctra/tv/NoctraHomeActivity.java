@@ -388,6 +388,16 @@ public class NoctraHomeActivity extends Activity {
                 }
             }
         } else if (action.equals("playerCommand")) {
+            if ("load".equals(message.optString("command"))) {
+                // Zapping : nouvelle chaîne dans le lecteur ouvert ; jeton
+                // seulement pour un flux du serveur Noctra.
+                String url = message.optString("url");
+                if (!url.startsWith("https://") && !url.startsWith("http://")) return;
+                message.remove("token");
+                if (sameOrigin(Uri.parse(url), server)) {
+                    try { message.put("token", session.accessToken); } catch (Exception ignored) { }
+                }
+            }
             NoctraPlayerBus.toPlayer(message);
         } else if (action.equals("webPlayer")) {
             String url = message.optString("url");
@@ -424,6 +434,10 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra(NoctraPlayerActivity.EXTRA_MIME, message.optString("mime"));
             JSONObject streamHeaders = message.optJSONObject("headers");
             if (streamHeaders != null && streamHeaders.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_HEADERS, streamHeaders.toString());
+            // Chaîne : programme en cours / suivant et zapping (▲ ▼) depuis le lecteur.
+            JSONObject epg = message.optJSONObject("epg");
+            if (epg != null) intent.putExtra(NoctraPlayerActivity.EXTRA_EPG, epg.toString());
+            if (message.has("playSessionId")) intent.putExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID, message.optString("playSessionId"));
             Uri target = Uri.parse(url);
             // Le jeton ne part que vers le serveur Noctra, jamais vers un autre hôte.
             if (sameOrigin(target, server)) intent.putExtra(NoctraPlayerActivity.EXTRA_TOKEN, session.accessToken);

@@ -488,3 +488,39 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 /* Texte du carrousel : apparaît en fondu avec son image. */
 .premiere-copy.fresh { animation: premiere-in .55s ease-out; }
 @keyframes premiere-in { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
+
+/* ── Guide des programmes ─────────────────────────────────────────── */
+.head-actions { display: flex; }
+.head-actions > * { margin-right: .7rem; }
+.guide-list { padding: .4rem 2.5rem 1rem; }
+.guide-row {
+  position: relative; display: flex; align-items: center; width: 100%; margin-bottom: .55rem; padding: .7rem 1rem;
+  border-radius: 1rem; background: var(--surface); border: 1px solid var(--line); transition: transform .15s, background-color .15s;
+}
+.guide-row:focus { outline: none; background: #1d2230; border-color: var(--text); transform: scale(1.01); }
+.guide-row.picked { border-color: var(--accent); }
+.guide-row .multi-badge {
+  position: absolute; top: .5rem; right: .6rem; z-index: 2; display: grid; place-items: center; width: 1.8rem; height: 1.8rem;
+  border-radius: 50%; background: var(--accent); color: #07110f; font-weight: 900; font-size: .95rem;
+}
+.guide-logo {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 5.2rem; height: 3.2rem; margin-right: 1rem;
+  border-radius: .6rem; background: #151823; overflow: hidden;
+}
+.guide-logo img { max-width: 80%; max-height: 80%; object-fit: contain; }
+.guide-logo b { color: var(--muted); font-size: .9rem; }
+.guide-channel, .guide-now, .guide-next { display: flex; flex-direction: column; min-width: 0; }
+.guide-channel { flex: none; width: 12rem; margin-right: 1.2rem; }
+.guide-now { flex: 1.4; margin-right: 1.4rem; }
+.guide-next { flex: 1; color: var(--muted); }
+.guide-row strong { font-size: .98rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guide-row small { color: var(--muted); font-size: .8rem; margin-bottom: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guide-now small { color: var(--accent); }
+.guide-now.missing small { color: var(--muted); }
+.guide-now.missing strong { color: var(--muted); font-weight: 500; }
+.guide-bar { display: block; height: .22rem; margin-top: .4rem; border-radius: 1rem; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.guide-bar i { display: block; height: 100%; background: var(--accent); }
+.picker-epg { margin-top: .45rem; font-size: .88rem; color: #cfd6e2; max-width: 34rem; }
+.picker-epg .now b { color: var(--accent); margin-right: .3rem; }
+.picker-epg .next { color: var(--muted); margin-top: .25rem; }
+.picker-epg .guide-bar { width: 16rem; }

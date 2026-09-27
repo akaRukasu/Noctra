@@ -245,8 +245,17 @@ assert.match(webPlayer, /settings\.setSafeBrowsingEnabled\(false\)/);
 // Flux HLS demandé par la page : transmis au lecteur natif avec les en-têtes de la page.
 assert.match(webPlayer, /if \(sniff && !handedOff && isStream\(request\.getUrl\(\)\)\) handOff\(request\);/);
 assert.match(webPlayer, /headers\.put\("Referer", entry\.getValue\(\)\)/);
-assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /intent\.hasExtra\(EXTRA_HEADERS\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /liveStream\(url, intent\.getStringExtra\(EXTRA_MIME\), intent\.getStringExtra\(EXTRA_HEADERS\)/);
 assert.match(tvApp, /failedOption\.sniffedFrom\.noSniff = true;/);
+// Guide des programmes (en cours, suivant, avancement) et zapping depuis le lecteur.
+assert.match(tvApp, /'\/api\/tv\/programme\?id=' \+ encodeURIComponent\(job\.channel\.iptvOrgId\)/);
+assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
+assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
+assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);
+const livePlayer = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(livePlayer, /KeyEvent\.KEYCODE_CHANNEL_UP/);
+assert.match(livePlayer, /action\.equals\("load"\) && !vod/);
+assert.match(livePlayer, /private void renderGuide\(\)/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
 assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);

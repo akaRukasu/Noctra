@@ -1249,6 +1249,7 @@
   }
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
+    if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
     if (!vodPlayback || !vodPlayback.sync || !sync.group) return;
     if (event.event === 'state') {
       if (event.action === 'ready') sendReady(event.positionMs, event.playing);
@@ -1694,7 +1695,14 @@
       renderMultiBar();
       if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (' + MULTI_MAX + ' au maximum).');
     } }, icon('grid'), multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview');
-    main.appendChild(head(params.title || source.name, params.title ? source.name : (source.description || ''), multiButton));
+    var guideButton = h('button', { class: 'btn f' + (guideMode ? ' primary' : ''), onclick: function () {
+      guideMode = !guideMode;
+      try { localStorage.setItem('noctra-tv-guide', guideMode ? '1' : ''); } catch (error) { /* préférence non mémorisée */ }
+      guideButton.className = 'btn f' + (guideMode ? ' primary' : '');
+      if (typeof refill === 'function') refill();
+    } }, icon('live'), 'Guide des programmes');
+    var refill = null;
+    main.appendChild(head(params.title || source.name, params.title ? source.name : (source.description || ''), h('span', { class: 'head-actions' }, guideButton, multiButton)));
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
     renderMultiBar();
@@ -1739,8 +1747,9 @@
         names.forEach(function (name) { chips.appendChild(chip(name, group === name, function () { pickGroup(name); })); });
         main.appendChild(chips);
       }
-      var grid = h('div', { class: 'grid channels' });
+      var grid = h('div', { class: guideMode ? 'guide-list' : 'grid channels' });
       main.appendChild(grid);
+      refill = function () { grid.className = guideMode ? 'guide-list' : 'grid channels'; fill(); };
       function pickGroup(name) {
         group = name;
         current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query };
@@ -1751,25 +1760,43 @@
       }
       function fill() {
         clear(grid);
+        resetEpgQueue();
         var needle = normalize(query);
         var list = channels.filter(function (channel) {
           return (!group || channel.group === group) && (!needle || normalize(channel.name).indexOf(needle) >= 0);
         });
         if (!list.length) { grid.appendChild(h('div', { class: 'empty', text: channels.length ? 'Aucune chaîne ne correspond.' : 'Aucune chaîne disponible.' })); return; }
         lazyGrid(grid, list, function (channel) {
-          var node = card({
-            kind: 'channel', title: channel.name, sub: [channel.group, channel.provider].filter(Boolean).join(' · '),
-            image: channel.logo ? absolute(channel.logo) : '',
-            badge: channel.isLive ? 'LIVE' : '',
-            onSelect: function () {
-              if (multi.on) toggleMulti(channel, source);
-              else launchChannel(channel, source);
-            }
-          });
+          function select() {
+            if (multi.on) toggleMulti(channel, source);
+            else launchChannel(channel, source, list);
+          }
+          var node;
+          if (guideMode) {
+            node = guideRow(channel, select);
+          } else {
+            var guide = epgLive(channel);
+            node = card({
+              kind: 'channel', title: channel.name,
+              sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [channel.group, channel.provider].filter(Boolean).join(' · '),
+              image: channel.logo ? absolute(channel.logo) : '',
+              badge: channel.isLive ? 'LIVE' : '',
+              progress: guide.now ? epgProgress(guide.now) : 0,
+              onSelect: select
+            });
+          }
           node.setAttribute('data-channel', channelKey(channel, source));
           markMulti(node);
+          // Guide absent du catalogue : demandé au serveur (quelques requêtes à la fois).
+          if (!channel.now && !channel.next && channel.iptvOrgId) {
+            loadEpg(channel).then(function () {
+              if (!node.parentNode) return;
+              if (node.classList.contains('guide-row')) { fillGuideRow(node, channel); markMulti(node); }
+              else updateCardEpg(node, channel);
+            });
+          }
           return node;
-        }, 72);
+        }, guideMode ? 40 : 72);
       }
       fill();
     }, function (error) {
@@ -1780,6 +1807,128 @@
   function normalize(value) {
     return String(value || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   }
+  // ── Guide des programmes (EPG) ─────────────────────────────────────
+  // Le catalogue du serveur fournit le programme en cours et le suivant
+  // (guide XMLTV) ; sinon il est demandé chaîne par chaîne (/api/tv/programme).
+  var guideMode = false;
+  try { guideMode = localStorage.getItem('noctra-tv-guide') === '1'; } catch (error) { /* mode grille */ }
+  function hhmm(ms) {
+    var date = new Date(Number(ms));
+    return isNaN(date.getTime()) ? '' : ('0' + date.getHours()).slice(-2) + ':' + ('0' + date.getMinutes()).slice(-2);
+  }
+  function epgLive(channel) {
+    var now = channel.now && channel.now.title ? channel.now : null;
+    var next = channel.next && channel.next.title ? channel.next : null;
+    var time = Date.now();
+    if (now && now.stop && now.stop <= time) { now = next && next.start <= time ? next : null; next = null; }
+    return { now: now, next: next };
+  }
+  function epgProgress(programme) {
+    if (!programme || !programme.start || !programme.stop || programme.stop <= programme.start) return 0;
+    return Math.max(0, Math.min(100, (Date.now() - programme.start) / (programme.stop - programme.start) * 100));
+  }
+  var epgPending = [];
+  var epgRunning = 0;
+  function loadEpg(channel) {
+    if (channel.now || channel.next || !channel.iptvOrgId) return Promise.resolve(channel);
+    if (!channel._epg) {
+      channel._epg = new Promise(function (resolve) { epgPending.push({ channel: channel, resolve: resolve }); });
+      pumpEpg();
+    }
+    return channel._epg;
+  }
+  function pumpEpg() {
+    while (epgRunning < 3 && epgPending.length) {
+      var job = epgPending.shift();
+      epgRunning++;
+      (function (job) {
+        memo('epg:' + job.channel.iptvOrgId, 120000, function () {
+          return api('/api/tv/programme?id=' + encodeURIComponent(job.channel.iptvOrgId), { timeout: 12000 });
+        }).then(function (data) {
+          if (data && data.now) job.channel.now = data.now;
+          if (data && data.next) job.channel.next = data.next;
+        }, function () { /* sans guide */ }).then(function () {
+          epgRunning--;
+          job.channel._epgDone = true;
+          job.resolve(job.channel);
+          pumpEpg();
+        });
+      })(job);
+    }
+  }
+  // Liste redessinée : les demandes des chaînes qui ne sont plus affichées sont abandonnées.
+  function resetEpgQueue() {
+    epgPending.splice(0).forEach(function (job) { delete job.channel._epg; job.resolve(job.channel); });
+  }
+  function updateCardEpg(node, channel) {
+    var guide = epgLive(channel);
+    if (!guide.now) return;
+    var sub = node.querySelector('.sub');
+    if (sub) sub.textContent = hhmm(guide.now.start) + ' · ' + guide.now.title;
+    var art = node.querySelector('.art');
+    var bar = node.querySelector('.progress i');
+    if (!bar && art) { bar = h('i'); art.appendChild(h('div', { class: 'progress' }, bar)); }
+    if (bar) bar.style.width = Math.max(3, epgProgress(guide.now)) + '%';
+  }
+  // Vue « Guide des programmes » : une ligne par chaîne, en cours et ensuite.
+  function guideRow(channel, onSelect) {
+    var node = h('button', { class: 'guide-row f', onclick: onSelect });
+    fillGuideRow(node, channel);
+    return node;
+  }
+  function fillGuideRow(node, channel) {
+    var guide = epgLive(channel);
+    clear(node);
+    var logo = h('span', { class: 'guide-logo' }, channel.logo ? image(absolute(channel.logo), '') : h('b', { text: String(channel.name || '?').slice(0, 3) }));
+    var now = guide.now
+      ? h('span', { class: 'guide-now' },
+        h('small', { text: 'En ce moment · ' + hhmm(guide.now.start) + (guide.now.stop ? ' – ' + hhmm(guide.now.stop) : '') }),
+        h('strong', { text: guide.now.title }),
+        h('span', { class: 'guide-bar' }, h('i', { style: 'width:' + Math.max(2, epgProgress(guide.now)) + '%' })))
+      : h('span', { class: 'guide-now missing' }, h('small', { text: channel.iptvOrgId && !channel._epgDone ? 'Guide des programmes…' : 'Programme non communiqué' }), h('strong', { text: channel.description || [channel.group, channel.provider].filter(Boolean).join(' · ') }));
+    var next = guide.next
+      ? h('span', { class: 'guide-next' }, h('small', { text: 'Ensuite · ' + hhmm(guide.next.start) }), h('strong', { text: guide.next.title }))
+      : h('span', { class: 'guide-next' });
+    node.appendChild(logo);
+    node.appendChild(h('span', { class: 'guide-channel' }, h('strong', { text: channel.name }), h('small', { text: [channel.group, channel.provider].filter(Boolean).join(' · ') })));
+    node.appendChild(now);
+    node.appendChild(next);
+  }
+  function epgPayload(state) {
+    var guide = epgLive(state.channel);
+    var list = state.list || [];
+    var at = list.indexOf(state.channel);
+    return { now: guide.now, next: guide.next, position: at >= 0 ? (at + 1) + ' / ' + list.length : '', zap: list.length > 1 };
+  }
+  function playId() { return 'live-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  // Zapping depuis le lecteur (▲ ▼) : chaîne voisine de la liste affichée,
+  // serveur choisi comme au lancement, flux chargé dans le lecteur ouvert.
+  function zap(delta) {
+    var state = playback;
+    if (!state || !state.list || state.list.length < 2) return;
+    var list = state.list;
+    var at = Math.max(0, list.indexOf(state.channel));
+    var channel = list[((at + delta) % list.length + list.length) % list.length];
+    var key = channelKey(channel, state.source);
+    var next = { channel: channel, source: state.source, key: key, options: [], index: 0, failed: {}, startedAt: 0, renewed: false, list: list, playId: playId() };
+    playback = next;
+    native('playerCommand', { command: 'zapping', title: channel.name, subtitle: [channel.group, channel.provider].filter(Boolean).join(' · '), epg: epgPayload(next), message: 'Connexion à ' + channel.name + '…' });
+    loadEpg(channel).then(function () {
+      if (playback === next) native('playerCommand', { command: 'guide', epg: epgPayload(next) });
+    });
+    channelOptions(channel, state.source).then(function (options) {
+      if (playback !== next) return;
+      if (!options.length) throw new Error('Aucun flux disponible pour ' + channel.name + '.');
+      next.options = rankOptions(options, key);
+      playOption(true);
+    }).catch(function (error) {
+      if (playback !== next) return;
+      native('playerCommand', { command: 'stop' });
+      showPicker(next, error.message || '', 0);
+    });
+  }
+
   function channelKey(channel, source) {
     return (source && source.id ? source.id : '') + ':' + channel.name;
   }
@@ -1857,14 +2006,15 @@
   }
 
   var playback = null;
-  function launchChannel(channel, source) {
+  function launchChannel(channel, source, list) {
     var key = channelKey(channel, source);
+    loadEpg(channel);
     var sheet = pickerSheet(channel, 'Recherche des serveurs…');
     openLayer(sheet.node);
-    channelOptions(channel, source).then(function (list) {
+    channelOptions(channel, source).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
-      if (!list.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
-      playback = { channel: channel, source: source, key: key, options: rankOptions(list, key), index: 0, failed: {}, startedAt: 0, renewed: false };
+      if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
+      playback = { channel: channel, source: source, key: key, options: rankOptions(options, key), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
       if (playback.options.length === 1) {
         closeLayer(true);
         playOption();
@@ -1878,6 +2028,19 @@
 
   // Fenêtre de choix : serveurs classés (dernier serveur fonctionnel, puis
   // lecteur natif, puis lecteurs web), lancement automatique du premier.
+  function epgLines(channel) {
+    var box = h('div', { class: 'picker-epg' });
+    function render() {
+      clear(box);
+      var guide = epgLive(channel);
+      if (guide.now) box.appendChild(h('div', { class: 'now' }, h('b', { text: hhmm(guide.now.start) + (guide.now.stop ? ' – ' + hhmm(guide.now.stop) : '') }), ' ' + guide.now.title,
+        h('span', { class: 'guide-bar' }, h('i', { style: 'width:' + Math.max(2, epgProgress(guide.now)) + '%' }))));
+      if (guide.next) box.appendChild(h('div', { class: 'next', text: 'Ensuite · ' + hhmm(guide.next.start) + ' · ' + guide.next.title }));
+    }
+    render();
+    if (!channel.now && !channel.next && channel.iptvOrgId) loadEpg(channel).then(render);
+    return box;
+  }
   function pickerSheet(channel, text) {
     var list = h('div', { class: 'servers' });
     var note = h('div', { class: 'picker-status loading', text: text });
@@ -1885,7 +2048,7 @@
     var node = h('div', { class: 'modal' }, h('div', { class: 'picker' },
       h('div', { class: 'picker-head' },
         h('div', { class: 'picker-logo' }, logo),
-        h('div', null, h('h2', { text: channel.name }), h('div', { class: 'sub', text: [channel.group, channel.provider].filter(Boolean).join(' · ') }))),
+        h('div', null, h('h2', { text: channel.name }), h('div', { class: 'sub', text: [channel.group, channel.provider].filter(Boolean).join(' · ') }), epgLines(channel))),
       note, list,
       h('button', { class: 'btn f picker-close', text: 'Annuler', onclick: function () { closeLayer(); } })));
     var timer = 0;
@@ -1946,7 +2109,7 @@
     fillPicker(sheet, state, seconds);
   }
 
-  function playOption() {
+  function playOption(load) {
     var state = playback;
     if (!state) return;
     var option = state.options[state.index];
@@ -1958,18 +2121,27 @@
         if (!list.length) throw new Error('Serveur vide');
         list.forEach(function (item) { item.renewUrl = option.resolveUrl; if (!item.label) item.label = option.label; });
         state.options.splice.apply(state.options, [state.index, 1].concat(list));
-        playOption();
-      }, function () { failOption(state, 'Ce serveur ne répond pas.'); });
+        if (playback === state) playOption(load);
+      }, function () {
+        if (load && playback === state) native('playerCommand', { command: 'stop' });
+        failOption(state, 'Ce serveur ne répond pas.');
+      });
       return;
     }
     state.startedAt = Date.now();
     if (option.streamUrl) {
       var mime = option.transport === 'ts' || state.channel.transport === 'ts' ? 'video/mp2t' : '';
-      if (!native('play', { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null })) {
+      state.playId = playId();
+      var request = { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null, epg: epgPayload(state), playSessionId: state.playId };
+      // Zapping : même lecteur, nouveau flux.
+      if (load) { request.command = 'load'; native('playerCommand', request); return; }
+      if (!native('play', request)) {
         toast('Le lecteur natif est disponible dans l’appli Noctra TV.', true);
       }
       return;
     }
+    // Chaîne sans flux direct : le lecteur natif se ferme, le lecteur web s'ouvre.
+    if (load) native('playerCommand', { command: 'stop' });
     openEmbed(state, option, label);
   }
   function failOption(state, message) {
@@ -2000,6 +2172,8 @@
   function playerClosed(result) {
     var state = playback;
     if (!state) return;
+    // Lecteur d'une chaîne quittée par zapping : fermeture sans conséquence.
+    if (result.playSessionId && state.playId && result.playSessionId !== state.playId) return;
     if (result.played) succeeded(state);
     if (result.ok) {
       playback = null;

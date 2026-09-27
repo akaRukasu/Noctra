@@ -12,18 +12,27 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONObject;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.Locale;
 
 /**
  * Lecteur plein écran des chaînes TV de Noctra (NoctraStream : ExoPlayer,
  * reconnexions et retour au direct). Un échec définitif est renvoyé à
  * l'accueil Noctra, qui propose alors un autre serveur de la chaîne.
+ *
+ * Chaînes : bandeau avec le programme en cours (horaires, avancement) et le
+ * suivant ; ▲ ▼ (ou CH+ / CH−) changent de chaîne sans quitter le lecteur.
+ * L'accueil choisit le serveur de la nouvelle chaîne et renvoie son flux
+ * (commande « load ») ; OK ou Info réaffichent le bandeau.
  */
 public class NoctraPlayerActivity extends Activity implements NoctraStream.Callback, NoctraPlayerBus.Player {
 
@@ -49,6 +58,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_ENDED = "noctra_ended";
     // SyncPlay : départ en pause, le groupe pilote la lecture.
     static final String EXTRA_SYNC = "noctra_sync";
+    /** Chaîne : {now:{title,start,stop}, next:{title,start}, position, zap} (JSON). */
+    static final String EXTRA_EPG = "noctra_epg";
     private static final long SEEK_STEP_MS = 10000;
     private static final long REPORT_MS = 10000;
     static final int RESULT_ERROR = RESULT_FIRST_USER;
@@ -64,6 +75,37 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private boolean sync;
     private TextView syncLabel;
     private long pendingSeekMs = -1;
+    private PlayerView playerView;
+    private TextView titleView;
+    private TextView subtitleView;
+    private TextView nowView;
+    private TextView nextView;
+    private ProgressBar nowProgress;
+    private JSONObject epg;
+    private String playSessionId;
+    private int zapDelta;
+    private final Runnable sendZap = new Runnable() {
+        @Override
+        public void run() {
+            if (zapDelta == 0) return;
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "playerEvent");
+                message.put("event", "zap");
+                message.put("delta", zapDelta);
+                NoctraPlayerBus.fromPlayer(message);
+            } catch (Exception ignored) {
+            }
+            zapDelta = 0;
+        }
+    };
+    private final Runnable tickGuide = new Runnable() {
+        @Override
+        public void run() {
+            renderGuide();
+            handler.postDelayed(this, 30000);
+        }
+    };
 
     private final Runnable sendSeek = new Runnable() {
         @Override
@@ -110,7 +152,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
-        PlayerView playerView = new PlayerView(this);
+        playerView = new PlayerView(this);
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
         playerView.setUseController(true);
         playerView.setKeepContentOnPlayerReset(true);
@@ -120,9 +162,26 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         banner.setOrientation(LinearLayout.VERTICAL);
         banner.setPadding(dp(32), dp(24), dp(32), dp(24));
         banner.setBackgroundColor(Color.argb(150, 9, 10, 15));
-        banner.addView(text(intent.getStringExtra(EXTRA_TITLE), 26, Color.rgb(242, 246, 244)));
-        String subtitle = intent.getStringExtra(EXTRA_SUBTITLE);
-        if (subtitle != null && !subtitle.isEmpty()) banner.addView(text(subtitle, 16, Color.rgb(112, 217, 194)));
+        titleView = text(intent.getStringExtra(EXTRA_TITLE), 26, Color.rgb(242, 246, 244));
+        banner.addView(titleView);
+        subtitleView = text(intent.getStringExtra(EXTRA_SUBTITLE), 16, Color.rgb(112, 217, 194));
+        banner.addView(subtitleView);
+        nowView = text("", 18, Color.rgb(242, 246, 244));
+        nowView.setPadding(0, dp(12), 0, dp(6));
+        banner.addView(nowView);
+        nowProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        nowProgress.setMax(1000);
+        banner.addView(nowProgress, new LinearLayout.LayoutParams(dp(420), dp(6)));
+        nextView = text("", 15, Color.rgb(170, 180, 196));
+        nextView.setPadding(0, dp(6), 0, 0);
+        banner.addView(nextView);
+        playSessionId = intent.getStringExtra(EXTRA_PLAY_SESSION_ID);
+        try {
+            epg = intent.hasExtra(EXTRA_EPG) ? new JSONObject(intent.getStringExtra(EXTRA_EPG)) : null;
+        } catch (Exception error) {
+            epg = null;
+        }
+        renderGuide();
         FrameLayout.LayoutParams bannerParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
         bannerParams.setMargins(dp(40), dp(32), dp(40), 0);
         root.addView(banner, bannerParams);
@@ -149,7 +208,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         if (sync) playerView.setUseController(false);
 
         setContentView(root);
-        handler.postDelayed(hideBanner, 5000);
+        handler.postDelayed(hideBanner, epg != null ? 7000 : 5000);
+        handler.postDelayed(tickGuide, 30000);
         NoctraPlayerBus.player = this;
         vod = intent.getBooleanExtra(EXTRA_VOD, false);
         if (vod) {
@@ -165,10 +225,19 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                     intent.getStringExtra(EXTRA_PLAY_SESSION_ID), intent.getStringExtra(EXTRA_DEVICE_ID));
                 handler.postDelayed(progress, 1000);
             }
-        } else if (intent.hasExtra(EXTRA_HEADERS)) {
-            HashMap<String, String> headers = new HashMap<String, String>();
+        } else {
+            stream = liveStream(url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_HEADERS), intent.getStringExtra(EXTRA_TOKEN));
+        }
+        if (sync) stream.setAutoplay(false);
+        stream.start();
+    }
+
+    /** Chaîne en direct ; en-têtes éventuels (flux repéré dans une page web) et jeton Noctra. */
+    private NoctraStream liveStream(String url, String mime, String headersJson, String token) {
+        HashMap<String, String> headers = new HashMap<String, String>();
+        if (headersJson != null) {
             try {
-                org.json.JSONObject json = new org.json.JSONObject(intent.getStringExtra(EXTRA_HEADERS));
+                JSONObject json = new JSONObject(headersJson);
                 java.util.Iterator<String> keys = json.keys();
                 while (keys.hasNext()) {
                     String key = keys.next();
@@ -176,14 +245,62 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                 }
             } catch (Exception ignored) {
             }
-            String token = intent.getStringExtra(EXTRA_TOKEN);
-            if (token != null) headers.put("x-noctra-token", token);
-            stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, true, 0);
-        } else {
-            stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_TOKEN), false);
         }
-        if (sync) stream.setAutoplay(false);
-        stream.start();
+        if (token != null && !token.isEmpty()) headers.put("x-noctra-token", token);
+        return new NoctraStream(this, playerView, this, url, mime, headers, false, true, 0);
+    }
+
+    // ── Guide des programmes et zapping ────────────────────────────────────
+    private static String hour(long ms) {
+        return new SimpleDateFormat("HH:mm", Locale.FRANCE).format(new Date(ms));
+    }
+
+    /** Programme en cours (horaires, avancement) et suivant ; passe seul au suivant à l'heure. */
+    private void renderGuide() {
+        if (nowView == null) return;
+        JSONObject now = epg == null ? null : epg.optJSONObject("now");
+        JSONObject next = epg == null ? null : epg.optJSONObject("next");
+        long time = System.currentTimeMillis();
+        if (now != null && now.optLong("stop") > 0 && now.optLong("stop") <= time && next != null && next.optLong("start") <= time) {
+            now = next;
+            next = null;
+            try {
+                epg.put("now", now);
+                epg.remove("next");
+            } catch (Exception ignored) {
+            }
+        }
+        String position = epg == null ? "" : epg.optString("position");
+        boolean zap = epg != null && epg.optBoolean("zap", false);
+        if (now != null && !now.optString("title").isEmpty()) {
+            long start = now.optLong("start");
+            long stop = now.optLong("stop");
+            nowView.setText("En ce moment" + (start > 0 && stop > 0 ? " · " + hour(start) + " – " + hour(stop) : "") + "\n" + now.optString("title"));
+            nowView.setVisibility(TextView.VISIBLE);
+            nowProgress.setVisibility(start > 0 && stop > start ? ProgressBar.VISIBLE : ProgressBar.GONE);
+            if (stop > start) nowProgress.setProgress((int) Math.max(0, Math.min(1000, (time - start) * 1000 / (stop - start))));
+        } else {
+            nowView.setText(epg == null ? "" : "Programme non communiqué par la source");
+            nowView.setVisibility(epg == null ? TextView.GONE : TextView.VISIBLE);
+            nowProgress.setVisibility(ProgressBar.GONE);
+        }
+        String after = next != null && !next.optString("title").isEmpty()
+            ? "Ensuite" + (next.optLong("start") > 0 ? " · " + hour(next.optLong("start")) : "") + " · " + next.optString("title") : "";
+        String keys = zap ? "▲ ▼ changer de chaîne" + (position.isEmpty() ? "" : " · " + position) : "";
+        nextView.setText(after + (after.isEmpty() || keys.isEmpty() ? "" : "\n") + keys);
+        nextView.setVisibility(after.isEmpty() && keys.isEmpty() ? TextView.GONE : TextView.VISIBLE);
+    }
+
+    private void showBanner() {
+        renderGuide();
+        handler.removeCallbacks(hideBanner);
+        banner.animate().cancel();
+        banner.setAlpha(1f);
+        handler.postDelayed(hideBanner, 6000);
+    }
+
+    private boolean canZap() {
+        return !vod && !sync && epg != null && epg.optBoolean("zap", false);
     }
 
     // ── SyncPlay et commandes à distance ───────────────────────────────────
@@ -224,6 +341,35 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         } else if (action.equals("stop")) {
             finishWith(true, null);
             return;
+        } else if (action.equals("zapping") && !vod) {
+            // Chaîne choisie : affichée tout de suite, pendant la recherche de son flux.
+            titleView.setText(command.optString("title"));
+            subtitleView.setText(command.optString("subtitle"));
+            epg = command.optJSONObject("epg");
+            onStatus(stream, command.optString("message", "Connexion…"));
+            showBanner();
+        } else if (action.equals("guide") && !vod) {
+            JSONObject guide = command.optJSONObject("epg");
+            if (guide != null) {
+                epg = guide;
+                renderGuide();
+            }
+        } else if (action.equals("load") && !vod) {
+            String url = command.optString("url");
+            if (!url.startsWith("https://") && !url.startsWith("http://")) return;
+            if (stream != null) stream.release();
+            JSONObject headers = command.optJSONObject("headers");
+            stream = liveStream(url, command.optString("mime"), headers == null ? null : headers.toString(),
+                command.has("token") ? command.optString("token") : null);
+            playSessionId = command.optString("playSessionId", playSessionId);
+            titleView.setText(command.optString("title"));
+            subtitleView.setText(command.optString("subtitle"));
+            JSONObject guide = command.optJSONObject("epg");
+            if (guide != null) epg = guide;
+            onStatus(stream, null);
+            stream.start();
+            showBanner();
+            return;
         }
         if (command.has("status") && syncLabel != null) {
             String text = command.optString("status");
@@ -244,6 +390,28 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (canZap() && stream != null) {
+            int code = event.getKeyCode();
+            int delta = code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP ? -1
+                : code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN ? 1 : 0;
+            if (delta != 0) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    // Appuis rapprochés cumulés : une seule demande (ex. ▼ ▼ ▼ = 3 chaînes plus loin).
+                    zapDelta += delta;
+                    onStatus(stream, zapDelta > 0 ? "Chaîne suivante" + (zapDelta > 1 ? " (+" + zapDelta + ")" : "") + "…"
+                        : "Chaîne précédente" + (zapDelta < -1 ? " (" + zapDelta + ")" : "") + "…");
+                    handler.removeCallbacks(sendZap);
+                    handler.postDelayed(sendZap, 450);
+                }
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_GUIDE)) {
+                showBanner();
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
+                && (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER)) showBanner();
+        }
         if (!sync || stream == null) return super.dispatchKeyEvent(event);
         int code = event.getKeyCode();
         boolean toggle = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
@@ -289,6 +457,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public void onStatus(NoctraStream source, String text) {
+        // Ancien flux (chaîne précédente, déjà remplacée) : ignoré.
+        if (source != null && source != stream) return;
         if (text == null) {
             status.setVisibility(TextView.GONE);
         } else {
@@ -299,11 +469,13 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public void onFailed(NoctraStream source, String message) {
+        if (source != null && source != stream) return;
         finishWith(false, message);
     }
 
     @Override
     public void onEnded(NoctraStream source) {
+        if (source != null && source != stream) return;
         ended = true;
         finishWith(true, null);
     }
@@ -315,6 +487,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         finished = true;
         handler.removeCallbacks(progress);
         handler.removeCallbacks(sendSeek);
+        handler.removeCallbacks(sendZap);
+        handler.removeCallbacks(tickGuide);
         if (NoctraPlayerBus.player == this) NoctraPlayerBus.player = null;
         long position = stream == null ? 0 : stream.positionMs();
         if (ended && stream != null) position = Math.max(position, stream.durationMs());
@@ -327,7 +501,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         Intent data = new Intent();
         data.putExtra(EXTRA_VOD, vod);
         data.putExtra(EXTRA_SYNC, sync);
-        data.putExtra(EXTRA_PLAY_SESSION_ID, getIntent().getStringExtra(EXTRA_PLAY_SESSION_ID));
+        data.putExtra(EXTRA_PLAY_SESSION_ID, playSessionId);
         data.putExtra(EXTRA_POSITION_MS, position);
         data.putExtra(EXTRA_ENDED, ended);
         data.putExtra(EXTRA_PLAYED, stream != null && stream.hasPlayed());
