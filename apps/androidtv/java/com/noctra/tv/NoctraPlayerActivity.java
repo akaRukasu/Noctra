@@ -6,12 +6,18 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -21,7 +27,9 @@ import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -33,6 +41,10 @@ import java.util.Locale;
  * suivant ; ▲ ▼ (ou CH+ / CH−) changent de chaîne sans quitter le lecteur.
  * L'accueil choisit le serveur de la nouvelle chaîne et renvoie son flux
  * (commande « load ») ; OK ou Info réaffichent le bandeau.
+ *
+ * Panneau des chaînes (bouton « Chaînes » de la barre de commandes, ◀,
+ * Menu ou Guide) : la liste de la source avec le programme en cours, pour
+ * changer de chaîne directement, la lecture continuant derrière.
  */
 public class NoctraPlayerActivity extends Activity implements NoctraStream.Callback, NoctraPlayerBus.Player {
 
@@ -84,6 +96,12 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private JSONObject epg;
     private String playSessionId;
     private int zapDelta;
+    private LinearLayout panel;
+    private TextView panelTitle;
+    private ListView channelList;
+    private ArrayAdapter<JSONObject> channelAdapter;
+    private final List<JSONObject> channelItems = new ArrayList<JSONObject>();
+    private int currentChannel = -1;
     private final Runnable sendZap = new Runnable() {
         @Override
         public void run() {
@@ -207,7 +225,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         // En groupe, les touches deviennent des demandes au groupe (voir dispatchKeyEvent).
         if (sync) playerView.setUseController(false);
 
+        buildPanel(root);
         setContentView(root);
+        if (canZap()) addChannelsButton();
         handler.postDelayed(hideBanner, epg != null ? 7000 : 5000);
         handler.postDelayed(tickGuide, 30000);
         NoctraPlayerBus.player = this;
@@ -230,6 +250,173 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         }
         if (sync) stream.setAutoplay(false);
         stream.start();
+    }
+
+    // ── Panneau des chaînes ────────────────────────────────────────────────
+    private void buildPanel(FrameLayout root) {
+        panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(24), dp(12), dp(16));
+        panel.setBackgroundColor(Color.argb(238, 9, 10, 15));
+        panel.setVisibility(View.GONE);
+        panelTitle = text("Chaînes", 22, Color.rgb(242, 246, 244));
+        panel.addView(panelTitle);
+        TextView keys = text("OK : regarder · Retour : fermer", 13, Color.rgb(150, 160, 176));
+        keys.setPadding(0, dp(2), 0, dp(12));
+        panel.addView(keys);
+        channelList = new ListView(this);
+        channelList.setDivider(null);
+        channelList.setSelector(new ColorDrawable(Color.argb(110, 112, 217, 194)));
+        channelList.setItemsCanFocus(false);
+        channelAdapter = new ArrayAdapter<JSONObject>(this, 0, channelItems) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                LinearLayout row = convertView instanceof LinearLayout ? (LinearLayout) convertView : channelRow();
+                JSONObject item = getItem(position);
+                TextView name = (TextView) row.getChildAt(0);
+                TextView programme = (TextView) row.getChildAt(1);
+                ProgressBar bar = (ProgressBar) row.getChildAt(2);
+                boolean current = position == currentChannel;
+                name.setText((position + 1) + "   " + (current ? "▶ " : "") + item.optString("name"));
+                name.setTextColor(current ? Color.rgb(112, 217, 194) : Color.rgb(242, 246, 244));
+                JSONObject now = item.optJSONObject("now");
+                long start = now == null ? 0 : now.optLong("start");
+                long stop = now == null ? 0 : now.optLong("stop");
+                programme.setText(now != null && !now.optString("title").isEmpty()
+                    ? (start > 0 ? hour(start) + (stop > 0 ? "–" + hour(stop) : "") + "  " : "") + now.optString("title")
+                    : item.optString("sub"));
+                long time = System.currentTimeMillis();
+                bar.setVisibility(stop > start && start > 0 ? View.VISIBLE : View.INVISIBLE);
+                if (stop > start) bar.setProgress((int) Math.max(0, Math.min(1000, (time - start) * 1000 / (stop - start))));
+                return row;
+            }
+        };
+        channelList.setAdapter(channelAdapter);
+        channelList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                closePanel();
+                if (position != currentChannel) zapTo(position);
+            }
+        });
+        panel.addView(channelList, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(panel, new FrameLayout.LayoutParams(dp(480), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START));
+    }
+
+    private LinearLayout channelRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(9), dp(12), dp(9));
+        TextView name = text("", 17, Color.rgb(242, 246, 244));
+        name.setSingleLine(true);
+        TextView programme = text("", 13, Color.rgb(170, 180, 196));
+        programme.setSingleLine(true);
+        row.addView(name);
+        row.addView(programme);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(1000);
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(dp(200), dp(4));
+        barParams.topMargin = dp(4);
+        row.addView(bar, barParams);
+        return row;
+    }
+
+    /** Bouton « Chaînes » ajouté à la barre de commandes du lecteur. */
+    private void addChannelsButton() {
+        try {
+            int id = getResources().getIdentifier("exo_basic_controls", "id", getPackageName());
+            View controls = id == 0 ? null : playerView.findViewById(id);
+            if (!(controls instanceof LinearLayout)) return;
+            TextView button = text("☰  Chaînes", 16, Color.rgb(242, 246, 244));
+            button.setGravity(Gravity.CENTER);
+            button.setPadding(dp(16), 0, dp(16), 0);
+            button.setFocusable(true);
+            button.setClickable(true);
+            final GradientDrawable idle = new GradientDrawable();
+            idle.setCornerRadius(dp(20));
+            idle.setColor(Color.argb(60, 255, 255, 255));
+            final GradientDrawable focused = new GradientDrawable();
+            focused.setCornerRadius(dp(20));
+            focused.setColor(Color.rgb(112, 217, 194));
+            button.setBackground(idle);
+            button.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                @Override
+                public void onFocusChange(View view, boolean hasFocus) {
+                    view.setBackground(hasFocus ? focused : idle);
+                    ((TextView) view).setTextColor(hasFocus ? Color.rgb(7, 17, 15) : Color.rgb(242, 246, 244));
+                }
+            });
+            button.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    openPanel();
+                }
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
+            params.gravity = Gravity.CENTER_VERTICAL;
+            params.setMargins(dp(8), 0, dp(8), 0);
+            ((LinearLayout) controls).addView(button, 0, params);
+        } catch (Throwable ignored) {
+            // Sans bouton : ◀, Menu ou Guide ouvrent aussi le panneau.
+        }
+    }
+
+    private boolean panelOpen() {
+        return panel != null && panel.getVisibility() == View.VISIBLE;
+    }
+
+    private void openPanel() {
+        if (!canZap() || panelOpen()) return;
+        try { playerView.hideController(); } catch (Throwable ignored) { }
+        panel.setVisibility(View.VISIBLE);
+        panel.setAlpha(0f);
+        panel.animate().alpha(1f).setDuration(160).start();
+        channelList.requestFocus();
+        if (currentChannel >= 0) channelList.setSelection(currentChannel);
+        // La liste (et son guide) est demandée à l'accueil, qui la connaît.
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "playerEvent");
+            message.put("event", "channels");
+            NoctraPlayerBus.fromPlayer(message);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void closePanel() {
+        if (!panelOpen()) return;
+        panel.setVisibility(View.GONE);
+        playerView.requestFocus();
+    }
+
+    private void zapTo(int index) {
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "playerEvent");
+            message.put("event", "zapTo");
+            message.put("index", index);
+            NoctraPlayerBus.fromPlayer(message);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Liste reçue de l'accueil : {items:[{name, sub, now}], current, title, update}. */
+    private void showChannels(JSONObject command) {
+        org.json.JSONArray items = command.optJSONArray("items");
+        if (items == null) return;
+        int selected = channelList.getSelectedItemPosition();
+        channelItems.clear();
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            channelItems.add(item == null ? new JSONObject() : item);
+        }
+        currentChannel = command.optInt("current", -1);
+        panelTitle.setText(command.optString("title", "Chaînes"));
+        channelAdapter.notifyDataSetChanged();
+        if (!panelOpen()) return;
+        int target = command.optBoolean("update", false) && selected >= 0 ? selected : currentChannel;
+        if (target >= 0 && target < channelItems.size()) channelList.setSelection(target);
+        channelList.requestFocus();
     }
 
     /** Chaîne en direct ; en-têtes éventuels (flux repéré dans une page web) et jeton Noctra. */
@@ -286,7 +473,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         }
         String after = next != null && !next.optString("title").isEmpty()
             ? "Ensuite" + (next.optLong("start") > 0 ? " · " + hour(next.optLong("start")) : "") + " · " + next.optString("title") : "";
-        String keys = zap ? "▲ ▼ changer de chaîne" + (position.isEmpty() ? "" : " · " + position) : "";
+        String keys = zap ? "▲ ▼ changer de chaîne · ◀ liste des chaînes" + (position.isEmpty() ? "" : " · " + position) : "";
         nextView.setText(after + (after.isEmpty() || keys.isEmpty() ? "" : "\n") + keys);
         nextView.setVisibility(after.isEmpty() && keys.isEmpty() ? TextView.GONE : TextView.VISIBLE);
     }
@@ -348,6 +535,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             epg = command.optJSONObject("epg");
             onStatus(stream, command.optString("message", "Connexion…"));
             showBanner();
+        } else if (action.equals("channels") && !vod) {
+            showChannels(command);
         } else if (action.equals("guide") && !vod) {
             JSONObject guide = command.optJSONObject("epg");
             if (guide != null) {
@@ -390,8 +579,25 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // Panneau ouvert : la liste reçoit les flèches et OK ; ◀ / Retour le ferment.
+        if (panelOpen()) {
+            int code = event.getKeyCode();
+            if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_DPAD_LEFT
+                || code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_GUIDE) {
+                if (event.getAction() == KeyEvent.ACTION_UP) closePanel();
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
+        }
         if (canZap() && stream != null) {
             int code = event.getKeyCode();
+            boolean controls = false;
+            try { controls = playerView.isControllerFullyVisible(); } catch (Throwable ignored) { }
+            if ((code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_GUIDE || code == KeyEvent.KEYCODE_TV_INPUT
+                || (code == KeyEvent.KEYCODE_DPAD_LEFT && !controls))) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) openPanel();
+                return true;
+            }
             int delta = code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP ? -1
                 : code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN ? 1 : 0;
             if (delta != 0) {
@@ -405,7 +611,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                 }
                 return true;
             }
-            if (event.getAction() == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_GUIDE)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_INFO) {
                 showBanner();
                 return true;
             }
@@ -512,6 +718,10 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public void onBackPressed() {
+        if (panelOpen()) {
+            closePanel();
+            return;
+        }
         finishWith(true, null);
     }
 

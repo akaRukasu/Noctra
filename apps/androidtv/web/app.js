@@ -1250,6 +1250,8 @@
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
+    if (event.event === 'zapTo') { zapTo(Number(event.index) || 0); return; }
+    if (event.event === 'channels') { sendChannels(false); return; }
     if (!vodPlayback || !vodPlayback.sync || !sync.group) return;
     if (event.event === 'state') {
       if (event.action === 'ready') sendReady(event.positionMs, event.playing);
@@ -1907,9 +1909,33 @@
   function zap(delta) {
     var state = playback;
     if (!state || !state.list || state.list.length < 2) return;
+    var at = Math.max(0, state.list.indexOf(state.channel));
+    zapTo(at + delta);
+  }
+  // Panneau des chaînes du lecteur : liste affichée, programme en cours ;
+  // le guide manquant des chaînes proches est demandé puis renvoyé.
+  function sendChannels(update) {
+    var state = playback;
+    if (!state || !state.list) return;
     var list = state.list;
+    native('playerCommand', {
+      command: 'channels', update: Boolean(update), current: list.indexOf(state.channel),
+      title: (state.source && state.source.name ? state.source.name + ' · ' : '') + list.length + ' chaîne' + (list.length > 1 ? 's' : ''),
+      items: list.slice(0, 3000).map(function (channel) {
+        return { name: channel.name, sub: [channel.group, channel.provider].filter(Boolean).join(' · '), now: epgLive(channel).now };
+      })
+    });
+    if (update) return;
     var at = Math.max(0, list.indexOf(state.channel));
-    var channel = list[((at + delta) % list.length + list.length) % list.length];
+    var around = list.slice(Math.max(0, at - 15), at + 30).filter(function (channel) { return !channel.now && !channel.next && channel.iptvOrgId; });
+    if (around.length) Promise.all(around.map(loadEpg)).then(function () { if (playback === state) sendChannels(true); });
+  }
+  function zapTo(target) {
+    var state = playback;
+    if (!state || !state.list || state.list.length < 2) return;
+    var list = state.list;
+    var channel = list[((target % list.length) + list.length) % list.length];
+    if (channel === state.channel) return;
     var key = channelKey(channel, state.source);
     var next = { channel: channel, source: state.source, key: key, options: [], index: 0, failed: {}, startedAt: 0, renewed: false, list: list, playId: playId() };
     playback = next;

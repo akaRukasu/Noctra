@@ -256,6 +256,12 @@ const livePlayer = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerAct
 assert.match(livePlayer, /KeyEvent\.KEYCODE_CHANNEL_UP/);
 assert.match(livePlayer, /action\.equals\("load"\) && !vod/);
 assert.match(livePlayer, /private void renderGuide\(\)/);
+// Panneau des chaînes dans le lecteur (bouton « Chaînes », ◀, Menu, Guide).
+assert.match(livePlayer, /getIdentifier\("exo_basic_controls", "id", getPackageName\(\)\)/);
+assert.match(livePlayer, /private void openPanel\(\)/);
+assert.match(livePlayer, /action\.equals\("channels"\) && !vod/);
+assert.match(tvApp, /if \(event\.event === 'channels'\) \{ sendChannels\(false\); return; \}/);
+assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{ zapTo\(Number\(event\.index\) \|\| 0\); return; \}/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
 assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);

@@ -15,4 +15,7 @@ public class PlayerView extends FrameLayout {
     public void setShowBuffering(int showBuffering) { throw new UnsupportedOperationException(); }
     public void setKeepContentOnPlayerReset(boolean keep) { throw new UnsupportedOperationException(); }
     public void setResizeMode(int resizeMode) { throw new UnsupportedOperationException(); }
+    public boolean isControllerFullyVisible() { throw new UnsupportedOperationException(); }
+    public void showController() { throw new UnsupportedOperationException(); }
+    public void hideController() { throw new UnsupportedOperationException(); }
 }
