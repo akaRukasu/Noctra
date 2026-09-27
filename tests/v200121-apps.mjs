@@ -348,7 +348,6 @@ assert.match(tvApp, /var WEB_MODE_KEY = 'noctra-tv-webmode-v1';/);
 assert.match(tvApp, /if \(!idCountry \|\| idCountry === \(country \|\| 'fr'\)\) union\(idKey, nameKey\);/);
 assert.match(tvApp, /function unifiedTwin\(channel\) \{/);
 assert.match(tvApp, /if \(playback\.options\.length === 1 \|\| trusted\) \{/);
-const serverTvCode = await read('server.mjs');
 assert.match(serverTvCode, /iptvOrgName: match\.name \|\| channel\.iptvOrgName \|\| ''/);
 assert.match(serverTvCode, /Chaînes des bouquets \(Movix, Vavoo…\) : logos et identité iptv-org/);
 assert.match(tvApp, /rememberWebMode\(failedOption\.sniffedFrom\.url, 'noSniff'\);/);
