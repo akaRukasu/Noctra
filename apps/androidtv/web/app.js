@@ -1756,9 +1756,63 @@
   // serveurs propose ceux de toutes les sources de la chaîne, classés par
   // fiabilité (historique de santé) : le plus stable démarre en premier.
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
-  var UNIFIED_SECTIONS = ['channels', 'personal'];
   var unifiedCache = null;
   var unifiedLoading = null;
+  var UNIFIED_WAIT_MS = 25000;
+  // ── Pays des chaînes ──
+  var COUNTRY_CODES = { fr: 'fr', fra: 'fr', uk: 'uk', gb: 'uk', en: 'uk', us: 'us', usa: 'us', de: 'de', ger: 'de', es: 'es', spa: 'es', esp: 'es', it: 'it', ita: 'it',
+    pt: 'pt', por: 'pt', br: 'br', ar: 'arab', ara: 'arab', nl: 'nl', be: 'be', ch: 'ch', ca: 'ca', au: 'au', tr: 'tr', pl: 'pl', ro: 'ro', ru: 'ru', mx: 'mx',
+    gr: 'gr', se: 'se', dk: 'dk', no: 'no', fi: 'fi', hu: 'hu', cz: 'cz', sk: 'sk', rs: 'rs', hr: 'hr', al: 'al', bg: 'bg', ua: 'ua', il: 'il', in: 'in', pk: 'pk',
+    za: 'za', ie: 'ie', at: 'at', lat: 'latam', latam: 'latam', ma: 'ma', dz: 'dz', tn: 'tn', qa: 'arab', sa: 'arab', ae: 'arab', eg: 'arab' };
+  var COUNTRY_WORDS = { france: 'fr', french: 'fr', francais: 'fr', francaise: 'fr', 'united kingdom': 'uk', england: 'uk', britain: 'uk', usa: 'us', america: 'us',
+    germany: 'de', deutschland: 'de', allemagne: 'de', spain: 'es', espana: 'es', espagne: 'es', italy: 'it', italia: 'it', italie: 'it', portugal: 'pt',
+    brazil: 'br', brasil: 'br', bresil: 'br', arabic: 'arab', arab: 'arab', arabia: 'arab', mena: 'arab', netherlands: 'nl', holland: 'nl', belgium: 'be', belgique: 'be',
+    switzerland: 'ch', suisse: 'ch', canada: 'ca', quebec: 'ca', australia: 'au', turkey: 'tr', turkiye: 'tr', poland: 'pl', polska: 'pl', romania: 'ro', russia: 'ru',
+    mexico: 'mx', latino: 'latam', greece: 'gr', sweden: 'se', denmark: 'dk', norway: 'no', finland: 'fi', india: 'in', pakistan: 'pk', ireland: 'ie', austria: 'at',
+    maroc: 'ma', morocco: 'ma', algerie: 'dz', algeria: 'dz', tunisie: 'tn', tunisia: 'tn', africa: 'za' };
+  var COUNTRY_LABELS = { fr: 'France', uk: 'Royaume-Uni', us: 'États-Unis', de: 'Allemagne', es: 'Espagne', it: 'Italie', pt: 'Portugal', br: 'Brésil', arab: 'Monde arabe',
+    nl: 'Pays-Bas', be: 'Belgique', ch: 'Suisse', ca: 'Canada', au: 'Australie', tr: 'Turquie', pl: 'Pologne', ro: 'Roumanie', ru: 'Russie', mx: 'Mexique', latam: 'Amérique latine',
+    gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique' };
+  // Chaînes françaises connues (reconnues même sans indication de pays).
+  var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
+  function countryOfCode(value) {
+    var code = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+    return COUNTRY_CODES[code] || COUNTRY_WORDS[code] || '';
+  }
+  function countryOfWords(value) {
+    var text = normalize(value);
+    if (!text) return '';
+    var words = text.split(' ');
+    for (var i = 0; i < words.length; i++) {
+      if (COUNTRY_WORDS[words[i]]) return COUNTRY_WORDS[words[i]];
+      if (i < words.length - 1 && COUNTRY_WORDS[words[i] + ' ' + words[i + 1]]) return COUNTRY_WORDS[words[i] + ' ' + words[i + 1]];
+    }
+    return '';
+  }
+  // Pays : champ du fournisseur, « FR: », « [UK] », « … DE », « … France »,
+  // identifiant du guide (« TF1.fr »), groupe, langue ; sinon source française.
+  function channelCountry(channel, source) {
+    var found = countryOfCode(channel.country) || countryOfWords(channel.country);
+    if (found) return found;
+    var name = String(channel.name || '');
+    var prefix = /^\s*(?:\[([A-Za-z]{2,3})\]|\(([A-Za-z]{2,3})\)|([A-Za-z]{2,3})\s*[:|\-–])\s*/.exec(name);
+    if (prefix) { found = countryOfCode(prefix[1] || prefix[2] || prefix[3]); if (found) return found; }
+    var suffix = /[\s(\[]([A-Z]{2,3})[)\]]?\s*$/.exec(name);
+    if (suffix) { found = countryOfCode(suffix[1]); if (found) return found; }
+    var words = normalize(name).split(' ');
+    var last = words[words.length - 1];
+    if (words.length > 1 && COUNTRY_WORDS[last]) return COUNTRY_WORDS[last];
+    var id = /\.([a-z]{2})(?:@|$)/i.exec(String(channel.iptvOrgId || channel.epgId || ''));
+    if (id) { found = countryOfCode(id[1]); if (found) return found; }
+    var group = String(channel.group || '');
+    var groupCode = /(?:^|[^A-Za-z])([A-Z]{2,3})(?:[^A-Za-z]|$)/.exec(group);
+    found = countryOfWords(group) || (groupCode ? countryOfCode(groupCode[1]) : '');
+    if (found) return found;
+    if (/^(?:fr|fra|fre|french|francais|français)$/i.test(String(channel.language || '').trim())) return 'fr';
+    if (FRENCH_BRANDS.test(unifiedName(name))) return 'fr';
+    if (source && (source._french || source._frenchGuess)) return 'fr';
+    return '';
+  }
   // « FR: TF1 HD », « [FR] TF1 (backup) » → « TF1 ».
   function cleanChannelName(name) {
     var clean = String(name || '')
@@ -1770,24 +1824,58 @@
       .replace(/\s+/g, ' ').trim();
     return clean || String(name || '').trim();
   }
-  function unifiedKey(name) {
+  function unifiedName(name) {
     return normalize(cleanChannelName(name).replace(/\+/g, ' plus ')).replace(/\s+(?:france|fr|fra)$/, '').trim();
   }
+  // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
+  // pas la version française) ; une chaîne sans pays connu rejoint la française.
+  function unifiedKey(name, country) {
+    var base = unifiedName(name);
+    if (country && country !== 'fr') {
+      var words = base.split(' ');
+      if (words.length > 1 && (COUNTRY_CODES[words[words.length - 1]] || COUNTRY_WORDS[words[words.length - 1]])) base = words.slice(0, -1).join(' ');
+      return country + ':' + base;
+    }
+    return base;
+  }
   function playable(channel) {
-    return Boolean((channel.playbackType === 'stream' && channel.streamUrl) || channel.resolverUrl || channel.embedUrl || channel.externalUrl);
+    return Boolean((channel.playbackType === 'stream' && channel.streamUrl) || channel.resolverUrl || channel.embedUrl || channel.externalUrl || channel.vipFallbackUrl);
+  }
+  // Événements (matchs du jour) : pas des chaînes.
+  function isEvent(channel) {
+    return Boolean(channel.eventId || (channel.homeName && channel.awayName) || channel.startTime
+      || /\s(?:vs\.?|v\.?|contre|x)\s/i.test(channel.name) || /\b\d{1,2}[:h]\d{2}\b/.test(channel.name));
   }
   function mergeChannels(loaded) {
     var byKey = {};
     var list = [];
+    // Source surtout française (60 % des chaînes au pays connu) : ses chaînes
+    // sans indication de pays sont considérées comme françaises.
+    loaded.forEach(function (part) {
+      var known = 0;
+      var french = 0;
+      part.channels.forEach(function (channel) {
+        if (!channel || !channel.name) return;
+        var country = channelCountry(channel, null);
+        if (!country) return;
+        known++;
+        if (country === 'fr') french++;
+      });
+      if (known >= 5 && french / known >= 0.6) part.source._frenchGuess = true;
+    });
     loaded.forEach(function (part) {
       part.channels.forEach(function (channel) {
-        if (!channel || !channel.name || !playable(channel)) return;
-        var key = unifiedKey(channel.name) || normalize(channel.name);
+        if (!channel || !channel.name || !playable(channel) || isEvent(channel)) return;
+        var country = channelCountry(channel, part.source);
+        var key = unifiedKey(channel.name, country) || normalize(channel.name);
         var unified = byKey[key];
         if (!unified) {
-          unified = byKey[key] = { name: cleanChannelName(channel.name), logo: channel.logo || '', group: '', _groups: {}, _entries: [], _key: key };
+          var display = cleanChannelName(channel.name);
+          if (country && country !== 'fr' && !countryOfWords(display) && !/\s[A-Z]{2,3}$/.test(display)) display += ' ' + country.toUpperCase();
+          unified = byKey[key] = { name: display, logo: channel.logo || '', group: '', _groups: {}, _entries: [], _key: key, country: country };
           list.push(unified);
         }
+        if (!unified.country && country) unified.country = country;
         unified._entries.push({ channel: channel, source: part.source });
         if (!unified.logo && channel.logo) unified.logo = channel.logo;
         if (!unified.iptvOrgId && channel.iptvOrgId) unified.iptvOrgId = channel.iptvOrgId;
@@ -1809,41 +1897,64 @@
     list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }); });
     return list;
   }
-  // Catalogues des sources de chaînes (3 à la fois), réunis ; gardés 10 min.
+  // Catalogues de toutes les sources (et de leurs bouquets), 4 à la fois.
+  // Au bout de 25 s, la liste s'affiche avec les catalogues déjà reçus ; les
+  // autres continuent et seront là à la prochaine ouverture. Gardée 10 min.
   function loadUnified(onProgress) {
     if (unifiedCache && Date.now() - unifiedCache.at < 600000) return Promise.resolve(unifiedCache.data);
     if (unifiedLoading) return unifiedLoading;
     unifiedLoading = sourcesList().then(function (sources) {
-      var wanted = sources.filter(function (source) { return UNIFIED_SECTIONS.indexOf(source.section || 'channels') >= 0; });
       var results = [];
       var failed = [];
-      var queue = wanted.map(function (source, index) { return { source: source, index: index }; });
+      var queue = [];
+      var total = 0;
       var done = 0;
       var running = 0;
-      return new Promise(function (resolve) {
+      function enqueue(source, ref, title) {
+        queue.push({ source: source, ref: ref || '', title: title || '', index: total++ });
+      }
+      sources.forEach(function (source) {
+        // Source française (description ou nom) : ses chaînes sans pays sont françaises.
+        source._french = /fran[cç]|french|\bfr\b/i.test((source.name || '') + ' ' + (source.description || ''));
+        enqueue(source);
+      });
+      function build() {
+        var channels = mergeChannels(results.filter(Boolean));
+        return { channels: channels, count: channels.length };
+      }
+      var finished = new Promise(function (resolve) {
         function pump() {
           if (!queue.length && !running) { resolve(); return; }
-          while (running < 3 && queue.length) {
+          while (running < 4 && queue.length) {
             (function (job) {
               running++;
-              loadCatalog(job.source).then(function (data) {
+              loadCatalog(job.source, job.ref, job.title).then(function (data) {
                 results[job.index] = { source: job.source, channels: (data && data.channels) || [] };
-              }, function () { failed.push(job.source.name); }).then(function () {
+                // Source en bouquets : les chaînes de chaque bouquet (40 au plus).
+                ((data && data.groups) || []).filter(function (group) { return group && group.ref; }).slice(0, 40)
+                  .forEach(function (group) { enqueue(job.source, group.ref, group.name); });
+              }, function () { if (!job.ref) failed.push(job.source.name); }).then(function () {
                 running--;
                 done++;
-                if (onProgress) { try { onProgress(done, wanted.length); } catch (error) { /* affichage */ } }
+                if (onProgress) { try { onProgress(done, total); } catch (error) { /* affichage */ } }
                 pump();
               });
             })(queue.shift());
           }
         }
         pump();
-      }).then(function () {
-        var channels = mergeChannels(results.filter(Boolean));
-        var data = { channels: channels, count: channels.length, sources: wanted.length - failed.length,
-          warning: failed.length ? 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.' : '' };
+      });
+      finished.then(function () {
+        var data = build();
+        if (failed.length) data.warning = 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.';
         unifiedCache = { at: Date.now(), data: data };
-        return data;
+      });
+      var deadline = new Promise(function (resolve) { setTimeout(function () { resolve('late'); }, UNIFIED_WAIT_MS); });
+      return Promise.race([finished, deadline]).then(function (late) {
+        if (late !== 'late') return unifiedCache.data;
+        var partial = build();
+        partial.warning = 'Certaines sources répondent lentement : leurs chaînes apparaîtront à la prochaine ouverture.';
+        return partial;
       });
     });
     unifiedLoading.then(function () { unifiedLoading = null; }, function () { unifiedLoading = null; });
@@ -1911,8 +2022,8 @@
     toast('Ouverture de ' + entry.name + '…');
     if (entry.sourceId === ALL_SOURCE.id) {
       loadUnified().then(function (data) {
-        var wanted = unifiedKey(entry.name);
-        var found = data.channels.filter(function (channel) { return channel._key === wanted; })[0];
+        var wanted = normalize(entry.name);
+        var found = data.channels.filter(function (channel) { return normalize(channel.name) === wanted; })[0];
         if (!found) { toast(entry.name + ' n’est plus proposée par les sources.', true); return; }
         launchChannel(found, ALL_SOURCE, data.channels, {});
       }).catch(function (error) { toast(error.message || 'Chaîne indisponible.', true); });
@@ -2006,10 +2117,9 @@
         (groups[key] = groups[key] || []).push(source);
       });
       // Toutes les chaînes réunies : en tête des sources.
-      var channelSources = sources.filter(function (source) { return UNIFIED_SECTIONS.indexOf(source.section || 'channels') >= 0; });
-      if (channelSources.length > 1) {
+      if (sources.length > 1) {
         main.appendChild(h('section', { class: 'row' },
-          h('h2', null, 'Toutes les chaînes', h('small', { text: channelSources.length + ' sources réunies · une carte par chaîne · la source la plus stable d’abord' })),
+          h('h2', null, 'Toutes les chaînes', h('small', { text: sources.length + ' sources réunies · chaînes françaises par défaut · la source la plus stable d’abord' })),
           h('div', { class: 'grid tiles' }, sourceTile(ALL_SOURCE, 'all'))));
       }
       var order = sourceSections.map(function (s) { return s.id; });
@@ -2070,6 +2180,28 @@
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
+      // Toutes les chaînes : chaînes françaises par défaut, autres pays au choix.
+      var countryRow = null;
+      if (source.id === ALL_SOURCE.id) {
+        var country = typeof params.country === 'string' ? params.country : 'fr';
+        var allChannels = channels;
+        var countryCounts = {};
+        allChannels.forEach(function (channel) { var code = channel.country || '?'; countryCounts[code] = (countryCounts[code] || 0) + 1; });
+        if (country) channels = allChannels.filter(function (channel) { return (channel.country || '?') === country; });
+        countryRow = h('div', { class: 'chips country-chips' });
+        var countryChip = function (value, label, count) {
+          return chip(label + ' · ' + count, country === value, function () {
+            current.params = { section: 'live', source: source, country: value };
+            show(false);
+          });
+        };
+        countryRow.appendChild(countryChip('fr', 'France', countryCounts.fr || 0));
+        countryRow.appendChild(countryChip('', 'Tous les pays', allChannels.length));
+        Object.keys(countryCounts).filter(function (code) { return code !== 'fr' && code !== '?'; })
+          .sort(function (a, b) { return countryCounts[b] - countryCounts[a]; }).slice(0, 10)
+          .forEach(function (code) { countryRow.appendChild(countryChip(code, COUNTRY_LABELS[code] || code.toUpperCase(), countryCounts[code])); });
+        if (countryCounts['?']) countryRow.appendChild(countryChip('?', 'Pays non indiqué', countryCounts['?']));
+      }
       if (channels.length) heading.querySelector('h1').appendChild(h('small', { class: 'head-count', text: channels.length + ' chaîne' + (channels.length > 1 ? 's' : '') }));
       var bouquets = ((data && data.groups) || []).filter(function (item) { return item && item.ref; });
       if (data && data.warning) main.appendChild(h('div', { class: 'empty', text: data.warning }));
@@ -2092,10 +2224,11 @@
       var favoriteCount = channels.filter(function (channel) { return isFavorite(channel, source); }).length;
       var field = searchField('Rechercher une chaîne…', query, function (value) {
         if (value === query) return;
-        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value, country: params.country };
         query = value;
         fill();
       });
+      if (countryRow) main.appendChild(countryRow);
       main.appendChild(field.node);
       // Filtres : toutes, favoris de la source, catégories (avec leur nombre de chaînes).
       if (names.length > 1 || favoriteCount) {
@@ -2129,7 +2262,7 @@
       refill = function () { grid.className = guideMode ? 'guide-list' : 'grid channels'; fill(); };
       function pickGroup(name) {
         group = name;
-        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query };
+        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query, country: params.country };
         Array.prototype.forEach.call(main.querySelectorAll('.chips .chip'), function (node) {
           node.classList.toggle('on', node.getAttribute('data-group') === name);
         });

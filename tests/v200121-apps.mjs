@@ -313,6 +313,10 @@ assert.match(tvApp, /var ALL_SOURCE = \{ id: 'all'/);
 assert.match(tvApp, /if \(channel\._entries\) return unifiedOptions\(channel\);/);
 assert.match(tvApp, /function expandOptions\(options\) \{/);
 assert.match(tvApp, /function serverList\(channel, source, key\) \{/);
+assert.match(tvApp, /function channelCountry\(channel, source\) \{/);
+assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
+assert.match(tvApp, /function isEvent\(channel\) \{/);
+assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');
 // Numéros de chaîne (0-9) pendant la lecture.
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /KeyEvent\.KEYCODE_0/);
 assert.match(webHost, /sendNumber: function \(\) \{/);
