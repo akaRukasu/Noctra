@@ -1758,7 +1758,7 @@
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
   var unifiedCache = null;
   var unifiedLoading = null;
-  var UNIFIED_WAIT_MS = 25000;
+  var UNIFIED_WAIT_MS = 30000;
   // ── Pays des chaînes ──
   var COUNTRY_CODES = { fr: 'fr', fra: 'fr', uk: 'uk', gb: 'uk', en: 'uk', us: 'us', usa: 'us', de: 'de', ger: 'de', es: 'es', spa: 'es', esp: 'es', it: 'it', ita: 'it',
     pt: 'pt', por: 'pt', br: 'br', ar: 'arab', ara: 'arab', nl: 'nl', be: 'be', ch: 'ch', ca: 'ca', au: 'au', tr: 'tr', pl: 'pl', ro: 'ro', ru: 'ru', mx: 'mx',
@@ -1774,7 +1774,7 @@
     nl: 'Pays-Bas', be: 'Belgique', ch: 'Suisse', ca: 'Canada', au: 'Australie', tr: 'Turquie', pl: 'Pologne', ro: 'Roumanie', ru: 'Russie', mx: 'Mexique', latam: 'Amérique latine',
     gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique' };
   // Chaînes françaises connues (reconnues même sans indication de pays).
-  var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
+  var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
   function countryOfCode(value) {
     var code = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
     return COUNTRY_CODES[code] || COUNTRY_WORDS[code] || '';
@@ -1791,13 +1791,19 @@
   }
   // Pays : champ du fournisseur, « FR: », « [UK] », « … DE », « … France »,
   // identifiant du guide (« TF1.fr »), groupe, langue ; sinon source française.
-  function channelCountry(channel, source) {
+  function channelCountry(channel) {
     var found = countryOfCode(channel.country) || countryOfWords(channel.country);
     if (found) return found;
     var name = String(channel.name || '');
-    var prefix = /^\s*(?:\[([A-Za-z]{2,3})\]|\(([A-Za-z]{2,3})\)|([A-Za-z]{2,3})\s*[:|\-–])\s*/.exec(name);
-    if (prefix) { found = countryOfCode(prefix[1] || prefix[2] || prefix[3]); if (found) return found; }
-    var suffix = /[\s(\[]([A-Z]{2,3})[)\]]?\s*$/.exec(name);
+    // Drapeau (🇫🇷, 🇬🇧…) dans le nom.
+    var flag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(name);
+    if (flag) {
+      found = countryOfCode(String.fromCharCode(97 + flag[1].charCodeAt(0) - 0xDDE6, 97 + flag[2].charCodeAt(0) - 0xDDE6));
+      if (found) return found;
+    }
+    var prefix = leadingCode(name);
+    if (prefix) return prefix.country;
+    var suffix = /[\s(\[|\-]([A-Z]{2,3})[)\]]?\s*$/.exec(name);
     if (suffix) { found = countryOfCode(suffix[1]); if (found) return found; }
     var words = normalize(name).split(' ');
     var last = words[words.length - 1];
@@ -1805,35 +1811,71 @@
     var id = /\.([a-z]{2})(?:@|$)/i.exec(String(channel.iptvOrgId || channel.epgId || ''));
     if (id) { found = countryOfCode(id[1]); if (found) return found; }
     var group = String(channel.group || '');
+    var groupFlag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(group);
+    if (groupFlag) {
+      found = countryOfCode(String.fromCharCode(97 + groupFlag[1].charCodeAt(0) - 0xDDE6, 97 + groupFlag[2].charCodeAt(0) - 0xDDE6));
+      if (found) return found;
+    }
     var groupCode = /(?:^|[^A-Za-z])([A-Z]{2,3})(?:[^A-Za-z]|$)/.exec(group);
     found = countryOfWords(group) || (groupCode ? countryOfCode(groupCode[1]) : '');
     if (found) return found;
     if (/^(?:fr|fra|fre|french|francais|français)$/i.test(String(channel.language || '').trim())) return 'fr';
-    if (FRENCH_BRANDS.test(unifiedName(name))) return 'fr';
-    if (source && (source._french || source._frenchGuess)) return 'fr';
+    if (FRENCH_BRANDS.test(brandName(name))) return 'fr';
     return '';
   }
-  // « FR: TF1 HD », « [FR] TF1 (backup) » → « TF1 ».
+  // Code pays en tête du nom : « FR: », « FR| », « [FR] », « (UK) », « FR - », « FR TF1 »…
+  function leadingCode(name) {
+    var match = /^\s*[\[(|]?\s*([A-Za-z]{2,3})\s*[\])|]?\s*([^\w\sÀ-ɏ]+|\s)\s*/.exec(String(name || ''));
+    if (!match) return null;
+    var code = match[1];
+    var country = countryOfCode(code);
+    // Séparé par une simple espace : code en majuscules seulement (« FR TF1 », pas « RMC Sport »).
+    if (!country || (/^\s$/.test(match[2]) && code !== code.toUpperCase())) return null;
+    return { country: country, length: match[0].length };
+  }
+  // « FR: TF1 HD », « [FR] TF1 (backup) », « FR| TF1 ᴴᴰ 🇫🇷 » → « TF1 ».
   function cleanChannelName(name) {
-    var clean = String(name || '')
+    var raw = String(name || '')
+      .replace(/\uD83C[\uDDE6-\uDDFF]/g, ' ')
+      .replace(/[ʰ-˿ᴀ-ᶿ⁰-₟℀-⅏]/g, ' ')
+      .replace(/[─-◿☀-➿]/g, ' ')
+      .trim();
+    var lead = leadingCode(raw);
+    if (lead) raw = raw.slice(lead.length);
+    var clean = raw
       .replace(/^\s*(?:\[[^\]]*\]|\([^)]*\))\s*/, '')
-      .replace(/^\s*(?:[A-Z]{2,3}|VIP|4K)\s*[:|\-–]\s*/i, '')
+      .replace(/^\s*(?:VIP|4K|HD|FHD)\s*[:|\-–]\s*/i, '')
       .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
-      .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip)\b/gi, ' ')
-      .replace(/[|•·]+/g, ' ')
+      .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip|multi ?audio)\b/gi, ' ')
+      .replace(/[|•·▎┃]+/g, ' ')
       .replace(/\s+/g, ' ').trim();
     return clean || String(name || '').trim();
   }
-  function unifiedName(name) {
+  function brandName(name) {
     return normalize(cleanChannelName(name).replace(/\+/g, ' plus ')).replace(/\s+(?:france|fr|fra)$/, '').trim();
+  }
+  // Nom de rapprochement, tolérant aux écritures des sources :
+  // « beIN Sport 1 » = « BEIN SPORTS 1 » = « beIN Sports 1 France »,
+  // « BFM TV » = « BFMTV », « 13ème Rue » = « 13e rue », « C+ Sport » = « Canal+ Sport ».
+  function unifiedName(name) {
+    var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word) {
+      if (word === 'sports') return 'sport';
+      if (word === 'channel') return '';
+      return word.replace(/^(\d+)(?:eme|e|er|ere)$/, '$1');
+    }).filter(Boolean);
+    if (words.length > 1 && words[words.length - 1] === 'tv') words.pop();
+    var key = words.join('');
+    if (key.length > 4 && /tv$/.test(key) && !/^(?:tv|mtv|btv)/.test(key)) key = key.slice(0, -2);
+    return key.replace(/^cplus/, 'canalplus').replace(/^beinsport(?=\d|max|$)/, 'beinsport');
   }
   // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
   // pas la version française) ; une chaîne sans pays connu rejoint la française.
   function unifiedKey(name, country) {
     var base = unifiedName(name);
     if (country && country !== 'fr') {
-      var words = base.split(' ');
-      if (words.length > 1 && (COUNTRY_CODES[words[words.length - 1]] || COUNTRY_WORDS[words[words.length - 1]])) base = words.slice(0, -1).join(' ');
+      var words = normalize(cleanChannelName(name)).split(' ');
+      var last = words[words.length - 1];
+      if (words.length > 1 && (COUNTRY_CODES[last] || COUNTRY_WORDS[last])) base = unifiedName(words.slice(0, -1).join(' '));
       return country + ':' + base;
     }
     return base;
@@ -1849,24 +1891,10 @@
   function mergeChannels(loaded) {
     var byKey = {};
     var list = [];
-    // Source surtout française (60 % des chaînes au pays connu) : ses chaînes
-    // sans indication de pays sont considérées comme françaises.
-    loaded.forEach(function (part) {
-      var known = 0;
-      var french = 0;
-      part.channels.forEach(function (channel) {
-        if (!channel || !channel.name) return;
-        var country = channelCountry(channel, null);
-        if (!country) return;
-        known++;
-        if (country === 'fr') french++;
-      });
-      if (known >= 5 && french / known >= 0.6) part.source._frenchGuess = true;
-    });
     loaded.forEach(function (part) {
       part.channels.forEach(function (channel) {
         if (!channel || !channel.name || !playable(channel) || isEvent(channel)) return;
-        var country = channelCountry(channel, part.source);
+        var country = channelCountry(channel);
         var key = unifiedKey(channel.name, country) || normalize(channel.name);
         var unified = byKey[key];
         if (!unified) {
@@ -1876,6 +1904,9 @@
           list.push(unified);
         }
         if (!unified.country && country) unified.country = country;
+        // Nom affiché : l'écriture la plus soignée (« beIN Sports 1 » plutôt que « BEIN SPORTS 1 »).
+        var candidate = cleanChannelName(channel.name);
+        if (unified.name === unified.name.toUpperCase() && candidate !== candidate.toUpperCase() && !(country && country !== 'fr')) unified.name = candidate;
         unified._entries.push({ channel: channel, source: part.source });
         if (!unified.logo && channel.logo) unified.logo = channel.logo;
         if (!unified.iptvOrgId && channel.iptvOrgId) unified.iptvOrgId = channel.iptvOrgId;
@@ -1913,11 +1944,7 @@
       function enqueue(source, ref, title) {
         queue.push({ source: source, ref: ref || '', title: title || '', index: total++ });
       }
-      sources.forEach(function (source) {
-        // Source française (description ou nom) : ses chaînes sans pays sont françaises.
-        source._french = /fran[cç]|french|\bfr\b/i.test((source.name || '') + ' ' + (source.description || ''));
-        enqueue(source);
-      });
+      sources.forEach(function (source) { enqueue(source); });
       function build() {
         var channels = mergeChannels(results.filter(Boolean));
         return { channels: channels, count: channels.length };
@@ -1925,7 +1952,7 @@
       var finished = new Promise(function (resolve) {
         function pump() {
           if (!queue.length && !running) { resolve(); return; }
-          while (running < 4 && queue.length) {
+          while (running < 6 && queue.length) {
             (function (job) {
               running++;
               loadCatalog(job.source, job.ref, job.title).then(function (data) {
@@ -1944,16 +1971,23 @@
         }
         pump();
       });
+      var shownPartial = false;
       finished.then(function () {
         var data = build();
         if (failed.length) data.warning = 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.';
         unifiedCache = { at: Date.now(), data: data };
+        // Liste affichée incomplète : complétée dès que toutes les sources ont répondu.
+        if (shownPartial && current && current.name === 'liveSource' && current.params.source === ALL_SOURCE && !layer.firstChild) {
+          toast('Toutes les sources ont répondu : liste complétée.');
+          show(false);
+        }
       });
       var deadline = new Promise(function (resolve) { setTimeout(function () { resolve('late'); }, UNIFIED_WAIT_MS); });
       return Promise.race([finished, deadline]).then(function (late) {
         if (late !== 'late') return unifiedCache.data;
         var partial = build();
-        partial.warning = 'Certaines sources répondent lentement : leurs chaînes apparaîtront à la prochaine ouverture.';
+        partial.warning = 'Certaines sources répondent lentement : la liste sera complétée automatiquement.';
+        shownPartial = true;
         return partial;
       });
     });
