@@ -230,7 +230,8 @@ assert.match(webPlayer, /public void onReceivedHttpError/);
 assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks \}\)/);
 assert.match(androidtv, /\.method public closePlayer\(\)V/);
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->close\(Landroid\/app\/Activity;\)Z/);
-assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->home\(Landroid\/app\/Activity;\)V/);
+assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->home\(Landroid\/app\/Activity;Ljava\/lang\/Object;\)V/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java'), /if \(opened\(activity\) && resumed\(fragment\)\) activity\.finish\(\);/, 'Épisode suivant : pas de fermeture pendant la transition vers « À suivre »');
 const playbackJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java');
 assert.match(playbackJava, /helper\.retrieveAndPlay\(itemId, false, positionTicks, context\)/);
 // Carrousel d'accueil : image à la définition de l'écran, décodée avant le fondu, affiche verticale entière.

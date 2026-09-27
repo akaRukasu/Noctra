@@ -115,14 +115,34 @@ public final class NoctraPlayback {
 
     /**
      * L'accueil Jellyfin revient au premier plan (HomeFragment.onResume) après
-     * la lecture, par exemple depuis l'écran « À suivre » : retour à Noctra.
+     * la lecture : retour à Noctra. Vérifié après un court délai : entre deux
+     * épisodes, Jellyfin passe un instant par son accueil en ouvrant l'écran
+     * « À suivre » (remplacement du lecteur), qui enchaîne l'épisode suivant.
      */
-    public static void home(Activity activity) {
+    public static void home(final Activity activity, final Object fragment) {
         if (activity != null) main = new WeakReference<Activity>(activity);
         if (!opened(activity)) return;
-        if (activity.getIntent().getBooleanExtra(EXTRA_STARTED, false)) activity.finish();
-        else if (pendingItem != null) cover(activity);
-        else activity.finish();
+        final boolean started = activity.getIntent().getBooleanExtra(EXTRA_STARTED, false);
+        if (!started && pendingItem != null) {
+            cover(activity);
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (opened(activity) && resumed(fragment)) activity.finish();
+            }
+        }, 900);
+    }
+
+    /** Fragment encore affiché ? (androidx Fragment.isResumed, par réflexion). */
+    private static boolean resumed(Object fragment) {
+        if (fragment == null) return true;
+        try {
+            return (Boolean) fragment.getClass().getMethod("isResumed").invoke(fragment);
+        } catch (Throwable error) {
+            return true;
+        }
     }
 
     /** Lecture Jellyfin qui n'a pas démarré : {itemId, positionTicks} pour le lecteur Noctra, une seule fois. */

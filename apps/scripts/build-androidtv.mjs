@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 13;
+const noctraRevision = 14;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -274,7 +274,7 @@ await patch(smali('ui/home/HomeFragment.smali'), [[
 
     invoke-super {p0}, Landroidx/fragment/app/Fragment;->onResume()V
 ${fragmentActivity('Lorg/jellyfin/androidtv/ui/home/HomeFragment')}
-    invoke-static {v0}, Lcom/noctra/tv/NoctraPlayback;->home(Landroid/app/Activity;)V
+    invoke-static {v0, p0}, Lcom/noctra/tv/NoctraPlayback;->home(Landroid/app/Activity;Ljava/lang/Object;)V
 
     return-void
 .end method
