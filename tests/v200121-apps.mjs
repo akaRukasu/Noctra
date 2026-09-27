@@ -337,7 +337,7 @@ assert.match(webPlayerJava, /WebResourceResponse adaptedResponse = compat \? com
 assert.match(webPlayerJava, /NoctraJsCompat\.base\(result, finalUrl\)/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraDns.java'), /"jsdelivr\.net"/);
 // Arrêt du lecteur web (Android 7 : moteur web dans le processus) : nouvel essai allégé automatique.
-assert.match(tvApp, /if \(result\.crashed && !entry\.option\.lite\) \{/);
+assert.match(tvApp, /if \(result\.crashed && !entry\.option\._lite\) \{/);
 assert.match(webPlayerJava, /static final String EXTRA_LITE = "noctra_lite";/);
 assert.match(webPlayerJava, /private static final String ACLIB_STUB = /);
 assert.match(webPlayerJava, /\|\| \(htmlMime && !document\);/, 'Scripts PHP servis en text/html adaptés comme scripts');
