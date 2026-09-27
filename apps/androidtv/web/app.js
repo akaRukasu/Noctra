@@ -1792,7 +1792,8 @@
   // Pays : champ du fournisseur, « FR: », « [UK] », « … DE », « … France »,
   // identifiant du guide (« TF1.fr »), groupe, langue ; sinon source française.
   function channelCountry(channel) {
-    var found = countryOfCode(channel.country) || countryOfWords(channel.country);
+    // Pays du référentiel iptv-org (ajouté par le serveur) : le plus fiable.
+    var found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
     if (found) return found;
     var name = String(channel.name || '');
     // Drapeau (🇫🇷, 🇬🇧…) dans le nom.
@@ -1905,17 +1906,50 @@
     return Boolean(channel.eventId || (channel.homeName && channel.awayName) || channel.startTime
       || /\s(?:vs\.?|v\.?|contre|x)\s/i.test(channel.name) || /\b\d{1,2}[:h]\d{2}\b/.test(channel.name));
   }
+  // Identité iptv-org (« BeINSports1.fr ») : même chaîne quel que soit son nom.
+  function iptvKey(channel) {
+    var id = String(channel.iptvOrgId || '').toLowerCase().replace(/@.*$/, '').trim();
+    return id ? 'id:' + id : '';
+  }
   function mergeChannels(loaded) {
     var byKey = {};
     var list = [];
+    // 1. Liens nom ↔ identité iptv-org : les variantes de nom d'une même chaîne
+    //    identifiée se rejoignent (ex. « BEIN SPORTS 1 .b » et « beIN Sports 1 France »).
+    var parent = {};
+    function root(key) {
+      while (parent[key] && parent[key] !== key) key = parent[key] = parent[parent[key]] || parent[key];
+      return key;
+    }
+    function union(a, b) {
+      var ra = root(a), rb = root(b);
+      if (!parent[ra]) parent[ra] = ra;
+      if (!parent[rb]) parent[rb] = rb;
+      if (ra !== rb) parent[rb] = ra;
+    }
+    var prepared = [];
     loaded.forEach(function (part) {
       part.channels.forEach(function (channel) {
         if (!channel || !channel.name || !playable(channel) || isEvent(channel)) return;
         var country = channelCountry(channel);
-        var key = unifiedKey(channel.name, country) || normalize(channel.name);
+        var nameKey = unifiedKey(channel.name, country) || normalize(channel.name);
+        var idKey = iptvKey(channel);
+        if (!parent[nameKey]) parent[nameKey] = nameKey;
+        if (idKey) {
+          var idCountry = countryOfCode((/\.([a-z]{2})$/.exec(idKey) || [])[1]);
+          // Jamais de lien entre pays différents (la version étrangère reste à part).
+          if (!idCountry || idCountry === (country || 'fr')) union(idKey, nameKey);
+        }
+        prepared.push({ channel: channel, source: part.source, country: country, nameKey: nameKey });
+      });
+    });
+    prepared.forEach(function (item) {
+        var channel = item.channel;
+        var country = item.country;
+        var key = root(item.nameKey);
         var unified = byKey[key];
         if (!unified) {
-          var display = cleanChannelName(channel.name);
+          var display = channel.iptvOrgName ? String(channel.iptvOrgName) : cleanChannelName(channel.name);
           if (country && country !== 'fr' && !countryOfWords(display) && !/\s[A-Z]{2,3}$/.test(display)) display += ' ' + country.toUpperCase();
           unified = byKey[key] = { name: display, logo: channel.logo || '', group: '', _groups: {}, _entries: [], _key: key, country: country };
           list.push(unified);
@@ -1923,15 +1957,16 @@
         if (!unified.country && country) unified.country = country;
         // Nom affiché : l'écriture la plus soignée (« beIN Sports 1 » plutôt que « BEIN SPORTS 1 »).
         var candidate = cleanChannelName(channel.name);
-        if (unified.name === unified.name.toUpperCase() && candidate !== candidate.toUpperCase() && !(country && country !== 'fr')) unified.name = candidate;
-        unified._entries.push({ channel: channel, source: part.source });
+        if (!unified._official && unified.name === unified.name.toUpperCase() && candidate !== candidate.toUpperCase() && !(country && country !== 'fr')) unified.name = candidate;
+        // Nom officiel iptv-org quand une des sources en fournit un.
+        if (channel.iptvOrgName && !unified._official && !(country && country !== 'fr')) { unified.name = String(channel.iptvOrgName); unified._official = true; }
+        unified._entries.push({ channel: channel, source: item.source, nameKey: item.nameKey });
         if (!unified.logo && channel.logo) unified.logo = channel.logo;
         if (!unified.iptvOrgId && channel.iptvOrgId) unified.iptvOrgId = channel.iptvOrgId;
         if (!unified.epgId && channel.epgId) unified.epgId = channel.epgId;
         if (!unified.now && channel.now && channel.now.title) { unified.now = channel.now; unified.next = channel.next; }
         if (channel.isLive) unified.isLive = true;
         if (channel.group) unified._groups[channel.group] = (unified._groups[channel.group] || 0) + 1;
-      });
     });
     // Même chaîne, mots dans un autre ordre (« Sport 360 Canal+ ») : réunies aussi.
     var byWords = {};
@@ -1962,7 +1997,18 @@
       unified.provider = names.length > 2 ? names.length + ' sources' : names.join(' · ');
     });
     list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }); });
+    // Chaîne d'une source → sa chaîne réunie (serveurs des autres sources).
+    var byName = {};
+    list.forEach(function (unified) { unified._entries.forEach(function (entry) { if (entry.nameKey && !byName[entry.nameKey]) byName[entry.nameKey] = unified; }); });
+    list._byName = byName;
     return list;
+  }
+  // Même chaîne dans les autres sources (catalogue réuni déjà chargé) : ou null.
+  function unifiedTwin(channel) {
+    if (!unifiedCache || !unifiedCache.data || !unifiedCache.data.channels._byName) return null;
+    var key = unifiedKey(channel.name, channelCountry(channel)) || normalize(channel.name);
+    var twin = unifiedCache.data.channels._byName[key];
+    return twin && twin._sources && twin._sources.length > 1 ? twin : null;
   }
   // Catalogues de toutes les sources (et de leurs bouquets), 4 à la fois.
   // Au bout de 25 s, la liste s'affiche avec les catalogues déjà reçus ; les
@@ -2093,8 +2139,12 @@
     })).then(function (lists) { return lists.reduce(function (all, list) { return all.concat(list); }, []); });
   }
   function serverList(channel, source, key) {
-    return channelOptions(channel, source).then(function (options) {
-      return channel._entries ? expandOptions(options) : options;
+    // Chaîne ouverte depuis une source : ses serveurs et ceux des autres sources
+    // qui la proposent, le plus fiable en premier.
+    var twin = !channel._entries && source && source.id !== ALL_SOURCE.id ? unifiedTwin(channel) : null;
+    var target = twin || channel;
+    return channelOptions(target, source).then(function (options) {
+      return target._entries ? expandOptions(options) : options;
     }).then(function (options) { return rankOptions(options, key, channel.provider); });
   }
   // Serveurs obtenus d'un serveur « automatique » d'une source réunie : même préfixe.
@@ -2208,6 +2258,9 @@
         (groups[key] = groups[key] || []).push(source);
       });
       // Toutes les chaînes réunies : en tête des sources.
+      // Catalogue réuni chargé en arrière-plan : chaque chaîne profite des
+      // serveurs des autres sources, même ouverte depuis une seule source.
+      if (sources.length > 1 && !unifiedCache) setTimeout(function () { loadUnified().catch(function () { /* facultatif */ }); }, 2500);
       if (sources.length > 1) {
         main.appendChild(h('section', { class: 'row' },
           h('h2', null, 'Toutes les chaînes', h('small', { text: sources.length + ' sources réunies · chaînes françaises par défaut · la source la plus stable d’abord' })),
@@ -2793,11 +2846,17 @@
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
       playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: options, index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
-      if (playback.options.length === 1) {
+      // Lancement immédiat quand le meilleur serveur est sûr (fiable, ou dernier
+      // serveur qui a fonctionné pour cette chaîne) ; sinon 3 s pour en choisir un autre.
+      var top = playback.options[0];
+      var health = optionHealth(top, key, 0, channel.provider);
+      var trusted = health.verdict === 'good' || (rememberedServer(key) === optionLabel(top, 0) && health.verdict !== 'recent-fail');
+      if (playback.options.length === 1 || trusted) {
         closeLayer(true);
+        if (playback.options.length > 1) toast('Lecture sur ' + optionLabel(top, 0) + ' · ▶ pendant la lecture pour changer de serveur');
         playOption();
       } else {
-        fillPicker(sheet, playback, 5);
+        fillPicker(sheet, playback, 3);
       }
     }, function (error) {
       if (document.body.contains(sheet.node)) sheet.status(error.message, true);
@@ -2956,7 +3015,7 @@
     var option = state.options[state.index];
     if (!option) { playback = null; return; }
     // Chaîne réunie : le nom du serveur contient déjà sa source.
-    var label = state.channel._entries ? optionLabel(option, state.index) : [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
+    var label = state.channel._entries || option._prefix ? optionLabel(option, state.index) : [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
     if (optionKind(option) === 'resolve') {
       toast('Connexion à ' + optionLabel(option, state.index) + '…');
       resolveOptions(option.resolveUrl).then(function (list) {

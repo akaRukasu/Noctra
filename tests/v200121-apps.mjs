@@ -254,7 +254,7 @@ assert.match(tvApp, /'\/api\/tv\/programme\?id=' \+ encodeURIComponent\(keys\[in
 assert.match(tvApp, /function epgKeys\(channel\)/, 'Guide aussi retrouvé par le nom de la chaîne');
 assert.match(tvApp, /function needsEpg\(channel\)/, 'Guide périmé redemandé');
 // Guide : rapprochement approximatif des noms côté serveur (« Canal Émotion » ↔ « Ciné+ Émotion »).
-const serverCode = await read('server.mjs');
+const serverTvCode = await read('server.mjs');
 assert.match(serverCode, /function fuzzyTvGuideProgrammes\(guide, name\)/);
 assert.match(serverCode, /if \(!programmes\.length\) programmes = fuzzyTvGuideProgrammes\(guide, cleanedName \|\| channel\.name\);/);
 // « Reprendre » : l'accueil Jellyfin est couvert, repli sur le lecteur Noctra si le lecteur Jellyfin ne s'ouvre pas.
@@ -344,6 +344,13 @@ assert.match(webPlayerJava, /\|\| \(htmlMime && !document\);/, 'Scripts PHP serv
 assert.match(webPlayerJava, /code == 403 \|\| code == 429 \|\| code == 503/);
 assert.match(webPlayerJava, /Onglet publicitaire ignoré/);
 assert.match(tvApp, /var WEB_MODE_KEY = 'noctra-tv-webmode-v1';/);
+// Identité iptv-org (nom officiel, pays), serveurs des autres sources, lancement immédiat.
+assert.match(tvApp, /if \(!idCountry \|\| idCountry === \(country \|\| 'fr'\)\) union\(idKey, nameKey\);/);
+assert.match(tvApp, /function unifiedTwin\(channel\) \{/);
+assert.match(tvApp, /if \(playback\.options\.length === 1 \|\| trusted\) \{/);
+const serverTvCode = await read('server.mjs');
+assert.match(serverTvCode, /iptvOrgName: match\.name \|\| channel\.iptvOrgName \|\| ''/);
+assert.match(serverTvCode, /Chaînes des bouquets \(Movix, Vavoo…\) : logos et identité iptv-org/);
 assert.match(tvApp, /rememberWebMode\(failedOption\.sniffedFrom\.url, 'noSniff'\);/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
 assert.match(tvApp, /function isEvent\(channel\) \{/);

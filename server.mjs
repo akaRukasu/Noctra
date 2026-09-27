@@ -4733,7 +4733,7 @@ const tvEpgCache = new Map();
 const tvEpgPromises = new Map();
 const tvReferences = new Map();
 const tvReferenceLifetime = 8 * 60 * 60_000;
-const tvLogoIndexSchemaVersion = 2;
+const tvLogoIndexSchemaVersion = 3;
 let iptvOrgLogoCache = { expiresAt: 0, map: null, guides: null, promise: null, schemaVersion: 0 };
 let iptvOrgLogoDiskChecked = false;
 const liveWatchVipDirectCache = new Map();
@@ -4920,7 +4920,7 @@ async function iptvOrgLogoIndex(waitForRefresh = false) {
     for (const channel of indexedChannels) {
       const logo = bestLogoByChannel.get(channel.id)?.url || '';
       if (!logo) continue;
-      const entry = { logo, channelId: channel.id, country: channel.country || '' };
+      const entry = { logo, channelId: channel.id, country: channel.country || '', name: String(channel.name || '') };
       index.set(tvLogoChannelIdKey(channel.id), entry);
     }
     // Les identifiants EPG sont fiables dans tous les pays. Pour les recherches
@@ -4934,7 +4934,7 @@ async function iptvOrgLogoIndex(waitForRefresh = false) {
       const logo = bestLogoByChannel.get(channel.id)?.url || '';
       if (!logo) continue;
       const names = [channel.name, ...(Array.isArray(channel.alt_names) ? channel.alt_names : [])].filter(Boolean);
-      const entry = { logo, channelId: channel.id, country: channel.country || '' };
+      const entry = { logo, channelId: channel.id, country: channel.country || '', name: String(channel.name || '') };
       for (const name of names) {
         for (const key of tvLogoIdentityKeys(name)) {
           if (key && !index.has(key)) index.set(key, entry);
@@ -4985,7 +4985,11 @@ async function enrichTvLogosFromIptvOrg(channels, preferFresh = false, waitForRe
       ...channel,
       logo: primaryLogo,
       secondaryLogo,
-      iptvOrgId: match.channelId || channel.iptvOrgId || ''
+      iptvOrgId: match.channelId || channel.iptvOrgId || '',
+      // Nom officiel et pays (référentiel iptv-org) : identification des chaînes
+      // réunies de plusieurs sources dans les applis TV.
+      iptvOrgName: match.name || channel.iptvOrgName || '',
+      iptvOrgCountry: match.country || channel.iptvOrgCountry || ''
     };
   });
 }
@@ -11640,9 +11644,14 @@ async function tvCatalogBySource(sourceId, options = {}) {
 async function tvCatalogByReference(token) {
   const reference = tvReferences.get(String(token || ''));
   if (!reference || reference.expiresAt <= Date.now()) throw new HttpError(410, 'Ce groupe TV a expiré. Recharge la source.');
-  const catalog = reference.meta?.kind === 'additional-group'
+  let catalog = reference.meta?.kind === 'additional-group'
     ? await additionalTv.group(reference.meta)
     : await tvCatalogFromUrl(reference.url, 'Chaînes');
+  // Chaînes des bouquets (Movix, Vavoo…) : logos et identité iptv-org comme les autres sources.
+  if (Array.isArray(catalog?.channels) && catalog.channels.length) {
+    const enriched = await enrichTvLogosFromIptvOrg(catalog.channels).catch(() => catalog.channels);
+    catalog = { ...catalog, channels: shareTvLogosAcrossDuplicateNames(enriched), count: enriched.length };
+  }
   return decorateTvCatalogImages(catalog);
 }
 

@@ -7,7 +7,7 @@ Noctra existe en applications pour :
 | Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad | `Noctra-ios-unsigned.ipa` | Sideloadly ou AltStore |
-| Téléviseurs LG (webOS) | `com.noctra.media_1.1.12_all.ipk` (**Noctra TV**) | mode développeur LG |
+| Téléviseurs LG (webOS) | `com.noctra.media_1.1.13_all.ipk` (**Noctra TV**) | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
 
 ## Android TV : Noctra TV (appli native)
@@ -118,13 +118,13 @@ Il faut un PC (Windows, macOS ou Linux) sur le même réseau que la TV, et un co
 1. **Compte LG développeur** : créez-le sur [webostv.developer.lge.com](https://webostv.developer.lge.com) (*Sign in* › *Create account*). C’est gratuit.
 2. **Mode développeur sur la TV** : dans le LG Content Store, installez l’appli **Developer Mode**. Ouvrez-la, connectez-vous avec le compte LG, activez **Dev Mode Status** (la TV redémarre), rouvrez l’appli et activez **Key Server**. Notez l’adresse IP et la *passphrase* affichées.
 3. **Installation**, au choix :
-   - **Sans ligne de commande (conseillé)** : sur le PC, installez [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop/releases) ; *Add device* › saisissez l’IP de la TV et la *passphrase* ; puis onglet **Apps** › **Install** › choisissez `com.noctra.media_1.1.12_all.ipk`.
+   - **Sans ligne de commande (conseillé)** : sur le PC, installez [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop/releases) ; *Add device* › saisissez l’IP de la TV et la *passphrase* ; puis onglet **Apps** › **Install** › choisissez `com.noctra.media_1.1.13_all.ipk`.
    - **En ligne de commande** :
      ```bash
      npm install -g @webos-tools/cli
      ares-setup-device        # « add » : nom « tv », IP de la TV, port 9922, utilisateur prisoner
      ares-novacom --device tv --getkey   # saisir la passphrase affichée sur la TV
-     ares-install --device tv com.noctra.media_1.1.12_all.ipk
+     ares-install --device tv com.noctra.media_1.1.13_all.ipk
      ```
 4. Noctra apparaît dans la liste des applis de la TV (bouton Accueil › *Applications*). Au premier lancement : Quick Connect ou identifiants Jellyfin.
 
