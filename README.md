@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.126 — intro de démarrage plus longue
+# Version actuelle : 200.0.127 — logo de l'œuvre sur l'affiche d'accueil
+
+Comme sur la version TV, l'affiche « Continuer à regarder » montre le logo du film ou de la série à la place du titre. Logos préchargés et décodés d'avance : aucun délai à la rotation. Sans logo, le titre texte reste. Détails : [MISE-A-JOUR-V200127.md](MISE-A-JOUR-V200127.md). Validation : `npm run test:v200127`.
+
+# Historique : 200.0.126 — intro de démarrage plus longue
 
 Intro Noctra de 3,5 s à la première ouverture (2,5 s ensuite), animation plus posée. Inclut les 200.0.124 et 200.0.125. Détails : [MISE-A-JOUR-V200126.md](MISE-A-JOUR-V200126.md). Validation : `npm run test:v200126`.
 

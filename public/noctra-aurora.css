@@ -1371,3 +1371,22 @@ html[data-noctra-skin="aurora"].na-motion:not(#na-skin) #na-intro {transition:op
  html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro img {animation:na-intro-mark 1.3s cubic-bezier(.2,1.3,.3,1) both!important;}
  html[data-noctra-skin="aurora"]:not(#na-skin) #na-intro b {animation:na-intro-word 1.2s var(--na-ease) .3s both!important;}
 }
+
+/* ═══════════════ 200.0.127 — Logo de l'œuvre dans l'affiche d'accueil ═══════════════
+   Comme l'interface TV de Jellyfin : le logo remplace le titre quand il existe.
+   Le titre texte reste dans le h1 pour les lecteurs d'écran. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .noctra-premiere-copy h1 .noctra-premiere-logo {
+ display:block;width:auto;height:auto;max-width:min(520px,82%);max-height:clamp(84px,11vw,160px);
+ object-fit:contain;object-position:left bottom;margin:6px 0 8px;
+ filter:drop-shadow(0 8px 24px rgba(0,0,0,.6)) drop-shadow(0 1px 2px rgba(0,0,0,.5));
+}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .noctra-premiere-copy h1 .noctra-premiere-logo[hidden] {display:none!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere[data-logo="true"] .noctra-premiere-copy h1 {line-height:1!important;}
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere[data-logo="true"] .noctra-premiere-title-text {
+ position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip-path:inset(50%)!important;white-space:nowrap!important;
+}
+/* Logo en cours de décodage (0,7 s au plus) : le titre garde sa place, invisible. */
+html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere[data-logo="pending"] .noctra-premiere-title-text {visibility:hidden;}
+@media (max-width:760px) {
+ html[data-noctra-skin="aurora"]:not(#na-skin) body.noctra-ready .noctra-premiere .noctra-premiere-copy h1 .noctra-premiere-logo {max-width:78%;max-height:92px;margin:4px 0 6px;}
+}

@@ -312,7 +312,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.126';
+  const NOCTRA_BUILD_VERSION = '200.0.127';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2051,12 +2051,41 @@
     return Math.max(1280, Math.min(2560, Math.round(width * ratio / 160) * 160));
   }
 
+  // 200.0.127 : logos de l'affiche d'accueil, chargés et décodés d'avance.
+  const premiereLogos = new Map();
+  function preloadPremiereLogo(url) {
+    if (!url) return null;
+    let entry = premiereLogos.get(url);
+    if (entry) return entry;
+    entry = { ready: false, failed: false };
+    const image = new Image();
+    image.decoding = 'async';
+    entry.promise = new Promise(resolve => {
+      image.onload = () => {
+        Promise.resolve(image.decode?.()).catch(() => {}).then(() => {
+          entry.ready = image.naturalWidth > 0;
+          entry.failed = !entry.ready;
+          resolve(entry.ready);
+        });
+      };
+      image.onerror = () => { entry.failed = true; resolve(false); };
+    });
+    image.src = url;
+    premiereLogos.set(url, entry);
+    if (premiereLogos.size > 60) premiereLogos.delete(premiereLogos.keys().next().value);
+    return entry;
+  }
+
   function premiereResumeData(item) {
     const client = window.ApiClient;
     const serverId = item.ServerId || client?.serverInfo?.()?.Id || '';
     const imageId = item.BackdropImageTags?.length ? item.Id : item.ParentBackdropItemId || item.Id;
     const imageType = item.BackdropImageTags?.length || item.ParentBackdropItemId ? 'Backdrop' : 'Primary';
     const image = client?.getImageUrl?.(imageId, { type: imageType, maxWidth: premiereImageWidth(), quality: 90 }) || appPath('/api/jellyfin/image/' + encodeURIComponent(item.Id));
+    // 200.0.127 : logo de l'œuvre (film : le sien ; épisode : celui de la série).
+    const logoTag = item.ImageTags?.Logo || item.ParentLogoImageTag || '';
+    const logoId = item.ImageTags?.Logo ? item.Id : item.ParentLogoItemId || '';
+    const logo = logoTag && logoId ? client?.getImageUrl?.(logoId, { type: 'Logo', tag: logoTag, maxWidth: 900, quality: 90 }) || '' : '';
     const action = name => ({ click: () => {
       // Use this bundled client's native action handler, preserving resume ticks and player choice.
       // 200.0.121 : require webpack mémorisé (homeWebpackRequire). L'ancien
@@ -2072,7 +2101,7 @@
         runtime(22832).Ay.onClick({ target: button, preventDefault() {}, stopPropagation() {} });
       }).catch(() => toast('Impossible d’ouvrir le lecteur. Réessayez.'));
     }});
-    return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, resume: action('resume'), visual: action('link') };
+    return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, logo, resume: action('resume'), visual: action('link') };
   }
 
   function currentJellyfinUserId() {
@@ -2162,13 +2191,14 @@
     // Ne jamais utiliser une rangée native non vérifiée comme reprise : lors d'un
     // changement de compte, Jellyfin peut conserver quelques cartes de l'ancien DOM.
     let items = resumeItems ?? [];
+    items.forEach(entry => preloadPremiereLogo(entry.logo));
     if (!container) return;
     home.querySelector('.noctra-premiere')?.remove();
     const premiere = document.createElement('section');
     premiere.className = 'noctra-premiere';
     premiere.setAttribute('aria-label', 'Continuer à regarder');
     premiere.setAttribute('aria-roledescription', 'carrousel');
-    premiere.innerHTML = '<div class="noctra-premiere-art" aria-hidden="true"></div><div class="noctra-premiere-atmosphere" aria-hidden="true"></div><div class="noctra-premiere-copy"><p class="noctra-eyebrow">CONTINUER À REGARDER</p><span class="noctra-premiere-label"></span><h1></h1><p class="noctra-premiere-subtitle"></p><div class="noctra-premiere-actions"><button type="button" class="noctra-button noctra-button--primary" data-premiere-play>'+icons.play+'<span>Reprendre</span></button><button type="button" class="noctra-button" data-premiere-details>Voir la fiche</button></div></div><div class="noctra-premiere-controls"><button type="button" data-premiere-prev aria-label="Titre précédent">'+icons.back+'</button><span data-premiere-count></span><button type="button" data-premiere-next aria-label="Titre suivant">'+icons.next+'</button><button type="button" class="noctra-premiere-motion" aria-label="Mettre le défilement en pause" aria-pressed="false">'+icons.pause+'</button></div>';
+    premiere.innerHTML = '<div class="noctra-premiere-art" aria-hidden="true"></div><div class="noctra-premiere-atmosphere" aria-hidden="true"></div><div class="noctra-premiere-copy"><p class="noctra-eyebrow">CONTINUER À REGARDER</p><span class="noctra-premiere-label"></span><h1><img class="noctra-premiere-logo" alt="" decoding="async" hidden><span class="noctra-premiere-title-text"></span></h1><p class="noctra-premiere-subtitle"></p><div class="noctra-premiere-actions"><button type="button" class="noctra-button noctra-button--primary" data-premiere-play>'+icons.play+'<span>Reprendre</span></button><button type="button" class="noctra-button" data-premiere-details>Voir la fiche</button></div></div><div class="noctra-premiere-controls"><button type="button" data-premiere-prev aria-label="Titre précédent">'+icons.back+'</button><span data-premiere-count></span><button type="button" data-premiere-next aria-label="Titre suivant">'+icons.next+'</button><button type="button" class="noctra-premiere-motion" aria-label="Mettre le défilement en pause" aria-pressed="false">'+icons.pause+'</button></div>';
     home.querySelector('.noctra-home-heading')?.remove();
     const homeHeading = document.createElement('header');
     homeHeading.className = 'noctra-home-heading';
@@ -2190,12 +2220,42 @@
       premiere.dataset.motionPaused = String(!canRun());
       if (canRun()) timer = setTimeout(() => { index = (index + 1) % items.length; render(); sync(); }, 8000);
     };
+    // 200.0.127 : logo de l'œuvre à la place du titre (comme l'interface TV
+    // de Jellyfin). Logos préchargés dès l'arrivée de la liste ; affiché tout
+    // de suite s'il est prêt, sinon le titre patiente 0,7 s au plus (invisible)
+    // pour éviter l'enchaînement texte puis logo ; sans logo, le titre reste.
+    let logoFallbackTimer = 0;
+    const showPremiereLogo = item => {
+      const logo = premiere.querySelector('.noctra-premiere-logo');
+      if (!logo) return;
+      window.clearTimeout(logoFallbackTimer);
+      const url = item?.logo || '';
+      const entry = url ? preloadPremiereLogo(url) : null;
+      const display = () => {
+        logo.src = url;
+        logo.alt = item.title || '';
+        logo.hidden = false;
+        premiere.dataset.logo = 'true';
+      };
+      if (entry?.ready) return display();
+      logo.hidden = true;
+      logo.removeAttribute('src');
+      if (!entry || entry.failed) { premiere.dataset.logo = 'false'; return; }
+      premiere.dataset.logo = 'pending';
+      logoFallbackTimer = window.setTimeout(() => { if (premiere.dataset.logo === 'pending') premiere.dataset.logo = 'false'; }, 700);
+      entry.promise.then(ok => {
+        if (disposed || items[index]?.id !== item.id) return;
+        if (ok) { window.clearTimeout(logoFallbackTimer); display(); }
+        else premiere.dataset.logo = 'false';
+      });
+    };
     const render = () => {
       const item = items[index];
       if (!item) {
         premiere.querySelector('.noctra-premiere-art').replaceChildren();
         delete premiere.dataset.itemId;
-        text('h1', resumeItems === null ? 'Vos lectures en cours' : 'Tout est à jour');
+        text('.noctra-premiere-title-text', resumeItems === null ? 'Vos lectures en cours' : 'Tout est à jour');
+        showPremiereLogo(null);
         text('.noctra-premiere-label', 'Continuer à regarder');
         text('.noctra-premiere-subtitle', resumeItems === null ? 'Retrouvez votre prochaine reprise ici.' : 'Vos films et épisodes commencés apparaîtront ici.');
         premiere.querySelector('.noctra-premiere-actions').hidden = true;
@@ -2205,7 +2265,8 @@
       premiere.querySelector('.noctra-premiere-actions').hidden = false;
       premiere.querySelector('.noctra-premiere-controls').hidden = false;
       premiere.dataset.itemId = item.id;
-      text('h1', item.title); text('.noctra-premiere-subtitle', item.subtitle);
+      text('.noctra-premiere-title-text', item.title); text('.noctra-premiere-subtitle', item.subtitle);
+      showPremiereLogo(item);
       text('.noctra-premiere-label', item.resume ? 'L’histoire continue' : 'À découvrir dans votre collection');
       text('[data-premiere-count]', (index + 1) + ' / ' + items.length);
       const art = premiere.querySelector('.noctra-premiere-art');
@@ -2271,6 +2332,7 @@
     const refresh = () => {
       const id = items[index]?.id;
       items = resumeItems ?? [];
+      items.forEach(entry => preloadPremiereLogo(entry.logo));
       index = Math.max(0, items.findIndex(item => item.id === id));
       render();
       // Image loads must not postpone an already scheduled slide indefinitely.
@@ -2372,6 +2434,7 @@
       premiereResumeCache = {user: resolvedUser, items: cleanItems};
       reconcileNativeResumeSections(home, cleanItems, resolvedUser);
       resumeItems = cleanItems.map(premiereResumeData);
+      resumeItems.forEach(entry => preloadPremiereLogo(entry.logo));
       refresh();
     }).catch(error => {
       if (disposed || error.name === 'AbortError') return;
