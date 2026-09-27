@@ -157,7 +157,7 @@
       try { data = JSON.parse(message.data); } catch (error) { return; }
       if (data.type === 'session') startSession(data);
       else if (data.type === 'playerClosed') { if (data.vod) vodClosed(data); else playerClosed(data); }
-      else if (data.type === 'resumed') appResumed();
+      else if (data.type === 'resumed') appResumed(data);
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
       else if (data.type === 'playerEvent') playerEvent(data);
@@ -218,8 +218,14 @@
   }
 
   // Retour depuis une fiche ou une lecture : reprises et « À suivre » à jour.
-  function appResumed() {
+  function appResumed(data) {
     forget('resume'); forget('nextup'); forget('item:');
+    // Le lecteur Jellyfin ne s'est pas ouvert : lecture avec le lecteur Noctra.
+    if (data && /^[0-9a-f]{32}$/i.test(String(data.jellyfinFailed || ''))) {
+      toast('Le lecteur Jellyfin n’a pas démarré : lecture avec le lecteur Noctra.');
+      playItem({ Id: data.jellyfinFailed }, typeof data.positionTicks === 'number' ? { startMs: Math.floor(data.positionTicks / 10000), noctraPlayer: true } : { noctraPlayer: true });
+      return;
+    }
     // Fiche aussi : position de reprise et « Vu » après le lecteur Jellyfin.
     if (current && (current.name === 'home' || current.name === 'item') && !layer.firstChild) {
       remember(current);
@@ -343,8 +349,14 @@
     try { node.focus({ preventScroll: true }); } catch (error) { node.focus(); }
     reveal(node);
   }
+  // Défilement animé seulement pour un appui isolé : des animations qui se
+  // chevauchent (appuis rapprochés, touche maintenue) font sauter l'affichage ;
+  // pendant une rafale, chaque déplacement est immédiat.
   function scrollTo(scroller, left, top) {
-    var options = { behavior: repeating ? 'auto' : 'smooth' };
+    var now = Date.now();
+    var smooth = !repeating && now - (scroller._movedAt || 0) > 450;
+    scroller._movedAt = now;
+    var options = { behavior: smooth ? 'smooth' : 'auto' };
     if (left !== null) options.left = left;
     if (top !== null) options.top = top;
     try { scroller.scrollTo(options); } catch (error) {

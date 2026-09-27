@@ -251,6 +251,22 @@ assert.match(tvApp, /failedOption\.sniffedFrom\.noSniff = true;/);
 assert.match(tvApp, /'\/api\/tv\/programme\?id=' \+ encodeURIComponent\(keys\[index\]\)/);
 assert.match(tvApp, /function epgKeys\(channel\)/, 'Guide aussi retrouvé par le nom de la chaîne');
 assert.match(tvApp, /function needsEpg\(channel\)/, 'Guide périmé redemandé');
+// Guide : rapprochement approximatif des noms côté serveur (« Canal Émotion » ↔ « Ciné+ Émotion »).
+const serverCode = await read('server.mjs');
+assert.match(serverCode, /function fuzzyTvGuideProgrammes\(guide, name\)/);
+assert.match(serverCode, /if \(!programmes\.length\) programmes = fuzzyTvGuideProgrammes\(guide, cleanedName \|\| channel\.name\);/);
+// « Reprendre » : l'accueil Jellyfin est couvert, repli sur le lecteur Noctra si le lecteur Jellyfin ne s'ouvre pas.
+const playbackCode = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java');
+assert.match(playbackCode, /private static void cover\(Activity activity\)/);
+assert.match(playbackCode, /handler\.postDelayed\(watchdog, START_TIMEOUT_MS\);/);
+assert.match(tvApp, /data\.jellyfinFailed/);
+// Lecteur web : sites bloqués par le DNS du fournisseur d'accès → DNS sécurisé (WebView et lecteur natif).
+const dnsCode = await read('apps/androidtv/java/com/noctra/tv/NoctraDns.java');
+assert.match(dnsCode, /https:\/\/1\.1\.1\.1\/dns-query/);
+assert.match(webPlayer, /return viaSecureDns\(request\);/);
+assert.match(stream, /new OkHttpDataSource\.Factory\(NoctraDns\.client\(\)\)/);
+// Défilement : pas d'animations qui se chevauchent.
+assert.match(tvApp, /var smooth = !repeating && now - \(scroller\._movedAt \|\| 0\) > 450;/);
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
 assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
 assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);

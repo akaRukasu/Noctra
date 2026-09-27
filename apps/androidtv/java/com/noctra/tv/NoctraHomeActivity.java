@@ -660,6 +660,12 @@ public class NoctraHomeActivity extends Activity {
         try {
             JSONObject message = new JSONObject();
             message.put("type", "resumed");
+            // Lecteur Jellyfin qui n'a pas démarré : l'accueil prend le relais.
+            String[] failure = NoctraPlayback.takeFailure();
+            if (failure != null) {
+                message.put("jellyfinFailed", failure[0]);
+                if (failure[1] != null) message.put("positionTicks", Long.parseLong(failure[1]));
+            }
             send(message);
         } catch (Exception ignored) {
         }

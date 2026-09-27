@@ -66,6 +66,10 @@ import java.util.regex.Pattern;
  * vidéo de la page sur les téléviseurs. Si le lecteur natif échoue, l'accueil
  * rouvre ce lecteur web sans repérage (EXTRA_SNIFF).
  *
+ * Sites bloqués par le DNS du fournisseur d'accès (sites de sport en France) :
+ * détectés (NoctraDns.blocked) puis chargés via OkHttp et le DNS sécurisé,
+ * y compris le flux transmis au lecteur natif (en-tête interne x-noctra-doh).
+ *
  * Pour se comporter comme sur PC (où ces lecteurs fonctionnent) : identité de
  * navigateur de bureau ; cadre configuré comme sur PC (bac à sable et référent
  * propres à chaque fournisseur, ex. aucun référent pour LiveWatch) ; une page
@@ -126,6 +130,8 @@ public class NoctraWebPlayerActivity extends Activity {
     private boolean sniff;
     private volatile boolean handedOff;
     private volatile String userAgent;
+    private volatile boolean secureDns;
+    private String noctraHost;
 
     /** Régies publicitaires lourdes, bloquées en mode allégé (après un arrêt du moteur web). */
     private static final String[] AD_HOSTS = {
@@ -160,6 +166,7 @@ public class NoctraWebPlayerActivity extends Activity {
             return;
         }
         appBase = NoctraConfig.NOCTRA_URL + "/tv-app/";
+        noctraHost = Uri.parse(NoctraConfig.NOCTRA_URL).getHost();
         source = url;
         sniff = intent.getBooleanExtra(EXTRA_SNIFF, true);
         referrer = intent.getStringExtra(EXTRA_REFERRER);
@@ -262,7 +269,9 @@ public class NoctraWebPlayerActivity extends Activity {
                     blocked++;
                     return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
                 }
-                return asset(request.getUrl().toString());
+                WebResourceResponse local = asset(request.getUrl().toString());
+                if (local != null) return local;
+                return viaSecureDns(request);
             }
 
             @Override
@@ -393,6 +402,80 @@ public class NoctraWebPlayerActivity extends Activity {
         webView.setWebChromeClient(chromeClient);
     }
 
+    /**
+     * Site bloqué par le DNS du fournisseur d'accès : requête faite par OkHttp
+     * avec le DNS sécurisé (cookies de la WebView conservés). GET seulement :
+     * le corps des autres requêtes n'est pas accessible ici.
+     */
+    private WebResourceResponse viaSecureDns(WebResourceRequest request) {
+        Uri url = request.getUrl();
+        String scheme = url.getScheme();
+        String host = url.getHost();
+        if (host == null || !("https".equals(scheme) || "http".equals(scheme)) || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+        if (host.equalsIgnoreCase(noctraHost) || isAd(url) || !NoctraDns.blocked(host)) return null;
+        if (!secureDns) {
+            secureDns = true;
+            NoctraWebLog.add(this, "Bloqué par le DNS du fournisseur d'accès : " + host + " → DNS sécurisé");
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (hint == null || finished) return;
+                    hint.setText("Site bloqué par votre fournisseur d'accès : ouverture par DNS sécurisé…");
+                    hint.animate().cancel();
+                    hint.setAlpha(1f);
+                    hint.animate().alpha(0f).setStartDelay(5000).setDuration(500).start();
+                }
+            });
+        }
+        okhttp3.Response response = null;
+        try {
+            String address = url.toString();
+            okhttp3.Request.Builder builder = new okhttp3.Request.Builder().url(address).get();
+            Map<String, String> sent = request.getRequestHeaders();
+            if (sent != null) {
+                for (Map.Entry<String, String> entry : sent.entrySet()) {
+                    String key = entry.getKey();
+                    if (key == null || entry.getValue() == null || key.equalsIgnoreCase("Accept-Encoding")) continue;
+                    builder.header(key, entry.getValue());
+                }
+            }
+            if (userAgent != null && (sent == null || !sent.containsKey("User-Agent"))) builder.header("User-Agent", userAgent);
+            String cookies = CookieManager.getInstance().getCookie(address);
+            if (cookies != null && !cookies.isEmpty()) builder.header("Cookie", cookies);
+            response = NoctraDns.client().newCall(builder.build()).execute();
+            for (String cookie : response.headers("Set-Cookie")) CookieManager.getInstance().setCookie(address, cookie);
+            int code = response.code();
+            // Redirections suivies par OkHttp ; un 3xx restant ne peut pas être rendu à la WebView.
+            if (code < 100 || code > 599 || (code >= 300 && code < 400)) code = 502;
+            Map<String, String> headers = new HashMap<String, String>();
+            okhttp3.Headers all = response.headers();
+            for (String name : all.names()) {
+                String lower = name.toLowerCase();
+                if (lower.equals("set-cookie") || lower.equals("content-encoding") || lower.equals("content-length") || lower.equals("transfer-encoding")) continue;
+                StringBuilder value = new StringBuilder();
+                for (String part : all.values(name)) {
+                    if (value.length() > 0) value.append(", ");
+                    value.append(part);
+                }
+                headers.put(name, value.toString());
+            }
+            okhttp3.ResponseBody body = response.body();
+            okhttp3.MediaType type = body == null ? null : body.contentType();
+            String mime = type == null ? "application/octet-stream" : type.type() + "/" + type.subtype();
+            String charset = type == null || type.charset() == null ? null : type.charset().name();
+            String reason = response.message();
+            if (reason == null || reason.trim().isEmpty()) reason = code < 400 ? "OK" : "Error";
+            InputStream stream = body == null ? new ByteArrayInputStream(new byte[0]) : body.byteStream();
+            return new WebResourceResponse(mime, charset, code, reason, headers, stream);
+        } catch (Throwable error) {
+            if (response != null) {
+                try { response.close(); } catch (Throwable ignored) { }
+            }
+            NoctraWebLog.add(this, "DNS sécurisé en échec : " + host + " (" + error.getClass().getSimpleName() + ")");
+            return null;
+        }
+    }
+
     /** Liste de lecture HLS demandée par la page ou un de ses cadres (hors publicités et Noctra). */
     private boolean isStream(Uri url) {
         if (url == null || url.getPath() == null || isAd(url)) return false;
@@ -424,6 +507,8 @@ public class NoctraWebPlayerActivity extends Activity {
             if (!headers.has("User-Agent") && userAgent != null) headers.put("User-Agent", userAgent);
             String cookies = CookieManager.getInstance().getCookie(media);
             if (cookies != null && !cookies.isEmpty()) headers.put("Cookie", cookies);
+            // Flux sur un site bloqué par le fournisseur d'accès : le lecteur natif passera aussi par le DNS sécurisé.
+            if (secureDns || NoctraDns.blocked(request.getUrl().getHost())) headers.put("x-noctra-doh", "1");
         } catch (Throwable ignored) {
         }
         NoctraWebLog.add(this, "Flux repéré : " + request.getUrl().getHost() + " → lecteur natif");

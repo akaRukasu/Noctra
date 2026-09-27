@@ -7,7 +7,9 @@ import android.os.Looper;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -233,13 +235,24 @@ final class NoctraStream {
         ready = false;
         startedAt = System.currentTimeMillis();
         bufferingSince = 0;
-        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-            // Flux repéré dans une page web : même identité que la page (sinon refus).
-            .setUserAgent(headers.containsKey("User-Agent") ? headers.get("User-Agent") : "NoctraTV/" + NoctraConfig.VERSION)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(12000)
-            .setReadTimeoutMs(20000)
-            .setDefaultRequestProperties(headers);
+        // Flux repéré dans une page web : même identité que la page (sinon refus).
+        String agent = headers.containsKey("User-Agent") ? headers.get("User-Agent") : "NoctraTV/" + NoctraConfig.VERSION;
+        DataSource.Factory http;
+        if (headers.containsKey("x-noctra-doh")) {
+            // Site bloqué par le DNS du fournisseur d'accès : OkHttp et DNS sécurisé.
+            HashMap<String, String> properties = new HashMap<String, String>(headers);
+            properties.remove("x-noctra-doh");
+            http = new OkHttpDataSource.Factory(NoctraDns.client())
+                .setUserAgent(agent)
+                .setDefaultRequestProperties(properties);
+        } else {
+            http = new DefaultHttpDataSource.Factory()
+                .setUserAgent(agent)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(12000)
+                .setReadTimeoutMs(20000)
+                .setDefaultRequestProperties(headers);
+        }
         DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(http)
             .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(6));
         DefaultLoadControl buffer = compact

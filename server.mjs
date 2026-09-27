@@ -5021,11 +5021,13 @@ async function iptvOrgProgramme(channelId) {
   try {
     const guide = await tvEpg(defaultTvEpgUrl);
     const baseId = id.replace(/@.*$/, '');
-    const programmes = guide.get(id)
+    let programmes = guide.get(id)
       || guide.get(baseId)
       || guide.get(normalizedIdentifier(id))
       || guide.get(normalizedIdentifier(baseId))
       || [];
+    // Nom approchant (« Canal Émotion » ↔ « Canal+ Émotion ») : guide XMLTV par ses noms.
+    if (!programmes.length) programmes = fuzzyTvGuideProgrammes(guide, baseId.replace(/\.[a-z]{2}$/i, ''));
     const nowMs = Date.now();
     const now = programmes.find(item => item.start <= nowMs && item.stop > nowMs) || null;
     const next = programmes.find(item => item.start > nowMs) || null;
@@ -11362,6 +11364,56 @@ async function tvEpg(urlValue) {
   return promise;
 }
 
+// Rapprochement approximatif d'un nom de chaîne avec les noms du guide XMLTV
+// (« Canal Émotion », « Canal+ Émotion », « Ciné+ Émotion HD »…) : mots
+// significatifs identiques, au plus un mot d'écart, numéros identiques, et
+// aucune ambiguïté entre deux chaînes différentes du guide.
+const tvGuideStopWords = new Set(['hd', 'fhd', 'uhd', 'sd', '4k', 'hevc', 'h265', 'tv', 'fr', 'france', 'la', 'le', 'les', 'l', 'de', 'du', 'des', 'the', 'channel', 'chaine', 'live', 'direct', 'backup', 'secours', 'plus', 'officiel', 'hq', 'fullhd', 'full', '1080p', '720p']);
+const tvGuideBrandAliases = new Map([['cine', 'canal'], ['canalplus', 'canal'], ['cineplus', 'canal']]);
+const tvGuideTokenIndexes = new WeakMap();
+
+function tvGuideTokens(value) {
+  // « sport360 » = « sport 360 », « tf1 » = « tf 1 » : même découpage des deux côtés.
+  return normalizedIdentifier(value).replace(/([a-z])(\d)/g, '$1 $2').replace(/(\d)([a-z])/g, '$1 $2').split(' ').filter(Boolean)
+    .map(token => tvGuideBrandAliases.get(token) || token)
+    .filter(token => !tvGuideStopWords.has(token));
+}
+
+function tvGuideTokenIndex(guide) {
+  let index = tvGuideTokenIndexes.get(guide);
+  if (index) return index;
+  index = [];
+  for (const [key, list] of guide) {
+    const tokens = [...new Set(tvGuideTokens(key))];
+    if (tokens.length && list?.length) index.push({ tokens, list });
+  }
+  tvGuideTokenIndexes.set(guide, index);
+  return index;
+}
+
+function fuzzyTvGuideProgrammes(guide, name) {
+  const query = [...new Set(tvGuideTokens(name))];
+  if (!query.length || !guide?.size) return [];
+  const digits = tokens => tokens.filter(token => /\d/.test(token)).sort().join(' ');
+  const queryDigits = digits(query);
+  let best = null;
+  let bestScore = 0;
+  let tie = false;
+  for (const entry of tvGuideTokenIndex(guide)) {
+    if (digits(entry.tokens) !== queryDigits) continue;
+    const common = query.filter(token => entry.tokens.includes(token)).length;
+    if (!common) continue;
+    let score = 0;
+    if (common === query.length && common === entry.tokens.length) score = 100;
+    else if (common === query.length && entry.tokens.length - common <= 1) score = 72;
+    else if (common === entry.tokens.length && common >= 2 && query.length - common <= 1) score = 64;
+    if (score < 60) continue;
+    if (score > bestScore) { best = entry; bestScore = score; tie = false; }
+    else if (score === bestScore && best && best.list !== entry.list) tie = true;
+  }
+  return best && !tie ? best.list : [];
+}
+
 function decorateTvEpg(channels, guide) {
   const now = Date.now();
   return channels.map(channel => {
@@ -11378,6 +11430,7 @@ function decorateTvEpg(channels, guide) {
       programmes = guide.get(key) || guide.get(normalized) || guide.get(pluralSports) || [];
       if (programmes.length) break;
     }
+    if (!programmes.length) programmes = fuzzyTvGuideProgrammes(guide, cleanedName || channel.name);
     const current = programmes.find(item => item.start <= now && item.stop > now) || null;
     const next = programmes.find(item => item.start > now) || null;
     return {

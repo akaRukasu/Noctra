@@ -71,7 +71,7 @@ h1, h2, h3, p { margin: 0; }
 #main {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1;
   overflow-y: auto; overflow-x: hidden; padding: calc(var(--header) + .4rem) 0 3rem;
-  scrollbar-width: none; will-change: scroll-position;
+  scrollbar-width: none;
 }
 .scroll::-webkit-scrollbar, .track::-webkit-scrollbar { display: none; }
 .page-head { padding: .6rem 2.5rem 1rem; display: flex; align-items: flex-end; flex-wrap: wrap; }
