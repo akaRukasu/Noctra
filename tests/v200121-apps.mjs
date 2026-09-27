@@ -292,6 +292,25 @@ assert.match(tvApp, /if \(source && source\.id\) rememberRecent\(channel, source
 assert.match(tvApp, /function openStoredChannel\(entry\) \{/);
 assert.match(tvApp, /if \(favoriteMode\) \{ toggleFavorite\(channel, source, ctx\); refreshFavoriteMarks\(channel, source\); \}/);
 assert.match(tvApp, /favorite = h\('button', \{ class: 'btn f picker-fav'/);
+// Santé des serveurs, vérification pendant le compte à rebours, moteur web ancien.
+assert.match(tvApp, /var HEALTH_KEY = 'noctra-tv-health-v1';/);
+assert.match(tvApp, /function probeOption\(option\) \{/);
+assert.match(tvApp, /if \(event\.event === 'live'\)/);
+assert.match(tvApp, /native\('updateWebEngine'\)/);
+const webPlayerJava = await read('apps/androidtv/java/com/noctra/tv/NoctraWebPlayerActivity.java');
+assert.match(webPlayerJava, /text\.contains\("SyntaxError"\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /action\.equals\("updateWebEngine"\)/);
+// Directs : reprise en douceur ; multiview : lien neuf, nouveaux essais, démarrages échelonnés.
+const streamJava = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamJava, /if \(live && played && softRetries < MAX_SOFT_RETRIES\)/);
+assert.match(streamJava, /if \(live && played && !edgeSought && now - bufferingSince > SOFT_STALL_MS\)/);
+const multiJava = await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivity.java');
+assert.match(multiJava, /private void scheduleRetry\(final Tile tile\)/);
+assert.match(multiJava, /\}, i \* 400L\);/);
+assert.match(webHost, /Tous les serveurs en échec : nouvel essai/);
+// Numéros de chaîne (0-9) pendant la lecture.
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /KeyEvent\.KEYCODE_0/);
+assert.match(webHost, /sendNumber: function \(\) \{/);
 // Pont web : fin d'épisode détectée même sans « ended » (épisode suivant automatique).
 assert.match(webHost, /Player\.endTimer = setTimeout\(function \(\) \{/);
 assert.match(tvApp, /if \(entry && result\.ended && entry\.item\.Type === 'Episode'\) \{ nextEpisode\(entry\.item\); return; \}/);
@@ -309,7 +328,7 @@ assert.match(tvApp, /if \(event\.event === 'failed'\) \{ playerFailed\(event\); 
 assert.match(tvApp, /if \(event\.event === 'server'\) \{ pickServer\(Number\(event\.index\) \|\| 0\); return; \}/);
 assert.match(livePlayer, /\(action\.equals\("channels"\) \|\| action\.equals\("servers"\)\) && !vod/);
 assert.match(tvApp, /if \(event\.event === 'channels'\) \{ sendChannels\(false\); return; \}/);
-assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{ zapTo\(Number\(event\.index\) \|\| 0\); return; \}/);
+assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{\n[\s\S]{0,300}?zapTo\(Number\(event\.index\) \|\| 0\);/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
 assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);

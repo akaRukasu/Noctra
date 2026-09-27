@@ -31,6 +31,10 @@ import java.util.Map;
  * - retour au direct quand le flux a trop de retard (BEHIND_LIVE_WINDOW) ;
  * - surveillance des blocages : une mise en mémoire tampon trop longue relance
  *   le flux ;
+ * - reprise en douceur avant toute reconnexion : un blocage de plus de 7 s
+ *   relance d'abord la lecture au bord du direct, une erreur passagère
+ *   (réseau, segment manquant) est d'abord retentée dans le même lecteur,
+ *   sans écran noir ni nouveau décodeur ;
  * - reconnexions espacées (1, 2, 4, 8 s…) tant que le flux a déjà fonctionné ;
  * - au premier démarrage, essai HLS puis flux direct (ou l'inverse).
  *
@@ -55,6 +59,8 @@ final class NoctraStream {
     private static final long POLL_MS = 500;
     private static final long START_TIMEOUT_MS = 30000;
     private static final long STALL_TIMEOUT_MS = 15000;
+    private static final long SOFT_STALL_MS = 7000;
+    private static final int MAX_SOFT_RETRIES = 2;
     private static final long STABLE_MS = 30000;
     private static final int MAX_RECONNECTS = 8;
 
@@ -79,6 +85,8 @@ final class NoctraStream {
     private long bufferingSince;
     private long readySince;
     private int reconnects;
+    private boolean edgeSought;
+    private int softRetries;
     private float volume = 1f;
     private boolean playWhenReady = true;
     private int maxWidth;
@@ -292,6 +300,20 @@ final class NoctraStream {
                 handler.postDelayed(poll, POLL_MS);
                 return;
             }
+            // Erreur passagère d'un direct qui fonctionnait : nouvel essai dans
+            // le même lecteur (image conservée) avant de tout reconstruire.
+            if (live && played && softRetries < MAX_SOFT_RETRIES) {
+                softRetries++;
+                callback.onStatus(this, "Reprise du flux…");
+                try {
+                    player.seekToDefaultPosition();
+                    player.prepare();
+                    player.setPlayWhenReady(playWhenReady);
+                } catch (Exception ignored) {
+                }
+                handler.postDelayed(poll, POLL_MS);
+                return;
+            }
             recover("Lecture impossible (" + PlaybackException.getErrorCodeName(error.errorCode) + ").");
             return;
         }
@@ -304,12 +326,22 @@ final class NoctraStream {
                 callback.onReadyChanged(this, true);
             }
             bufferingSince = 0;
+            edgeSought = false;
             if (!live) positionMs();
-            if (reconnects > 0 && now - readySince > STABLE_MS) reconnects = 0;
+            if ((reconnects > 0 || softRetries > 0) && now - readySince > STABLE_MS) {
+                reconnects = 0;
+                softRetries = 0;
+            }
         } else if (state == Player.STATE_BUFFERING) {
             if (ready) callback.onReadyChanged(this, false);
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
+            // Direct bloqué : d'abord un saut au bord du direct (segments récents).
+            if (live && played && !edgeSought && now - bufferingSince > SOFT_STALL_MS) {
+                edgeSought = true;
+                callback.onStatus(this, "Retour au direct…");
+                try { player.seekToDefaultPosition(); } catch (Exception ignored) { }
+            }
             if (played && now - bufferingSince > (live ? STALL_TIMEOUT_MS : STALL_TIMEOUT_MS * 3)) {
                 recover("Le flux ne répond plus.");
                 return;

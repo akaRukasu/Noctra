@@ -416,12 +416,45 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         playerView.requestFocus();
     }
 
+    private final StringBuilder typedNumber = new StringBuilder();
+    private final Runnable sendNumber = new Runnable() {
+        @Override
+        public void run() {
+            if (typedNumber.length() == 0) return;
+            int number = 0;
+            try { number = Integer.parseInt(typedNumber.toString()); } catch (NumberFormatException ignored) { }
+            typedNumber.setLength(0);
+            // Nombre de chaînes de la liste : « 3 / 180 » dans le guide envoyé par l'accueil.
+            int total = 0;
+            java.util.regex.Matcher position = java.util.regex.Pattern.compile("/\\s*(\\d+)").matcher(epg == null ? "" : epg.optString("position"));
+            if (position.find()) {
+                try { total = Integer.parseInt(position.group(1)); } catch (NumberFormatException ignored) { }
+            }
+            if (number > 0 && (total == 0 || number <= total)) {
+                zapTo(number - 1, true);
+                return;
+            }
+            onStatus(stream, "Pas de chaîne n° " + number + (total > 0 ? " (" + total + " chaînes)" : ""));
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (typedNumber.length() == 0 && stream != null && stream.hasPlayed()) onStatus(stream, null);
+                }
+            }, 2500);
+        }
+    };
+
     private void zapTo(int index) {
+        zapTo(index, false);
+    }
+
+    private void zapTo(int index, boolean typed) {
         try {
             JSONObject message = new JSONObject();
             message.put("type", "playerEvent");
             message.put("event", "zapTo");
             message.put("index", index);
+            if (typed) message.put("number", true);
             NoctraPlayerBus.fromPlayer(message);
         } catch (Exception ignored) {
         }
@@ -553,7 +586,21 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     @Override
     public void onReadyChanged(NoctraStream source, boolean ready) {
         if (source == stream && vod) event("state", ready ? "ready" : "buffering", stream.positionMs());
+        // Direct : premier démarrage de ce flux signalé à l'accueil (fiabilité du serveur).
+        if (source == stream && !vod && ready && !reportedLive) {
+            reportedLive = true;
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "playerEvent");
+                message.put("event", "live");
+                message.put("action", "playing");
+                message.put("playSessionId", playSessionId == null ? "" : playSessionId);
+                NoctraPlayerBus.fromPlayer(message);
+            } catch (Exception ignored) {
+            }
+        }
     }
+    private boolean reportedLive;
 
     @Override
     public void onCommand(JSONObject command) {
@@ -599,6 +646,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             stream = liveStream(url, command.optString("mime"), headers == null ? null : headers.toString(),
                 command.has("token") ? command.optString("token") : null);
             playSessionId = command.optString("playSessionId", playSessionId);
+            reportedLive = false;
             titleView.setText(command.optString("title"));
             subtitleView.setText(command.optString("subtitle"));
             JSONObject guide = command.optJSONObject("epg");
@@ -674,6 +722,24 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             }
             if (event.getAction() == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_INFO) {
                 showBanner();
+                return true;
+            }
+            // Numéro de chaîne (touches 0-9, comme sur une box TV) : validé après 1,5 s ou par OK.
+            int digit = code >= KeyEvent.KEYCODE_0 && code <= KeyEvent.KEYCODE_9 ? code - KeyEvent.KEYCODE_0
+                : code >= KeyEvent.KEYCODE_NUMPAD_0 && code <= KeyEvent.KEYCODE_NUMPAD_9 ? code - KeyEvent.KEYCODE_NUMPAD_0 : -1;
+            if (digit >= 0) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && typedNumber.length() < 4) {
+                    typedNumber.append(digit);
+                    onStatus(stream, "Chaîne " + typedNumber + "…");
+                    handler.removeCallbacks(sendNumber);
+                    handler.postDelayed(sendNumber, 1500);
+                }
+                return true;
+            }
+            if (typedNumber.length() > 0 && event.getAction() == KeyEvent.ACTION_DOWN
+                && (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER)) {
+                handler.removeCallbacks(sendNumber);
+                sendNumber.run();
                 return true;
             }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0

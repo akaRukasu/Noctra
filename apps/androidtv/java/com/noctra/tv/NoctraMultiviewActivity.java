@@ -71,6 +71,10 @@ public class NoctraMultiviewActivity extends Activity {
         String mime;
     }
 
+    /** Délais des nouveaux essais d'une vignette dont tous les serveurs ont échoué. */
+    private static final long[] RETRY_MS = { 20000, 45000, 90000, 180000 };
+    private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+
     private final class Tile implements NoctraStream.Callback {
         FrameLayout frame;
         PlayerView view;
@@ -85,6 +89,10 @@ public class NoctraMultiviewActivity extends Activity {
         final List<Integer> failed = new ArrayList<Integer>();
         int current = -1;
         int generation;
+        /** Dernier lien neuf demandé au même serveur (coupure après lecture). */
+        long renewedAt;
+        int retries;
+        Runnable retry;
 
         @Override
         public void onStatus(NoctraStream source, String text) {
@@ -94,6 +102,11 @@ public class NoctraMultiviewActivity extends Activity {
 
         @Override
         public void onReadyChanged(NoctraStream source, boolean ready) {
+            // Lecture établie : les nouveaux essais repartent de zéro.
+            if (source == stream && ready) {
+                retries = 0;
+                failed.clear();
+            }
         }
 
         @Override
@@ -104,15 +117,27 @@ public class NoctraMultiviewActivity extends Activity {
         @Override
         public void onFailed(NoctraStream source, String message) {
             if (source != stream) return;
+            Option option = current >= 0 && current < options.size() ? options.get(current) : null;
+            long now = System.currentTimeMillis();
+            // Coupure d'un flux qui fonctionnait : lien neuf du même serveur
+            // (jeton expiré le plus souvent), au plus une fois toutes les 2 min.
+            if (source.hasPlayed() && option != null && !option.resolve.isEmpty() && now - renewedAt > 120000) {
+                renewedAt = now;
+                option.url = "";
+                showStatus(this, "Reconnexion au serveur…");
+                play(this, current);
+                return;
+            }
+            if (source.hasPlayed()) retries = 0;
             if (!failed.contains(current)) failed.add(current);
             int next = nextOption(this);
             if (next >= 0) {
                 showStatus(this, "Serveur indisponible · essai du suivant…");
                 play(this, next);
+            } else if (message != null && message.contains("DECODER")) {
+                showStatus(this, "Le téléviseur ne peut pas décoder un flux de plus.");
             } else {
-                showStatus(this, message != null && message.contains("DECODER")
-                    ? "Le téléviseur ne peut pas décoder un flux de plus."
-                    : "Flux indisponible · OK › Changer de serveur");
+                scheduleRetry(this);
             }
         }
     }
@@ -162,7 +187,23 @@ public class NoctraMultiviewActivity extends Activity {
                 if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) arrange();
             }
         });
-        for (Tile tile : tiles) play(tile, 0);
+        // Démarrages échelonnés : 12 connexions et décodeurs à la fois
+        // saturent les petits boîtiers (échecs au lancement).
+        for (int i = 0; i < tiles.size(); i++) {
+            final Tile tile = tiles.get(i);
+            if (i == 0) {
+                play(tile, 0);
+                continue;
+            }
+            showStatus(tile, "Connexion…");
+            final int generation = tile.generation;
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!isFinishing() && generation == tile.generation && tile.stream == null) play(tile, 0);
+                }
+            }, i * 400L);
+        }
         refreshLabels();
         tiles.get(0).frame.requestFocus();
     }
@@ -541,7 +582,35 @@ public class NoctraMultiviewActivity extends Activity {
         return -1;
     }
 
+    /**
+     * Tous les serveurs de la vignette ont échoué : nouvel essai de toute la
+     * liste après 20 s, 45 s, 1 min 30 puis 3 min (coupure passagère d'une source).
+     */
+    private void scheduleRetry(final Tile tile) {
+        if (tile.retries >= RETRY_MS.length) {
+            showStatus(tile, "Flux indisponible · OK › Changer de serveur");
+            return;
+        }
+        final long delay = RETRY_MS[tile.retries++];
+        final int generation = tile.generation;
+        showStatus(tile, "Flux indisponible · nouvel essai dans " + (delay / 1000) + " s");
+        if (tile.retry != null) handler.removeCallbacks(tile.retry);
+        tile.retry = new Runnable() {
+            @Override
+            public void run() {
+                if (isFinishing() || generation != tile.generation) return;
+                tile.failed.clear();
+                for (Option option : tile.options) {
+                    if (!option.resolve.isEmpty()) option.url = "";
+                }
+                play(tile, 0);
+            }
+        };
+        handler.postDelayed(tile.retry, delay);
+    }
+
     private void play(final Tile tile, final int index) {
+        if (tile.retry != null) handler.removeCallbacks(tile.retry);
         if (tile.stream != null) tile.stream.release();
         tile.stream = null;
         tile.current = index;
@@ -566,7 +635,7 @@ public class NoctraMultiviewActivity extends Activity {
                             if (!tile.failed.contains(index)) tile.failed.add(index);
                             int next = nextOption(tile);
                             if (next >= 0) play(tile, next);
-                            else showStatus(tile, "Flux indisponible · OK › Changer de serveur");
+                            else scheduleRetry(tile);
                             return;
                         }
                         option.url = url;
@@ -663,6 +732,7 @@ public class NoctraMultiviewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
         for (Tile tile : tiles) {
             tile.generation++;
             if (tile.stream != null) tile.stream.release();

@@ -319,6 +319,14 @@ public class NoctraHomeActivity extends Activity {
             message.put("jellyfinUrl", NoctraConfig.JELLYFIN_URL);
             message.put("version", NoctraConfig.VERSION);
             message.put("codecs", codecs());
+            // Moteur web du téléviseur : les lecteurs web récents exigent une version récente.
+            JSONObject engine = new JSONObject();
+            String engineVersion = NoctraWebEngine.version(this);
+            engine.put("version", engineVersion);
+            engine.put("major", NoctraWebEngine.major(engineVersion));
+            engine.put("package", NoctraWebEngine.packageName(this));
+            engine.put("recommended", NoctraWebEngine.RECOMMENDED_MAJOR);
+            message.put("webEngine", engine);
             send(message);
             if (pendingRemote != null) {
                 send(pendingRemote);
@@ -361,6 +369,17 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra("ItemId", id);
             if (action.equals("openLibrary")) intent.putExtra("ItemIsUserView", true);
             openJellyfin(intent);
+        } else if (action.equals("updateWebEngine")) {
+            // Mise à jour du moteur web (Play Store) : lecteurs web récents.
+            if (!NoctraWebEngine.openUpdate(this)) {
+                try {
+                    JSONObject error = new JSONObject();
+                    error.put("type", "nativeError");
+                    error.put("message", "Play Store introuvable : installez la dernière version d'« Android System WebView » sur le téléviseur.");
+                    send(error);
+                } catch (Exception ignored) {
+                }
+            }
         } else if (action.equals("openSettings")) {
             Intent intent = new Intent();
             intent.setComponent(new ComponentName(this, "org.jellyfin.androidtv.ui.preference.PreferencesActivity"));

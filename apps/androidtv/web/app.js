@@ -61,7 +61,8 @@
     history: '<path d="M13 4a8 8 0 1 1-7.4 11h2.2A6 6 0 1 0 7 8.4L9.6 11H3V4.4l2.2 2.2A8 8 0 0 1 13 4zm-1 4h2v4.6l3.2 1.9-1 1.7L12 13.7z"/>',
     trophy: '<path d="M7 3h10v2h3v3a5 5 0 0 1-4.3 4.9A5 5 0 0 1 13 15.9V18h3v2H8v-2h3v-2.1a5 5 0 0 1-2.7-3A5 5 0 0 1 4 8V5h3zm0 4H6v1a3 3 0 0 0 1.4 2.5A5 5 0 0 1 7 9zm10 0v2c0 .5-.1 1-.2 1.5A3 3 0 0 0 18 8V7z"/>',
     antenna: '<path d="M3 8h18v12H3zm2 2v8h14v-8zM8 3l4 4 4-4 1.4 1.4L14.8 7h-5.6L6.6 4.4z"/>',
-    info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>'
+    info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>',
+    download: '<path d="M11 4h2v8.2l3.3-3.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/>'
   };
   function icon(name) {
     return h('span', { html: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + icons[name] + '</svg>' }).firstChild;
@@ -196,6 +197,8 @@
     // Capacités de l'hôte : Android TV (lecteur Jellyfin, lecteur web séparé…)
     // ou pont web de LG webOS / Samsung Tizen (tv-native.js).
     S.caps = data.caps || {};
+    // Moteur web du téléviseur (version de Chrome) : les lecteurs web récents en dépendent.
+    S.engine = data.webEngine || null;
     S.platform = data.platform || 'androidtv';
     // Jellyfin sur la même origine que la page si possible (pas de CORS).
     var own = String(data.jellyfinUrl || '').replace(/\/+$/, '');
@@ -1277,11 +1280,18 @@
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
-    if (event.event === 'zapTo') { zapTo(Number(event.index) || 0); return; }
+    if (event.event === 'zapTo') {
+      // Numéro tapé au-delà de la liste : ignoré (le lecteur l'indique).
+      if (event.number && playback && playback.list && Number(event.index) >= playback.list.length) return;
+      zapTo(Number(event.index) || 0);
+      return;
+    }
     if (event.event === 'channels') { sendChannels(false); return; }
     if (event.event === 'servers') { sendServers(); return; }
     if (event.event === 'server') { pickServer(Number(event.index) || 0); return; }
     if (event.event === 'failed') { playerFailed(event); return; }
+    // Direct lancé : serveur fiable pour cette chaîne (historique de santé).
+    if (event.event === 'live') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) succeeded(playback); return; }
     // Piste choisie dans le lecteur : retenue pour les épisodes suivants.
     if (event.event === 'tracks') {
       if (typeof event.audio === 'string') trackPrefs.audio = event.audio;
@@ -1805,7 +1815,11 @@
 
   views.live = function (params, alive) {
     favoriteMode = false;
-    main.appendChild(head('TV en direct', 'Favoris et chaînes récentes en un clic, puis les sources par univers. Dans une chaîne : ▲ ▼ pour zapper, ◀ la liste, ▶ les serveurs.'));
+    // Dernière chaîne regardée : relancée d'un appui, comme la touche « retour chaîne » d'une box.
+    var last = storedChannels(RECENTS_KEY)[0];
+    var resume = last ? h('span', { class: 'head-actions' }, h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } },
+      icon('play'), 'Reprendre ' + last.name)) : null;
+    main.appendChild(head('TV en direct', 'Favoris et chaînes récentes en un clic, puis les sources par univers. Dans une chaîne : ▲ ▼ ou les chiffres pour zapper, ◀ la liste, ▶ les serveurs.', resume));
     // Accès rapide : favoris puis chaînes récemment regardées.
     var favorites = storedChannels(FAVORITES_KEY);
     var recents = storedChannels(RECENTS_KEY).filter(function (item) {
@@ -1963,6 +1977,9 @@
           var node;
           if (guideMode) {
             node = guideRow(channel, select);
+            // Numéro de la chaîne dans la liste affichée : à taper pendant la lecture.
+            node._number = list.indexOf(channel) + 1;
+            fillGuideRow(node, channel);
           } else {
             var guide = epgLive(channel);
             node = card({
@@ -2115,7 +2132,7 @@
       ? h('span', { class: 'guide-next' }, h('small', { text: 'Ensuite · ' + hhmm(guide.next.start) }), h('strong', { text: guide.next.title }))
       : h('span', { class: 'guide-next' });
     node.appendChild(logo);
-    node.appendChild(h('span', { class: 'guide-channel' }, h('strong', { text: channel.name }), h('small', { text: [channel.group, channel.provider].filter(Boolean).join(' · ') })));
+    node.appendChild(h('span', { class: 'guide-channel' }, h('strong', null, node._number ? h('i', { class: 'guide-num', text: String(node._number) }) : null, channel.name), h('small', { text: [channel.group, channel.provider].filter(Boolean).join(' · ') })));
     node.appendChild(now);
     node.appendChild(next);
   }
@@ -2169,7 +2186,7 @@
     channelOptions(channel, state.source).then(function (options) {
       if (playback !== next) return;
       if (!options.length) throw new Error('Aucun flux disponible pour ' + channel.name + '.');
-      next.options = rankOptions(options, key);
+      next.options = rankOptions(options, key, channel.provider);
       playOption(true);
     }).catch(function (error) {
       if (playback !== next) return;
@@ -2241,17 +2258,119 @@
   function rememberServer(key, label) {
     try { localStorage.setItem('noctra-tv-server:' + key, label); } catch (error) { /* stockage indisponible */ }
   }
-  function rankOptions(options, key) {
+  // ── Santé des serveurs ─────────────────────────────────────────────
+  // Historique mémorisé sur la TV : réussites et échecs de chaque serveur
+  // d'une chaîne, et de chaque famille de serveurs (fournisseur + type de
+  // lecteur + hôte), toutes chaînes confondues. Un échec récent fait passer
+  // le serveur après les autres ; un serveur fiable passe devant.
+  var HEALTH_KEY = 'noctra-tv-health-v1';
+  var HEALTH_RECENT_MS = 20 * 60000;
+  var healthData = null;
+  function healthStore() {
+    if (healthData) return healthData;
+    try { healthData = JSON.parse(localStorage.getItem(HEALTH_KEY) || '{}') || {}; } catch (error) { healthData = {}; }
+    if (typeof healthData !== 'object' || Array.isArray(healthData)) healthData = {};
+    return healthData;
+  }
+  function saveHealth() {
+    var store = healthStore();
+    var keys = Object.keys(store);
+    // Au plus 600 entrées : les plus anciennes sont oubliées.
+    if (keys.length > 600) {
+      keys.sort(function (a, b) { return Math.max(store[a].o || 0, store[a].f || 0) - Math.max(store[b].o || 0, store[b].f || 0); });
+      keys.slice(0, keys.length - 600).forEach(function (key) { delete store[key]; });
+    }
+    try { localStorage.setItem(HEALTH_KEY, JSON.stringify(store)); } catch (error) { /* stockage indisponible */ }
+  }
+  function optionHost(option) {
+    var raw = option.streamUrl || option.url || option.resolveUrl || '';
+    try {
+      var url = new URL(absolute(raw), location.href);
+      // Flux relayés par le serveur Noctra : l'hôte ne distingue rien.
+      return url.origin === location.origin ? 'noctra' : url.hostname.replace(/^www\./, '');
+    } catch (error) { return ''; }
+  }
+  function healthIds(option, key, index, provider) {
+    return [
+      'c|' + key + '|' + optionLabel(option, index),
+      'f|' + (option.provider || provider || '') + '|' + optionKind(option) + '|' + optionHost(option)
+    ];
+  }
+  function recordHealth(state, index, ok) {
+    var option = state && state.options[index];
+    if (!option) return;
+    var store = healthStore();
+    var now = Date.now();
+    healthIds(option, state.key, index, state.channel.provider).forEach(function (id) {
+      var entry = store[id] || (store[id] = { ok: 0, fail: 0 });
+      if (ok) { entry.ok = Math.min(50, entry.ok + 1); entry.o = now; }
+      else { entry.fail = Math.min(50, entry.fail + 1); entry.f = now; }
+      // Les vieux résultats comptent de moins en moins.
+      if (entry.ok + entry.fail > 20) { entry.ok = Math.round(entry.ok * 0.7); entry.fail = Math.round(entry.fail * 0.7); }
+    });
+    saveHealth();
+  }
+  // Fiabilité estimée : 'good', 'recent-fail', 'unstable' ou '' (inconnue).
+  function optionHealth(option, key, index, provider) {
+    var store = healthStore();
+    var ids = healthIds(option, key, index, provider);
+    var own = store[ids[0]];
+    var family = store[ids[1]];
+    var now = Date.now();
+    var score = 0;
+    var verdict = '';
+    [own, family].forEach(function (entry, level) {
+      if (!entry) return;
+      var weight = level === 0 ? 1 : 0.5;
+      var rate = (entry.ok + 1) / (entry.ok + entry.fail + 2);
+      score += (rate - 0.5) * 2 * weight;
+      var failedRecently = entry.f && now - entry.f < HEALTH_RECENT_MS && (!entry.o || entry.f > entry.o);
+      if (failedRecently) score -= 2 * weight;
+      if (level === 0 && failedRecently) verdict = 'recent-fail';
+      else if (!verdict && entry.fail >= 2 && rate < 0.45) verdict = 'unstable';
+      else if (!verdict && level === 0 && entry.ok >= 2 && rate >= 0.75) verdict = 'good';
+    });
+    return { score: score, verdict: verdict };
+  }
+  function rankOptions(options, key, provider) {
     var remembered = rememberedServer(key);
     var weight = { native: 0, resolve: 1, web: 2 };
+    // Moteur web trop ancien : les lecteurs web passent encore après.
+    var oldEngine = engineOutdated();
     return options.map(function (option, index) { return { option: option, index: index }; }).sort(function (a, b) {
       function score(entry) {
         var option = entry.option;
-        if (remembered && optionLabel(option, entry.index) === remembered) return -10;
-        return weight[optionKind(option)] + (option.compatPage ? 3 : 0) + (option.manualOnly ? 4 : 0) + (option.fallback ? 0.5 : 0);
+        var health = optionHealth(option, key, entry.index, provider);
+        var base = weight[optionKind(option)] + (option.compatPage ? 3 : 0) + (option.manualOnly ? 4 : 0) + (option.fallback ? 0.5 : 0)
+          + (oldEngine && optionKind(option) === 'web' ? 1 : 0) - health.score;
+        // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
+        if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail') return base - 10;
+        return base;
       }
       return score(a) - score(b) || a.index - b.index;
     }).map(function (entry) { return entry.option; });
+  }
+  function engineOutdated() {
+    return Boolean(S.engine && S.engine.major > 0 && S.engine.major < (S.engine.recommended || 110));
+  }
+  // Disponibilité vérifiée pendant le compte à rebours : les flux relayés
+  // par le serveur Noctra (même origine) sont demandés ; une réponse qui
+  // n'est pas une liste de lecture marque le serveur « Hors ligne ».
+  function probeOption(option) {
+    if (optionKind(option) !== 'native' || option.headers) return Promise.resolve('');
+    var url = absolute(option.streamUrl);
+    if (url.indexOf(location.origin + '/') !== 0) return Promise.resolve('');
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 7000);
+    return fetch(url, { headers: { 'x-noctra-token': S.token }, credentials: 'omit', cache: 'no-store', signal: controller ? controller.signal : undefined })
+      .then(function (response) {
+        if (!response.ok) return 'down';
+        var type = String(response.headers.get('content-type') || '').toLowerCase();
+        // Flux continu (MPEG-TS…) : la réponse suffit, sans tout télécharger.
+        if (!/mpegurl|text|json/.test(type)) { if (controller) controller.abort(); return 'up'; }
+        return response.text().then(function (text) { return /^\s*#EXTM3U/.test(text) ? 'up' : 'down'; });
+      }, function () { return 'down'; })
+      .then(function (result) { clearTimeout(timer); return result; });
   }
 
   var playback = null;
@@ -2264,7 +2383,7 @@
     channelOptions(channel, source).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
-      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: rankOptions(options, key), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
+      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: rankOptions(options, key, channel.provider), index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
       if (playback.options.length === 1) {
         closeLayer(true);
         playOption();
@@ -2349,9 +2468,19 @@
       var failed = state.failed[index];
       if (!failed && first < 0) first = index;
       var tags = [h('span', { class: 'tag ' + kind, text: kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web' })];
-      if (remembered && optionLabel(option, index) === remembered) tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
+      var health = optionHealth(option, state.key, index, state.channel.provider);
+      if (remembered && optionLabel(option, index) === remembered && health.verdict !== 'recent-fail') tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
       else if (index === 0 && !failed) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
       if (failed) tags.push(h('span', { class: 'tag bad', text: 'Échec' }));
+      else if (health.verdict === 'recent-fail') tags.push(h('span', { class: 'tag warn', text: 'Échec récent' }));
+      else if (health.verdict === 'unstable') tags.push(h('span', { class: 'tag warn', text: 'Instable' }));
+      else if (health.verdict === 'good') tags.push(h('span', { class: 'tag good', text: 'Fiable' }));
+      // Lecteur web sur un moteur web ancien : risque d'échec annoncé.
+      if (kind === 'web' && engineOutdated()) tags.push(h('span', { class: 'tag warn', text: 'Moteur web ancien' }));
+      var probe = h('span', { class: 'tag probe' });
+      probe.style.display = 'none';
+      tags.push(probe);
+      option._probe = probe;
       sheet.list.appendChild(h('button', { class: 'server f' + (failed ? ' failed' : ''), 'data-index': index, onclick: function () {
         closeLayer(true);
         state.index = index;
@@ -2362,8 +2491,48 @@
     var target = sheet.list.children[Math.max(0, first)];
     if (target) focus(target);
     if (first < 0) sheet.status('Aucun serveur ne fonctionne pour cette chaîne en ce moment. Vous pouvez en réessayer un.', true);
-    else if (seconds) sheet.countdown(seconds, function () { if (document.body.contains(sheet.node)) target.click(); });
+    else if (seconds) {
+      sheet.countdown(seconds, function () {
+        if (!document.body.contains(sheet.node)) return;
+        // Premier serveur disponible : ceux trouvés hors ligne sont sautés.
+        var pick = null;
+        state.options.some(function (option, index) {
+          if (state.failed[index] || option._offline) return false;
+          pick = sheet.list.children[index];
+          return true;
+        });
+        (pick || target).click();
+      });
+      probeServers(sheet, state);
+    }
     else sheet.status('Choisissez un serveur.');
+    if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
+  }
+  // Vérification des serveurs pendant le compte à rebours (4 au plus à la fois).
+  function probeServers(sheet, state) {
+    state.options.slice(0, 6).forEach(function (option, index) {
+      if (state.failed[index] || !option._probe) return;
+      probeOption(option).then(function (result) {
+        if (!result || !document.body.contains(sheet.node)) return;
+        option._offline = result === 'down';
+        if (option._offline) {
+          // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
+          recordHealth(state, index, false);
+          var recommended = option._probe.parentNode && option._probe.parentNode.querySelector('.tag.ok');
+          if (recommended) recommended.remove();
+        }
+        option._probe.style.display = '';
+        option._probe.className = 'tag ' + (result === 'up' ? 'good' : 'bad');
+        option._probe.textContent = result === 'up' ? 'En ligne' : 'Hors ligne';
+      });
+    });
+  }
+  // Moteur web trop ancien (Android TV) : mise à jour proposée (Play Store).
+  function addEngineButton(node) {
+    var actions = node.querySelector('.picker-actions');
+    if (!actions || actions.querySelector('.engine-update')) return;
+    actions.appendChild(h('button', { class: 'btn f engine-update', onclick: function () { native('updateWebEngine'); } },
+      icon('download'), 'Mettre à jour le moteur web (Chrome ' + S.engine.major + ')'));
   }
   function showPicker(state, message, seconds) {
     var sheet = pickerSheet(state.channel, '', state.source, state.ctx);
@@ -2410,6 +2579,7 @@
   }
   function markFailed(state) {
     state.failed[state.index] = true;
+    recordHealth(state, state.index, false);
     // Flux repéré mais illisible en natif : son lecteur web reste proposé, sans repérage.
     var failedOption = state.options[state.index];
     if (failedOption && failedOption.sniffedFrom) {
@@ -2495,7 +2665,13 @@
   }
   function succeeded(state) {
     var option = state.options[state.index];
-    if (option) rememberServer(state.key, optionLabel(option, state.index));
+    if (!option) return;
+    rememberServer(state.key, optionLabel(option, state.index));
+    // Une seule réussite comptée par serveur et par lecture.
+    if (state.okIndex === state.index && state.okOption === option) return;
+    state.okIndex = state.index;
+    state.okOption = option;
+    recordHealth(state, state.index, true);
   }
   function quickExit(state) {
     return state.options.length > 1 && Date.now() - state.startedAt < 25000;
@@ -2571,6 +2747,13 @@
     var state = entry.state;
     // Journal du lecteur affiché avec l'erreur : la cause exacte, visible à l'écran.
     var log = result.log ? '\nJournal du lecteur :\n' + result.log : '';
+    // Script du lecteur illisible (SyntaxError) sur un moteur web ancien :
+    // la cause réelle est expliquée en premier, avec son remède.
+    if (!result.playing && engineOutdated() && /SyntaxError|trop ancien/.test(String(result.log || '') + ' ' + String(result.error || ''))) {
+      log = '\nCause probable : le moteur web du téléviseur (Chrome ' + S.engine.major + ') est trop ancien pour ce lecteur. '
+        + (S.engine.package ? 'Mettez à jour « Android System WebView » avec le bouton ci-dessous (Play Store), ' : '')
+        + 'ou choisissez un serveur « Lecteur natif ».' + log;
+    }
     if (result.media) {
       // Flux trouvé (pont du serveur, ou liste HLS demandée par la page) :
       // lecture native avec les en-têtes de la page, plus stable.

@@ -347,6 +347,9 @@ h1, h2, h3, p { margin: 0; }
 .tag.web { color: var(--amber); }
 .tag.ok { color: #07110f; background: var(--accent); }
 .tag.bad { color: #fff; background: rgba(231, 137, 146, .6); }
+.tag.warn { color: var(--amber); background: rgba(231, 185, 110, .14); }
+.tag.good { color: var(--accent); background: rgba(112, 217, 194, .14); }
+.server:focus .tag.warn, .server:focus .tag.good { background: rgba(11, 13, 18, .12); color: #0b0d12; }
 .picker-close { justify-self: start; }
 .embed .hint .keys { margin-top: .35rem; color: var(--muted); font-size: .82rem; }
 
@@ -610,3 +613,5 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .nw-tile-label { position: absolute; left: .6rem; bottom: .6rem; max-width: 90%; padding: .3rem .7rem; border-radius: .5rem; background: rgba(9, 10, 15, .75); font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nw-tile.audio .nw-tile-label { color: var(--accent); }
 .nw-tile-status { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); text-align: center; font-size: .9rem; text-shadow: 0 1px 6px #000; }
+
+.guide-num { display: inline-block; min-width: 2.1rem; margin-right: .45rem; padding: .05rem .35rem; border-radius: .35rem; background: rgba(255, 255, 255, .08); color: var(--muted); font-style: normal; font-size: .8rem; font-weight: 800; text-align: center; }

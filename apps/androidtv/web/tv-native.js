@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.1';
+  var VERSION = '1.1.2';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   var BASE = location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
   var JF = String(params.get('jellyfin') || location.origin + '/jellyfin').replace(/\/+$/, '');
@@ -117,12 +117,18 @@
       dts: false
     };
   }
+  function engineInfo() {
+    var match = /Chrome\/(\d+)[\d.]*/.exec(navigator.userAgent || '');
+    return { version: match ? match[0].slice(7) : '', major: match ? Number(match[1]) : 0, package: '', recommended: 110 };
+  }
   function sendSession() {
     send({
       type: 'session', token: session.token, userId: session.userId, userName: session.userName,
       serverAddress: JF, noctraUrl: BASE, jellyfinUrl: JF, version: VERSION, codecs: codecs(), platform: platform,
       // Ni lecteur Jellyfin natif, ni lecteur web séparé : lecteur HTML5 et iframes.
-      caps: { jellyfinPlayer: false, webPlayer: false, multiview: true }
+      caps: { jellyfinPlayer: false, webPlayer: false, multiview: true },
+      // Moteur web du téléviseur (fixé par le micrologiciel : pas de mise à jour possible).
+      webEngine: engineInfo()
     });
   }
   function handle(message) {
@@ -429,6 +435,8 @@
         clearTimeout(Player.stallTimer);
         Player.setStatus(null);
         if (!Player.played && Player.report) Player.report.start(Player.position());
+        // Direct lancé : signalé à l'accueil (fiabilité du serveur).
+        if (!Player.played && !m.vod) send({ type: 'playerEvent', event: 'live', action: 'playing', playSessionId: Player.playSessionId });
         Player.played = true;
         Player.reconnects = 0;
         if (m.sync) Player.event('state', 'ready');
@@ -805,11 +813,33 @@
           return true;
         }
         if (is(event, 'left') || is(event, 'menu')) { Player.openPanel('channels'); return true; }
+        // Numéro de chaîne (0-9) : validé après 1,5 s ou par OK.
+        var code = event.keyCode;
+        var digit = code >= 48 && code <= 57 ? code - 48 : code >= 96 && code <= 105 ? code - 96 : -1;
+        if (digit >= 0) {
+          if (Player.typed.length < 4) Player.typed += String(digit);
+          Player.setStatus('Chaîne ' + Player.typed + '…');
+          clearTimeout(Player.numberTimer);
+          Player.numberTimer = setTimeout(Player.sendNumber, 1500);
+          return true;
+        }
+        if (Player.typed && is(event, 'enter')) { clearTimeout(Player.numberTimer); Player.sendNumber(); return true; }
       }
       if (Player.managed() && is(event, 'right')) { Player.openPanel('servers'); return true; }
       if (m.vod && (is(event, 'left') || is(event, 'right'))) { Player.seekBy(is(event, 'right') ? 10000 : -10000); return true; }
       if (is(event, 'enter') || is(event, 'up') || is(event, 'down')) { Player.showControls(); return true; }
       return true;
+    },
+
+    typed: '',
+    numberTimer: 0,
+    sendNumber: function () {
+      var number = Number(Player.typed) || 0;
+      Player.typed = '';
+      var total = Number((/\/\s*(\d+)/.exec((Player.epg && Player.epg.position) || '') || [])[1]) || 0;
+      if (number > 0 && (!total || number <= total)) { send({ type: 'playerEvent', event: 'zapTo', index: number - 1, number: true }); return; }
+      Player.setStatus('Pas de chaîne n° ' + number + (total ? ' (' + total + ' chaînes)' : ''));
+      setTimeout(function () { if (!Player.typed && Player.played) Player.setStatus(null); }, 2500);
     },
 
     finish: function (ok, error, silent, ended) {
@@ -818,7 +848,8 @@
       var m = Player.m, video = Player.video;
       var position = Player.position();
       if (ended && video && video.duration && isFinite(video.duration)) position = Math.floor(video.duration * 1000);
-      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer, Player.endTimer].forEach(clearTimeout);
+      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer, Player.endTimer, Player.numberTimer].forEach(clearTimeout);
+      Player.typed = '';
       Player.endTimer = 0;
       clearInterval(Player.progressTimer);
       if (Player.report) { Player.report.stop(position, Player.played); Player.report = null; }
@@ -880,7 +911,8 @@
       Multiview.tiles = [];
       items.slice(0, MULTI_MAX).forEach(function (item) {
         var options = (item.options || []).filter(function (option) { return option.url || option.resolve; });
-        if (options.length) Multiview.add(item.title || '', item.subtitle || '', options);
+        // Démarrages échelonnés : moins d'échecs au lancement sur les téléviseurs modestes.
+        if (options.length) Multiview.add(item.title || '', item.subtitle || '', options, Multiview.tiles.length * 400);
       });
       if (!Multiview.tiles.length) { Multiview.close(); return; }
       Multiview.audio = Multiview.tiles[0];
@@ -889,7 +921,7 @@
       Multiview.tiles[0].node.focus();
       keepScreenOn(true);
     },
-    add: function (title, subtitle, options) {
+    add: function (title, subtitle, options, delay) {
       var video = el('video', { autoplay: true, muted: true, playsinline: true });
       video.muted = true;
       var tile = { title: title, subtitle: subtitle, options: options, current: -1, failed: {}, generation: 0, video: video };
@@ -897,14 +929,31 @@
       tile.status = el('div', { class: 'nw-tile-status' });
       tile.node = el('div', { class: 'nw-tile', tabindex: '0', onclick: function () { Multiview.openMenu(tile); } }, video, tile.label, tile.status);
       tile.engine = new Engine(video, function (message) { Multiview.failed(tile, message); });
-      video.addEventListener('playing', function () { tile.status.textContent = ''; tile.played = true; });
+      video.addEventListener('playing', function () {
+        clearTimeout(tile.stallTimer);
+        tile.status.textContent = '';
+        tile.played = true;
+        tile.retries = 0;
+      });
+      // Flux bloqué (mise en mémoire tampon sans fin) : serveur suivant après 20 s.
+      video.addEventListener('waiting', function () {
+        clearTimeout(tile.stallTimer);
+        var generation = tile.generation;
+        tile.stallTimer = setTimeout(function () {
+          if (generation === tile.generation && Multiview.tiles.indexOf(tile) >= 0 && (video.paused || video.readyState < 3)) Multiview.failed(tile, 'Le flux ne répond plus.');
+        }, 20000);
+      });
+      video.addEventListener('ended', function () { Multiview.failed(tile, 'Le direct s’est interrompu.'); });
       video.addEventListener('error', function () {
         if (!video.getAttribute('src') && !video.currentSrc) return;
         Multiview.failed(tile, 'Lecture impossible (code ' + (video.error ? video.error.code : '?') + ')');
       });
       Multiview.node.appendChild(tile.node);
       Multiview.tiles.push(tile);
-      Multiview.play(tile, 0);
+      if (delay) {
+        Multiview.status(tile, 'Connexion…');
+        setTimeout(function () { if (Multiview.tiles.indexOf(tile) >= 0 && tile.current < 0) Multiview.play(tile, 0); }, delay);
+      } else Multiview.play(tile, 0);
       return tile;
     },
     status: function (tile, text) { tile.status.textContent = text || ''; },
@@ -919,6 +968,8 @@
     },
     play: function (tile, index) {
       tile.current = index;
+      clearTimeout(tile.stallTimer);
+      clearTimeout(tile.retryTimer);
       var generation = ++tile.generation;
       var option = tile.options[index];
       Multiview.labels();
@@ -945,13 +996,37 @@
       if (Multiview.tiles.indexOf(tile) < 0) return;
       var option = tile.options[tile.current];
       if (!tile.library && !tile.played && option && option.url && tile.engine.canFallback()) { Multiview.start(tile, option.url, option.mime, true); return; }
+      clearTimeout(tile.stallTimer);
+      // Coupure d'un flux qui fonctionnait : lien neuf du même serveur (au plus toutes les 2 min).
+      if (tile.played && option && option.resolve && Date.now() - (tile.renewedAt || 0) > 120000) {
+        tile.renewedAt = Date.now();
+        tile.played = false;
+        option.url = '';
+        Multiview.status(tile, 'Reconnexion au serveur…');
+        Multiview.play(tile, tile.current);
+        return;
+      }
       tile.failed[tile.current] = true;
       tile.played = false;
       for (var step = 1; step <= tile.options.length; step++) {
         var index = (tile.current + step) % tile.options.length;
         if (!tile.failed[index]) { Multiview.status(tile, 'Serveur indisponible · essai du suivant…'); Multiview.play(tile, index); return; }
       }
-      Multiview.status(tile, /decod|MEDIA_ERR_DECODE|code 3|code 4/i.test(String(message)) ? 'Le téléviseur ne peut pas décoder un flux de plus.' : 'Flux indisponible · OK › Changer de serveur');
+      if (/decod|MEDIA_ERR_DECODE|code 3|code 4/i.test(String(message))) { Multiview.status(tile, 'Le téléviseur ne peut pas décoder un flux de plus.'); return; }
+      // Tous les serveurs en échec : nouvel essai de la liste après 20 s, 45 s, 1 min 30, 3 min.
+      var delays = [20000, 45000, 90000, 180000];
+      tile.retries = tile.retries || 0;
+      if (tile.retries >= delays.length) { Multiview.status(tile, 'Flux indisponible · OK › Changer de serveur'); return; }
+      var delay = delays[tile.retries++];
+      var generation = tile.generation;
+      Multiview.status(tile, 'Flux indisponible · nouvel essai dans ' + (delay / 1000) + ' s');
+      clearTimeout(tile.retryTimer);
+      tile.retryTimer = setTimeout(function () {
+        if (generation !== tile.generation || Multiview.tiles.indexOf(tile) < 0) return;
+        tile.failed = {};
+        tile.options.forEach(function (item) { if (item.resolve) item.url = ''; });
+        Multiview.play(tile, 0);
+      }, delay);
     },
     arrange: function () {
       var tiles = Multiview.tiles, count = tiles.length;

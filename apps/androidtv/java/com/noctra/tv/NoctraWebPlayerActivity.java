@@ -132,6 +132,8 @@ public class NoctraWebPlayerActivity extends Activity {
     private volatile String userAgent;
     private volatile boolean secureDns;
     private String noctraHost;
+    private String engineVersion = "";
+    private boolean engineTooOld;
 
     /** Régies publicitaires lourdes, bloquées en mode allégé (après un arrêt du moteur web). */
     private static final String[] AD_HOSTS = {
@@ -152,6 +154,8 @@ public class NoctraWebPlayerActivity extends Activity {
         Intent intent = getIntent();
         String url = intent.getStringExtra(EXTRA_URL);
         NoctraWebLog.start(this, intent.getStringExtra(EXTRA_TITLE) + " · " + url);
+        engineVersion = NoctraWebEngine.version(this);
+        NoctraWebLog.add(this, "Moteur web : " + NoctraWebEngine.describe(this));
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
@@ -387,6 +391,16 @@ public class NoctraWebPlayerActivity extends Activity {
                 String text = message == null ? null : message.message();
                 if (text != null && message.messageLevel() == ConsoleMessage.MessageLevel.ERROR && consoleErrors++ < 8) {
                     NoctraWebLog.add(NoctraWebPlayerActivity.this, "Erreur de la page : " + text);
+                }
+                // Script du lecteur illisible par ce moteur web (syntaxe trop récente) :
+                // cause des erreurs suivantes (« … is not defined »), et seul remède
+                // durable : mettre à jour le moteur web du téléviseur.
+                if (text != null && !engineTooOld && text.contains("SyntaxError")
+                    && NoctraWebEngine.major(engineVersion) > 0 && NoctraWebEngine.major(engineVersion) < NoctraWebEngine.RECOMMENDED_MAJOR) {
+                    engineTooOld = true;
+                    NoctraWebLog.add(NoctraWebPlayerActivity.this, "Moteur web trop ancien pour ce lecteur (Chrome " + NoctraWebEngine.major(engineVersion) + ")");
+                    report("Le moteur web du téléviseur (Chrome " + NoctraWebEngine.major(engineVersion) + ") est trop ancien pour ce lecteur. "
+                        + "Mettez à jour « Android System WebView » (Play Store), ou choisissez un serveur « Lecteur natif ».");
                 }
                 if (text != null && !direct && text.startsWith("Refused to") && (text.contains("X-Frame-Options") || text.contains("frame-ancestors"))) {
                     handler.post(new Runnable() {

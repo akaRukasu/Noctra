@@ -5,7 +5,8 @@ window.NOCTRA_PLATFORM = 'tizen';
 (function () {
   try {
     var keys = ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaFastForward', 'MediaRewind',
-      'ChannelUp', 'ChannelDown', 'ChannelList', 'Info', 'Guide', 'ColorF0Red', 'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue'];
+      'ChannelUp', 'ChannelDown', 'ChannelList', 'Info', 'Guide', 'ColorF0Red', 'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue',
+      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
     var supported = tizen.tvinputdevice.getSupportedKeys().map(function (key) { return key.name; });
     keys.forEach(function (name) {
       if (supported.indexOf(name) >= 0) {
