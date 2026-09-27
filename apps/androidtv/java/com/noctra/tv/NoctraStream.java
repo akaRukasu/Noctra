@@ -234,7 +234,8 @@ final class NoctraStream {
         startedAt = System.currentTimeMillis();
         bufferingSince = 0;
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-            .setUserAgent("NoctraTV/" + NoctraConfig.VERSION)
+            // Flux repéré dans une page web : même identité que la page (sinon refus).
+            .setUserAgent(headers.containsKey("User-Agent") ? headers.get("User-Agent") : "NoctraTV/" + NoctraConfig.VERSION)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12000)
             .setReadTimeoutMs(20000)

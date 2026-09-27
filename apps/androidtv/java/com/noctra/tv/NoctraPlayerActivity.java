@@ -32,6 +32,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_SUBTITLE = "noctra_subtitle";
     static final String EXTRA_MIME = "noctra_mime";
     static final String EXTRA_TOKEN = "noctra_token";
+    /** En-têtes du flux (JSON) : ceux de la page web où il a été repéré (Referer, Origin, cookies…). */
+    static final String EXTRA_HEADERS = "noctra_headers";
     static final String EXTRA_ERROR = "noctra_error";
     static final String EXTRA_PLAYED = "noctra_played";
     // Films et épisodes (lecture Jellyfin) :
@@ -163,6 +165,20 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                     intent.getStringExtra(EXTRA_PLAY_SESSION_ID), intent.getStringExtra(EXTRA_DEVICE_ID));
                 handler.postDelayed(progress, 1000);
             }
+        } else if (intent.hasExtra(EXTRA_HEADERS)) {
+            HashMap<String, String> headers = new HashMap<String, String>();
+            try {
+                org.json.JSONObject json = new org.json.JSONObject(intent.getStringExtra(EXTRA_HEADERS));
+                java.util.Iterator<String> keys = json.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    headers.put(key, json.optString(key));
+                }
+            } catch (Exception ignored) {
+            }
+            String token = intent.getStringExtra(EXTRA_TOKEN);
+            if (token != null) headers.put("x-noctra-token", token);
+            stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, true, 0);
         } else {
             stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_TOKEN), false);
         }

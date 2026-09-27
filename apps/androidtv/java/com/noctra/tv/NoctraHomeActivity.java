@@ -398,6 +398,7 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_SUBTITLE, message.optString("subtitle"));
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_COMPAT, message.optBoolean("compat", false));
             // Même cadre que sur PC : bac à sable et référent propres au fournisseur.
+            intent.putExtra(NoctraWebPlayerActivity.EXTRA_SNIFF, message.optBoolean("sniff", true));
             if (message.has("sandbox") && !message.isNull("sandbox")) intent.putExtra(NoctraWebPlayerActivity.EXTRA_SANDBOX, message.optString("sandbox"));
             intent.putExtra(NoctraWebPlayerActivity.EXTRA_REFERRER, message.optString("referrer", "strict-origin-when-cross-origin"));
             // Le jeton ne sert qu'aux lecteurs préparés par le serveur Noctra.
@@ -421,6 +422,8 @@ public class NoctraHomeActivity extends Activity {
             intent.putExtra(NoctraPlayerActivity.EXTRA_TITLE, message.optString("title"));
             intent.putExtra(NoctraPlayerActivity.EXTRA_SUBTITLE, message.optString("subtitle"));
             intent.putExtra(NoctraPlayerActivity.EXTRA_MIME, message.optString("mime"));
+            JSONObject streamHeaders = message.optJSONObject("headers");
+            if (streamHeaders != null && streamHeaders.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_HEADERS, streamHeaders.toString());
             Uri target = Uri.parse(url);
             // Le jeton ne part que vers le serveur Noctra, jamais vers un autre hôte.
             if (sameOrigin(target, server)) intent.putExtra(NoctraPlayerActivity.EXTRA_TOKEN, session.accessToken);
@@ -582,6 +585,8 @@ public class NoctraHomeActivity extends Activity {
                 message.put("ok", resultCode == RESULT_OK);
                 message.put("playing", data != null && data.getBooleanExtra(NoctraWebPlayerActivity.EXTRA_PLAYING, false));
                 message.put("media", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_MEDIA));
+                String mediaHeaders = data == null ? null : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_HEADERS);
+                if (mediaHeaders != null) message.put("headers", new JSONObject(mediaHeaders));
                 message.put("error", data == null ? "" : data.getStringExtra(NoctraWebPlayerActivity.EXTRA_ERROR));
                 // Fin du journal du lecteur web (y compris après un arrêt brutal de son processus).
                 message.put("log", NoctraWebLog.tail(this, 4));

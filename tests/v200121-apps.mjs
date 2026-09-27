@@ -242,6 +242,11 @@ assert.match(tvApp, /referrer: 'no-referrer'/);
 assert.match(tvApp, /sandbox: frame\.sandbox, referrer: frame\.referrer/);
 assert.match(await read('apps/androidtv/web/player.js'), /frame\.referrerPolicy = params\.get\('referrer'\)/);
 assert.match(webPlayer, /settings\.setSafeBrowsingEnabled\(false\)/);
+// Flux HLS demandé par la page : transmis au lecteur natif avec les en-têtes de la page.
+assert.match(webPlayer, /if \(sniff && !handedOff && isStream\(request\.getUrl\(\)\)\) handOff\(request\);/);
+assert.match(webPlayer, /headers\.put\("Referer", entry\.getValue\(\)\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /intent\.hasExtra\(EXTRA_HEADERS\)/);
+assert.match(tvApp, /failedOption\.sniffedFrom\.noSniff = true;/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
 assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);

@@ -1965,7 +1965,7 @@
     state.startedAt = Date.now();
     if (option.streamUrl) {
       var mime = option.transport === 'ts' || state.channel.transport === 'ts' ? 'video/mp2t' : '';
-      if (!native('play', { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime })) {
+      if (!native('play', { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null })) {
         toast('Le lecteur natif est disponible dans l’appli Noctra TV.', true);
       }
       return;
@@ -1974,6 +1974,12 @@
   }
   function failOption(state, message) {
     state.failed[state.index] = true;
+    // Flux repéré mais illisible en natif : son lecteur web reste proposé, sans repérage.
+    var failedOption = state.options[state.index];
+    if (failedOption && failedOption.sniffedFrom) {
+      failedOption.sniffedFrom.noSniff = true;
+      state.options.forEach(function (option, index) { if (option === failedOption.sniffedFrom) delete state.failed[index]; });
+    }
     var next = -1;
     state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
     if (next < 0) {
@@ -2047,7 +2053,7 @@
   function openEmbed(state, option, label) {
     var url = absolute(option.url);
     var frame = frameConfig(state.channel, option, url);
-    if (native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer })) {
+    if (native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff })) {
       webPlayback = { state: state, option: option };
       return;
     }
@@ -2061,8 +2067,9 @@
     // Journal du lecteur affiché avec l'erreur : la cause exacte, visible à l'écran.
     var log = result.log ? '\nJournal du lecteur :\n' + result.log : '';
     if (result.media) {
-      // Flux trouvé par le pont du serveur : lecture native, plus stable.
-      state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl });
+      // Flux trouvé (pont du serveur, ou liste HLS demandée par la page) :
+      // lecture native avec les en-têtes de la page, plus stable.
+      state.options.splice(state.index + 1, 0, { playbackType: 'stream', streamUrl: result.media, headers: result.headers || null, sniffedFrom: entry.option, label: optionLabel(entry.option, state.index) + ' · direct', renewUrl: entry.option.renewUrl });
       state.index++;
       playOption();
       return;

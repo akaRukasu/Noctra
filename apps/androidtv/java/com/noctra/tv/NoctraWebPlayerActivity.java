@@ -60,6 +60,12 @@ import java.util.regex.Pattern;
  * plein écran), Retour quitte. Quand le pont du serveur Noctra trouve le flux
  * vidéo, il est renvoyé à l'accueil qui le lit avec le lecteur natif.
  *
+ * Flux repéré : dès que la page (ou un de ses cadres) demande une liste de
+ * lecture HLS (.m3u8), son adresse et ses en-têtes (Referer, Origin, cookies,
+ * identité) sont transmis au lecteur natif de l'appli, plus stable que la
+ * vidéo de la page sur les téléviseurs. Si le lecteur natif échoue, l'accueil
+ * rouvre ce lecteur web sans repérage (EXTRA_SNIFF).
+ *
  * Pour se comporter comme sur PC (où ces lecteurs fonctionnent) : identité de
  * navigateur de bureau ; cadre configuré comme sur PC (bac à sable et référent
  * propres à chaque fournisseur, ex. aucun référent pour LiveWatch) ; une page
@@ -78,6 +84,8 @@ public class NoctraWebPlayerActivity extends Activity {
     static final String EXTRA_COMPAT = "noctra_compat";
     static final String EXTRA_SANDBOX = "noctra_sandbox";
     static final String EXTRA_REFERRER = "noctra_referrer";
+    static final String EXTRA_SNIFF = "noctra_sniff";
+    static final String EXTRA_HEADERS = "noctra_headers";
     /** Durée d'affichage d'une page ouverte par le lecteur (souvent sa publicité). */
     private static final int TAB_MS = 8000;
     static final String EXTRA_ERROR = "noctra_error";
@@ -115,6 +123,9 @@ public class NoctraWebPlayerActivity extends Activity {
     private boolean lite;
     private int consoleErrors;
     private int blocked;
+    private boolean sniff;
+    private volatile boolean handedOff;
+    private volatile String userAgent;
 
     /** Régies publicitaires lourdes, bloquées en mode allégé (après un arrêt du moteur web). */
     private static final String[] AD_HOSTS = {
@@ -150,6 +161,7 @@ public class NoctraWebPlayerActivity extends Activity {
         }
         appBase = NoctraConfig.NOCTRA_URL + "/tv-app/";
         source = url;
+        sniff = intent.getBooleanExtra(EXTRA_SNIFF, true);
         referrer = intent.getStringExtra(EXTRA_REFERRER);
         if (referrer == null || referrer.isEmpty()) referrer = "strict-origin-when-cross-origin";
 
@@ -229,6 +241,7 @@ public class NoctraWebPlayerActivity extends Activity {
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setUserAgentString(desktopUserAgent(settings.getUserAgentString()));
+        userAgent = settings.getUserAgentString();
         // Navigation sécurisée de la WebView : elle bloque (page blanche) les
         // sites de streaming qu'elle juge douteux, que l'utilisateur ouvre ici
         // volontairement, comme sur son PC.
@@ -244,6 +257,7 @@ public class NoctraWebPlayerActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (sniff && !handedOff && isStream(request.getUrl())) handOff(request);
                 if (lite && isAd(request.getUrl())) {
                     blocked++;
                     return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
@@ -377,6 +391,55 @@ public class NoctraWebPlayerActivity extends Activity {
             }
         };
         webView.setWebChromeClient(chromeClient);
+    }
+
+    /** Liste de lecture HLS demandée par la page ou un de ses cadres (hors publicités et Noctra). */
+    private boolean isStream(Uri url) {
+        if (url == null || url.getPath() == null || isAd(url)) return false;
+        String scheme = url.getScheme();
+        if (!"https".equals(scheme) && !"http".equals(scheme)) return false;
+        if (url.toString().startsWith(appBase)) return false;
+        String path = url.getPath().toLowerCase();
+        return path.endsWith(".m3u8") || path.endsWith(".m3u") || path.contains(".m3u8/");
+    }
+
+    /** Flux trouvé : transmis au lecteur natif avec les en-têtes de la page. */
+    private void handOff(WebResourceRequest request) {
+        handedOff = true;
+        final String media = request.getUrl().toString();
+        final org.json.JSONObject headers = new org.json.JSONObject();
+        try {
+            Map<String, String> sent = request.getRequestHeaders();
+            if (sent != null) {
+                for (Map.Entry<String, String> entry : sent.entrySet()) {
+                    String key = entry.getKey();
+                    if (key == null || entry.getValue() == null) continue;
+                    String lower = key.toLowerCase();
+                    if (lower.equals("referer")) headers.put("Referer", entry.getValue());
+                    else if (lower.equals("origin")) headers.put("Origin", entry.getValue());
+                    else if (lower.equals("user-agent")) headers.put("User-Agent", entry.getValue());
+                }
+            }
+            // Fil réseau de la WebView : identité mémorisée (aucun appel à la WebView ici).
+            if (!headers.has("User-Agent") && userAgent != null) headers.put("User-Agent", userAgent);
+            String cookies = CookieManager.getInstance().getCookie(media);
+            if (cookies != null && !cookies.isEmpty()) headers.put("Cookie", cookies);
+        } catch (Throwable ignored) {
+        }
+        NoctraWebLog.add(this, "Flux repéré : " + request.getUrl().getHost() + " → lecteur natif");
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (finished) return;
+                finished = true;
+                Intent data = new Intent();
+                data.putExtra(EXTRA_PLAYING, playing);
+                data.putExtra(EXTRA_MEDIA, media);
+                data.putExtra(EXTRA_HEADERS, headers.toString());
+                setResult(RESULT_OK, data);
+                finish();
+            }
+        });
     }
 
     private static boolean isAd(Uri url) {
