@@ -89,8 +89,14 @@
     window.close();
   }
 
-  function openServer(base) {
-    var target = base + '/client/index.html' + (platform ? '?noctraApp=' + encodeURIComponent(platform) : '');
+  function openServer(base, serverTvApp) {
+    // LG webOS et Samsung Tizen : interface Noctra TV (comme l'appli Android
+    // TV), si le serveur la propose (/health : tvApp) ; sinon, et ailleurs,
+    // l'interface web complète.
+    var tvApp = (platform === 'webos' || platform === 'tizen') && config.tvInterface !== false && serverTvApp === true;
+    var target = tvApp
+      ? base + '/tv-app/index.html?platform=' + encodeURIComponent(platform)
+      : base + '/client/index.html' + (platform ? '?noctraApp=' + encodeURIComponent(platform) : '');
     if (postNative('openServer', { base: base, url: target })) return;
     location.replace(target);
   }
@@ -129,7 +135,7 @@
         if (xhr.status >= 200 && xhr.status < 300) {
           var data = null;
           try { data = JSON.parse(xhr.responseText); } catch (error) {}
-          if (data && data.client === 'Noctra') finish({ ok: true, version: data.version || '' });
+          if (data && data.client === 'Noctra') finish({ ok: true, version: data.version || '', tvApp: data.tvApp === true });
           else finish({ ok: false, error: 'Ce serveur répond, mais ce n’est pas un serveur Noctra. Vérifiez l’adresse (par exemple https://mon-serveur.fr/noctra).' });
         } else if (xhr.status === 404) {
           finish({ ok: false, error: 'Aucun serveur Noctra à cette adresse (erreur 404). Vérifiez le chemin, par exemple /noctra.' });
@@ -205,7 +211,7 @@
       saveState(result.url, auto);
       postNative('saveServer', { url: result.url, auto: auto });
       $('busy-status').textContent = 'Ouverture de Noctra…';
-      openServer(result.url);
+      openServer(result.url, result.tvApp);
     });
   }
 

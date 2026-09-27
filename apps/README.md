@@ -7,12 +7,29 @@ Noctra existe en applications pour :
 | Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad | `Noctra-ios-unsigned.ipa` | Sideloadly ou AltStore |
-| Téléviseurs LG (webOS) | `com.noctra.media_1.0.0_all.ipk` | mode développeur LG |
-| Téléviseurs Samsung (Tizen) | `Noctra.wgt` | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
+| Téléviseurs LG (webOS) | `com.noctra.media_1.1.0_all.ipk` (**Noctra TV**) | mode développeur LG |
+| Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
 
 ## Android TV : Noctra TV (appli native)
 
 Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli Jellyfin officielle pour Android TV adaptée pour Noctra : marque Noctra et serveur `akarukasu.merlion.usbx.me/jellyfin` intégré. On arrive directement sur la page d’authentification, puis sur l’accueil Noctra : médiathèques, fiches, TV en direct (avec le multiview jusqu’à 12 chaînes), SyncPlay, Découvrir, Demandes, Roulette et recherche. L’interface est native et fluide ; films et épisodes sont lus avec le lecteur Jellyfin (langue audio et sous-titres au choix), puis on revient sur Noctra. Les détails, la construction et la licence sont dans [androidtv/README.md](androidtv/README.md).
+
+## LG webOS et Samsung Tizen : Noctra TV
+
+Les applis LG et Samsung ouvrent la **même interface Noctra TV** que l’appli Android TV : accueil (carrousel « Continuer à regarder », médiathèques 2 × 2), fiches films et séries, TV en direct (guide des programmes, zapping ▲ ▼, panneaux des chaînes et des serveurs, bascule automatique de serveur), multiview, SyncPlay, Découvrir, Demandes, Roulette et recherche.
+
+Il n’y a pas d’appli Jellyfin native sur ces téléviseurs : le fichier `androidtv/web/tv-native.js` remplace l’appli Android en JavaScript, avec le même protocole.
+- **Connexion** : par **Quick Connect** (un code s’affiche à l’écran ; sur le téléphone ou le PC, Jellyfin › Paramètres › Quick Connect, saisir le code) ou par nom d’utilisateur et mot de passe. La session est mémorisée ; Compte › Paramètres permet de se déconnecter.
+- **Lecture** : lecteur vidéo du téléviseur (HLS et MPEG-TS natifs), avec hls.js et mpegts.js du serveur en secours. Films et épisodes : reprise, avance ◀ ▶ (10 s) et ⏪ ⏩ (30 s), langue audio et sous-titres modifiables pendant la lecture (OK › Audio / Sous-titres), suivi de lecture Jellyfin (reprises, « Vu »), épisode suivant proposé à la fin.
+- **Chaînes** : bandeau du programme, ▲ ▼ ou CH+ / CH− pour zapper, ◀ pour la liste des chaînes, ▶ pour les serveurs, OK pour la barre de commandes.
+- **Touches** : Retour (LG 461, Samsung 10009) ferme la fenêtre ou le lecteur, puis quitte à l’accueil ; lecture/pause, stop, avance et retour rapides ; les touches Samsung sont déclarées par l’appli avant l’ouverture de l’interface.
+
+L’interface est servie par le serveur Noctra à l’adresse `…/noctra/tv-app/` (même origine que l’API Noctra et Jellyfin). Elle se met donc à jour avec le serveur, sans réinstaller l’appli. **Le serveur doit contenir cette version** (il l’annonce dans `/health`) : avec un serveur plus ancien, l’appli ouvre l’interface web complète comme avant.
+
+**Différences avec l’appli Android TV** (limites des téléviseurs, pas de code natif possible) :
+- Les **lecteurs web externes** (certaines sources sport) s’ouvrent dans une fenêtre intégrée. Sur LG, le pointeur de la Magic Remote permet de cliquer dedans ; sur Samsung, sans pointeur, ils sont souvent inutilisables : préférez les serveurs « Lecteur natif ». Le contournement du blocage DNS des fournisseurs d’accès n’existe pas ici : réglez au besoin le DNS du téléviseur sur `1.1.1.1` (paramètres réseau).
+- Le **multiview** dépend du nombre de décodeurs vidéo du téléviseur (souvent 2 à 4 flux simultanés) : au-delà, la vignette l’indique.
+- Films et épisodes passent par le lecteur Noctra (flux HLS de Jellyfin) et non par le lecteur Jellyfin.
 
 L’interface web complète de Noctra dans une WebView (appli `Noctra-android.apk`) est trop lourde pour les boîtiers et vidéoprojecteurs Android. Elle reste l’appli recommandée sur téléphone et tablette.
 
@@ -39,8 +56,8 @@ Le serveur doit être en **200.0.121 ou plus récent**. Cette version ajoute le 
 
 ### Compatibilité
 
-- **Samsung** : téléviseurs 2021 et plus récents (Tizen 6.5+).
-- **LG** : téléviseurs webOS 22 et plus récents (2022+).
+- **Samsung** : Noctra TV sur les téléviseurs 2019 et plus récents (Tizen 5+) ; l’interface web complète demande 2021+ (Tizen 6.5+).
+- **LG** : Noctra TV sur les téléviseurs 2020 et plus récents (webOS 5+) ; l’interface web complète demande webOS 22 (2022+).
 - **Android et Android TV** : Android 7 ou plus récent, avec « Android System WebView » (ou Chrome) à jour.
 - **iPhone et iPad** : iOS 15 ou plus récent.
 
@@ -96,29 +113,40 @@ Avec un identifiant Apple gratuit, la signature expire au bout de 7 jours. AltSt
 La PWA (Safari → Partager → Sur l’écran d’accueil) reste une alternative sans installation.
 
 ### Téléviseurs LG (webOS)
-1. Créez un compte gratuit sur [webostv.developer.lge.com](https://webostv.developer.lge.com).
-2. Sur la TV, installez l’appli **Developer Mode** depuis le LG Content Store, connectez-vous avec ce compte, puis activez *Dev Mode Status* et *Key Server*. La TV redémarre.
-3. Sur le PC, installez l’outil LG et déclarez la TV. La phrase de passe s’affiche dans l’appli Developer Mode.
+Il faut un PC (Windows, macOS ou Linux) sur le même réseau que la TV, et un compte développeur LG gratuit.
+
+1. **Compte LG développeur** : créez-le sur [webostv.developer.lge.com](https://webostv.developer.lge.com) (*Sign in* › *Create account*). C’est gratuit.
+2. **Mode développeur sur la TV** : dans le LG Content Store, installez l’appli **Developer Mode**. Ouvrez-la, connectez-vous avec le compte LG, activez **Dev Mode Status** (la TV redémarre), rouvrez l’appli et activez **Key Server**. Notez l’adresse IP et la *passphrase* affichées.
+3. **Installation**, au choix :
+   - **Sans ligne de commande (conseillé)** : sur le PC, installez [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop/releases) ; *Add device* › saisissez l’IP de la TV et la *passphrase* ; puis onglet **Apps** › **Install** › choisissez `com.noctra.media_1.1.0_all.ipk`.
+   - **En ligne de commande** :
+     ```bash
+     npm install -g @webos-tools/cli
+     ares-setup-device        # « add » : nom « tv », IP de la TV, port 9922, utilisateur prisoner
+     ares-novacom --device tv --getkey   # saisir la passphrase affichée sur la TV
+     ares-install --device tv com.noctra.media_1.1.0_all.ipk
+     ```
+4. Noctra apparaît dans la liste des applis de la TV (bouton Accueil › *Applications*). Au premier lancement : Quick Connect ou identifiants Jellyfin.
+
+**Mise à jour** : installez simplement le nouvel IPK par-dessus (même méthode). **Attention** : la session développeur LG expire au bout de 50 heures, et les applis installées sont alors retirées. Ouvrez de temps en temps l’appli Developer Mode et appuyez sur **Extend** (webOS Dev Manager peut le faire pour vous). Une TV rootée avec Homebrew Channel n’a pas cette limite.
+
+### Téléviseurs Samsung (Tizen)
+Il faut un PC Windows (ou un téléphone Android) sur le même réseau que la TV, et un compte Samsung.
+
+1. **Mode développeur sur la TV** : ouvrez **Applications** (Apps), puis tapez `1` `2` `3` `4` `5` avec la télécommande (pavé numérique à l’écran si besoin). Activez **Developer mode**, saisissez l’**adresse IP du PC** (Windows : `ipconfig`), validez, puis **éteignez et rallumez la TV** (pas seulement la veille : débranchez-la 30 s si nécessaire).
+2. **Installation avec Apps2Samsung (conseillé)** : sur le PC, téléchargez [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung/releases) et lancez-le. Il détecte la TV ; choisissez **fichier .wgt personnalisé** (*custom .wgt*), sélectionnez `Noctra.wgt` et lancez l’installation. À la première utilisation, il vous connecte à votre compte Samsung pour créer le certificat de signature lié à votre TV : c’est normal, un .wgt doit être signé pour votre téléviseur.
+3. **Autre méthode (Tizen Studio)** : installez [Tizen Studio](https://developer.samsung.com/smarttv/develop/getting-started/setting-up-sdk/installing-tv-sdk.html) avec l’extension *Samsung TV* ; *Device Manager* › *Remote Device Manager* › ajoutez l’IP de la TV ; *Certificate Manager* › créez un certificat **Samsung** (profil TV, avec le DUID de la TV) ; puis signez et installez :
    ```bash
-   npm install -g @webos-tools/cli
-   ares-setup-device        # ajouter la TV : adresse IP affichée dans Developer Mode, port 9922
-   ares-novacom --device tv --getkey
-   ares-install --device tv com.noctra.media_1.0.0_all.ipk
+   tizen package -t wgt -s MonProfil -- Noctra.wgt
+   tizen install -n Noctra.wgt -t <nom-de-la-TV>
    ```
-   Sans ligne de commande, [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) installe l’IPK en quelques clics.
+4. Noctra apparaît dans **Applications**. Au premier lancement : Quick Connect ou identifiants Jellyfin.
 
-La session développeur LG expire au bout de 50 heures si elle n’est pas prolongée. Le bouton *Extend* de l’appli Developer Mode la prolonge, et webOS Dev Manager peut le faire automatiquement. Une TV rootée avec Homebrew Channel n’a pas cette limite.
-
-### Téléviseurs Samsung (Tizen), avec Apps2Samsung
-1. Sur la TV, ouvrez **Applications**, puis tapez `1` `2` `3` `4` `5` avec la télécommande. Activez **Developer mode** et saisissez l’adresse IP du PC. Éteignez puis rallumez la TV.
-2. Sur le PC (ou avec l’appli Android d’Apps2Samsung), lancez [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) et choisissez la TV.
-3. Choisissez **fichier .wgt personnalisé**, sélectionnez `Noctra.wgt`, puis lancez l’installation. Apps2Samsung signe le paquet avec votre compte Samsung (une seule connexion) et l’installe.
-
-Le PC et la TV doivent être sur le même réseau. Apps2Samsung explique la marche à suivre si le mode développeur n’est pas prêt.
+**Mise à jour** : réinstallez le nouveau `Noctra.wgt` de la même façon (même compte Samsung, sinon désinstallez d’abord l’ancienne version). Le mode développeur n’a pas besoin de rester actif après l’installation.
 
 ## Personnaliser
 
-- **Serveur proposé par défaut** : `apps/shared/launcher/config.js` (`defaultServerUrl`).
+- **Serveur proposé par défaut** : `apps/shared/launcher/config.js` (`defaultServerUrl`). `tvInterface: false` y fait ouvrir l’interface web complète au lieu de Noctra TV sur LG et Samsung.
 - **Versions** : `apps/android/app/build.gradle.kts` (`versionCode`, `versionName`), `apps/ios/project.yml` (`MARKETING_VERSION`), `apps/webos/appinfo.json`, `apps/tizen/config.xml` et `appVersion` dans `config.js`.
 - **Icônes et bannières** : `node apps/scripts/render-icons.mjs`, à partir de `public/noctra-mark.svg` (nécessite Playwright).
 
@@ -132,6 +160,8 @@ apps/
   android/           projet Android (Java, classes du système uniquement) : un APK téléphone + Android TV,
                      construit par scripts/build-android.mjs ou par Android Studio (Gradle)
   ios/               projet XcodeGen (Swift, WKWebView)
+  androidtv/web/     interface Noctra TV (Android TV ; servie par le serveur à /tv-app/ pour LG et Samsung),
+                     tv-native.js : remplace l’appli Android sur LG et Samsung (connexion, lecteur, multiview)
   scripts/           build-tv.mjs (IPK + WGT sans SDK), build-android.mjs (APK sans SDK), render-icons.mjs
 public/noctra-app-bridge.js   pont côté serveur, chargé avant le moteur Jellyfin
 ```

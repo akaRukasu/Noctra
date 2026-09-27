@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://noctra.media/tizen" version="1.0.0" viewmodes="maximized">
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://noctra.media/tizen" version="1.1.0" viewmodes="maximized">
     <tizen:application id="NoctraTV01.Noctra" package="NoctraTV01" required_version="4.0"/>
     <name>Noctra</name>
-    <description>Client Noctra pour téléviseurs Samsung Tizen</description>
+    <description>Noctra TV pour téléviseurs Samsung Tizen</description>
     <icon src="icon.png"/>
     <content src="index.html"/>
-    <!-- L'appli ouvre l'interface web du serveur Noctra choisi à l'écran de connexion. -->
+    <!-- L'appli ouvre l'interface Noctra TV du serveur choisi (/tv-app/). -->
     <access origin="*" subdomains="true"/>
     <tizen:allow-navigation>*</tizen:allow-navigation>
     <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:</tizen:content-security-policy>

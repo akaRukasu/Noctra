@@ -8,7 +8,7 @@
   // ── Outils ─────────────────────────────────────────────────────────
   var main = document.getElementById('main');
   var layer = document.getElementById('layer');
-  var S = { token: '', userId: '', userName: '', noctra: '', jf: '', isAdmin: false, config: {}, ready: false };
+  var S = { token: '', userId: '', userName: '', noctra: '', jf: '', isAdmin: false, config: {}, ready: false, caps: {}, platform: 'androidtv' };
 
   function h(tag, attrs) {
     var node = document.createElement(tag);
@@ -168,7 +168,8 @@
 
   // Hors de l'appli (essais dans un navigateur) : #token=…&user=…&jellyfin=…
   setTimeout(function () {
-    if (S.ready || port) return;
+    // Pont web (webOS, Tizen) : la session arrive après l'écran de connexion.
+    if (S.ready || port || document.documentElement.classList.contains('web-host')) return;
     var params = new URLSearchParams(location.hash.slice(1));
     if (!params.get('token')) {
       main.appendChild(h('div', { class: 'error', text: 'Session introuvable : ouvrez Noctra TV depuis le téléviseur.' }));
@@ -188,6 +189,10 @@
     S.userName = data.userName || '';
     S.noctra = String(data.noctraUrl || '').replace(/\/+$/, '');
     S.codecs = data.codecs || {};
+    // Capacités de l'hôte : Android TV (lecteur Jellyfin, lecteur web séparé…)
+    // ou pont web de LG webOS / Samsung Tizen (tv-native.js).
+    S.caps = data.caps || {};
+    S.platform = data.platform || 'androidtv';
     // Jellyfin sur la même origine que la page si possible (pas de CORS).
     var own = String(data.jellyfinUrl || '').replace(/\/+$/, '');
     var remote = String(data.serverAddress || '').replace(/\/+$/, '');
@@ -765,7 +770,7 @@
     }
     // Hors groupe : lecteur Jellyfin (langue audio, sous-titres, qualité…
     // modifiables pendant la lecture) ; à sa fermeture, retour ici.
-    if (!options.sync && !options.noctraPlayer) {
+    if (!options.sync && !options.noctraPlayer && S.caps.jellyfinPlayer !== false) {
       var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
       if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks })) return Promise.resolve();
     }
@@ -781,7 +786,13 @@
       var sent = native('play', {
         sync: Boolean(options.sync),
         url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
-        vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs
+        vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs,
+        // Pistes proposées dans le lecteur (pont web : changement pendant la lecture).
+        tracks: {
+          audio: streamsOf(full, 'Audio').map(function (stream) { return { index: stream.Index, label: trackLabel(stream), language: stream.Language || '' }; }),
+          subtitles: streamsOf(full, 'Subtitle').map(function (stream) { return { index: stream.Index, label: trackLabel(stream), language: stream.Language || '', text: Boolean(stream.IsTextSubtitleStream) }; }),
+          audioIndex: (pickAudio(full) || {}).Index, subtitleIndex: pickSubtitle(full) ? pickSubtitle(full).Index : -1
+        }
       });
       if (!sent) toast('La lecture est disponible dans l’appli Noctra TV.', true);
     }, function (error) { toast(error.message, true); });
@@ -961,7 +972,7 @@
   function titlePage(item, alive) {
     // Pistes audio et sous-titres : choisies dans le lecteur Jellyfin
     // (trackButtons ne sert qu'hors de l'appli, avec le lecteur Noctra).
-    var actions = playButtons(item).concat(port ? [] : trackButtons(item), flagButtons(item));
+    var actions = playButtons(item).concat(port && S.caps.jellyfinPlayer !== false ? [] : trackButtons(item), flagButtons(item));
     if (item.Type === 'Episode' && item.SeriesId) actions.push(h('button', { class: 'btn f', onclick: function () { openItem(item.SeriesId); } }, icon('library'), 'Voir la série'));
     main.appendChild(detailHeader(item, actions));
     add(main, peopleRow(item));
@@ -1267,6 +1278,13 @@
     if (event.event === 'servers') { sendServers(); return; }
     if (event.event === 'server') { pickServer(Number(event.index) || 0); return; }
     if (event.event === 'failed') { playerFailed(event); return; }
+    // Piste choisie dans le lecteur : retenue pour les épisodes suivants.
+    if (event.event === 'tracks') {
+      if (typeof event.audio === 'string') trackPrefs.audio = event.audio;
+      if (typeof event.subtitles === 'string') trackPrefs.subtitles = event.subtitles;
+      saveTracks();
+      return;
+    }
     if (!vodPlayback || !vodPlayback.sync || !sync.group) return;
     if (event.event === 'state') {
       if (event.action === 'ready') sendReady(event.positionMs, event.playing);
@@ -2371,7 +2389,7 @@
   function openEmbed(state, option, label) {
     var url = absolute(option.url);
     var frame = frameConfig(state.channel, option, url);
-    if (native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff })) {
+    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: !option.noSniff })) {
       webPlayback = { state: state, option: option };
       return;
     }

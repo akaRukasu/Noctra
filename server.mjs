@@ -12612,6 +12612,24 @@ async function readJsonBody(req, limit = 2 * 1024 * 1024) {
   return text ? JSON.parse(text) : {};
 }
 
+// Interface Noctra TV (apps/androidtv/web) : embarquée dans l'appli Android TV,
+// servie ici pour les applis LG webOS et Samsung Tizen (même origine que
+// l'API Noctra et Jellyfin, donc sans CORS). Noms de fichiers en liste fermée.
+const tvAppRoot = join(projectRoot, 'apps', 'androidtv', 'web');
+async function serveTvApp(pathname, res) {
+  const name = pathname.replace(/^\/tv-app\/?/, '') || 'index.html';
+  if (!/^[a-z0-9-]+\.(?:html|js|css|svg)$/.test(name)) return false;
+  const content = await readFile(join(tvAppRoot, name)).catch(() => null);
+  if (!content) return false;
+  res.writeHead(200, {
+    'content-type': mime[extname(name).toLowerCase()] || 'application/octet-stream',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff'
+  });
+  res.end(content);
+  return true;
+}
+
 async function serveStatic(pathname, res) {
   const relative = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '');
   const filePath = join(publicRoot, relative);
@@ -12673,7 +12691,8 @@ const server = createServer(async (req, res) => {
       // (page locale de l'appli, donc autre origine). Aucune donnée sensible.
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.121', baseUrl: basePath || '/' }, appProbe);
+      // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.121', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
@@ -13841,6 +13860,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    if ((path === '/tv-app' || path.startsWith('/tv-app/')) && req.method === 'GET' && await serveTvApp(path, res)) return;
     if (await serveStatic(path, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Not found');

@@ -266,6 +266,20 @@ const dnsCode = await read('apps/androidtv/java/com/noctra/tv/NoctraDns.java');
 assert.match(dnsCode, /https:\/\/1\.1\.1\.1\/dns-query/);
 assert.match(webPlayer, /return viaSecureDns\(request\);/);
 assert.match(stream, /new OkHttpDataSource\.Factory\(NoctraDns\.client\(\)\)/);
+// LG webOS et Samsung Tizen : interface Noctra TV servie par le serveur, pont web (tv-native.js).
+assert.match(serverCode, /async function serveTvApp\(pathname, res\)/);
+assert.match(serverCode, /tvApp: true \}, appProbe\);/, '/health annonce l’interface TV');
+const tvLauncherCode = await read('apps/shared/launcher/launcher.js');
+assert.match(tvLauncherCode, /base \+ '\/tv-app\/index\.html\?platform=' \+ encodeURIComponent\(platform\)/);
+assert.match(tvLauncherCode, /serverTvApp === true/, 'Serveur ancien : interface complète');
+assert.match(await read('apps/tizen/platform.js'), /tizen\.tvinputdevice\.registerKey\(name\)/);
+const webHost = await read('apps/androidtv/web/tv-native.js');
+assert.match(webHost, /if \(\['webos', 'tizen', 'web'\]\.indexOf\(platform\) < 0\) return;/, 'Inactif dans l’appli Android TV');
+assert.ok(!/\basync\s+(?:function|\()|\bawait\s+[\w(]|\?\.[\w([]|\?\?/.test(webHost), 'Pont web en ES2015 (webOS 5, Tizen 5)');
+for (const needle of ["'/Users/AuthenticateByName'", "'/QuickConnect/Initiate'", "'/Sessions/Playing'", "'ApiKey='", "event: 'zap'", "event: 'failed'", 'MULTI_MAX = 12']) assert.ok(webHost.includes(needle), needle);
+assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-native\.js"><\/script>\s*<script src="app\.js"><\/script>/);
+assert.match(tvApp, /S\.caps\.jellyfinPlayer !== false/);
+assert.match(tvApp, /S\.caps\.webPlayer !== false && native\('webPlayer'/);
 // Défilement : pas d'animations qui se chevauchent.
 assert.match(tvApp, /var smooth = !repeating && now - \(scroller\._movedAt \|\| 0\) > 450;/);
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);

@@ -524,3 +524,73 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .picker-epg .now b { color: var(--accent); margin-right: .3rem; }
 .picker-epg .next { color: var(--muted); margin-top: .25rem; }
 .picker-epg .guide-bar { width: 16rem; }
+
+/* ── Pont web (LG webOS, Samsung Tizen) : connexion, lecteur, multiview ── */
+.nw-overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; }
+#nw-login { display: flex; align-items: center; justify-content: center; background: radial-gradient(60rem 30rem at 20% 0%, rgba(112, 217, 194, .14), transparent 70%), #07080d; }
+.nw-card { width: 34rem; max-width: 92vw; padding: 2rem 2.2rem; border-radius: 1.4rem; background: var(--surface); border: 1px solid var(--line); }
+.nw-card h1 { font-size: 1.9rem; font-weight: 800; margin: .6rem 0 .2rem; }
+.nw-brand { display: flex; align-items: center; font-weight: 800; font-size: 1.25rem; }
+.nw-brand img { width: 2.1rem; height: 2.1rem; margin-right: .6rem; }
+.nw-muted { color: var(--muted); font-size: .9rem; margin: .3rem 0; }
+.nw-code { font-size: 2.6rem; font-weight: 800; letter-spacing: .35em; color: var(--accent); margin: .2rem 0 .6rem; }
+.nw-quick { margin: .8rem 0; padding: .8rem 1rem; border-radius: 1rem; background: rgba(255, 255, 255, .04); }
+.nw-users { display: flex; flex-wrap: wrap; margin: .4rem 0; }
+.nw-chip { margin: 0 .5rem .5rem 0; padding: .45rem .95rem; border-radius: 99rem; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); font-weight: 600; }
+.nw-input { display: block; width: 100%; margin: .5rem 0; padding: .8rem 1.1rem; border-radius: .9rem; border: 1px solid var(--line); background: #0d1017; color: var(--text); font-size: 1.05rem; outline: none; }
+.nw-btn { display: block; width: 100%; margin: .5rem 0; padding: .75rem 1.2rem; border-radius: 99rem; background: rgba(255, 255, 255, .08); border: 1px solid var(--line); font-weight: 700; text-align: left; }
+.nw-btn.primary { background: var(--accent); color: #07110f; border-color: transparent; }
+.nw-f:focus, .nw-chip:focus, .nw-tile:focus, .nw-row-item:focus, .nw-buttons .nw-btn:focus { outline: none; }
+.nw-btn:focus, .nw-chip:focus { background: var(--text); color: #0b0d12; }
+.nw-input:focus { border-color: var(--text); box-shadow: 0 0 0 .15rem var(--text); }
+.nw-status-line { min-height: 1.3rem; margin-top: .4rem; color: #ffd2d6; font-size: .9rem; }
+.nw-sheet-back { display: flex; align-items: center; justify-content: center; background: rgba(4, 5, 9, .72); z-index: 60; }
+.nw-sheet { width: 34rem; max-width: 92vw; max-height: 86vh; overflow-y: auto; padding: 1.4rem 1.6rem; border-radius: 1.3rem; background: #131722; border: 1px solid var(--line); }
+.nw-sheet h2 { font-size: 1.3rem; margin-bottom: .5rem; }
+
+#nw-player { background: #000; }
+#nw-player video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; }
+.nw-banner {
+  position: absolute; top: 2rem; left: 2.5rem; max-width: 46rem; padding: 1.2rem 1.6rem; border-radius: 1.1rem;
+  background: rgba(9, 10, 15, .8); opacity: 0; transition: opacity .3s;
+}
+.nw-banner.shown { opacity: 1; }
+.nw-title { font-size: 1.7rem; font-weight: 800; }
+.nw-sub { color: var(--accent); margin-top: .2rem; }
+.nw-now { margin-top: .7rem; font-size: 1.05rem; }
+.nw-bar { width: 26rem; height: .3rem; margin-top: .45rem; border-radius: 1rem; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.nw-bar i, .nw-seek i { display: block; height: 100%; width: 0; background: var(--accent); }
+.nw-next { margin-top: .5rem; color: #aab4c4; font-size: .92rem; white-space: pre-line; }
+.nw-state { position: absolute; left: 50%; bottom: 4rem; transform: translateX(-50%); padding: .7rem 1.4rem; border-radius: .8rem; background: rgba(9, 10, 15, .8); font-size: 1.05rem; }
+.nw-sync { position: absolute; top: 2rem; right: 2.5rem; padding: .6rem 1.1rem; border-radius: .8rem; background: rgba(9, 10, 15, .85); color: var(--accent); }
+.nw-controls {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 1.4rem 2.5rem 1.6rem;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .85), rgba(0, 0, 0, 0)); opacity: 0; transition: opacity .25s;
+}
+.nw-controls.shown { opacity: 1; }
+.nw-seek { height: .35rem; margin-bottom: 1rem; border-radius: 1rem; background: rgba(255, 255, 255, .2); overflow: hidden; }
+.nw-row { display: flex; align-items: center; }
+.nw-buttons { display: flex; flex: 1; flex-wrap: wrap; }
+.nw-buttons .nw-btn { display: inline-block; width: auto; margin: 0 .7rem 0 0; }
+.nw-buttons .nw-btn:focus { background: var(--accent); color: #07110f; }
+.nw-time { color: #d9dfe8; font-variant-numeric: tabular-nums; }
+.nw-panel {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 30rem; padding: 1.6rem 1rem 1rem 1.4rem;
+  background: rgba(9, 10, 15, .94); display: none; flex-direction: column;
+}
+.nw-panel.shown { display: flex; }
+.nw-panel h3 { font-size: 1.35rem; }
+.nw-list { flex: 1; overflow-y: auto; margin-top: .6rem; }
+.nw-row-item { display: block; width: 100%; padding: .6rem .8rem; border-radius: .7rem; text-align: left; }
+.nw-row-item b { display: block; font-size: 1.02rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nw-row-item span { display: block; color: #aab4c4; font-size: .85rem; margin-top: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nw-row-item.current b { color: var(--accent); }
+.nw-row-item:focus { background: rgba(112, 217, 194, .28); }
+
+#nw-multi { background: #05060a; }
+.nw-tile { position: absolute; box-sizing: border-box; border: .2rem solid #1c1f2a; border-radius: .7rem; overflow: hidden; background: #000; }
+.nw-tile:focus { border-color: var(--accent); }
+.nw-tile video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.nw-tile-label { position: absolute; left: .6rem; bottom: .6rem; max-width: 90%; padding: .3rem .7rem; border-radius: .5rem; background: rgba(9, 10, 15, .75); font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nw-tile.audio .nw-tile-label { color: var(--accent); }
+.nw-tile-status { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); text-align: center; font-size: .9rem; text-shadow: 0 1px 6px #000; }
