@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.19';
+  var VERSION = '1.1.20';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   var BASE = location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
   var JF = String(params.get('jellyfin') || location.origin + '/jellyfin').replace(/\/+$/, '');
@@ -378,7 +378,11 @@
         throw new Error('HLS non pris en charge par ce téléviseur');
       }
       var retries = 0;
-      self.hls = new Hls({ maxBufferLength: 30, backBufferLength: 30, liveSyncDurationCount: 3, fragLoadingMaxRetry: 6, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 4 });
+      // Direct : le lecteur ne charge que jusqu'au bord du direct ; 5 segments
+      // derrière (au lieu de 3) et pas d'accélération pour le rattraper : plus
+      // de réserve sur une connexion irrégulière (moins de micro-coupures).
+      self.hls = new Hls({ maxBufferLength: 60, maxMaxBufferLength: 120, backBufferLength: 30, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 13,
+        maxLiveSyncPlaybackRate: 1, fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6 });
       self.hls.on(Hls.Events.ERROR, function (event, data) {
         if (!data || !data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && retries < 3) { retries++; self.hls.startLoad(); return; }

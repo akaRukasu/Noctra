@@ -52,6 +52,24 @@ final class NoctraJsCompat {
         + "if(window.Element&&!Element.prototype.replaceChildren){Element.prototype.replaceChildren=function(){while(this.firstChild)this.removeChild(this.firstChild);this.append.apply(this,arguments)}}"
         + "}catch(e){}})();";
 
+    /**
+     * Lecteurs web à base de hls.js : réserve plus grande sur les directs.
+     * Le lecteur ne peut charger que jusqu'au bord du direct : il se place
+     * 5 segments derrière (3 par défaut), garde jusqu'à 60 s de tampon et
+     * réessaie plus longtemps un segment lent. Réglages appliqués au moment
+     * de loadSource, sans toucher à ceux que la page a choisis plus prudents.
+     */
+    static final String HLS_TUNING = "(function(){try{var b=function(c){if(!c)return;var up=function(k,v){if(typeof c[k]==='number'&&c[k]<v)c[k]=v};"
+        + "up('maxBufferLength',60);up('maxMaxBufferLength',120);up('fragLoadingMaxRetry',8);up('manifestLoadingMaxRetry',6);up('levelLoadingMaxRetry',6);"
+        + "up('fragLoadingTimeOut',30000);up('levelLoadingTimeOut',20000);up('manifestLoadingTimeOut',20000);up('nudgeMaxRetry',8);"
+        + "if(c.lowLatencyMode)c.lowLatencyMode=false;"
+        + "if(c.liveSyncDuration==null&&typeof c.liveSyncDurationCount==='number'&&c.liveSyncDurationCount<5)c.liveSyncDurationCount=5;"
+        + "if(c.liveMaxLatencyDuration==null&&typeof c.liveMaxLatencyDurationCount==='number'){var m=(c.liveSyncDurationCount||5)+8;if(!(c.liveMaxLatencyDurationCount>=m))c.liveMaxLatencyDurationCount=m}"
+        + "if(typeof c.maxLiveSyncPlaybackRate==='number')c.maxLiveSyncPlaybackRate=1};"
+        + "var p=function(H){if(!H||!H.prototype||H.__noctra)return;H.__noctra=1;var l=H.prototype.loadSource;"
+        + "if(l)H.prototype.loadSource=function(){try{b(this.config)}catch(e){}return l.apply(this,arguments)}};"
+        + "var cur=window.Hls;p(cur);Object.defineProperty(window,'Hls',{configurable:true,get:function(){return cur},set:function(v){cur=v;p(v)}})}catch(e){}})();";
+
     private static final Pattern SCRIPT = Pattern.compile("(<script\\b)([^>]*)>([\\s\\S]*?)(</script\\s*>)", Pattern.CASE_INSENSITIVE);
     private static final Pattern TYPE = Pattern.compile("\\btype\\s*=\\s*[\"']?([^\"'\\s>]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern INTEGRITY = Pattern.compile("\\s+integrity\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)", Pattern.CASE_INSENSITIVE);
@@ -76,7 +94,7 @@ final class NoctraJsCompat {
             }
             scripts.appendTail(out);
             String result = INTEGRITY.matcher(out.toString()).replaceAll("");
-            String tag = "<script>" + POLYFILL + "</script>";
+            String tag = "<script>" + POLYFILL + HLS_TUNING + "</script>";
             Matcher head = HEAD.matcher(result);
             if (head.find()) return result.substring(0, head.end()) + tag + result.substring(head.end());
             Matcher html = HTML.matcher(result);

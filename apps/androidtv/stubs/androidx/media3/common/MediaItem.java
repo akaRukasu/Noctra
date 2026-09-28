@@ -10,6 +10,18 @@ public final class MediaItem {
         public Builder() { }
         public Builder setUri(String uri) { throw new UnsupportedOperationException(); }
         public Builder setMimeType(String mimeType) { throw new UnsupportedOperationException(); }
+        public Builder setLiveConfiguration(LiveConfiguration liveConfiguration) { throw new UnsupportedOperationException(); }
         public MediaItem build() { throw new UnsupportedOperationException(); }
+    }
+
+    public static final class LiveConfiguration {
+        private LiveConfiguration() { }
+
+        public static final class Builder {
+            public Builder() { }
+            public Builder setMinPlaybackSpeed(float minPlaybackSpeed) { throw new UnsupportedOperationException(); }
+            public Builder setMaxPlaybackSpeed(float maxPlaybackSpeed) { throw new UnsupportedOperationException(); }
+            public LiveConfiguration build() { throw new UnsupportedOperationException(); }
+        }
     }
 }
