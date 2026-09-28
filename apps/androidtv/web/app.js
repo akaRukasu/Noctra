@@ -62,7 +62,9 @@
     trophy: '<path d="M7 3h10v2h3v3a5 5 0 0 1-4.3 4.9A5 5 0 0 1 13 15.9V18h3v2H8v-2h3v-2.1a5 5 0 0 1-2.7-3A5 5 0 0 1 4 8V5h3zm0 4H6v1a3 3 0 0 0 1.4 2.5A5 5 0 0 1 7 9zm10 0v2c0 .5-.1 1-.2 1.5A3 3 0 0 0 18 8V7z"/>',
     antenna: '<path d="M3 8h18v12H3zm2 2v8h14v-8zM8 3l4 4 4-4 1.4 1.4L14.8 7h-5.6L6.6 4.4z"/>',
     info: '<path d="M11 10h2v7h-2zm0-3h2v2h-2zM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/>',
-    download: '<path d="M11 4h2v8.2l3.3-3.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/>'
+    download: '<path d="M11 4h2v8.2l3.3-3.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/>',
+    guide: '<path d="M3 5h18v2H3zm0 6h4v2H3zm6 0h12v2H9zm-6 6h4v2H3zm6 0h12v2H9z"/>',
+    globe: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm6.9 8h-3a14 14 0 0 0-1.2-5.3A7 7 0 0 1 18.9 11zM12 5.1c.9 1.2 1.7 3.3 1.9 5.9h-3.8c.2-2.6 1-4.7 1.9-5.9zM9.3 5.7A14 14 0 0 0 8.1 11h-3a7 7 0 0 1 4.2-5.3zM5.1 13h3a14 14 0 0 0 1.2 5.3A7 7 0 0 1 5.1 13zm6.9 5.9c-.9-1.2-1.7-3.3-1.9-5.9h3.8c-.2 2.6-1 4.7-1.9 5.9zm2.7-.6a14 14 0 0 0 1.2-5.3h3a7 7 0 0 1-4.2 5.3z"/>'
   };
   function icon(name) {
     return h('span', { html: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + icons[name] + '</svg>' }).firstChild;
@@ -579,6 +581,14 @@
     img.addEventListener('error', function () {
       if (++at < list.length) { img.src = list[at]; return; }
       img.style.visibility = 'hidden';
+    });
+    // Monogramme du serveur Noctra (logo d'origine injoignable, 320 × 180) :
+    // le logo suivant est essayé s'il y en a un.
+    img.addEventListener('load', function (event) {
+      if (at < list.length - 1 && img.naturalWidth === 320 && img.naturalHeight === 180 && /\/api\/tv\/image\//.test(img.src)) {
+        event.stopImmediatePropagation();
+        img.src = list[++at];
+      }
     });
     return img;
   }
@@ -1786,51 +1796,36 @@
   // serveurs propose ceux de toutes les sources de la chaîne, classés par
   // fiabilité (historique de santé) : le plus stable démarre en premier.
   // ── Logos de secours ──
-  // Chaînes sans logo (bouquets Movix, Vavoo…) : logos de la collection libre
-  // tv-logo/tv-logos (chaînes françaises), liste chargée une fois par semaine.
-  var LOGO_INDEX_KEY = 'noctra-tv-logo-index-v1';
+  // Collection libre tv-logo/tv-logos (chaînes françaises) : liste embarquée
+  // (tv-data.js), images servies par jsDelivr ou, à défaut, par GitHub.
   var LOGO_BASE = 'https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@main/countries/france/';
+  var LOGO_MIRROR = 'https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/france/';
   var logoIndex = null;
-  var logoIndexLoading = null;
-  function buildLogoIndex(files) {
-    var index = {};
+  // Clé de logo : « canal-plus-sport-360 » → même clé que « Canal+ Sport 360 HD ».
+  function logoIndexGet() {
+    if (logoIndex) return logoIndex;
+    logoIndex = {};
+    var files = String((typeof TV_DATA !== 'undefined' && TV_DATA && TV_DATA.logos) || '').split(' ');
     files.forEach(function (file) {
-      if (!/\.png$/i.test(file)) return;
-      var base = file.replace(/\.png$/i, '').replace(/-fr$/i, '').replace(/-french(?=-|$)/gi, '').replace(/-/g, ' ');
-      var key = unifiedName(base);
-      if (key && !index[key]) index[key] = LOGO_BASE + file;
+      if (!file) return;
+      var key = unifiedName(file.replace(/^hd\//, '').replace(/-french$/, '').replace(/-/g, ' '));
+      if (key && !logoIndex[key]) logoIndex[key] = file + '-fr.png';
     });
-    return index;
+    // Écritures courantes absentes des noms de fichiers.
+    var aliases = { disneyjunior: 'disneyjr', nickelodeonjr: 'nickelodeonjunior', canalplusf1: 'canalplusformula1', automoto: 'automotolachaine',
+      europe2: 'europe2pop', teletoon: 'teletoonplus', piwi: 'piwiplus', infosport: 'infosportplus', meteo: 'lachainemeteo' };
+    Object.keys(aliases).forEach(function (key) { if (!logoIndex[key] && logoIndex[aliases[key]]) logoIndex[key] = logoIndex[aliases[key]]; });
+    return logoIndex;
   }
-  function loadLogoIndex() {
-    if (logoIndex) return Promise.resolve(logoIndex);
-    if (logoIndexLoading) return logoIndexLoading;
-    try {
-      var stored = JSON.parse(localStorage.getItem(LOGO_INDEX_KEY) || 'null');
-      if (stored && stored.files && Date.now() - stored.at < 7 * 86400000) {
-        logoIndex = buildLogoIndex(stored.files);
-        return Promise.resolve(logoIndex);
-      }
-    } catch (error) { /* liste à recharger */ }
-    logoIndexLoading = fetch('https://api.github.com/repos/tv-logo/tv-logos/contents/countries/france', { credentials: 'omit' })
-      .then(function (response) { if (!response.ok) throw new Error('logos ' + response.status); return response.json(); })
-      .then(function (list) {
-        var files = (Array.isArray(list) ? list : []).map(function (item) { return item && item.name; }).filter(Boolean);
-        try { localStorage.setItem(LOGO_INDEX_KEY, JSON.stringify({ at: Date.now(), files: files })); } catch (error) { /* stockage plein */ }
-        logoIndex = buildLogoIndex(files);
-        return logoIndex;
-      })
-      .catch(function () { logoIndex = {}; return logoIndex; })
-      .then(function (index) { logoIndexLoading = null; return index; });
-    return logoIndexLoading;
+  function logoFile(name) {
+    var index = logoIndexGet();
+    var key = unifiedName(name);
+    if (!key) return '';
+    return index[key] || index[key + 's'] || (/s$/.test(key) ? index[key.slice(0, -1)] : '') || '';
   }
-  // Attente courte : l'affichage ne dépend jamais de la collection de logos.
-  function logoIndexReady(ms) {
-    return Promise.race([loadLogoIndex(), new Promise(function (resolve) { setTimeout(function () { resolve(logoIndex); }, ms || 2500); })]);
-  }
-  // Noms de fichiers de la collection tv-logos : « canal-plus-sport-360-fr.png ».
+  // Nom de fichier deviné (chaîne absente de la liste) : « canal-plus-sport-360-fr.png ».
   var LOGO_SLUG_FIXES = { cnews: 'c-news', cstar: 'c-star', bfm: 'bfm-tv', bfmtv: 'bfm-tv', 'france-info': 'franceinfo', 'lequipe-21': 'lequipe',
-    'lequipe-tv': 'lequipe', eurosport: 'eurosport-1', 'tv5-monde': 'tv5monde', 'la-chaine-lequipe': 'lequipe', 'd8': 'c8', 'd17': 'c-star',
+    'lequipe-tv': 'lequipe', eurosport: 'eurosport-1', 'la-chaine-lequipe': 'lequipe', 'd8': 'c8', 'd17': 'c-star',
     'nt1': 'tfx', 'hd1': 'tf1-series-films', 'numero-23': 'rmc-story', 'cine-plus': 'cine-plus-premier', 'bein-sport': 'bein-sports' };
   function logoSlugs(name) {
     var slug = normalize(cleanChannelName(name).replace(/\+/g, ' plus ').replace(/&/g, ' and ').replace(/['’]/g, ''))
@@ -1842,24 +1837,48 @@
     // beIN Sports 1/2/3 : fichiers « -french ».
     if (/^bein-sports-\d$/.test(fixed)) list.push(fixed + '-french');
     list.push(fixed);
-    if (fixed.indexOf('-') >= 0) list.push(fixed.replace(/-/g, ''));
-    return list.filter(function (item, index) { return list.indexOf(item) === index; }).map(function (item) { return LOGO_BASE + item + '-fr.png'; });
+    return list.map(function (item) { return LOGO_BASE + item + '-fr.png'; });
   }
-  // Logo de la chaîne (celui de la source d'abord), puis logos de secours
-  // pour une chaîne française : essayés dans l'ordre jusqu'à ce qu'un s'affiche.
+  // Logo « monogramme » généré par le serveur Noctra quand la source n'en a pas
+  // (adresse /api/tv/image/s<données>.<signature> sans adresse d'origine).
+  function serverMonogram(url) {
+    var match = /\/api\/tv\/image\/s([A-Za-z0-9_-]+)\./.exec(String(url || ''));
+    if (!match) return false;
+    try {
+      var payload = match[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (payload.length % 4) payload += '=';
+      return atob(payload).indexOf('"u":') < 0;
+    } catch (error) { return false; }
+  }
+  // Logos essayés dans l'ordre jusqu'à ce qu'un s'affiche : logo officiel de la
+  // collection tv-logos (chaîne française reconnue), logos des sources, puis
+  // le monogramme du serveur en dernier recours.
   function channelLogo(channel) {
-    var list = [];
-    if (channel.logo) list.push(absolute(channel.logo));
-    if (channel._entries) channel._entries.forEach(function (entry) { if (entry.channel.logo) list.push(absolute(entry.channel.logo)); });
+    var known = [];
+    var sources = [];
+    var monograms = [];
+    var logos = [channel.logo];
+    if (channel._entries) channel._entries.forEach(function (entry) { logos.push(entry.channel.logo); });
+    logos.forEach(function (logo) {
+      if (!logo) return;
+      var url = absolute(logo);
+      (serverMonogram(url) ? monograms : sources).push(url);
+    });
     var country = channel._entries ? channel.country : channelCountry(channel);
     if (channel.name && (!country || country === 'fr')) {
-      var known = logoIndex && (logoIndex[unifiedName(channel.iptvOrgName || channel.name)] || logoIndex[unifiedName(channel.name)]);
-      if (known) list.push(known);
-      logoSlugs(channel.iptvOrgName || channel.name).forEach(function (url) { list.push(url); });
-      if (channel.iptvOrgName && channel.iptvOrgName !== channel.name) logoSlugs(channel.name).forEach(function (url) { list.push(url); });
+      var names = [channel.iptvOrgName, channel.name];
+      if (channel._entries) channel._entries.forEach(function (entry) { names.push(entry.channel.iptvOrgName, entry.channel.name); });
+      var file = '';
+      for (var i = 0; i < names.length && !file; i++) if (names[i]) file = logoFile(names[i]);
+      if (file) known.push(LOGO_BASE + file);
+      var list = known.concat(sources.slice(0, 3));
+      if (file) list.push(LOGO_MIRROR + file);
+      else if (!sources.length) logoSlugs(channel.iptvOrgName || channel.name).forEach(function (url) { list.push(url); });
+      list = list.concat(monograms.slice(0, 1));
+      return list.filter(function (item, index) { return list.indexOf(item) === index; }).slice(0, 6);
     }
-    list = list.filter(function (item, index) { return list.indexOf(item) === index; }).slice(0, 6);
-    return list.length ? list : '';
+    var other = sources.slice(0, 4).concat(monograms.slice(0, 1));
+    return other.length ? other : '';
   }
 
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
@@ -1876,12 +1895,40 @@
     brazil: 'br', brasil: 'br', bresil: 'br', arabic: 'arab', arab: 'arab', arabia: 'arab', mena: 'arab', netherlands: 'nl', holland: 'nl', belgium: 'be', belgique: 'be',
     switzerland: 'ch', suisse: 'ch', canada: 'ca', quebec: 'ca', australia: 'au', turkey: 'tr', turkiye: 'tr', poland: 'pl', polska: 'pl', romania: 'ro', russia: 'ru',
     mexico: 'mx', latino: 'latam', greece: 'gr', sweden: 'se', denmark: 'dk', norway: 'no', finland: 'fi', india: 'in', pakistan: 'pk', ireland: 'ie', austria: 'at',
-    maroc: 'ma', morocco: 'ma', algerie: 'dz', algeria: 'dz', tunisie: 'tn', tunisia: 'tn', africa: 'za' };
+    maroc: 'ma', morocco: 'ma', algerie: 'dz', algeria: 'dz', tunisie: 'tn', tunisia: 'tn', africa: 'afrique', afrique: 'afrique' };
   var COUNTRY_LABELS = { fr: 'France', uk: 'Royaume-Uni', us: 'États-Unis', de: 'Allemagne', es: 'Espagne', it: 'Italie', pt: 'Portugal', br: 'Brésil', arab: 'Monde arabe',
     nl: 'Pays-Bas', be: 'Belgique', ch: 'Suisse', ca: 'Canada', au: 'Australie', tr: 'Turquie', pl: 'Pologne', ro: 'Roumanie', ru: 'Russie', mx: 'Mexique', latam: 'Amérique latine',
-    gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique' };
+    gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique du Sud',
+    afrique: 'Afrique francophone', lu: 'Luxembourg', mc: 'Monaco', ht: 'Haïti' };
   // Chaînes françaises connues (reconnues même sans indication de pays).
   var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
+  // Chaînes étrangères souvent rangées parmi les françaises (liste à la main,
+  // prioritaire sur tout le reste : Africa 24 est enregistrée « FR » chez iptv-org).
+  var FOREIGN_BRANDS = [
+    [/^(?:al ?jazeera|al ?arabiya|al ?hadath|sky news arabia|mbc|rotana|dubai|abu dhabi|sharjah|al ?mayadeen|al ?manar|nile|france ?24 arab|bein sports? (?:arabia|mena|news))(?:\s|$)/, 'arab'],
+    [/^(?:2m|al ?aoula|arryadia|medi ?1 ?tv|tamazight|assadissa)(?:\s|$)/, 'ma'],
+    [/^(?:canal algerie|echorouk|ennahar|el ?bilad|beur ?tv|samira)(?:\s|$)/, 'dz'],
+    [/^(?:watania|nessma|hannibal|el ?hiwar|attessia)(?:\s|$)/, 'tn'],
+    [/^(?:la une|tipik|la trois|rtl ?tvi|club rtl|plug rtl|ln ?24|bx ?1|rtbf)(?:\s|$)/, 'be'],
+    [/^(?:rts ?(?:un|deux|1 suisse)|leman bleu|la tele suisse)(?:\s|$)/, 'ch'],
+    [/^(?:tva|tele ?quebec|noovo|lcn|rdi|ici (?:tele|rdi|artv|radio canada)|radio canada|rds|tva sports|canal vie|canal d|series ?plus|super ecran|vrak|yoopa|historia|evasion|unis)(?:\s|$)/, 'ca'],
+    [/^(?:africa ?24|africable|a ?plus ?ivoire|trace africa|nollywood|rti ?[12]?|rts ?[12]?(?: senegal)?|ortm|crtv|ortb|rtnc|rtb|canal ?2 ?international|equinoxe|novelas tv afrique|canal plus afrique|life tv|nci|tele congo|rtg|tfm|2stv|sen ?tv|walf|vox africa|love world|kalac|bblack africa)(?:\s|$)/, 'afrique']
+  ];
+  var foreignIndex = null;
+  function foreignCountry(name) {
+    var raw = String(name || '');
+    // Écriture arabe dans le nom.
+    if (/[؀-ۿ]/.test(raw)) return 'arab';
+    var brand = brandName(raw);
+    for (var i = 0; i < FOREIGN_BRANDS.length; i++) if (FOREIGN_BRANDS[i][0].test(brand)) return FOREIGN_BRANDS[i][1];
+    // Chaînes francophones hors de France (tv-data.js, d'après iptv-org).
+    if (!foreignIndex) {
+      foreignIndex = {};
+      var data = (typeof TV_DATA !== 'undefined' && TV_DATA && TV_DATA.foreign) || {};
+      Object.keys(data).forEach(function (country) { data[country].split(' ').forEach(function (key) { if (key) foreignIndex[key] = country; }); });
+    }
+    return foreignIndex[unifiedName(raw)] || '';
+  }
   function countryOfCode(value) {
     var code = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
     return COUNTRY_CODES[code] || COUNTRY_WORDS[code] || '';
@@ -1900,9 +1947,13 @@
   // identifiant du guide (« TF1.fr »), groupe, langue ; sinon source française.
   function channelCountry(channel) {
     // Pays du référentiel iptv-org (ajouté par le serveur) : le plus fiable.
-    var found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
-    if (found) return found;
     var name = String(channel.name || '');
+    // Chaînes francophones d'autres pays (Afrique, Belgique, Québec…) et chaînes
+    // arabes, souvent rangées dans les listes « FR » des sources.
+    var found = foreignCountry(name);
+    if (found) return found;
+    found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
+    if (found) return found;
     // Drapeau (🇫🇷, 🇬🇧…) dans le nom.
     var flag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(name);
     if (flag) {
@@ -1959,8 +2010,14 @@
       .replace(/^\s*(?:\[[^\]]*\]|\([^)]*\))\s*/, '')
       .replace(/^\s*(?:VIP|4K|HD|FHD)\s*[:|\-–]\s*/i, '')
       .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+      // Numéro de lien : « BACKUP 2 », « Lien 3 », « BEIN SPORTS 1 · 2 », « … #2 ».
+      .replace(/\b(?:backup|secours|alt|link|lien|source|server|serveur|mirror|option)\s*\d{1,2}\b/gi, ' ')
+      .replace(/(\d)\s*(?:[·|•#–]|\s-)\s*\d{1,2}\s*$/, '$1')
+      .replace(/\s#\d{1,2}\s*$/, ' ')
       .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip|multi ?audio)\b/gi, ' ')
       .replace(/[|•·▎┃]+/g, ' ')
+      // « CANAL + SPORT » = « Canal+ Sport » (le « + » détaché des marques connues).
+      .replace(/(^|\s)(canal|c|cin[eé]|plan[eè]te|golf|piwi|teletoon|polar|com[eé]die|infosport|ligue 1)\s+\+(?=\s|$)/gi, '$1$2+')
       .replace(/(^|\s)\++(?=\s|$)/g, ' ')
       // Variantes d'une même chaîne dans certaines listes : « BEIN SPORTS 1 .b », « .c », « .s »…
       .replace(/\s+\.[A-Za-z0-9]{1,3}(?=\s|$)/g, ' ')
@@ -1982,15 +2039,19 @@
     lequipe21: 'lequipe', lequipetv: 'lequipe', franceinfotv: 'franceinfo', lcpan: 'lcp', lcpassembleenationale: 'lcp', artefrance: 'arte',
     canal: 'canalplus', canalplusfrance: 'canalplus', eurosport: 'eurosport1', beinsport: 'beinsport1', rmcsport: 'rmcsport1', tv5: 'tv5monde', france24fr: 'france24' };
   function unifiedName(name) {
-    var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word) {
+    var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word, index) {
       if (word === 'sports') return 'sport';
       if (NOISE_WORDS[word]) return '';
+      // « Chasse & Pêche » = « Chasse et Pêche », « Science & Vie » = « Science and Vie ».
+      if (index && (word === 'et' || word === 'and')) return '';
       return word.replace(/^(\d+)(?:eme|e|er|ere)$/, '$1');
     }).filter(Boolean);
     if (words.length > 1 && words[words.length - 1] === 'tv') words.pop();
+    // Lettre de variante après un numéro (« BEIN SPORTS 1 S »).
+    if (words.length > 2 && /^[a-z]$/.test(words[words.length - 1]) && /^\d+$/.test(words[words.length - 2])) words.pop();
     var key = words.join('');
     if (key.length > 4 && /tv$/.test(key) && !/^(?:tv|mtv|btv)/.test(key)) key = key.slice(0, -2);
-    key = key.replace(/^cplus/, 'canalplus').replace(/^beinsports?/, 'beinsport');
+    key = key.replace(/^cplus/, 'canalplus').replace(/^beinsports?/, 'beinsport').replace(/^bein(?=max\d|\d)/, 'beinsport');
     return NAME_ALIASES[key] || key;
   }
   // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
@@ -2017,6 +2078,58 @@
   function iptvKey(channel) {
     var id = String(channel.iptvOrgId || '').toLowerCase().replace(/@.*$/, '').trim();
     return id ? 'id:' + id : '';
+  }
+  // ── Catégories de « TV en direct » ──
+  // Les catégories des sources (« FR| FRANCE TV », « Haloule section 1.1 »…)
+  // sont remplacées par quelques catégories claires, d'après le nom de la
+  // chaîne, puis ses catégories dans les sources.
+  var CATEGORIES = [
+    ['Sport', /\bsports?\b|^(?:bein|rmc sport|eurosport|l ?equipe|dazn|ligue 1|golf|infosport|equidia|automoto|multisports|canal plus (?:foot|ligue|top|moto|formula|f1|premier|rugby)|foot|nba|nfl|ufc|f1|motors?v|tennis|trace sport|olympia|sport en france|premier sports|team ?tv|ol tv)|\b(?:foot|football|rugby|tennis|golf|racing|fight)\b/],
+    ['Info', /^(?:bfm ?(?:tv|business)?|c ?news|europe ?1|la chaine meteo|b ?smart|rt$|lci|france ?info|franceinfo|france ?24|euronews|i24|lcp|public senat|tv5 ?monde info|rt france|africanews|bloomberg|cnn|bbc (?:world )?news|sky news|al jazeera|monaco info)(?:\s|$)|\b(?:news|info|infos)$/],
+    ['Jeunesse', /^(?:disney|nickelodeon|nick|gulli|tiji|piwi|canal j|boomerang|cartoon|cartoonito|boing|teletoon|mangas|j ?one|game ?one|mgg|nolife|baby ?tv|duck ?tv|pitchoun|toonami|kids|mon nickelodeon)|\b(?:kids|junior|jr|jeunesse|enfants?|toons?)\b/],
+    ['Cinéma', /^(?:cine ?plus|ocs|tcm|paramount|action|canal plus (?:cinemas?|box office|grand ecran|premier|decale)|tf1 series films|drive in|dreamsee|altice studio|film|movies?)|\b(?:cinemas?|cine|movies?|films?)\b/],
+    ['Séries', /^(?:13 ?e?(?:me)? ?rue|syfy|warner|polar ?plus|comedie ?plus|novelas|crime district|serie club|ab ?1|rtl ?9|teva|canal plus series|elle girl|e ?!|comedy central|mtv|abxplore|tv breizh)|\bseries?\b/],
+    ['Découverte', /^(?:planete|ushuaia|histoire|toute l ?histoire|national geographic|nat ?geo|discovery|animaux|science|trek|chasse|seasons|rmc decouverte|museum|ultra nature|love nature|canal plus docs|culturebox|crime ?\+? ?investigation|investigation discovery|explore)|\b(?:docs?|documentaires?|decouverte|nature|histoire|voyage)\b/],
+    ['Musique', /^(?:mcm|nrj hits|trace|m6 music|melody|mezzo|rfm|stingray|mtv (?:hits|live)|clubbing|bet|cstar hits|europe 2|djazz|brava)|\b(?:music|musique|hits|radio)\b/],
+    ['Généralistes', /^(?:tf1|france ?[2-5]|m6|arte|c8|w9|tmc|tfx|nrj ?12|c ?star|ab ?3|6 ?ter|rmc story|rmc life|cherie 25|paris premiere|canal plus|c ?plus|t18|novo ?19|l ?equipe|gulli|france ?3 .+|tv5 ?monde|kto|rtl|lci)(?:\s|$)/]
+  ];
+  var CATEGORY_ORDER = ['Généralistes', 'Info', 'Sport', 'Cinéma', 'Séries', 'Jeunesse', 'Découverte', 'Musique', 'Autres'];
+  function channelCategory(channel) {
+    var name = brandName(channel.iptvOrgName || channel.name);
+    var i;
+    for (i = 0; i < CATEGORIES.length; i++) if (CATEGORIES[i][1].test(name)) return CATEGORIES[i][0];
+    // Catégories des sources (« Sport FR », « Cinéma », « Kids »…).
+    var groups = Object.keys(channel._groups || {}).concat(channel.group ? [channel.group] : []).map(normalize);
+    var rules = [['Sport', /\bsports?\b|foot|ligue|match/], ['Info', /\b(?:info|infos|news|actualite)/], ['Jeunesse', /kids|enfant|jeunesse|junior|cartoon|dessin/],
+      ['Cinéma', /cinema|cine|film|movie/], ['Séries', /\bseries?\b/], ['Découverte', /docu|decouverte|nature|histoire/], ['Musique', /music|musique/],
+      ['Généralistes', /general|tnt/]];
+    for (i = 0; i < rules.length; i++) {
+      for (var g = 0; g < groups.length; g++) if (rules[i][1].test(groups[g])) return rules[i][0];
+    }
+    return 'Autres';
+  }
+  // Deux mots égaux à une lettre près (ajoutée, retirée, remplacée ou inversée).
+  function oneEdit(a, b) {
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 1) return false;
+    var i = 0;
+    while (i < a.length && i < b.length && a.charAt(i) === b.charAt(i)) i++;
+    if (a.length === b.length) {
+      // Remplacée, ou deux lettres inversées (« premeir »).
+      return a.slice(i + 1) === b.slice(i + 1) || (a.charAt(i) === b.charAt(i + 1) && a.charAt(i + 1) === b.charAt(i) && a.slice(i + 2) === b.slice(i + 2));
+    }
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+  }
+  // Chaîne réunie « unified » ajoutée à « twin » (sources, catégories, logo, guide).
+  function absorb(twin, unified) {
+    unified._entries.forEach(function (entry) { twin._entries.push(entry); });
+    Object.keys(unified._groups).forEach(function (group) { twin._groups[group] = (twin._groups[group] || 0) + unified._groups[group]; });
+    if (!twin.logo) twin.logo = unified.logo;
+    if (!twin.iptvOrgId && unified.iptvOrgId) twin.iptvOrgId = unified.iptvOrgId;
+    if (!twin.epgId && unified.epgId) twin.epgId = unified.epgId;
+    if (!twin.now && unified.now) { twin.now = unified.now; twin.next = unified.next; }
+    if (!twin.country) twin.country = unified.country;
+    if (unified.isLive) twin.isLive = true;
   }
   function mergeChannels(loaded) {
     var byKey = {};
@@ -2057,7 +2170,7 @@
         var unified = byKey[key];
         if (!unified) {
           var display = channel.iptvOrgName ? String(channel.iptvOrgName) : cleanChannelName(channel.name);
-          if (country && country !== 'fr' && !countryOfWords(display) && !/\s[A-Z]{2,3}$/.test(display)) display += ' ' + country.toUpperCase();
+          if (country && country.length === 2 && country !== 'fr' && !countryOfWords(display) && !/\s[A-Z]{2,3}$/.test(display)) display += ' ' + country.toUpperCase();
           unified = byKey[key] = { name: display, logo: channel.logo || '', group: '', _groups: {}, _entries: [], _key: key, country: country };
           list.push(unified);
         }
@@ -2087,14 +2200,49 @@
       if (tokens === '|') return true;
       var twin = byWords[country + tokens];
       if (!twin) { byWords[country + tokens] = unified; return true; }
-      unified._entries.forEach(function (entry) { twin._entries.push(entry); });
-      Object.keys(unified._groups).forEach(function (group) { twin._groups[group] = (twin._groups[group] || 0) + unified._groups[group]; });
-      if (!twin.logo) twin.logo = unified.logo;
-      if (!twin.now && unified.now) { twin.now = unified.now; twin.next = unified.next; }
-      if (!twin.country) twin.country = unified.country;
+      absorb(twin, unified);
       return false;
     });
+    // Même chaîne à une lettre près (faute de frappe d'une source :
+    // « Cinéplus Premeir ») : noms d'au moins 9 lettres, mêmes numéros.
+    var buckets = {};
+    list = list.filter(function (unified) {
+      var parts = unified._key.split(':');
+      var key = parts[parts.length - 1];
+      if (key.replace(/\d/g, '').length < 9) return true;
+      var bucket = (parts.length > 1 ? parts[0] : '') + '|' + key.replace(/\D/g, '') + '|' + key.slice(0, 2);
+      var others = buckets[bucket] = buckets[bucket] || [];
+      var letters = key.replace(/\d/g, '');
+      for (var i = 0; i < others.length; i++) {
+        if (oneEdit(others[i].letters, letters)) { absorb(others[i].unified, unified); return false; }
+      }
+      others.push({ unified: unified, letters: letters });
+      return true;
+    });
     list.forEach(function (unified) {
+      // Nom affiché (chaîne française) : l'écriture la plus soignée et la plus
+      // courante des sources (« beIN SPORTS 1 » plutôt que « bein sports 1 France »).
+      if (!unified._official && (!unified.country || unified.country === 'fr')) {
+        var scores = {};
+        var seen = {};
+        var keyDigits = unified._key.replace(/\D/g, '');
+        unified._entries.forEach(function (entry) {
+          var name = cleanChannelName(entry.channel.name);
+          if (!name) return;
+          if (scores[name] === undefined) {
+            var letters = name.replace(/[^A-Za-zÀ-ÿ]/g, '');
+            scores[name] = (letters && letters !== letters.toUpperCase() && letters !== letters.toLowerCase() ? 3 : letters === letters.toUpperCase() ? 1 : 0)
+              - (/\s(?:france|fr|fra|french)$/i.test(name) ? 2 : 0)
+              - (name.replace(/\D/g, '') !== keyDigits ? 2 : 0)
+              + (/[A-Za-zÀ-ÿ+]\s\d/.test(name) ? 0.5 : 0) - name.length / 60;
+            seen[name] = 0;
+          }
+          // Écriture la plus répandue : léger avantage.
+          if (++seen[name] <= 3) scores[name] += 0.3;
+        });
+        var best = Object.keys(scores).sort(function (a, b) { return scores[b] - scores[a]; })[0];
+        if (best) unified.name = best;
+      }
       var groups = Object.keys(unified._groups);
       groups.sort(function (a, b) { return unified._groups[b] - unified._groups[a]; });
       unified.group = groups[0] || '';
@@ -2102,6 +2250,7 @@
       unified._entries.forEach(function (entry) { if (names.indexOf(entry.source.name) < 0) names.push(entry.source.name); });
       unified._sources = names;
       unified.provider = names.length > 2 ? names.length + ' sources' : names.join(' · ');
+      unified.category = channelCategory(unified);
     });
     list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }); });
     // Chaîne d'une source → sa chaîne réunie (serveurs des autres sources).
@@ -2333,7 +2482,6 @@
   // réunies, françaises par défaut) ; « Sources » permet d'en choisir une.
   views.live = function (params, alive) {
     favoriteMode = false;
-    loadLogoIndex();
     var merged = {};
     Object.keys(params || {}).forEach(function (key) { merged[key] = params[key]; });
     merged.section = 'live';
@@ -2344,6 +2492,14 @@
   // Fenêtre « Sources » : une source précise, par univers.
   function sourcesSheet() {
     var box = h('div', { class: 'sources-sheet scroll' }, h('h2', null, 'Sources', h('small', { text: 'Choisissez une source pour voir ses chaînes' })));
+    // Apport de chaque source à « TV en direct » (chaînes réunies).
+    var data = unifiedCache && unifiedCache.data;
+    if (data && data.coverage) {
+      var names = Object.keys(data.coverage).sort(function (a, b) { return data.coverage[b] - data.coverage[a]; });
+      box.appendChild(h('p', { class: 'sources-coverage', text: 'Réunies dans « TV en direct » : ' + names.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
+        + (data.pending && data.pending.length ? ' — en attente : ' + data.pending.join(', ') : '')
+        + (data.failedSources && data.failedSources.length ? ' — indisponibles : ' + data.failedSources.join(', ') : '') }));
+    }
     var status = loading();
     box.appendChild(status);
     openLayer(h('div', { class: 'modal' }, box));
@@ -2377,40 +2533,53 @@
     var ref = params.ref || '';
     var group = params.group || '';
     var query = params.query || '';
+    var unifiedView = source.id === ALL_SOURCE.id;
     var multiButton = h('button', { class: 'btn f' + (multi.on ? ' primary' : ''), onclick: function () {
       multi.on = !multi.on;
       multiButton.className = 'btn f' + (multi.on ? ' primary' : '');
-      multiButton.lastChild.textContent = multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview';
+      multiButton.lastChild.textContent = multi.on ? 'Multiview : choisissez' : 'Multiview';
       renderMultiBar();
       if (multi.on) toast('OK ajoute ou retire une chaîne du multiview (' + MULTI_MAX + ' au maximum).');
-    } }, icon('grid'), multi.on ? 'Multiview : choisissez les chaînes' : 'Multiview');
+    } }, icon('grid'), multi.on ? 'Multiview : choisissez' : 'Multiview');
     var guideButton = h('button', { class: 'btn f' + (guideMode ? ' primary' : ''), onclick: function () {
       guideMode = !guideMode;
       try { localStorage.setItem('noctra-tv-guide', guideMode ? '1' : ''); } catch (error) { /* préférence non mémorisée */ }
       guideButton.className = 'btn f' + (guideMode ? ' primary' : '');
       if (typeof refill === 'function') refill();
-    } }, icon('live'), 'Guide des programmes');
+    } }, icon('guide'), 'Guide');
     var favButton = h('button', { class: 'btn f' + (favoriteMode ? ' primary' : ''), onclick: function () {
       favoriteMode = !favoriteMode;
       favButton.className = 'btn f' + (favoriteMode ? ' primary' : '');
-      favButton.lastChild.textContent = favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Modifier les favoris';
+      favButton.lastChild.textContent = favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Favoris';
       if (favoriteMode) toast('OK ajoute ou retire une chaîne des favoris. Rappuyez sur « Favoris » pour terminer.');
-    } }, icon('star'), favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Modifier les favoris');
+    } }, icon('star'), favoriteMode ? 'Favoris : OK ajoute ou retire' : 'Favoris');
     var refill = null;
-    var actions = h('span', { class: 'head-actions' });
+    var fillList = null;
+    // En-tête : titre et nombre de chaînes, « Reprendre » la dernière chaîne.
+    var resume = null;
     if (params.home) {
-      // Dernière chaîne regardée : relancée d'un appui (« retour chaîne »).
       var last = storedChannels(RECENTS_KEY)[0];
-      if (last) actions.appendChild(h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } }, icon('play'), 'Reprendre ' + last.name));
-      actions.appendChild(h('button', { class: 'btn f', onclick: sourcesSheet }, icon('antenna'), 'Sources'));
+      if (last) resume = h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } }, icon('play'), 'Reprendre ' + last.name);
     }
-    actions.appendChild(guideButton);
-    actions.appendChild(favButton);
-    actions.appendChild(multiButton);
     var heading = params.home
-      ? head('TV en direct', 'Toutes les chaînes de vos sources réunies · la source la plus stable d’abord · ▲ ▼ ou les chiffres pour zapper, ◀ la liste, ▶ les serveurs', actions)
-      : head(params.title || source.name, params.title ? source.name : (source.description || ''), actions);
+      ? head('TV en direct', '', resume)
+      : head(params.title || source.name, params.title ? source.name : (source.description || ''), null);
     main.appendChild(heading);
+    // Barre d'outils : recherche, pays, sources, guide, favoris, multiview.
+    var field = searchField('Rechercher une chaîne…', query, function (value) {
+      if (value === query) return;
+      query = value;
+      current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value, country: params.country, home: params.home };
+      if (fillList) fillList();
+    });
+    var toolbar = h('div', { class: 'live-toolbar' }, field.node);
+    var countrySlot = h('span', { class: 'live-slot' });
+    if (unifiedView) toolbar.appendChild(countrySlot);
+    if (params.home) toolbar.appendChild(h('button', { class: 'btn f', onclick: sourcesSheet }, icon('antenna'), 'Sources'));
+    toolbar.appendChild(guideButton);
+    toolbar.appendChild(favButton);
+    toolbar.appendChild(multiButton);
+    main.appendChild(toolbar);
     var status = loading('Chargement des chaînes…');
     main.appendChild(status);
     renderMultiBar();
@@ -2419,36 +2588,37 @@
     var loadList = source.id === ALL_SOURCE.id
       ? loadUnified(function (done, total) { if (alive()) status.textContent = 'Réunion des chaînes de toutes les sources… ' + done + ' / ' + total; })
       : loadCatalog(source, ref, params.title);
-    return Promise.all([loadList, logoIndexReady(2500)]).then(function (results) {
-      var data = results[0];
+    return loadList.then(function (data) {
       if (!alive()) return;
       status.remove();
       var channels = (data && data.channels) || [];
-      // Toutes les chaînes : chaînes françaises par défaut, autres pays au choix.
-      var countryRow = null;
-      if (source.id === ALL_SOURCE.id) {
+      // Toutes les chaînes : chaînes françaises par défaut, autres pays au choix
+      // (bouton « Pays : France ▾ » de la barre d'outils).
+      if (unifiedView) {
         var country = typeof params.country === 'string' ? params.country : 'fr';
         var allChannels = channels;
         var countryCounts = {};
         allChannels.forEach(function (channel) { var code = channel.country || '?'; countryCounts[code] = (countryCounts[code] || 0) + 1; });
         if (country) channels = allChannels.filter(function (channel) { return (channel.country || '?') === country; });
-        countryRow = h('div', { class: 'chips country-chips' });
-        var countryChip = function (value, label, count) {
-          return chip(label + ' · ' + count, country === value, function () {
-            current.params = { section: 'live', source: source, country: value, home: params.home };
-            show(false);
+        var countryLabel = function (code) { return code === '' ? 'Tous les pays' : code === '?' ? 'Pays non indiqué' : COUNTRY_LABELS[code] || code.toUpperCase(); };
+        countrySlot.appendChild(h('button', { class: 'btn f', onclick: function () {
+          var list = h('div', { class: 'list scroll' }, h('h2', { text: 'Pays' }));
+          var codes = ['fr', ''].concat(Object.keys(countryCounts).filter(function (code) { return code !== 'fr' && code !== '?'; })
+            .sort(function (a, b) { return countryCounts[b] - countryCounts[a]; }));
+          if (countryCounts['?']) codes.push('?');
+          codes.forEach(function (code) {
+            list.appendChild(h('button', { class: 'btn f' + (country === code ? ' primary' : ''), onclick: function () {
+              closeLayer(true);
+              current.params = { section: 'live', source: source, country: code, home: params.home };
+              show(false);
+            } }, countryLabel(code) + ' · ' + (code === '' ? allChannels.length : countryCounts[code] || 0)));
           });
-        };
-        countryRow.appendChild(countryChip('fr', 'France', countryCounts.fr || 0));
-        countryRow.appendChild(countryChip('', 'Tous les pays', allChannels.length));
-        Object.keys(countryCounts).filter(function (code) { return code !== 'fr' && code !== '?'; })
-          .sort(function (a, b) { return countryCounts[b] - countryCounts[a]; }).slice(0, 10)
-          .forEach(function (code) { countryRow.appendChild(countryChip(code, COUNTRY_LABELS[code] || code.toUpperCase(), countryCounts[code])); });
-        if (countryCounts['?']) countryRow.appendChild(countryChip('?', 'Pays non indiqué', countryCounts['?']));
+          openLayer(h('div', { class: 'modal' }, list));
+        } }, icon('globe'), 'Pays : ' + countryLabel(country)));
       }
       if (channels.length) heading.querySelector('h1').appendChild(h('small', { class: 'head-count', text: channels.length + ' chaîne' + (channels.length > 1 ? 's' : '') }));
       var bouquets = ((data && data.groups) || []).filter(function (item) { return item && item.ref; });
-      if (data && data.warning) main.appendChild(h('div', { class: 'empty', text: data.warning }));
+      if (data && data.warning) main.appendChild(h('p', { class: 'live-note', text: data.warning }));
       if (bouquets.length) {
         var tiles = h('div', { class: 'grid bouquets' });
         bouquets.forEach(function (bouquet) {
@@ -2460,31 +2630,21 @@
         main.appendChild(h('section', { class: 'row' }, h('h2', { text: 'Bouquets' }), tiles));
         if (!channels.length) return;
       }
+      // Catégories : claires pour les chaînes réunies, celles de la source sinon.
+      var groupOf = unifiedView ? function (channel) { return channel.category || 'Autres'; } : function (channel) { return channel.group || ''; };
       var counts = {};
-      channels.forEach(function (channel) { var g = channel.group || ''; if (g) counts[g] = (counts[g] || 0) + 1; });
-      var allNames = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b, 'fr'); });
-      var names = allNames.slice(0, 16);
+      channels.forEach(function (channel) { var g = groupOf(channel); if (g) counts[g] = (counts[g] || 0) + 1; });
+      var allNames = unifiedView
+        ? CATEGORY_ORDER.filter(function (name) { return counts[name]; })
+        : Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b, 'fr'); });
+      var names = unifiedView ? allNames : allNames.slice(0, 16);
       var FAVORITES_GROUP = '★';
       var favoriteCount = channels.filter(function (channel) { return isFavorite(channel, source); }).length;
       var RECENTS_GROUP = '⏱';
-      var recentCount = source.id === ALL_SOURCE.id ? channels.filter(function (channel) { return isRecent(channel, source); }).length : 0;
-      var field = searchField('Rechercher une chaîne…', query, function (value) {
-        if (value === query) return;
-        current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: value, country: params.country, home: params.home };
-        query = value;
-        fill();
-      });
-      if (countryRow) main.appendChild(countryRow);
-      if (source.id === ALL_SOURCE.id && data.coverage) {
-        var coverageNames = Object.keys(data.coverage).sort(function (a, b) { return data.coverage[b] - data.coverage[a]; });
-        main.appendChild(h('p', { class: 'live-hint coverage', text: 'Sources réunies : ' + coverageNames.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
-          + (data.pending && data.pending.length ? ' — en attente : ' + data.pending.join(', ') : '')
-          + (data.failedSources && data.failedSources.length ? ' — indisponibles : ' + data.failedSources.join(', ') : '') }));
-      }
-      main.appendChild(field.node);
-      // Filtres : toutes, favoris de la source, catégories (avec leur nombre de chaînes).
+      var recentCount = unifiedView ? channels.filter(function (channel) { return isRecent(channel, source); }).length : 0;
+      // Filtres : toutes, favoris, récentes, catégories (avec leur nombre de chaînes).
       if (names.length > 1 || favoriteCount || recentCount) {
-        var chips = h('div', { class: 'chips' });
+        var chips = h('div', { class: 'chips live-chips' });
         var groupChip = function (value, label) {
           var node = chip(label, group === value, function () { pickGroup(value); });
           node.setAttribute('data-group', value);
@@ -2526,7 +2686,7 @@
         resetEpgQueue();
         var needle = normalize(query);
         var list = channels.filter(function (channel) {
-          var inGroup = !group || (group === FAVORITES_GROUP ? isFavorite(channel, source) : group === RECENTS_GROUP ? isRecent(channel, source) : channel.group === group);
+          var inGroup = !group || (group === FAVORITES_GROUP ? isFavorite(channel, source) : group === RECENTS_GROUP ? isRecent(channel, source) : groupOf(channel) === group);
           return inGroup && (!needle || normalize(channel.name).indexOf(needle) >= 0);
         });
         if (!list.length) { grid.appendChild(h('div', { class: 'empty', text: channels.length ? 'Aucune chaîne ne correspond.' : 'Aucune chaîne disponible.' })); return; }
@@ -2546,7 +2706,7 @@
             var guide = epgLive(channel);
             node = card({
               kind: 'channel', title: channel.name,
-              sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [channel.group, channel.provider].filter(Boolean).join(' · '),
+              sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [groupOf(channel), channel.provider].filter(Boolean).join(' · '),
               image: channelLogo(channel),
               badge: [isFavorite(channel, source) ? '★' : '', channel.isLive ? 'LIVE' : ''].filter(Boolean).join(' '),
               progress: guide.now ? epgProgress(guide.now) : 0,
@@ -2567,6 +2727,7 @@
           return node;
         }, guideMode ? 40 : 72);
       }
+      fillList = fill;
       fill();
     }, function (error) {
       if (!alive()) return;

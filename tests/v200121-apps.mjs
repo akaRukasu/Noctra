@@ -278,7 +278,7 @@ const webHost = await read('apps/androidtv/web/tv-native.js');
 assert.match(webHost, /if \(\['webos', 'tizen', 'web'\]\.indexOf\(platform\) < 0\) return;/, 'Inactif dans l’appli Android TV');
 assert.ok(!/\basync\s+(?:function|\()|\bawait\s+[\w(]|\?\.[\w([]|\?\?/.test(webHost), 'Pont web en ES2015 (webOS 5, Tizen 5)');
 for (const needle of ["'/Users/AuthenticateByName'", "'/QuickConnect/Initiate'", "'/Sessions/Playing'", "'ApiKey='", "event: 'zap'", "event: 'failed'", 'MULTI_MAX = 12']) assert.ok(webHost.includes(needle), needle);
-assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-native\.js"><\/script>\s*<script src="app\.js"><\/script>/);
+assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-native\.js"><\/script>\s*<script src="tv-data\.js"><\/script>\s*<script src="app\.js"><\/script>/);
 assert.match(tvApp, /S\.caps\.jellyfinPlayer !== false/);
 assert.match(tvApp, /S\.caps\.webPlayer !== false && native\('webPlayer'/);
 // Défilement : pas d'animations qui se chevauchent.
@@ -351,7 +351,22 @@ assert.match(tvApp, /function unifiedTwin\(channel\) \{/);
 assert.match(tvApp, /merged\.source = ALL_SOURCE;/, 'TV en direct s’ouvre sur les chaînes réunies');
 assert.match(tvApp, /function sourcesSheet\(\) \{/);
 assert.match(tvApp, /function logoSlugs\(name\) \{/);
-assert.match(tvApp, /var coverageNames = /, 'Catégories non écrasées par la ligne des sources');
+assert.match(tvApp, /var groupOf = unifiedView \? function \(channel\) \{ return channel\.category \|\| 'Autres'; \}/, 'Catégories claires pour les chaînes réunies');
+assert.match(tvApp, /var toolbar = h\('div', \{ class: 'live-toolbar' \}, field\.node\);/, 'Barre d’outils compacte de TV en direct');
+assert.match(tvApp, /icon\('globe'\), 'Pays : ' \+ countryLabel\(country\)/);
+// Logos : liste tv-logos embarquée, monogramme du serveur en dernier recours.
+const tvData = await read('apps/androidtv/web/tv-data.js');
+assert.match(tvData, /^\/\* Généré par apps\/scripts\/tv-data\.mjs/);
+assert.match(tvData, /"logos":"[^"]*\bbein-sports-1-french\b[^"]*\btf1\b/);
+assert.match(tvData, /"afrique":"[^"]*\baplusivoire\b/);
+assert.match(tvApp, /function serverMonogram\(url\) \{/);
+assert.match(tvApp, /img\.naturalWidth === 320 && img\.naturalHeight === 180/);
+// Chaînes étrangères hors de « France » (Al Jazeera, Africa 24, A+ Ivoire…).
+assert.match(tvApp, /var found = foreignCountry\(name\);/);
+assert.match(tvApp, /\[\/\^\(\?:africa \?24\|/);
+// Doublons : fautes d'une lettre, « + » détaché, lettre de variante.
+assert.match(tvApp, /function oneEdit\(a, b\) \{/);
+assert.match(tvApp, /function absorb\(twin, unified\) \{/);
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
 assert.match(tvApp, /var inPage = root === document && !isMenu\(from\) && main\.contains\(from\);/, '▲ reste dans la page avant la barre d’onglets');
