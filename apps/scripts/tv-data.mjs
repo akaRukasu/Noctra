@@ -2,6 +2,7 @@
 /* Génère apps/androidtv/web/tv-data.js : données fixes de la TV en direct.
    - logos : noms des logos français de la collection libre tv-logo/tv-logos
      (images servies par jsDelivr ou raw.githubusercontent.com) ;
+   - iptvLogos : logos iptv-org des autres chaînes françaises ;
    - foreign : chaînes francophones d'autres pays (Afrique, Belgique, Suisse,
      Québec, Maghreb…), d'après la base libre iptv-org/database, pour qu'elles
      ne soient pas classées parmi les chaînes françaises.
@@ -28,7 +29,7 @@ async function text(url) {
   return response.text();
 }
 function parseCsv(content) {
-  const lines = content.split('\n').filter(Boolean);
+  const lines = content.split(/\r?\n/).filter(Boolean);
   const head = lines.shift().split(',');
   return lines.map(line => {
     const cells = [];
@@ -85,8 +86,22 @@ for (const channel of channels) {
     if (key.length >= 5 && !GENERIC.has(key) && !/^\d+$/.test(key) && !french.has(key)) (foreign[country] ||= new Set()).add(key);
   }
 }
+// 3. Logos iptv-org des chaînes françaises absentes de tv-logos (imgur abrégé en « i: »).
+const logoRows = parseCsv(await text(base + 'logos.csv'));
+const byId = Object.fromEntries(channels.map(channel => [channel.id, channel]));
+const extraLogos = {};
+for (const row of logoRows.sort((a, b) => (a.feed ? 1 : 0) - (b.feed ? 1 : 0) || (a.in_use === 'TRUE' ? 0 : 1) - (b.in_use === 'TRUE' ? 0 : 1))) {
+  const channel = byId[row.channel];
+  if (!channel || !FRANCE.has(channel.country) || channel.closed || !/^https:\/\//.test(row.url) || /\s/.test(row.url)) continue;
+  for (const name of names(channel)) {
+    const key = unifiedName(name);
+    if (key.length < 2 || extraLogos[key] || french.has(key) && logos.some(file => logoKey(file) === key)) continue;
+    extraLogos[key] = row.url.replace(/^https:\/\/i\.imgur\.com\//, 'i:');
+  }
+}
 const data = {
   logos: logos.join(' '),
+  iptvLogos: Object.keys(extraLogos).sort().map(key => key + ' ' + extraLogos[key]).join('|'),
   foreign: Object.fromEntries(Object.keys(foreign).sort().map(country => [country, [...foreign[country]].sort().join(' ')]))
 };
 const count = Object.values(foreign).reduce((total, set) => total + set.size, 0);
@@ -94,4 +109,4 @@ await writeFile(join(webRoot, 'tv-data.js'),
   '/* Généré par apps/scripts/tv-data.mjs : ne pas modifier à la main.\n'
   + '   Logos : tv-logo/tv-logos. Chaînes francophones hors de France : iptv-org/database. */\n'
   + 'var TV_DATA = ' + JSON.stringify(data) + ';\n');
-console.log(`tv-data.js : ${logos.length} logos, ${count} chaînes francophones hors de France.`);
+console.log(`tv-data.js : ${logos.length} logos tv-logos, ${Object.keys(extraLogos).length} logos iptv-org, ${count} chaînes francophones hors de France.`);

@@ -478,12 +478,26 @@
     var a = from.getBoundingClientRect();
     var fromRow = from.closest('.track');
     var best = gridNeighbour(from, direction);
+    var grid = from.parentElement && from.parentElement.classList.contains('grid') ? from.parentElement : null;
+    // Grille : case voisine dans la même rangée, sans mesurer toute la grille
+    // (des centaines de chaînes : chaque mesure coûte sur un petit processeur).
+    if (!best && horizontal && grid) {
+      var side = direction === 'right' ? from.nextElementSibling : from.previousElementSibling;
+      if (side && focusable(side) && side.offsetTop === from.offsetTop) best = side;
+      else if (!side || side.offsetTop !== from.offsetTop) return;
+    }
     // Rangée, groupe de boutons : on regarde d'abord les voisins immédiats.
     if (!best && horizontal && from.parentElement) best = nearest(from, a, from.parentElement.querySelectorAll('.f'), direction);
     // Dans la page, on reste dans la page : la barre d'onglets (fixe en haut de
     // l'écran) n'est atteinte qu'une fois arrivé tout en haut du contenu.
     var inPage = root === document && !isMenu(from) && main.contains(from);
-    if (!best) best = nearest(from, a, (inPage ? main : root).querySelectorAll('.f'), direction);
+    if (!best) {
+      var candidates = (inPage ? main : root).querySelectorAll('.f');
+      // Sortie d'une grille (▲ depuis la première rangée, ▼ depuis la dernière) :
+      // ses cases ne sont pas mesurées.
+      if (grid && !horizontal) candidates = Array.prototype.filter.call(candidates, function (node) { return node.parentElement !== grid; });
+      best = nearest(from, a, candidates, direction);
+    }
     if (!best && direction === 'up' && root === document && !isMenu(from)) best = document.querySelector('#nav .nav.active') || document.querySelector('#nav .f');
     if (!best) return;
     // Retour dans une rangée déjà parcourue : dernier élément choisi.
@@ -577,17 +591,24 @@
   function image(src, alt) {
     var list = Array.isArray(src) ? src.filter(Boolean) : [src];
     var at = 0;
-    var img = h('img', { src: list[0], alt: alt || '', loading: 'lazy', decoding: 'async' });
-    img.addEventListener('error', function () {
-      if (++at < list.length) { img.src = list[at]; return; }
+    var img = h('img', { alt: alt || '', loading: 'lazy', decoding: 'async' });
+    // Adresse suivante ; « noctra-proxy:… » passe par le serveur Noctra.
+    function load(url) {
+      if (String(url).indexOf(PROXY_PREFIX) !== 0) { img.src = url; return; }
+      proxyImage(url.slice(PROXY_PREFIX.length)).then(function (blob) { img.src = blob; }, function () { next(); });
+    }
+    function next() {
+      if (++at < list.length) { load(list[at]); return; }
       img.style.visibility = 'hidden';
-    });
+    }
+    img.addEventListener('error', next);
+    if (list.length) load(list[0]);
     // Monogramme du serveur Noctra (logo d'origine injoignable, 320 × 180) :
     // le logo suivant est essayé s'il y en a un.
     img.addEventListener('load', function (event) {
       if (at < list.length - 1 && img.naturalWidth === 320 && img.naturalHeight === 180 && /\/api\/tv\/image\//.test(img.src)) {
         event.stopImmediatePropagation();
-        img.src = list[++at];
+        load(list[++at]);
       }
     });
     return img;
@@ -637,8 +658,11 @@
   // télécommande reste réactive pendant qu'une page de 70 titres arrive.
   function appendChunked(container, items, make, done) {
     var index = 0;
+    // Liste redessinée entre-temps (recherche, catégorie, mise à jour) : l'ancien
+    // rendu s'arrête au lieu de mêler ses cartes aux nouvelles.
+    var generation = container._generation;
     function chunk() {
-      if (!document.body.contains(container)) return;
+      if (!document.body.contains(container) || container._generation !== generation) return;
       var fragment = document.createDocumentFragment();
       var end = Math.min(items.length, index + 18);
       for (; index < end; index++) fragment.appendChild(make(items[index], index));
@@ -651,6 +675,7 @@
   // Rendu progressif des longues grilles (chaînes, médiathèques).
   function lazyGrid(grid, items, make, batch) {
     var index = 0;
+    grid._generation = (grid._generation || 0) + 1;
     function more() {
       var slice = items.slice(index, index + (batch || 60));
       index += slice.length;
@@ -1778,11 +1803,11 @@
     saveChannels(RECENTS_KEY, list);
   }
   // Catalogue d'une source ou d'un bouquet (mis en cache pour la session).
-  function loadCatalog(source, ref, title) {
+  function loadCatalog(source, ref, title, fresh) {
     var key = ref ? 'tv-ref:' + ref : 'tv:' + source.id;
     var path = ref ? '/api/tv/catalog?ref=' + encodeURIComponent(ref) : '/api/tv/catalog?source=' + encodeURIComponent(source.id);
     catalogSources[key] = { source: source, label: title ? source.name + ' · ' + title : source.name };
-    return cache[key] ? Promise.resolve(cache[key]) : api(path, { timeout: 45000 }).then(function (data) {
+    return cache[key] && !fresh ? Promise.resolve(cache[key]) : api(path, { timeout: 45000 }).then(function (data) {
       cache[key] = data;
       return data;
     });
@@ -1796,10 +1821,9 @@
   // serveurs propose ceux de toutes les sources de la chaîne, classés par
   // fiabilité (historique de santé) : le plus stable démarre en premier.
   // ── Logos de secours ──
-  // Collection libre tv-logo/tv-logos (chaînes françaises) : liste embarquée
-  // (tv-data.js), images servies par jsDelivr ou, à défaut, par GitHub.
+  // Collection libre tv-logo/tv-logos (chaînes françaises) et logos iptv-org :
+  // listes embarquées (tv-data.js) ; image directe, puis par le serveur Noctra.
   var LOGO_BASE = 'https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@main/countries/france/';
-  var LOGO_MIRROR = 'https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/france/';
   var logoIndex = null;
   // Clé de logo : « canal-plus-sport-360 » → même clé que « Canal+ Sport 360 HD ».
   function logoIndexGet() {
@@ -1816,6 +1840,39 @@
       europe2: 'europe2pop', teletoon: 'teletoonplus', piwi: 'piwiplus', infosport: 'infosportplus', meteo: 'lachainemeteo' };
     Object.keys(aliases).forEach(function (key) { if (!logoIndex[key] && logoIndex[aliases[key]]) logoIndex[key] = logoIndex[aliases[key]]; });
     return logoIndex;
+  }
+  // Logos iptv-org des autres chaînes françaises (tv-data.js) : adresse complète.
+  var iptvLogoIndex = null;
+  function iptvLogo(name) {
+    if (!iptvLogoIndex) {
+      iptvLogoIndex = {};
+      String((typeof TV_DATA !== 'undefined' && TV_DATA && TV_DATA.iptvLogos) || '').split('|').forEach(function (item) {
+        var cut = item.indexOf(' ');
+        if (cut > 0) iptvLogoIndex[item.slice(0, cut)] = item.slice(cut + 1).replace(/^i:/, 'https://i.imgur.com/');
+      });
+    }
+    var key = unifiedName(name);
+    return key ? iptvLogoIndex[key] || '' : '';
+  }
+  // Logo externe demandé par le serveur Noctra (mis en cache sur le serveur) :
+  // utile quand le réseau du téléviseur n'atteint pas l'hébergeur du logo.
+  var PROXY_PREFIX = 'noctra-proxy:';
+  function viaServer(url) { return PROXY_PREFIX + url; }
+  var proxyImages = {};
+  var proxyCount = 0;
+  function proxyImage(url) {
+    if (proxyImages[url]) return proxyImages[url];
+    if (++proxyCount > 400) { proxyImages = {}; proxyCount = 1; }
+    var json = JSON.stringify({ u: url });
+    var token = 'j' + btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    var promise = fetch(S.noctra + '/api/tv/image/' + token, { headers: { 'x-noctra-token': S.token }, credentials: 'same-origin' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('logo ' + response.status);
+        return response.blob();
+      })
+      .then(function (blob) { return URL.createObjectURL(blob); });
+    promise.catch(function () { delete proxyImages[url]; });
+    return (proxyImages[url] = promise);
   }
   function logoFile(name) {
     var index = logoIndexGet();
@@ -1869,13 +1926,16 @@
       var names = [channel.iptvOrgName, channel.name];
       if (channel._entries) channel._entries.forEach(function (entry) { names.push(entry.channel.iptvOrgName, entry.channel.name); });
       var file = '';
+      var other = '';
       for (var i = 0; i < names.length && !file; i++) if (names[i]) file = logoFile(names[i]);
-      if (file) known.push(LOGO_BASE + file);
+      for (var j = 0; j < names.length && !file && !other; j++) if (names[j]) other = iptvLogo(names[j]);
+      // Logo officiel, directement puis par le serveur Noctra.
+      if (file) known.push(LOGO_BASE + file, viaServer(LOGO_BASE + file));
+      else if (other) known.push(other, viaServer(other));
       var list = known.concat(sources.slice(0, 3));
-      if (file) list.push(LOGO_MIRROR + file);
-      else if (!sources.length) logoSlugs(channel.iptvOrgName || channel.name).forEach(function (url) { list.push(url); });
+      if (!file && !other && !sources.length) logoSlugs(channel.iptvOrgName || channel.name).forEach(function (url) { list.push(url); });
       list = list.concat(monograms.slice(0, 1));
-      return list.filter(function (item, index) { return list.indexOf(item) === index; }).slice(0, 6);
+      return list.filter(function (item, index) { return list.indexOf(item) === index; }).slice(0, 7);
     }
     var other = sources.slice(0, 4).concat(monograms.slice(0, 1));
     return other.length ? other : '';
@@ -1884,7 +1944,6 @@
   var ALL_SOURCE = { id: 'all', name: 'Toutes les chaînes', description: 'Les chaînes de toutes les sources réunies · la source la plus stable est proposée d’abord' };
   var unifiedCache = null;
   var unifiedLoading = null;
-  var UNIFIED_WAIT_MS = 30000;
   // ── Pays des chaînes ──
   var COUNTRY_CODES = { fr: 'fr', fra: 'fr', uk: 'uk', gb: 'uk', en: 'uk', us: 'us', usa: 'us', de: 'de', ger: 'de', es: 'es', spa: 'es', esp: 'es', it: 'it', ita: 'it',
     pt: 'pt', por: 'pt', br: 'br', ar: 'arab', ara: 'arab', nl: 'nl', be: 'be', ch: 'ch', ca: 'ca', au: 'au', tr: 'tr', pl: 'pl', ro: 'ro', ru: 'ru', mx: 'mx',
@@ -1945,7 +2004,12 @@
   }
   // Pays : champ du fournisseur, « FR: », « [UK] », « … DE », « … France »,
   // identifiant du guide (« TF1.fr »), groupe, langue ; sinon source française.
+  // Pays d'une chaîne : calculé une fois par chaîne (règles coûteuses sur un petit processeur).
   function channelCountry(channel) {
+    if (channel._cc === undefined) channel._cc = computeCountry(channel);
+    return channel._cc;
+  }
+  function computeCountry(channel) {
     // Pays du référentiel iptv-org (ajouté par le serveur) : le plus fiable.
     var name = String(channel.name || '');
     // Chaînes francophones d'autres pays (Afrique, Belgique, Québec…) et chaînes
@@ -1996,7 +2060,18 @@
     return { country: country, length: match[0].length };
   }
   // « FR: TF1 HD », « [FR] TF1 (backup) », « FR| TF1 ᴴᴰ 🇫🇷 » → « TF1 ».
-  function cleanChannelName(name) {
+  // Règles de noms appelées des milliers de fois à chaque chargement : résultats gardés.
+  function remembered(fn) {
+    var store = {};
+    var size = 0;
+    return function (value) {
+      var key = String(value === undefined || value === null ? '' : value);
+      if (Object.prototype.hasOwnProperty.call(store, key)) return store[key];
+      if (++size > 40000) { store = {}; size = 1; }
+      return (store[key] = fn(key));
+    };
+  }
+  var cleanChannelName = remembered(function (name) {
     var raw = String(name || '')
       .replace(/\uD83C[\uDDE6-\uDDFF]/g, ' ')
       .replace(/[ʰ-˿ᴀ-ᶿ⁰-₟℀-⅏]/g, ' ')
@@ -2023,10 +2098,10 @@
       .replace(/\s+\.[A-Za-z0-9]{1,3}(?=\s|$)/g, ' ')
       .replace(/\s+/g, ' ').trim();
     return clean || String(name || '').trim();
-  }
-  function brandName(name) {
+  });
+  var brandName = remembered(function (name) {
     return normalize(cleanChannelName(name).replace(/\+/g, ' plus ')).replace(/\s+(?:france|fr|fra)$/, '').trim();
-  }
+  });
   // Nom de rapprochement, tolérant aux écritures des sources :
   // « beIN Sport 1 » = « BEIN SPORTS 1 » = « beIN Sports 1 France »,
   // « BFM TV » = « BFMTV », « 13ème Rue » = « 13e rue », « C+ Sport » = « Canal+ Sport ».
@@ -2038,7 +2113,7 @@
   var NAME_ALIASES = { hd1: 'tf1seriesfilms', tf1seriefilm: 'tf1seriesfilms', nt1: 'tfx', numero23: 'rmcstory', d8: 'c8', d17: 'cstar', itele: 'cnews',
     lequipe21: 'lequipe', lequipetv: 'lequipe', franceinfotv: 'franceinfo', lcpan: 'lcp', lcpassembleenationale: 'lcp', artefrance: 'arte',
     canal: 'canalplus', canalplusfrance: 'canalplus', eurosport: 'eurosport1', beinsport: 'beinsport1', rmcsport: 'rmcsport1', tv5: 'tv5monde', france24fr: 'france24' };
-  function unifiedName(name) {
+  var unifiedName = remembered(function (name) {
     var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word, index) {
       if (word === 'sports') return 'sport';
       if (NOISE_WORDS[word]) return '';
@@ -2053,7 +2128,7 @@
     if (key.length > 4 && /tv$/.test(key) && !/^(?:tv|mtv|btv)/.test(key)) key = key.slice(0, -2);
     key = key.replace(/^cplus/, 'canalplus').replace(/^beinsports?/, 'beinsport').replace(/^bein(?=max\d|\d)/, 'beinsport');
     return NAME_ALIASES[key] || key;
-  }
+  });
   // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
   // pas la version française) ; une chaîne sans pays connu rejoint la française.
   function unifiedKey(name, country) {
@@ -2160,7 +2235,7 @@
           // Jamais de lien entre pays différents (la version étrangère reste à part).
           if (!idCountry || idCountry === (country || 'fr')) union(idKey, nameKey);
         }
-        prepared.push({ channel: channel, source: part.source, country: country, nameKey: nameKey });
+        prepared.push({ channel: channel, source: part.source, country: country, nameKey: nameKey, part: part });
       });
     });
     prepared.forEach(function (item) {
@@ -2180,7 +2255,7 @@
         if (!unified._official && unified.name === unified.name.toUpperCase() && candidate !== candidate.toUpperCase() && !(country && country !== 'fr')) unified.name = candidate;
         // Nom officiel iptv-org quand une des sources en fournit un.
         if (channel.iptvOrgName && !unified._official && !(country && country !== 'fr')) { unified.name = String(channel.iptvOrgName); unified._official = true; }
-        unified._entries.push({ channel: channel, source: item.source, nameKey: item.nameKey });
+        unified._entries.push({ channel: channel, source: item.source, nameKey: item.nameKey, key: item.part.key, stale: Boolean(item.part.stale) });
         if (!unified.logo && channel.logo) unified.logo = channel.logo;
         if (!unified.iptvOrgId && channel.iptvOrgId) unified.iptvOrgId = channel.iptvOrgId;
         if (!unified.epgId && channel.epgId) unified.epgId = channel.epgId;
@@ -2252,7 +2327,9 @@
       unified.provider = names.length > 2 ? names.length + ' sources' : names.join(' · ');
       unified.category = channelCategory(unified);
     });
-    list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }); });
+    // Ordre alphabétique (clé calculée une fois : localeCompare est très lent sur les TV).
+    list.forEach(function (unified) { unified._sort = normalize(unified.name); });
+    list.sort(function (a, b) { return a._sort < b._sort ? -1 : a._sort > b._sort ? 1 : 0; });
     // Chaîne d'une source → sa chaîne réunie (serveurs des autres sources).
     var byName = {};
     list.forEach(function (unified) { unified._entries.forEach(function (entry) { if (entry.nameKey && !byName[entry.nameKey]) byName[entry.nameKey] = unified; }); });
@@ -2266,79 +2343,171 @@
     var twin = unifiedCache.data.channels._byName[key];
     return twin && twin._sources && twin._sources.length > 1 ? twin : null;
   }
-  // Catalogues de toutes les sources (et de leurs bouquets), 4 à la fois.
-  // Au bout de 25 s, la liste s'affiche avec les catalogues déjà reçus ; les
-  // autres continuent et seront là à la prochaine ouverture. Gardée 10 min.
+  // ── Catalogues gardés sur le téléviseur (IndexedDB) ──
+  // À l'ouverture, « TV en direct » s'affiche tout de suite avec les catalogues
+  // de la dernière fois, puis se met à jour en arrière-plan sans perdre la
+  // place de la télécommande. Les liens des chaînes sont renouvelés au lancement.
+  var STORE_MAX_AGE = 3 * 86400000;
+  var storeDb = null;
+  function catalogStore() {
+    if (storeDb) return storeDb;
+    storeDb = new Promise(function (resolve) {
+      try {
+        var open = indexedDB.open('noctra-tv', 1);
+        open.onupgradeneeded = function () { open.result.createObjectStore('catalogs'); };
+        open.onsuccess = function () { resolve(open.result); };
+        open.onerror = function () { resolve(null); };
+      } catch (error) { resolve(null); }
+    });
+    return storeDb;
+  }
+  function storeCatalog(key, value) {
+    catalogStore().then(function (db) {
+      if (!db) return;
+      try { db.transaction('catalogs', 'readwrite').objectStore('catalogs').put(value, key); } catch (error) { /* stockage plein */ }
+    });
+  }
+  function storedCatalogs() {
+    return catalogStore().then(function (db) {
+      if (!db) return {};
+      return new Promise(function (resolve) {
+        var all = {};
+        try {
+          var request = db.transaction('catalogs', 'readonly').objectStore('catalogs').openCursor();
+          request.onsuccess = function () {
+            var cursor = request.result;
+            if (!cursor) { resolve(all); return; }
+            if (cursor.value && Date.now() - cursor.value.at < STORE_MAX_AGE) all[cursor.key] = cursor.value;
+            cursor.continue();
+          };
+          request.onerror = function () { resolve(all); };
+        } catch (error) { resolve(all); }
+      });
+    });
+  }
+  // Mise à jour de la liste affichée (vue « TV en direct » ouverte).
+  var unifiedListeners = [];
+  function unifiedChanged(data) {
+    unifiedListeners = unifiedListeners.filter(function (listener) { return listener(data) !== false; });
+  }
+  // Catalogues de toutes les sources (et de leurs bouquets), 6 à la fois ;
+  // un catalogue en échec est redemandé une fois. Sans catalogues gardés, la
+  // liste s'affiche au bout de 12 s avec ceux déjà reçus et se complète seule.
+  // Gardée 10 min en mémoire.
+  var UNIFIED_WAIT_MS = 12000;
+  var catalogRefresh = {};
+  function fetchUnified(sources, onProgress, onPart) {
+    var results = [];
+    var failed = [];
+    var queue = [];
+    var total = 0;
+    var done = 0;
+    var running = 0;
+    function enqueue(source, ref, title, retry) {
+      queue.push({ source: source, ref: ref || '', title: title || '', index: total++, retry: retry || 0 });
+    }
+    sources.forEach(function (source) { enqueue(source); });
+    function build() {
+      var parts = results.filter(Boolean);
+      var channels = mergeChannels(parts);
+      // Apport de chaque source (chaînes gardées, bouquets compris) et sources encore attendues.
+      var counts = {};
+      parts.forEach(function (part) {
+        var kept = part.channels.filter(function (channel) { return channel && channel.name && playable(channel) && !isEvent(channel); }).length;
+        counts[part.source.name] = (counts[part.source.name] || 0) + kept;
+      });
+      var pending = sources.filter(function (source) { return counts[source.name] === undefined && failed.indexOf(source.name) < 0; }).map(function (source) { return source.name; });
+      return { channels: channels, count: channels.length, coverage: counts, pending: pending, failedSources: failed.slice() };
+    }
+    var finished = new Promise(function (resolve) {
+      function pump() {
+        if (!queue.length && !running) { resolve(); return; }
+        while (running < 6 && queue.length) {
+          (function (job) {
+            running++;
+            var key = job.ref ? 'tv-ref:' + job.ref : 'tv:' + job.source.id;
+            var request = catalogRefresh[key] = loadCatalog(job.source, job.ref, job.title, true);
+            request.then(function (data) {
+              results[job.index] = { source: job.source, channels: (data && data.channels) || [], key: key };
+              storeCatalog(key, { at: Date.now(), sourceId: job.source.id, ref: job.ref, title: job.title, data: data });
+              if (onPart) onPart(key, data);
+              // Source en bouquets : les chaînes de chaque bouquet (60 au plus).
+              ((data && data.groups) || []).filter(function (group) { return group && group.ref; }).slice(0, 60)
+                .forEach(function (group) { enqueue(job.source, group.ref, group.name); });
+            }, function () {
+              // Nouvel essai un peu plus tard (serveur ou source momentanément lents).
+              if (!job.retry) { queue.push({ source: job.source, ref: job.ref, title: job.title, index: job.index, retry: 1 }); total++; }
+              else if (!job.ref) failed.push(job.source.name);
+            }).then(function () {
+              running--;
+              done++;
+              if (onProgress) { try { onProgress(done, total); } catch (error) { /* affichage */ } }
+              pump();
+            });
+          })(queue.shift());
+        }
+      }
+      pump();
+    });
+    return { finished: finished.then(function () {
+      var data = build();
+      if (failed.length) data.warning = 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.';
+      return data;
+    }), build: build };
+  }
   function loadUnified(onProgress) {
     if (unifiedCache && Date.now() - unifiedCache.at < 600000) return Promise.resolve(unifiedCache.data);
     if (unifiedLoading) return unifiedLoading;
-    unifiedLoading = sourcesList().then(function (sources) {
-      var results = [];
-      var failed = [];
-      var queue = [];
-      var total = 0;
-      var done = 0;
-      var running = 0;
-      function enqueue(source, ref, title) {
-        queue.push({ source: source, ref: ref || '', title: title || '', index: total++ });
-      }
-      sources.forEach(function (source) { enqueue(source); });
-      function build() {
-        var parts = results.filter(Boolean);
-        var channels = mergeChannels(parts);
-        // Apport de chaque source (chaînes gardées, bouquets compris) et sources encore attendues.
-        var counts = {};
-        parts.forEach(function (part) {
-          var kept = part.channels.filter(function (channel) { return channel && channel.name && playable(channel) && !isEvent(channel); }).length;
-          counts[part.source.name] = (counts[part.source.name] || 0) + kept;
-        });
-        var pending = sources.filter(function (source) { return counts[source.name] === undefined && failed.indexOf(source.name) < 0; }).map(function (source) { return source.name; });
-        return { channels: channels, count: channels.length, coverage: counts, pending: pending, failedSources: failed.slice() };
-      }
-      var finished = new Promise(function (resolve) {
-        function pump() {
-          if (!queue.length && !running) { resolve(); return; }
-          while (running < 6 && queue.length) {
-            (function (job) {
-              running++;
-              loadCatalog(job.source, job.ref, job.title).then(function (data) {
-                results[job.index] = { source: job.source, channels: (data && data.channels) || [] };
-                // Source en bouquets : les chaînes de chaque bouquet (40 au plus).
-                ((data && data.groups) || []).filter(function (group) { return group && group.ref; }).slice(0, 40)
-                  .forEach(function (group) { enqueue(job.source, group.ref, group.name); });
-              }, function () { if (!job.ref) failed.push(job.source.name); }).then(function () {
-                running--;
-                done++;
-                if (onProgress) { try { onProgress(done, total); } catch (error) { /* affichage */ } }
-                pump();
-              });
-            })(queue.shift());
-          }
-        }
-        pump();
+    unifiedLoading = Promise.all([sourcesList(), storedCatalogs()]).then(function (results) {
+      var sources = results[0];
+      var stored = results[1];
+      catalogRefresh = {};
+      var run = fetchUnified(sources, onProgress);
+      var ids = {};
+      sources.forEach(function (source) { ids[source.id] = source; });
+      // Catalogues gardés : ceux des sources encore configurées.
+      var parts = [];
+      Object.keys(stored).forEach(function (key) {
+        var item = stored[key];
+        var source = ids[item.sourceId];
+        if (source && item.data) parts.push({ source: source, channels: item.data.channels || [], key: key, stale: true });
       });
-      var shownPartial = false;
-      finished.then(function () {
-        var data = build();
-        if (failed.length) data.warning = 'Sources indisponibles pour le moment : ' + failed.join(', ') + '.';
+      run.finished.then(function (data) {
         unifiedCache = { at: Date.now(), data: data };
-        // Liste affichée incomplète : complétée dès que toutes les sources ont répondu.
-        if (shownPartial && current && current.name === 'liveSource' && current.params.source === ALL_SOURCE && !layer.firstChild) {
-          toast('Toutes les sources ont répondu : liste complétée.');
-          show(false);
-        }
+        unifiedChanged(data);
       });
+      if (parts.length) {
+        var channels = mergeChannels(parts);
+        var counts = {};
+        parts.forEach(function (part) { counts[part.source.name] = (counts[part.source.name] || 0) + part.channels.length; });
+        var quick = { channels: channels, count: channels.length, coverage: counts, pending: [], failedSources: [], stale: true };
+        unifiedCache = { at: 0, data: quick };
+        return quick;
+      }
       var deadline = new Promise(function (resolve) { setTimeout(function () { resolve('late'); }, UNIFIED_WAIT_MS); });
-      return Promise.race([finished, deadline]).then(function (late) {
-        if (late !== 'late') return unifiedCache.data;
-        var partial = build();
-        partial.warning = 'Certaines sources répondent lentement : la liste sera complétée automatiquement.';
-        shownPartial = true;
+      return Promise.race([run.finished, deadline]).then(function (data) {
+        if (data !== 'late') return data;
+        var partial = run.build();
+        partial.warning = 'Certaines sources répondent lentement : la liste se complète toute seule.';
+        partial.partial = true;
         return partial;
       });
     });
     unifiedLoading.then(function () { unifiedLoading = null; }, function () { unifiedLoading = null; });
     return unifiedLoading;
+  }
+  // Chaîne d'un catalogue gardé : version à jour (liens neufs) dès que le
+  // catalogue a été redemandé, 10 s d'attente au plus.
+  function freshChannel(entry) {
+    if (!entry.stale) return Promise.resolve(entry.channel);
+    var request = catalogRefresh[entry.key];
+    if (!request) return Promise.resolve(entry.channel);
+    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 10000); });
+    return Promise.race([request.then(function (data) { return data; }, function () { return null; }), timeout]).then(function (data) {
+      var list = (data && data.channels) || [];
+      var name = entry.channel.name;
+      return list.filter(function (channel) { return channel && channel.name === name; })[0] || entry.channel;
+    });
   }
   // Serveurs d'une chaîne réunie : ceux de chaque source, préfixés du nom de
   // la source ; les serveurs « automatiques » ne sont demandés qu'au lancement.
@@ -2357,10 +2526,12 @@
           if (seen[entry.source.name] > 1) sourceLabel += ' · ' + seen[entry.source.name];
         }
       }
-      var single = entry.channel.resolverUrl && !(entry.channel.playbackType === 'stream' && entry.channel.streamUrl) && !liveWatchOfficial(entry.channel, entry.source)
-        ? Promise.resolve([{ playbackType: 'resolver', resolveUrl: entry.channel.resolverUrl, label: 'serveurs' }])
-        : channelOptions(entry.channel, entry.source);
-      return single.then(function (options) {
+      // Catalogue gardé sur le téléviseur : liens renouvelés avant le lancement.
+      return freshChannel(entry).then(function (channel) {
+        return channel.resolverUrl && !(channel.playbackType === 'stream' && channel.streamUrl) && !liveWatchOfficial(channel, entry.source)
+          ? [{ playbackType: 'resolver', resolveUrl: channel.resolverUrl, label: 'serveurs' }]
+          : channelOptions(channel, entry.source);
+      }).then(function (options) {
         return options.map(function (option) {
           var copy = {};
           Object.keys(option).forEach(function (key) { copy[key] = option[key]; });
@@ -2580,17 +2751,20 @@
     toolbar.appendChild(favButton);
     toolbar.appendChild(multiButton);
     main.appendChild(toolbar);
+    // Contenu sous la barre d'outils : redessiné sur place quand la liste se
+    // met à jour (catalogues gardés, puis catalogues du moment).
+    var body = h('div', { class: 'live-body' });
+    main.appendChild(body);
     var status = loading('Chargement des chaînes…');
-    main.appendChild(status);
+    body.appendChild(status);
+    var countNode = null;
     renderMultiBar();
     var ctx = { ref: ref, title: params.title };
     // Les bouquets (Northlive, Movix…) renvoient des groupes à ouvrir un par un (?ref=).
     var loadList = source.id === ALL_SOURCE.id
       ? loadUnified(function (done, total) { if (alive()) status.textContent = 'Réunion des chaînes de toutes les sources… ' + done + ' / ' + total; })
       : loadCatalog(source, ref, params.title);
-    return loadList.then(function (data) {
-      if (!alive()) return;
-      status.remove();
+    function render(data) {
       var channels = (data && data.channels) || [];
       // Toutes les chaînes : chaînes françaises par défaut, autres pays au choix
       // (bouton « Pays : France ▾ » de la barre d'outils).
@@ -2616,9 +2790,13 @@
           openLayer(h('div', { class: 'modal' }, list));
         } }, icon('globe'), 'Pays : ' + countryLabel(country)));
       }
-      if (channels.length) heading.querySelector('h1').appendChild(h('small', { class: 'head-count', text: channels.length + ' chaîne' + (channels.length > 1 ? 's' : '') }));
+      if (channels.length) {
+        countNode = h('small', { class: 'head-count', text: channels.length + ' chaîne' + (channels.length > 1 ? 's' : '') });
+        heading.querySelector('h1').appendChild(countNode);
+      }
+      if (data && data.stale) body.appendChild(h('p', { class: 'live-note', text: 'Liste de la dernière ouverture · mise à jour en cours…' }));
       var bouquets = ((data && data.groups) || []).filter(function (item) { return item && item.ref; });
-      if (data && data.warning) main.appendChild(h('p', { class: 'live-note', text: data.warning }));
+      if (data && data.warning) body.appendChild(h('p', { class: 'live-note', text: data.warning }));
       if (bouquets.length) {
         var tiles = h('div', { class: 'grid bouquets' });
         bouquets.forEach(function (bouquet) {
@@ -2627,7 +2805,7 @@
           } }, h('span', { class: 'bouquet-logo' }, bouquet.image ? image(absolute(bouquet.image), '') : icon('live')),
             h('strong', { text: bouquet.name || 'Bouquet' }), h('small', { text: typeof bouquet.count === 'number' ? bouquet.count + ' chaînes' : 'Ouvrir les chaînes' })));
         });
-        main.appendChild(h('section', { class: 'row' }, h('h2', { text: 'Bouquets' }), tiles));
+        body.appendChild(h('section', { class: 'row' }, h('h2', { text: 'Bouquets' }), tiles));
         if (!channels.length) return;
       }
       // Catégories : claires pour les chaînes réunies, celles de la source sinon.
@@ -2668,20 +2846,20 @@
             openLayer(h('div', { class: 'modal' }, list));
           }));
         }
-        main.appendChild(chips);
+        body.appendChild(chips);
       }
       var grid = h('div', { class: guideMode ? 'guide-list' : 'grid channels' });
-      main.appendChild(grid);
+      body.appendChild(grid);
       refill = function () { grid.className = guideMode ? 'guide-list' : 'grid channels'; fill(); };
       function pickGroup(name) {
         group = name;
         current.params = { section: 'live', source: source, ref: ref, title: params.title, group: group, query: query, country: params.country, home: params.home };
-        Array.prototype.forEach.call(main.querySelectorAll('.chips .chip'), function (node) {
+        Array.prototype.forEach.call(body.querySelectorAll('.chips .chip'), function (node) {
           node.classList.toggle('on', node.getAttribute('data-group') === name);
         });
         fill();
       }
-      function fill() {
+      function fill(keepKey) {
         clear(grid);
         resetEpgQueue();
         var needle = normalize(query);
@@ -2716,19 +2894,65 @@
           node.setAttribute('data-channel', channelKey(channel, source));
           if (isFavorite(channel, source)) node.classList.add('favorite');
           markMulti(node);
-          // Guide absent du catalogue : demandé au serveur (quelques requêtes à la fois).
+          // Guide absent du catalogue : demandé au serveur quand la chaîne
+          // apparaît à l'écran (quelques requêtes à la fois).
           if (needsEpg(channel)) {
-            loadEpg(channel).then(function () {
-              if (!node.parentNode) return;
-              if (node.classList.contains('guide-row')) { fillGuideRow(node, channel); markMulti(node); }
-              else updateCardEpg(node, channel);
+            whenVisible(node, function () {
+              loadEpg(channel).then(function () {
+                if (!node.parentNode) return;
+                if (node.classList.contains('guide-row')) { fillGuideRow(node, channel); markMulti(node); }
+                else updateCardEpg(node, channel);
+              });
             });
           }
           return node;
-        }, guideMode ? 40 : 72);
+        }, Math.max(guideMode ? 40 : 72, keepAt(list, keepKey) + 18));
       }
       fillList = fill;
-      fill();
+      fill(renderKeep);
+    }
+    // Chaîne à garder affichée après une mise à jour (place de la télécommande).
+    var renderKeep = '';
+    function keepAt(list, key) {
+      if (!key) return 0;
+      for (var i = 0; i < list.length; i++) if (channelKey(list[i], source) === key) return i;
+      return 0;
+    }
+    function refresh(data) {
+      var active = document.activeElement;
+      var inBody = body.contains(active);
+      var keep = inBody && active.getAttribute('data-channel');
+      var chipGroup = inBody ? active.getAttribute('data-group') : null;
+      var scroll = main.scrollTop;
+      renderKeep = keep || '';
+      clear(body);
+      clear(countrySlot);
+      if (countNode && countNode.parentNode) countNode.parentNode.removeChild(countNode);
+      render(data);
+      renderKeep = '';
+      main.scrollTop = scroll;
+      if (!inBody) return;
+      var target = null;
+      Array.prototype.some.call(body.querySelectorAll('.f'), function (node) {
+        if ((keep && node.getAttribute('data-channel') === keep) || (!keep && chipGroup !== null && node.getAttribute('data-group') === chipGroup)) { target = node; return true; }
+        return false;
+      });
+      focus(target || body.querySelector('.f'));
+    }
+    return loadList.then(function (data) {
+      if (!alive()) return;
+      status.remove();
+      render(data);
+      // Liste complétée ou mise à jour en arrière-plan : redessinée sur place
+      // (après la fermeture d'une fenêtre ouverte entre-temps).
+      if (unifiedView && (data.stale || data.partial)) {
+        unifiedListeners.push(function apply(fresh) {
+          if (!alive()) return false;
+          if (layer.firstChild) { setTimeout(function () { if (alive()) apply(fresh); }, 1500); return false; }
+          refresh(fresh);
+          return false;
+        });
+      }
     }, function (error) {
       if (!alive()) return;
       status.replaceWith(failure(error, function () { show(false); }));
@@ -2767,13 +2991,16 @@
     if (channel._epgAt && Date.now() - channel._epgAt < 600000) return false;
     return epgKeys(channel).length > 0;
   }
-  // Identifiants essayés dans l'ordre : iptv-org, EPG de la source, puis le nom
-  // nettoyé (« FR: TF1 HD » → « TF1 »), reconnu par les noms du guide XMLTV.
+  // Clés essayées dans l'ordre : noms nettoyés (« FR: TF1 HD » → « TF1 »),
+  // reconnus par les noms du guide XMLTV, puis identifiants iptv-org et EPG.
   function epgKeys(channel) {
     var keys = [];
+    var seen = {};
     function push(value) {
       value = String(value || '').replace(/\s+/g, ' ').trim();
-      if (value && value.length > 1 && keys.indexOf(value) < 0) keys.push(value);
+      // Écritures qui ne diffèrent que par la casse ou la ponctuation : une seule demande.
+      var key = normalize(value.replace(/\+/g, ' plus '));
+      if (value && value.length > 1 && !seen[key]) { seen[key] = 1; keys.push(value); }
     }
     function clean(name) {
       return cleanChannelName(name)
@@ -2782,8 +3009,6 @@
     }
     // Chaîne réunie : identifiants et noms de toutes ses sources.
     var entries = channel._entries ? channel._entries.map(function (entry) { return entry.channel; }) : [channel];
-    push(channel.iptvOrgId);
-    entries.forEach(function (item) { push(item.iptvOrgId); push(item.epgId); });
     var names = [];
     [channel.iptvOrgName, channel.name].concat(entries.map(function (item) { return item.iptvOrgName; }), entries.map(function (item) { return item.name; }))
       .forEach(function (name) { var value = clean(name || ''); if (value && names.indexOf(value) < 0) names.push(value); });
@@ -2794,7 +3019,31 @@
       if (/\bsport\b/i.test(name)) push(name.replace(/\bsport\b/i, 'sports'));
       if (/^C\+\s/i.test(name)) push(name.replace(/^C\+/i, 'Canal+'));
     });
+    // Noms d'abord : le serveur les trouve tout de suite dans le guide XMLTV
+    // déjà chargé ; les identifiants iptv-org peuvent demander d'autres guides.
+    keys = keys.slice(0, 4);
+    push(channel.iptvOrgId);
+    entries.forEach(function (item) { push(item.iptvOrgId); push(item.epgId); });
     return keys.slice(0, 6);
+  }
+  // Action lancée quand l'élément entre à l'écran (ou tout de suite sur un
+  // moteur sans IntersectionObserver).
+  var visibleObserver = null;
+  function whenVisible(node, action) {
+    if (typeof IntersectionObserver !== 'function') { action(); return; }
+    if (!visibleObserver) {
+      visibleObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          visibleObserver.unobserve(entry.target);
+          var run = entry.target._onVisible;
+          entry.target._onVisible = null;
+          if (run) run();
+        });
+      }, { rootMargin: '200px 0px' });
+    }
+    node._onVisible = action;
+    visibleObserver.observe(node);
   }
   function loadEpg(channel) {
     if (!needsEpg(channel)) return Promise.resolve(channel);
@@ -2806,13 +3055,20 @@
   }
   function fetchEpg(keys, index) {
     if (index >= keys.length) return Promise.resolve(null);
-    return memo('epg:' + keys[index], 300000, function () {
+    return memo('epg:' + keys[index], 900000, function () {
       return api('/api/tv/programme?id=' + encodeURIComponent(keys[index]), { timeout: 12000 });
     }).then(function (data) {
       return data && (data.now || data.next) ? data : fetchEpg(keys, index + 1);
     }, function () { return fetchEpg(keys, index + 1); });
   }
+  var epgWait = 0;
   function pumpEpg() {
+    // Pendant la navigation à la télécommande, les demandes attendent : la
+    // page reste fluide.
+    if (Date.now() - lastMove < 700) {
+      if (!epgWait) epgWait = setTimeout(function () { epgWait = 0; pumpEpg(); }, 700);
+      return;
+    }
     while (epgRunning < 3 && epgPending.length) {
       var job = epgPending.shift();
       epgRunning++;

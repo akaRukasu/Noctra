@@ -367,6 +367,19 @@ assert.match(tvApp, /\[\/\^\(\?:africa \?24\|/);
 // Doublons : fautes d'une lettre, « + » détaché, lettre de variante.
 assert.match(tvApp, /function oneEdit\(a, b\) \{/);
 assert.match(tvApp, /function absorb\(twin, unified\) \{/);
+// Fluidité et chargement de « TV en direct ».
+assert.match(tvApp, /var unifiedName = remembered\(function \(name\) \{/, 'Règles de noms mises en cache');
+assert.match(tvApp, /list\.sort\(function \(a, b\) \{ return a\._sort < b\._sort \? -1 : a\._sort > b\._sort \? 1 : 0; \}\);/, 'Pas de localeCompare sur des milliers de chaînes');
+assert.match(tvApp, /if \(side && focusable\(side\) && side\.offsetTop === from\.offsetTop\) best = side;/, 'Grille : voisin direct sans tout mesurer');
+assert.match(tvApp, /if \(!document\.body\.contains\(container\) \|\| container\._generation !== generation\) return;/, 'Ancien rendu interrompu');
+assert.match(tvApp, /var open = indexedDB\.open\('noctra-tv', 1\);/, 'Catalogues gardés sur le téléviseur');
+assert.match(tvApp, /function freshChannel\(entry\) \{/, 'Liens renouvelés au lancement');
+assert.match(tvApp, /if \(!job\.retry\) \{ queue\.push\(/, 'Catalogue en échec redemandé');
+assert.match(tvApp, /var UNIFIED_WAIT_MS = 12000;/);
+assert.match(tvApp, /whenVisible\(node, function \(\) \{\s*loadEpg\(channel\)/, 'Guide demandé pour les chaînes visibles');
+assert.match(tvApp, /if \(Date\.now\(\) - lastMove < 700\) \{/, 'Guide en pause pendant la navigation');
+assert.match(tvApp, /function proxyImage\(url\) \{/, 'Logos par le serveur Noctra');
+assert.match(tvData, /"iptvLogos":"[^"]*\b13rue i:/);
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
 assert.match(tvApp, /var inPage = root === document && !isMenu\(from\) && main\.contains\(from\);/, '▲ reste dans la page avant la barre d’onglets');

@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.16';
+  var VERSION = '1.1.17';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   var BASE = location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
   var JF = String(params.get('jellyfin') || location.origin + '/jellyfin').replace(/\/+$/, '');
