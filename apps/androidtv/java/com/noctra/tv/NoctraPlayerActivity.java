@@ -95,6 +95,16 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private TextView subtitleView;
     private TextView nowView;
     private TextView nextView;
+    private TextView statsView;
+    private final Runnable updateStats = new Runnable() {
+        @Override
+        public void run() {
+            if (statsView == null || vod || stream == null || banner.getAlpha() == 0f) return;
+            statsView.setText(stream.diagnostics());
+            statsView.setVisibility(TextView.VISIBLE);
+            handler.postDelayed(this, 1000);
+        }
+    };
     private ProgressBar nowProgress;
     private JSONObject epg;
     private String playSessionId;
@@ -205,6 +215,11 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         nextView = text("", 15, Color.rgb(170, 180, 196));
         nextView.setPadding(0, dp(6), 0, 0);
         banner.addView(nextView);
+        // Diagnostic du direct (réserve, débit reçu, coupures, relais), tenu à jour.
+        statsView = text("", 13, Color.rgb(231, 185, 110));
+        statsView.setPadding(0, dp(6), 0, 0);
+        statsView.setVisibility(TextView.GONE);
+        banner.addView(statsView);
         playSessionId = intent.getStringExtra(EXTRA_PLAY_SESSION_ID);
         try {
             epg = intent.hasExtra(EXTRA_EPG) ? new JSONObject(intent.getStringExtra(EXTRA_EPG)) : null;
@@ -558,6 +573,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         banner.animate().cancel();
         banner.setAlpha(1f);
         handler.postDelayed(hideBanner, 6000);
+        handler.removeCallbacks(updateStats);
+        updateStats.run();
     }
 
     private boolean canZap() {

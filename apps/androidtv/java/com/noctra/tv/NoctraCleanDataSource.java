@@ -40,6 +40,40 @@ final class NoctraCleanDataSource implements DataSource {
         }
     }
 
+    // ── Mesure de la réception (diagnostic affiché par le lecteur) ──
+    // Pour chaque segment vidéo : octets reçus et temps de chargement
+    // (demande comprise). Moyenne glissante du débit reçu.
+    private static final Object STATS = new Object();
+    private static double averageKbps;
+    private static long lastSegmentMs;
+    private static long lastSegmentBytes;
+    private static int segments;
+    private static int failures;
+
+    /** « Réception 8,4 Mb/s · segment chargé en 1,2 s », ou vide. */
+    static String receptionSummary() {
+        synchronized (STATS) {
+            if (segments == 0) return failures > 0 ? "Segments en échec : " + failures : "";
+            String text = String.format(java.util.Locale.FRANCE, "Réception %.1f Mb/s · dernier segment %.1f s (%d Ko)",
+                averageKbps / 1000.0, lastSegmentMs / 1000.0, lastSegmentBytes / 1024);
+            return failures > 0 ? text + " · " + failures + " échec" + (failures > 1 ? "s" : "") : text;
+        }
+    }
+
+    static void resetStats() {
+        synchronized (STATS) {
+            averageKbps = 0;
+            lastSegmentMs = 0;
+            lastSegmentBytes = 0;
+            segments = 0;
+            failures = 0;
+        }
+    }
+
+    private boolean measured;
+    private long openedAt;
+    private long bytes;
+
     private final DataSource upstream;
     private boolean inspect;
     private byte[] head;
@@ -60,8 +94,18 @@ final class NoctraCleanDataSource implements DataSource {
         head = null;
         headPosition = 0;
         headLength = 0;
-        long length = upstream.open(dataSpec);
         String path = dataSpec.uri == null || dataSpec.uri.getPath() == null ? "" : dataSpec.uri.getPath().toLowerCase();
+        measured = dataSpec.position == 0 && !path.endsWith(".m3u8") && !path.endsWith(".m3u") && !path.endsWith(".key");
+        openedAt = System.currentTimeMillis();
+        bytes = 0;
+        long length;
+        try {
+            length = upstream.open(dataSpec);
+        } catch (IOException error) {
+            if (measured) synchronized (STATS) { failures++; }
+            measured = false;
+            throw error;
+        }
         inspect = dataSpec.position == 0 && !path.endsWith(".m3u8") && !path.endsWith(".m3u") && !path.endsWith(".key");
         // Longueur inconnue si des octets risquent d'être retirés.
         return inspect ? -1 : length;
@@ -69,6 +113,12 @@ final class NoctraCleanDataSource implements DataSource {
 
     @Override
     public int read(byte[] buffer, int offset, int length) throws IOException {
+        int count = readInner(buffer, offset, length);
+        if (count > 0) bytes += count;
+        return count;
+    }
+
+    private int readInner(byte[] buffer, int offset, int length) throws IOException {
         if (length == 0) return 0;
         if (inspect) {
             inspect = false;
@@ -136,6 +186,18 @@ final class NoctraCleanDataSource implements DataSource {
 
     @Override
     public void close() throws IOException {
+        // Segment entièrement reçu : débit de ce segment dans la moyenne.
+        if (measured && bytes > 16384) {
+            long elapsed = Math.max(1, System.currentTimeMillis() - openedAt);
+            double kbps = bytes * 8.0 / elapsed;
+            synchronized (STATS) {
+                averageKbps = segments == 0 ? kbps : averageKbps * 0.7 + kbps * 0.3;
+                lastSegmentMs = elapsed;
+                lastSegmentBytes = bytes;
+                segments++;
+            }
+        }
+        measured = false;
         head = null;
         upstream.close();
     }

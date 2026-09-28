@@ -391,7 +391,11 @@ assert.match(streamJava, /long target = Math\.max\(WINDOW_SAFETY_MS, position - 
 assert.doesNotMatch(streamJava, /setTargetOffsetMs/, 'Démarrage au point prévu par le flux');
 assert.match(streamJava, /\.setMinPlaybackSpeed\(1f\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct à vitesse fixe : la réserve reste acquise');
 assert.match(streamJava, /private static long extraOffsetMs = 8000;/, 'Réserve agrandie dès le démarrage');
-assert.match(streamJava, /http = new OkHttpDataSource\.Factory\(NoctraDns\.plainClient\(\)\)/, 'Connexions réutilisées pour le direct');
+assert.doesNotMatch(streamJava, /NoctraDns\.plainClient\(\)/, 'Direct : connexion HTTP d’origine');
+assert.match(streamJava, /String diagnostics\(\) \{/, 'Diagnostic du direct');
+assert.match(streamJava, /callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraCleanDataSource.java'), /static String receptionSummary\(\) \{/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /statsView\.setText\(stream\.diagnostics\(\)\);/);
 assert.match(streamJava, /private static final int\[\]\[\] CAPS = \{ \{ 1280, 720 \}, \{ 960, 540 \} \};/);
 const compatJava = await read('apps/androidtv/java/com/noctra/tv/NoctraJsCompat.java');
 assert.match(compatJava, /String tag = "<script>" \+ POLYFILL \+ HLS_TUNING \+ "<\/script>";/, 'Lecteurs hls.js : réserve plus grande');

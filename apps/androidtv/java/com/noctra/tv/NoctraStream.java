@@ -31,8 +31,8 @@ import java.util.Map;
  *   de plus après chaque blocage (30 s au plus, jamais trop près du début de
  *   la fenêtre du flux) ;
  * - direct à vitesse fixe (pas de rattrapage qui revide la réserve),
- *   connexions réutilisées (OkHttp), définition plafonnée si les coupures
- *   se répètent ;
+ *   définition plafonnée si les coupures se répètent ;
+ * - diagnostic : réserve, débit reçu par segment, coupures, relais.
  * - nouvelles tentatives sur les segments HLS avant de signaler une erreur ;
  * - retour au direct quand le flux a trop de retard (BEHIND_LIVE_WINDOW) ;
  * - surveillance des blocages : une mise en mémoire tampon trop longue relance
@@ -232,7 +232,31 @@ final class NoctraStream {
 
     void start() {
         released = false;
+        stalls = 0;
+        if (live) NoctraCleanDataSource.resetStats();
         open();
+    }
+
+    private int stalls;
+
+    /**
+     * Diagnostic du direct, affiché dans le bandeau et pendant une coupure :
+     * « Réserve 12 s · Réception 8,4 Mb/s · dernier segment 1,2 s · 3 coupures · relais Noctra ».
+     */
+    String diagnostics() {
+        StringBuilder text = new StringBuilder();
+        try {
+            if (player != null) text.append("Réserve ").append(Math.max(0, player.getTotalBufferedDuration()) / 1000).append(" s");
+        } catch (Throwable ignored) {
+        }
+        if (live) {
+            String reception = NoctraCleanDataSource.receptionSummary();
+            if (!reception.isEmpty()) text.append(text.length() > 0 ? " · " : "").append(reception);
+        }
+        text.append(text.length() > 0 ? " · " : "").append(stalls).append(stalls > 1 ? " coupures" : " coupure");
+        if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
+        text.append(url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
+        return text.toString();
     }
 
     /** Démarrage en pause (SyncPlay : le groupe décide du départ). */
@@ -328,12 +352,6 @@ final class NoctraStream {
             http = new OkHttpDataSource.Factory(NoctraDns.client())
                 .setUserAgent(agent)
                 .setDefaultRequestProperties(properties);
-        } else if (live) {
-            // Direct : connexions réutilisées d'un segment à l'autre (OkHttp,
-            // HTTP/2 vers le serveur Noctra) : moins d'attente par segment.
-            http = new OkHttpDataSource.Factory(NoctraDns.plainClient())
-                .setUserAgent(agent)
-                .setDefaultRequestProperties(headers);
         } else {
             http = new DefaultHttpDataSource.Factory()
                 .setUserAgent(agent)
@@ -434,11 +452,14 @@ final class NoctraStream {
             if (ready && live && !reserveSeeking) {
                 widenLiveOffset();
                 noteStall(now);
+                stalls++;
             }
             reserveSeeking = false;
             if (ready) callback.onReadyChanged(this, false);
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
+            // Coupure en cours : chiffres affichés pour comprendre d'où elle vient.
+            if (played && live && now - bufferingSince > 1500 && !edgeSought) callback.onStatus(this, "Mise en mémoire… " + diagnostics());
             // Direct bloqué : d'abord un saut au bord du direct (segments récents).
             if (live && played && !edgeSought && now - bufferingSince > SOFT_STALL_MS) {
                 edgeSought = true;

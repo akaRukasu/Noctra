@@ -20,6 +20,7 @@ public interface Player {
     void setMediaItem(MediaItem mediaItem, long startPositionMs);
     long getCurrentPosition();
     long getDuration();
+    long getTotalBufferedDuration();
     void seekTo(long positionMs);
     TrackSelectionParameters getTrackSelectionParameters();
     void setTrackSelectionParameters(TrackSelectionParameters parameters);
