@@ -622,6 +622,7 @@
     if (picture) picture.addEventListener('load', function () { art.classList.add('loaded'); });
     var node = h('button', { class: 'card f ' + (options.kind || ''), onclick: options.onSelect },
       options.badge ? h('span', { class: 'badge ' + (options.badgeClass || ''), text: options.badge }) : null,
+      options.number ? h('span', { class: 'card-num', text: String(options.number) }) : null,
       art,
       options.noMeta ? null : h('div', { class: 'meta' },
         h('div', { class: 'title', text: options.title || '' }),
@@ -1325,6 +1326,18 @@
   function playerEvent(event) {
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
     if (event.event === 'zapTo') {
+      // Chaînes numérotées : numéro tapé → chaîne de ce numéro (dans la liste
+      // affichée, sinon parmi toutes les chaînes du pays).
+      if (event.number && playback && playback.list && playback.list._all) {
+        var wanted = (Number(event.index) || 0) + 1;
+        var all = playback.list._all;
+        var found = null;
+        for (var i = 0; i < all.length && !found; i++) if (all[i]._lcn === wanted) found = all[i];
+        if (!found) return;
+        if (playback.list.indexOf(found) < 0) { all._all = all; playback.list = all; }
+        zapTo(playback.list.indexOf(found));
+        return;
+      }
       // Numéro tapé au-delà de la liste : ignoré (le lecteur l'indique).
       if (event.number && playback && playback.list && Number(event.index) >= playback.list.length) return;
       zapTo(Number(event.index) || 0);
@@ -2090,6 +2103,8 @@
       .replace(/(\d)\s*(?:[·|•#–]|\s-)\s*\d{1,2}\s*$/, '$1')
       .replace(/\s#\d{1,2}\s*$/, ' ')
       .replace(/\b(?:UHD|FHD|FULL ?HD|HD|SD|4K|HEVC|H\.?265|1080[pi]?|720p|50 ?fps|backup|secours|raw|vip|multi ?audio)\b/gi, ' ')
+      // Variantes LiveWatch : « TF1 · BASIC », « beIN SPORTS 1 · SAT · HD », « … · Flux 2 ».
+      .replace(/(?:\s*·\s*(?:[A-Z0-9][A-Z0-9 +]{0,17}|Flux\s*\d+|Serveur\s*\d+|Variante\s+\S+)?)+\s*$/, '')
       .replace(/[|•·▎┃]+/g, ' ')
       // « CANAL + SPORT » = « Canal+ Sport » (le « + » détaché des marques connues).
       .replace(/(^|\s)(canal|c|cin[eé]|plan[eè]te|golf|piwi|teletoon|polar|com[eé]die|infosport|ligue 1)\s+\+(?=\s|$)/gi, '$1$2+')
@@ -2144,15 +2159,50 @@
   function playable(channel) {
     return Boolean((channel.playbackType === 'stream' && channel.streamUrl) || channel.resolverUrl || channel.embedUrl || channel.externalUrl || channel.vipFallbackUrl);
   }
-  // Événements (matchs du jour) : pas des chaînes.
-  function isEvent(channel) {
-    return Boolean(channel.eventId || (channel.homeName && channel.awayName) || channel.startTime
-      || /\s(?:vs\.?|v\.?|contre|x)\s/i.test(channel.name) || /\b\d{1,2}[:h]\d{2}\b/.test(channel.name));
+  // Événements (matchs du jour) : pas des chaînes. Les catalogues de chaînes
+  // (LiveWatch, NorthTV, FrameTV, Daddy TV…) donnent parfois une date ou un
+  // identifiant à leurs chaînes : seules les sources sport sont jugées sur ces
+  // champs, les autres seulement sur un vrai match (« A vs B »).
+  function isEvent(channel, source) {
+    var match = Boolean(channel.homeName && channel.awayName) || /\s(?:vs\.?|v\.?|contre)\s/i.test(channel.name);
+    if (source && source.section && source.section !== 'sports') return match;
+    return Boolean(match || channel.eventId || channel.startTime || /\s[x×]\s/i.test(channel.name) || /\b\d{1,2}[:h]\d{2}\b/.test(channel.name));
   }
   // Identité iptv-org (« BeINSports1.fr ») : même chaîne quel que soit son nom.
   function iptvKey(channel) {
     var id = String(channel.iptvOrgId || '').toLowerCase().replace(/@.*$/, '').trim();
     return id ? 'id:' + id : '';
+  }
+  // ── Numéros de chaînes ──
+  // Chaînes françaises : numéros habituels de la TNT (1 TF1, 2 France 2…
+  // 27 franceinfo), puis 30, 31… pour les autres ; ailleurs 1, 2, 3… Les
+  // numéros ne changent pas avec la catégorie ou la recherche, et les touches
+  // chiffrées de la télécommande les utilisent pendant la lecture.
+  var TNT_NUMBERS = { tf1: 1, france2: 2, france3: 3, canalplus: 4, france5: 5, m6: 6, arte: 7, c8: 8, w9: 9, tmc: 10, tfx: 11, nrj12: 12,
+    lcp: 13, lcppublicsenat: 13, publicsenat: 13, france4: 14, bfm: 15, cnews: 16, cstar: 17, gulli: 18, tf1seriesfilms: 20, lequipe: 21, '6ter': 22,
+    rmcstory: 23, rmcdecouverte: 24, cherie25: 25, lci: 26, franceinfo: 27, t18: 28, novo19: 29 };
+  function tntNumber(channel) {
+    if (TNT_NUMBERS[channel._key]) return TNT_NUMBERS[channel._key];
+    var entries = channel._entries || [];
+    for (var i = 0; i < entries.length; i++) if (TNT_NUMBERS[entries[i].nameKey]) return TNT_NUMBERS[entries[i].nameKey];
+    return TNT_NUMBERS[unifiedName(channel.name)] || 0;
+  }
+  function numberChannels(channels, french) {
+    var list = channels.slice();
+    if (french) {
+      var used = {};
+      list.forEach(function (channel) {
+        var number = tntNumber(channel);
+        channel._lcn = number && !used[number] ? number : 0;
+        if (channel._lcn) used[number] = true;
+      });
+      list.sort(function (a, b) { return (a._lcn || 1000) - (b._lcn || 1000); });
+      var next = 30;
+      list.forEach(function (channel) { if (!channel._lcn) channel._lcn = next++; });
+    } else {
+      list.forEach(function (channel, index) { channel._lcn = index + 1; });
+    }
+    return list;
   }
   // ── Catégories de « TV en direct » ──
   // Les catégories des sources (« FR| FRANCE TV », « Haloule section 1.1 »…)
@@ -2225,7 +2275,7 @@
     var prepared = [];
     loaded.forEach(function (part) {
       part.channels.forEach(function (channel) {
-        if (!channel || !channel.name || !playable(channel) || isEvent(channel)) return;
+        if (!channel || !channel.name || !playable(channel) || isEvent(channel, part.source)) return;
         var country = channelCountry(channel);
         var nameKey = unifiedKey(channel.name, country) || normalize(channel.name);
         var idKey = iptvKey(channel);
@@ -2413,7 +2463,7 @@
       // Apport de chaque source (chaînes gardées, bouquets compris) et sources encore attendues.
       var counts = {};
       parts.forEach(function (part) {
-        var kept = part.channels.filter(function (channel) { return channel && channel.name && playable(channel) && !isEvent(channel); }).length;
+        var kept = part.channels.filter(function (channel) { return channel && channel.name && playable(channel) && !isEvent(channel, part.source); }).length;
         counts[part.source.name] = (counts[part.source.name] || 0) + kept;
       });
       var pending = sources.filter(function (source) { return counts[source.name] === undefined && failed.indexOf(source.name) < 0; }).map(function (source) { return source.name; });
@@ -2660,6 +2710,21 @@
     merged.home = true;
     return views.liveSource(merged, alive);
   };
+  function groupingDetails(channels) {
+    var list = h('div', { class: 'list scroll grouping-list' }, h('h2', null, 'Détail des regroupements', h('small', { text: 'Chaînes françaises · noms réunis par source · ○ sans logo officiel' })));
+    numberChannels(channels.filter(function (channel) { return channel.country === 'fr'; }), true).forEach(function (channel) {
+      var names = [];
+      channel._entries.forEach(function (entry) {
+        var label = entry.source.name + ' : ' + entry.channel.name;
+        if (names.indexOf(label) < 0) names.push(label);
+      });
+      var official = logoFile(channel.iptvOrgName || channel.name) || iptvLogo(channel.iptvOrgName || channel.name);
+      list.appendChild(h('button', { class: 'btn f grouping-row' },
+        h('b', { text: (channel._lcn ? channel._lcn + ' · ' : '') + channel.name + (official ? '' : ' ○') }),
+        h('small', { text: names.slice(0, 12).join('  ·  ') + (names.length > 12 ? '  … +' + (names.length - 12) : '') })));
+    });
+    openLayer(h('div', { class: 'modal' }, list));
+  }
   // Fenêtre « Sources » : une source précise, par univers.
   function sourcesSheet() {
     var box = h('div', { class: 'sources-sheet scroll' }, h('h2', null, 'Sources', h('small', { text: 'Choisissez une source pour voir ses chaînes' })));
@@ -2670,6 +2735,11 @@
       box.appendChild(h('p', { class: 'sources-coverage', text: 'Réunies dans « TV en direct » : ' + names.map(function (name) { return name + ' ' + data.coverage[name]; }).join(' · ')
         + (data.pending && data.pending.length ? ' — en attente : ' + data.pending.join(', ') : '')
         + (data.failedSources && data.failedSources.length ? ' — indisponibles : ' + data.failedSources.join(', ') : '') }));
+    }
+    // Détail des regroupements : pour chaque chaîne française, les noms réunis
+    // de chaque source et la présence d'un logo (pour repérer un doublon).
+    if (data && data.channels) {
+      box.appendChild(h('div', { class: 'actions sources-actions' }, h('button', { class: 'btn f', onclick: function () { groupingDetails(data.channels); } }, icon('info'), 'Détail des regroupements')));
     }
     var status = loading();
     box.appendChild(status);
@@ -2774,6 +2844,8 @@
         var countryCounts = {};
         allChannels.forEach(function (channel) { var code = channel.country || '?'; countryCounts[code] = (countryCounts[code] || 0) + 1; });
         if (country) channels = allChannels.filter(function (channel) { return (channel.country || '?') === country; });
+        // Ordre des numéros (TNT d'abord pour la France), stable quels que soient les filtres.
+        channels = numberChannels(channels, country === 'fr');
         var countryLabel = function (code) { return code === '' ? 'Tous les pays' : code === '?' ? 'Pays non indiqué' : COUNTRY_LABELS[code] || code.toUpperCase(); };
         countrySlot.appendChild(h('button', { class: 'btn f', onclick: function () {
           var list = h('div', { class: 'list scroll' }, h('h2', { text: 'Pays' }));
@@ -2872,13 +2944,13 @@
           function select() {
             if (favoriteMode) { toggleFavorite(channel, source, ctx); refreshFavoriteMarks(channel, source); }
             else if (multi.on) toggleMulti(channel, source);
-            else launchChannel(channel, source, list, ctx);
+            else { list._all = channels; launchChannel(channel, source, list, ctx); }
           }
           var node;
           if (guideMode) {
             node = guideRow(channel, select);
             // Numéro de la chaîne dans la liste affichée : à taper pendant la lecture.
-            node._number = list.indexOf(channel) + 1;
+            node._number = unifiedView && channel._lcn ? channel._lcn : list.indexOf(channel) + 1;
             fillGuideRow(node, channel);
           } else {
             var guide = epgLive(channel);
@@ -2887,6 +2959,7 @@
               sub: guide.now ? hhmm(guide.now.start) + ' · ' + guide.now.title : [groupOf(channel), channel.provider].filter(Boolean).join(' · '),
               image: channelLogo(channel),
               badge: [isFavorite(channel, source) ? '★' : '', channel.isLive ? 'LIVE' : ''].filter(Boolean).join(' '),
+              number: unifiedView ? channel._lcn : 0,
               progress: guide.now ? epgProgress(guide.now) : 0,
               onSelect: select
             });
@@ -3130,7 +3203,12 @@
     var guide = epgLive(state.channel);
     var list = state.list || [];
     var at = list.indexOf(state.channel);
-    return { now: guide.now, next: guide.next, position: at >= 0 ? (at + 1) + ' / ' + list.length : '', zap: list.length > 1, managed: true };
+    // Chaînes numérotées : « n° / plus grand numéro » (touches chiffrées du lecteur).
+    var numbered = state.channel._lcn && list._all;
+    var highest = 0;
+    if (numbered) list._all.forEach(function (channel) { if (channel._lcn > highest) highest = channel._lcn; });
+    var position = numbered ? state.channel._lcn + ' / ' + highest : at >= 0 ? (at + 1) + ' / ' + list.length : '';
+    return { now: guide.now, next: guide.next, position: position, zap: list.length > 1, managed: true };
   }
   function playId() { return 'live-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -3152,7 +3230,7 @@
       command: 'channels', mode: 'channels', update: Boolean(update), current: list.indexOf(state.channel),
       title: (state.source && state.source.name ? state.source.name + ' · ' : '') + list.length + ' chaîne' + (list.length > 1 ? 's' : ''),
       items: list.slice(0, 3000).map(function (channel) {
-        return { name: channel.name, sub: [channel.group, channel.provider].filter(Boolean).join(' · '), now: epgLive(channel).now };
+        return { name: (list._all && channel._lcn ? channel._lcn + '  ' : '') + channel.name, sub: [channel.category || channel.group, channel.provider].filter(Boolean).join(' · '), now: epgLive(channel).now };
       })
     });
     if (update) return;
@@ -3686,6 +3764,18 @@
   function quickExit(state) {
     return state.options.length > 1 && Date.now() - state.startedAt < 25000;
   }
+  // Retour du lecteur : la carte de la dernière chaîne regardée (après un
+  // zapping aussi) reprend la sélection.
+  function focusChannelCard(state) {
+    if (!state || !state.channel || layer.firstChild) return;
+    var key = channelKey(state.channel, state.source);
+    var target = null;
+    Array.prototype.some.call(main.querySelectorAll('[data-channel]'), function (node) {
+      if (node.getAttribute('data-channel') === key) { target = node; return true; }
+      return false;
+    });
+    if (target) focus(target);
+  }
   function playerClosed(result) {
     var state = playback;
     if (!state) return;
@@ -3695,6 +3785,7 @@
     if (result.ok) {
       playback = null;
       if (!result.played && quickExit(state)) showPicker(state, '', 0);
+      else focusChannelCard(state);
       return;
     }
     // Coupure après une lecture réussie : nouveau lien (jeton neuf) du même serveur.

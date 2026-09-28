@@ -379,6 +379,16 @@ assert.match(tvApp, /var UNIFIED_WAIT_MS = 12000;/);
 assert.match(tvApp, /whenVisible\(node, function \(\) \{\s*loadEpg\(channel\)/, 'Guide demandé pour les chaînes visibles');
 assert.match(tvApp, /if \(Date\.now\(\) - lastMove < 700\) \{/, 'Guide en pause pendant la navigation');
 assert.match(tvApp, /function proxyImage\(url\) \{/, 'Logos par le serveur Noctra');
+// Numéros TNT, LiveWatch dans les chaînes réunies, réserve du direct.
+assert.match(tvApp, /var TNT_NUMBERS = \{ tf1: 1, france2: 2, france3: 3, canalplus: 4,/);
+assert.match(tvApp, /channels = numberChannels\(channels, country === 'fr'\);/);
+assert.match(tvApp, /if \(all\[i\]\._lcn === wanted\) found = all\[i\];/, 'Touches chiffrées : numéro de la chaîne');
+assert.match(tvApp, /if \(source && source\.section && source\.section !== 'sports'\) return match;/, 'Chaînes LiveWatch gardées');
+assert.match(tvApp, /Variantes LiveWatch : « TF1 · BASIC »/);
+assert.match(tvApp, /function groupingDetails\(channels\) \{/);
+assert.match(tvApp, /else focusChannelCard\(state\);/);
+assert.match(streamJava, /\.setMinPlaybackSpeed\(1f\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct à vitesse fixe');
+assert.match(streamJava, /return Math\.min\(45000, \(compact \? 15000 : 20000\) \+ extraOffsetMs\);/, 'Réserve du direct adaptée à la connexion');
 assert.match(tvData, /"iptvLogos":"[^"]*\b13rue i:/);
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
@@ -388,7 +398,7 @@ assert.match(serverCode, /iptvOrgName: match\.name \|\| channel\.iptvOrgName \|\
 assert.match(serverCode, /Chaînes des bouquets \(Movix, Vavoo…\) : logos et identité iptv-org/);
 assert.match(tvApp, /rememberWebMode\(failedOption\.sniffedFrom\.url, 'noSniff'\);/);
 assert.match(tvApp, /var country = typeof params\.country === 'string' \? params\.country : 'fr';/);
-assert.match(tvApp, /function isEvent\(channel\) \{/);
+assert.match(tvApp, /function isEvent\(channel, source\) \{/);
 assert.ok(!tvApp.includes('UNIFIED_SECTIONS'), 'Toutes les sources réunies (bouquets et sources sport compris)');
 // Numéros de chaîne (0-9) pendant la lecture.
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /KeyEvent\.KEYCODE_0/);
@@ -410,7 +420,7 @@ assert.match(tvApp, /if \(event\.event === 'failed'\) \{ playerFailed\(event\); 
 assert.match(tvApp, /if \(event\.event === 'server'\) \{ pickServer\(Number\(event\.index\) \|\| 0\); return; \}/);
 assert.match(livePlayer, /\(action\.equals\("channels"\) \|\| action\.equals\("servers"\)\) && !vod/);
 assert.match(tvApp, /if \(event\.event === 'channels'\) \{ sendChannels\(false\); return; \}/);
-assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{\n[\s\S]{0,300}?zapTo\(Number\(event\.index\) \|\| 0\);/);
+assert.match(tvApp, /if \(event\.event === 'zapTo'\) \{\n[\s\S]{0,1500}?zapTo\(Number\(event\.index\) \|\| 0\);/);
 assert.match(webPlayer, /callback\.proceed\(false\)/);
 assert.match(webPlayer, /if \(\+\+crashes == 1 && !finished\) restart\(\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java'), /message\.put\("log", NoctraWebLog\.tail\(this, 4\)\)/);
