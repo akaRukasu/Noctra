@@ -643,3 +643,6 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .grouping-list .grouping-row { display: block; width: 100%; text-align: left; border-radius: .8rem; margin-bottom: .4rem; }
 .grouping-list .grouping-row small { display: block; margin-top: .25rem; color: var(--muted); font-weight: 600; font-size: .78rem; line-height: 1.35; white-space: normal; }
 .grouping-list .grouping-row:focus small { color: #2a2f3a; }
+/* Historique d'un serveur sur ce téléviseur (« 9/10 réussites », « Jamais essayé »). */
+.tag.stat { font-weight: 700; background: none; border: 1px solid var(--line); }
+.server:focus .tag.stat { color: #0b0d12; border-color: rgba(11, 13, 18, .25); }

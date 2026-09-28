@@ -2546,13 +2546,13 @@
     unifiedLoading.then(function () { unifiedLoading = null; }, function () { unifiedLoading = null; });
     return unifiedLoading;
   }
-  // Chaîne d'un catalogue gardé : version à jour (liens neufs) dès que le
-  // catalogue a été redemandé, 10 s d'attente au plus.
+  // Chaîne d'un catalogue gardé : version à jour (liens neufs) si le
+  // catalogue du moment arrive vite (3 s au plus), sinon celle gardée.
   function freshChannel(entry) {
     if (!entry.stale) return Promise.resolve(entry.channel);
     var request = catalogRefresh[entry.key];
     if (!request) return Promise.resolve(entry.channel);
-    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 10000); });
+    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 3000); });
     return Promise.race([request.then(function (data) { return data; }, function () { return null; }), timeout]).then(function (data) {
       var list = (data && data.channels) || [];
       var name = entry.channel.name;
@@ -3402,6 +3402,18 @@
     });
     return { score: score, verdict: verdict };
   }
+  // Fiabilité lisible : « Fiable · 9/10 », « Instable · 2/6 », « Jamais essayé ».
+  function healthText(option, key, index, provider) {
+    var store = healthStore();
+    var ids = healthIds(option, key, index, provider);
+    var own = store[ids[0]];
+    var family = store[ids[1]];
+    var health = optionHealth(option, key, index, provider);
+    var label = health.verdict === 'good' ? 'Fiable' : health.verdict === 'unstable' ? 'Instable' : health.verdict === 'recent-fail' ? 'Échec récent' : '';
+    if (own && own.ok + own.fail) return (label || 'Essayé') + ' · ' + own.ok + '/' + (own.ok + own.fail) + ' réussites';
+    if (family && family.ok + family.fail) return 'Même fournisseur · ' + family.ok + '/' + (family.ok + family.fail) + ' réussites';
+    return 'Jamais essayé';
+  }
   function rankOptions(options, key, provider) {
     var remembered = rememberedServer(key);
     var weight = { native: 0, resolve: 1, web: 2 };
@@ -3460,12 +3472,13 @@
       var top = playback.options[0];
       var health = optionHealth(top, key, 0, channel.provider);
       var trusted = health.verdict === 'good' || (rememberedServer(key) === optionLabel(top, 0) && health.verdict !== 'recent-fail');
-      if (playback.options.length === 1 || trusted) {
+      // Serveurs affichés avec leur fiabilité ; le meilleur démarre tout seul
+      // (2 s s'il est sûr, 3 s sinon), une touche arrête le compte à rebours.
+      if (playback.options.length === 1) {
         closeLayer(true);
-        if (playback.options.length > 1) toast('Lecture sur ' + optionLabel(top, 0) + ' · ▶ pendant la lecture pour changer de serveur');
         playOption();
       } else {
-        fillPicker(sheet, playback, 3);
+        fillPicker(sheet, playback, trusted ? 2 : 3);
       }
     }, function (error) {
       if (document.body.contains(sheet.node)) sheet.status(error.message, true);
@@ -3553,6 +3566,8 @@
       else if (health.verdict === 'recent-fail') tags.push(h('span', { class: 'tag warn', text: 'Échec récent' }));
       else if (health.verdict === 'unstable') tags.push(h('span', { class: 'tag warn', text: 'Instable' }));
       else if (health.verdict === 'good') tags.push(h('span', { class: 'tag good', text: 'Fiable' }));
+      // Historique de ce serveur sur ce téléviseur.
+      tags.push(h('span', { class: 'tag stat', text: healthText(option, state.key, index, state.channel.provider).replace(/^(?:Fiable|Instable|Échec récent|Essayé) · /, '') }));
       // Lecteur web sur un moteur web ancien : risque d'échec annoncé.
       if (kind === 'web' && engineOutdated()) tags.push(h('span', { class: 'tag warn', text: 'Moteur web ancien' }));
       var probe = h('span', { class: 'tag probe' });
@@ -3725,7 +3740,7 @@
         return {
           name: optionLabel(option, index),
           sub: [kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web',
-            index === state.index ? 'en cours' : '', state.failed[index] ? 'échec' : ''].filter(Boolean).join(' · ')
+            index === state.index ? 'en cours' : '', state.failed[index] ? 'échec' : healthText(option, state.key, index, state.channel.provider)].filter(Boolean).join(' · ')
         };
       })
     });

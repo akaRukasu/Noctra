@@ -27,8 +27,8 @@ import java.util.Map;
  * pensée pour les connexions instables :
  * - tampon plus large qu'à l'origine, et une réserve plus grande après une
  *   coupure pour éviter les coupures à répétition ;
- * - lecture à 20 s du bord du direct (au lieu de ~3 segments), vitesse fixe,
- *   retard augmenté de 6 s après chaque blocage (45 s au plus) ;
+ * - après un blocage en pleine lecture, 6 s de réserve en plus sur le direct
+ *   (24 s au plus, jamais trop près du début de la fenêtre du flux) ;
  * - nouvelles tentatives sur les segments HLS avant de signaler une erreur ;
  * - retour au direct quand le flux a trop de retard (BEHIND_LIVE_WINDOW) ;
  * - surveillance des blocages : une mise en mémoire tampon trop longue relance
@@ -142,17 +142,36 @@ final class NoctraStream {
         }
     }
 
-    // Retard sur le direct : 20 s (15 s en multiview), puis 6 s de plus à
-    // chaque blocage (jusqu'à 45 s), gardé pour les chaînes suivantes : la
-    // réserve s'adapte à la connexion du moment.
+    // Réserve supplémentaire sur le direct : 0 au départ (démarrage normal,
+    // au point prévu par le flux), puis 6 s de plus après chaque blocage en
+    // pleine lecture (24 s au plus), gardée pour les chaînes suivantes. Elle
+    // n'est prise qu'une fois le flux prêt, sans jamais s'approcher à moins de
+    // 8 s du début de la fenêtre du direct (segments bientôt effacés).
     private static long extraOffsetMs;
-
-    private long liveOffsetMs() {
-        return Math.min(45000, (compact ? 15000 : 20000) + extraOffsetMs);
-    }
+    private static final long WINDOW_SAFETY_MS = 8000;
+    private boolean reserveApplied;
+    // Mise en mémoire qui suit ce recul : pas un blocage.
+    private boolean reserveSeeking;
 
     private static void widenLiveOffset() {
-        extraOffsetMs = Math.min(25000, extraOffsetMs + 6000);
+        extraOffsetMs = Math.min(24000, extraOffsetMs + 6000);
+    }
+
+    /** Recul dans la fenêtre du direct pour garder plus de réserve (connexion irrégulière). */
+    private void applyLiveReserve() {
+        if (reserveApplied || !live || extraOffsetMs <= 0 || player == null) return;
+        reserveApplied = true;
+        try {
+            long window = player.getDuration();
+            long position = player.getCurrentPosition();
+            if (window <= 0 || position <= 0) return;
+            long target = Math.max(WINDOW_SAFETY_MS, position - extraOffsetMs);
+            if (target < position - 2000) {
+                reserveSeeking = true;
+                player.seekTo(target);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private static Map<String, String> tokenHeaders(String token) {
@@ -256,6 +275,7 @@ final class NoctraStream {
     private void open() {
         closePlayer();
         ready = false;
+        reserveApplied = false;
         startedAt = System.currentTimeMillis();
         bufferingSince = 0;
         // Flux repéré dans une page web : même identité que la page (sinon refus).
@@ -292,22 +312,6 @@ final class NoctraStream {
         MediaItem.Builder item = new MediaItem.Builder().setUri(url);
         String mime = attempts.get(attempt);
         if (!mime.isEmpty()) item.setMimeType(mime);
-        if (live) {
-            // Direct : lecture plus loin du bord du flux (réserve plus grande),
-            // à vitesse normale. Sur une connexion moins régulière que la fibre,
-            // un segment un peu lent ne vide plus la réserve (micro-coupures).
-            long target = liveOffsetMs();
-            try {
-                item.setLiveConfiguration(new MediaItem.LiveConfiguration.Builder()
-                    .setTargetOffsetMs(target)
-                    .setMinOffsetMs(Math.min(target, 10000))
-                    .setMaxOffsetMs(90000)
-                    .setMinPlaybackSpeed(1f)
-                    .setMaxPlaybackSpeed(1f)
-                    .build());
-            } catch (Throwable ignored) {
-            }
-        }
         view.setPlayer(player);
         player.setVolume(volume);
         // Film ou épisode : reprise à la position (début, reprise, ou point de coupure).
@@ -354,6 +358,7 @@ final class NoctraStream {
             if (!ready) {
                 ready = true;
                 played = true;
+                applyLiveReserve();
                 readySince = now;
                 callback.onStatus(this, null);
                 callback.onReadyChanged(this, true);
@@ -367,7 +372,8 @@ final class NoctraStream {
             }
         } else if (state == Player.STATE_BUFFERING) {
             // Blocage en pleine lecture : réserve plus grande à la prochaine ouverture.
-            if (ready && live) widenLiveOffset();
+            if (ready && live && !reserveSeeking) widenLiveOffset();
+            reserveSeeking = false;
             if (ready) callback.onReadyChanged(this, false);
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;

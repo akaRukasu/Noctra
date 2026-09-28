@@ -387,13 +387,15 @@ assert.match(tvApp, /if \(source && source\.section && source\.section !== 'spor
 assert.match(tvApp, /Variantes LiveWatch : « TF1 · BASIC »/);
 assert.match(tvApp, /function groupingDetails\(channels\) \{/);
 assert.match(tvApp, /else focusChannelCard\(state\);/);
-assert.match(streamJava, /\.setMinPlaybackSpeed\(1f\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct à vitesse fixe');
-assert.match(streamJava, /return Math\.min\(45000, \(compact \? 15000 : 20000\) \+ extraOffsetMs\);/, 'Réserve du direct adaptée à la connexion');
+assert.match(streamJava, /long target = Math\.max\(WINDOW_SAFETY_MS, position - extraOffsetMs\);/, 'Réserve du direct prise après un blocage, sans quitter la fenêtre');
+assert.doesNotMatch(streamJava, /setLiveConfiguration/, 'Démarrage au point prévu par le flux');
+assert.match(tvApp, /fillPicker\(sheet, playback, trusted \? 2 : 3\);/, 'Fiabilité des serveurs affichée avant le lancement');
+assert.match(tvApp, /function healthText\(option, key, index, provider\) \{/);
 assert.match(tvData, /"iptvLogos":"[^"]*\b13rue i:/);
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);
 assert.match(tvApp, /var inPage = root === document && !isMenu\(from\) && main\.contains\(from\);/, '▲ reste dans la page avant la barre d’onglets');
-assert.match(tvApp, /if \(playback\.options\.length === 1 \|\| trusted\) \{/);
+assert.match(tvApp, /if \(playback\.options\.length === 1\) \{/);
 assert.match(serverCode, /iptvOrgName: match\.name \|\| channel\.iptvOrgName \|\| ''/);
 assert.match(serverCode, /Chaînes des bouquets \(Movix, Vavoo…\) : logos et identité iptv-org/);
 assert.match(tvApp, /rememberWebMode\(failedOption\.sniffedFrom\.url, 'noSniff'\);/);
