@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.24';
+  var VERSION = '1.1.25';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -410,11 +410,17 @@
       }
       self.onInfo('hls.js ' + (Hls.version || '') + (token ? ' · jeton joint' : '') + ' · ' + where);
       var retries = 0;
-      // Direct : le lecteur ne charge que jusqu'au bord du direct ; 5 segments
-      // derrière (au lieu de 3) et pas d'accélération pour le rattraper : plus
-      // de réserve sur une connexion irrégulière (moins de micro-coupures).
-      self.hls = new Hls({ maxBufferLength: 60, maxMaxBufferLength: 120, backBufferLength: 30, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 13,
-        maxLiveSyncPlaybackRate: 1, fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6,
+      // Réglages pour téléviseur :
+      // - direct 4 segments derrière le bord (réserve), sans accélération pour le rattraper ;
+      // - mémoire limitée des téléviseurs : 30 s d'avance et 40 Mo au plus, 10 s
+      //   gardées en arrière (au-delà, « mémoire pleine » et coupures) ;
+      // - définition plafonnée à celle de l'écran, démarrage à bonne qualité
+      //   (estimation de débit de départ 6 Mb/s), décodage dans un worker ;
+      // - segments lents réessayés plus longtemps.
+      self.hls = new Hls({ maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 40 * 1000 * 1000, backBufferLength: 10,
+        liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 12, maxLiveSyncPlaybackRate: 1,
+        capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000, enableWorker: true, startFragPrefetch: true,
+        fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, manifestLoadingTimeOut: 15000, levelLoadingMaxRetry: 6,
         xhrSetup: token ? function (xhr, address) { if (String(address).indexOf(BASE + '/') === 0) xhr.setRequestHeader('x-noctra-token', token); } : undefined });
       self.hls.on(Hls.Events.ERROR, function (event, data) {
         if (!data) return;
@@ -563,7 +569,9 @@
       Player.currentUrl = url;
       Player.currentMime = mime;
       Player.setStatus('Connexion…');
-      Player.watch(30000);
+      // Direct : 15 s pour démarrer, puis serveur suivant (la fenêtre des
+      // serveurs ou l'accueil en choisit un autre) ; film : 30 s.
+      Player.watch(Player.m && !Player.m.vod ? 15000 : 30000);
       Player.engine.load(Player.url(url), mime, Player.library).then(function () {
         var attempt = Player.video.play();
         if (attempt && attempt.catch) attempt.catch(function () { /* lecture automatique refusée : OK relance */ });

@@ -3419,17 +3419,29 @@
     if (family && family.ok + family.fail) return 'Même fournisseur · ' + family.ok + '/' + (family.ok + family.fail) + ' réussites';
     return 'Jamais essayé';
   }
+  // Appli LG / Samsung avec l'interface intégrée (autre origine que le
+  // serveur) : pas de cookie de session Noctra, donc les lecteurs web
+  // préparés par le serveur (affichés en cadre) ne peuvent pas s'ouvrir.
+  function tvBrowserHost() { return Boolean(S.caps && S.caps.webPlayer === false); }
+  function unavailableHere(option) {
+    if (!tvBrowserHost() || serverOrigin() === location.origin || optionKind(option) !== 'web') return false;
+    try { return absolute(option.url).indexOf(serverOrigin() + '/') === 0; } catch (error) { return false; }
+  }
   function rankOptions(options, key, provider) {
     var remembered = rememberedServer(key);
     var weight = { native: 0, resolve: 1, web: 2 };
     // Moteur web trop ancien : les lecteurs web passent encore après.
     var oldEngine = engineOutdated();
+    // LG / Samsung : pas de lecteur web allégé ni séparé (cadre dans la page) :
+    // les flux directs d'abord, les lecteurs web ensuite.
+    var host = tvBrowserHost();
     return options.map(function (option, index) { return { option: option, index: index }; }).sort(function (a, b) {
       function score(entry) {
         var option = entry.option;
         var health = optionHealth(option, key, entry.index, provider);
         var base = weight[optionKind(option)] + (option.compatPage ? 3 : 0) + (option.manualOnly ? 4 : 0) + (option.fallback ? 0.5 : 0)
-          + (oldEngine && optionKind(option) === 'web' ? 1 : 0) - health.score;
+          + (oldEngine && optionKind(option) === 'web' ? 1 : 0) + (host && optionKind(option) === 'web' ? 1.5 : 0)
+          + (unavailableHere(option) ? 20 : 0) - health.score;
         // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
         if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail') return base - 10;
         return base;
@@ -3479,7 +3491,7 @@
       var trusted = health.verdict === 'good' || (rememberedServer(key) === optionLabel(top, 0) && health.verdict !== 'recent-fail');
       // Serveurs affichés avec leur fiabilité ; le meilleur démarre tout seul
       // (2 s s'il est sûr, 3 s sinon), une touche arrête le compte à rebours.
-      if (playback.options.length === 1) {
+      if (playback.options.length === 1 && !unavailableHere(top)) {
         closeLayer(true);
         playOption();
       } else {
@@ -3566,7 +3578,8 @@
       var tags = [h('span', { class: 'tag ' + kind, text: kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web' })];
       var health = optionHealth(option, state.key, index, state.channel.provider);
       if (remembered && optionLabel(option, index) === remembered && health.verdict !== 'recent-fail') tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
-      else if (index === 0 && !failed) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
+      else if (index === 0 && !failed && !unavailableHere(option)) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
+      if (unavailableHere(option)) tags.push(h('span', { class: 'tag bad', text: 'Indisponible ici' }));
       if (failed) tags.push(h('span', { class: 'tag bad', text: 'Échec' }));
       else if (health.verdict === 'recent-fail') tags.push(h('span', { class: 'tag warn', text: 'Échec récent' }));
       else if (health.verdict === 'unstable') tags.push(h('span', { class: 'tag warn', text: 'Instable' }));
@@ -3589,13 +3602,17 @@
     var target = sheet.list.children[Math.max(0, first)];
     if (target) focus(target);
     if (first < 0) sheet.status('Aucun serveur ne fonctionne pour cette chaîne en ce moment. Vous pouvez en réessayer un.', true);
+    else if (state.options.every(function (option) { return unavailableHere(option); })) {
+      sheet.status('Les lecteurs de cette chaîne passent par le serveur Noctra : ils s’ouvriront dans l’appli quand le serveur sera mis à jour. Essayez une autre chaîne.', true);
+      return;
+    }
     else if (seconds) {
       sheet.countdown(seconds, function () {
         if (!document.body.contains(sheet.node)) return;
         // Premier serveur disponible : ceux trouvés hors ligne sont sautés.
         var pick = null;
         state.options.some(function (option, index) {
-          if (state.failed[index] || option._offline) return false;
+          if (state.failed[index] || option._offline || unavailableHere(option)) return false;
           pick = sheet.list.children[index];
           return true;
         });
@@ -3717,9 +3734,17 @@
     }
     markFailed(state);
     var next = -1;
-    for (var step = 1; step <= state.options.length; step++) {
-      var index = (state.index + step) % state.options.length;
-      if (!state.failed[index]) { next = index; break; }
+    // Serveur suivant : ni en échec, ni « hors ligne » au test, ni impossible ici
+    // (sauf s'il ne reste que ceux-là).
+    for (var pass = 0; pass < 2 && next < 0; pass++) {
+      for (var step = 1; step <= state.options.length; step++) {
+        var index = (state.index + step) % state.options.length;
+        var candidate = state.options[index];
+        if (state.failed[index]) continue;
+        if (!pass && candidate && (candidate._offline || unavailableHere(candidate))) continue;
+        next = index;
+        break;
+      }
     }
     if (next < 0) {
       // Plus aucun serveur : le lecteur se ferme (fermeture ignorée) et la fenêtre des serveurs s'affiche.
@@ -3762,7 +3787,8 @@
   function failOption(state, message) {
     markFailed(state);
     var next = -1;
-    state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
+    state.options.some(function (option, index) { if (!state.failed[index] && !option._offline && !unavailableHere(option)) { next = index; return true; } return false; });
+    if (next < 0) state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
     if (next < 0) {
       playback = null;
       // Dernier serveur en échec : sa raison reste affichée (photo utile au diagnostic).
