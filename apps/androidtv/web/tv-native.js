@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.22';
+  var VERSION = '1.1.23';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -351,11 +351,20 @@
     this.ts = null;
     try { this.video.removeAttribute('src'); this.video.load(); } catch (error) { /* vidéo retirée */ }
   };
+  // Flux relayé par le serveur Noctra, depuis l'interface intégrée à l'appli :
+  // le serveur exige le jeton (pas de cookie de session ici). Le lecteur du
+  // téléviseur ne peut pas l'envoyer : hls.js / mpegts.js le joignent à
+  // chaque requête.
+  function needsToken(url) {
+    return Boolean(SERVER && session && session.token && String(url).indexOf(BASE + '/') === 0);
+  }
   // library : false = lecteur du téléviseur ; true = hls.js / mpegts.js (secours).
   Engine.prototype.load = function (url, mime, library) {
     var self = this;
     var video = this.video;
     this.destroy();
+    var token = needsToken(url) ? session.token : '';
+    if (token) library = true;
     var hint = String(mime || '').toLowerCase();
     var ts = hint.indexOf('mp2t') >= 0 || /\.ts(\?|$)/i.test(url);
     var file = /\.(mp4|m4v|mkv|webm|mov)(\?|$)/i.test(url);
@@ -369,7 +378,8 @@
     if (ts) {
       return loadScript(BASE + '/vendor/mpegts.js').then(function () {
         if (!window.mpegts || !mpegts.isSupported()) throw new Error('MPEG-TS non pris en charge');
-        self.ts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: url }, { enableStashBuffer: true, liveBufferLatencyChasing: false });
+        self.ts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: url },
+          { enableStashBuffer: true, liveBufferLatencyChasing: false, headers: token ? { 'x-noctra-token': token } : undefined });
         self.ts.attachMediaElement(video);
         self.ts.on(mpegts.Events.ERROR, function (type, detail) { self.onFatal('Flux MPEG-TS : ' + detail); });
         self.ts.load();
@@ -386,7 +396,8 @@
       // derrière (au lieu de 3) et pas d'accélération pour le rattraper : plus
       // de réserve sur une connexion irrégulière (moins de micro-coupures).
       self.hls = new Hls({ maxBufferLength: 60, maxMaxBufferLength: 120, backBufferLength: 30, liveSyncDurationCount: 5, liveMaxLatencyDurationCount: 13,
-        maxLiveSyncPlaybackRate: 1, fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6 });
+        maxLiveSyncPlaybackRate: 1, fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6,
+        xhrSetup: token ? function (xhr, address) { if (String(address).indexOf(BASE + '/') === 0) xhr.setRequestHeader('x-noctra-token', token); } : undefined });
       self.hls.on(Hls.Events.ERROR, function (event, data) {
         if (!data || !data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && retries < 3) { retries++; self.hls.startLoad(); return; }
@@ -400,6 +411,14 @@
   };
   Engine.prototype.canFallback = function () { return !this.hls && !this.ts; };
 
+  var PLAYER_ICONS = {
+    playpause: '<path d="M4 5v14l9-7zM15 5h2v14h-2zM19 5h2v14h-2z"/>',
+    audio: '<path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h2v-8H5v-1a7 7 0 0 1 14 0v1h-2v8h2a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/>',
+    subtitles: '<path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7v2h4v-2zm6 0v2h6v-2zm-6-4v2h8V8zm10 0v2h2V8z"/>',
+    channels: '<path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/>',
+    servers: '<path d="M7 7h11l-3-3 1.4-1.4L21.8 8l-5.4 5.4L15 12l3-3H7zm10 10H6l3 3-1.4 1.4L2.2 16l5.4-5.4L9 12l-3 3h11z"/>',
+    close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/>'
+  };
   // ── Lecteur plein écran ──────────────────────────────────────────────
   var Player = {
     node: null, video: null, engine: null, m: null, epg: null,
@@ -580,15 +599,19 @@
     // Barre de commandes : lecture/pause, pistes, chaînes, serveurs, quitter.
     renderButtons: function () {
       var m = Player.m;
-      var list = [{ label: '⏯  Lecture / pause', run: function () { Player.togglePause(); } }];
-      if (m.vod && m.tracks && m.tracks.audio && m.tracks.audio.length > 1) list.push({ label: '♪  Audio', run: function () { Player.openPanel('audio'); } });
-      if (m.vod && m.tracks && m.tracks.subtitles && m.tracks.subtitles.length) list.push({ label: '💬  Sous-titres', run: function () { Player.openPanel('subtitles'); } });
-      if (Player.zappable()) list.push({ label: '☰  Chaînes', run: function () { Player.openPanel('channels'); } });
-      if (Player.managed()) list.push({ label: '⇄  Serveurs', run: function () { Player.openPanel('servers'); } });
-      list.push({ label: '✕  Quitter', run: function () { Player.finish(true, null); } });
+      // Icônes dessinées : les symboles « ⏯ ☰ ⇄ 💬 » manquent dans les polices de certains téléviseurs.
+      var list = [{ icon: 'playpause', label: 'Lecture / pause', run: function () { Player.togglePause(); } }];
+      if (m.vod && m.tracks && m.tracks.audio && m.tracks.audio.length > 1) list.push({ icon: 'audio', label: 'Audio', run: function () { Player.openPanel('audio'); } });
+      if (m.vod && m.tracks && m.tracks.subtitles && m.tracks.subtitles.length) list.push({ icon: 'subtitles', label: 'Sous-titres', run: function () { Player.openPanel('subtitles'); } });
+      if (Player.zappable()) list.push({ icon: 'channels', label: 'Chaînes', run: function () { Player.openPanel('channels'); } });
+      if (Player.managed()) list.push({ icon: 'servers', label: 'Serveurs', run: function () { Player.openPanel('servers'); } });
+      list.push({ icon: 'close', label: 'Quitter', run: function () { Player.finish(true, null); } });
       Player.buttons.innerHTML = '';
       list.forEach(function (entry) {
-        Player.buttons.appendChild(el('button', { class: 'nw-btn', onclick: function () { entry.run(); } }, entry.label));
+        var button = el('button', { class: 'nw-btn', onclick: function () { entry.run(); } });
+        button.innerHTML = '<svg class="nw-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + PLAYER_ICONS[entry.icon] + '</svg>';
+        button.appendChild(document.createTextNode(entry.label));
+        Player.buttons.appendChild(button);
       });
     },
     renderTime: function () {

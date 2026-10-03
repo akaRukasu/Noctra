@@ -646,3 +646,5 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 /* Historique d'un serveur sur ce téléviseur (« 9/10 réussites », « Jamais essayé »). */
 .tag.stat { font-weight: 700; background: none; border: 1px solid var(--line); }
 .server:focus .tag.stat { color: #0b0d12; border-color: rgba(11, 13, 18, .25); }
+/* Icônes des boutons du lecteur LG / Samsung (dessinées, sans dépendre des polices du téléviseur). */
+.nw-btn .nw-icon { width: 1.15rem; height: 1.15rem; margin-right: .55rem; vertical-align: -.2rem; flex: none; }
