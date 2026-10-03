@@ -154,7 +154,7 @@ assert.match(home, /if \(sameOrigin\(target, server\)\) intent\.putExtra\(Noctra
 assert.match(home, /return !request\.getUrl\(\)\.toString\(\)\.startsWith\(appBase\);/, 'Le cadre principal reste sur l’accueil');
 // Lecture des chaînes : tampon élargi, tentatives, retour au direct, reconnexions.
 const stream = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
-assert.match(stream, /new DefaultMediaSourceFactory\(data\)\s*\.setLoadErrorHandlingPolicy\(new DefaultLoadErrorHandlingPolicy\(6\)\)/);
+assert.match(stream, /new DefaultMediaSourceFactory\(data\)[\s\S]{0,200}\.setLoadErrorHandlingPolicy\(new DefaultLoadErrorHandlingPolicy\(live && !played \? 3 : 6\)\)/);
 assert.match(stream, /\.setLoadControl\(buffer\)/);
 assert.match(stream, /error\.errorCode == BEHIND_LIVE_WINDOW && played/);
 assert.match(stream, /private static final int BEHIND_LIVE_WINDOW = 1002;/);
@@ -416,7 +416,7 @@ assert.match(tvApp, /if \(pass === 1 && candidate && \(candidate\._probeState ==
 assert.match(tvApp, /if \(pass === 0 && !\(candidate && candidate\._probeState === 'up'/, 'Bascule : serveurs vérifiés en ligne d’abord');
 assert.match(webHost, /maxBufferSize: 40 \* 1000 \* 1000, backBufferLength: 10,/, 'hls.js : mémoire des téléviseurs');
 assert.match(webHost, /capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000/);
-assert.match(webHost, /Player\.watch\(limit \|\| \(Player\.m && !Player\.m\.vod \? 15000 : 30000\)\);/);
+assert.match(webHost, /Player\.watch\(limit \|\| \(Player\.m && !Player\.m\.vod \? 12000 : 30000\)\);/);
 // Flux MPEG-TS continus (Northlive, Movix, RénéVéo : transport « mpegts ») lus comme tels.
 assert.match(tvApp, /function tsTransport\(item\)/);
 assert.match(tvApp, /tsTransport\(option\) \|\| tsTransport\(state\.channel\) \? 'video\/mp2t'/);
@@ -556,4 +556,10 @@ assert.match(webHost, /if \(keepalive\) init\.keepalive = true;/);
 // Serveurs TV : rapidité prise en compte, 6 tests à la fois.
 assert.match(tvApp, /function probePenalty\(option\)/);
 assert.match(tvApp, /for \(var worker = 0; worker < 6; worker\+\+\) next\(\);/);
+// Échec après lancement constaté plus vite : refus net (4xx) avant démarrage, délais de démarrage du direct réduits.
+assert.match(webHost, /code >= 400 && code < 500 && video\.readyState < 2 && Player\.m && !Player\.m\.vod/);
+const streamJavaFast = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamJavaFast, /LIVE_START_MS = 15000/);
+assert.match(streamJavaFast, /attempt == 0 \? LIVE_START_MS : LIVE_RETRY_START_MS/);
+assert.match(streamJavaFast, /new DefaultLoadErrorHandlingPolicy\(live && !played \? 3 : 6\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

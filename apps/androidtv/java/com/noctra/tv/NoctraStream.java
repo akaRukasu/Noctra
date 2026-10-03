@@ -64,6 +64,10 @@ final class NoctraStream {
     private static final int BEHIND_LIVE_WINDOW = 1002;
     private static final long POLL_MS = 500;
     private static final long START_TIMEOUT_MS = 30000;
+    // Direct qui ne démarre pas : 15 s au premier essai, 10 s au second (autre
+    // format), puis serveur suivant (avant : 30 s par essai, soit 1 min).
+    private static final long LIVE_START_MS = 15000;
+    private static final long LIVE_RETRY_START_MS = 10000;
     private static final long STALL_TIMEOUT_MS = 15000;
     private static final long SOFT_STALL_MS = 7000;
     private static final int MAX_SOFT_RETRIES = 2;
@@ -363,7 +367,9 @@ final class NoctraStream {
         // Direct : segments « déguisés » (faux en-tête d'image) nettoyés avant lecture.
         DataSource.Factory data = live ? new NoctraCleanDataSource.Factory(http) : http;
         DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(data)
-            .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(6));
+            // Avant la première image d'un direct : 3 nouvelles tentatives par
+            // requête (erreur vite constatée) ; ensuite 6 (coupures passagères).
+            .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(live && !played ? 3 : 6));
         DefaultLoadControl buffer = compact
             ? new DefaultLoadControl.Builder().setBufferDurationsMs(12000, 30000, 2000, 4000).build()
             : new DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 2500, 6000).build();
@@ -481,7 +487,7 @@ final class NoctraStream {
             return;
         }
         // Film : le serveur peut mettre du temps à préparer la conversion.
-        if (!played && now - startedAt > (live ? START_TIMEOUT_MS : START_TIMEOUT_MS * 2)) {
+        if (!played && now - startedAt > (live ? (attempt == 0 ? LIVE_START_MS : LIVE_RETRY_START_MS) : START_TIMEOUT_MS * 2)) {
             recover("Le flux ne répond pas.");
             return;
         }

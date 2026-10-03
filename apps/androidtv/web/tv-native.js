@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.31';
+  var VERSION = '1.1.32';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -492,6 +492,12 @@
           }, 0);
           return;
         }
+        // Direct pas encore démarré et refus net du serveur (403, 404, 410…) :
+        // serveur suivant tout de suite, sans nouvelles tentatives.
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && code >= 400 && code < 500 && video.readyState < 2 && Player.m && !Player.m.vod) {
+          self.onFatal('Flux HLS refusé (HTTP ' + code + ')');
+          return;
+        }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && retries < 3) { retries++; self.hls.startLoad(); return; }
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && retries < 3) { retries++; self.hls.recoverMediaError(); return; }
         self.onFatal('Flux HLS : ' + (data.details || 'erreur'));
@@ -625,9 +631,9 @@
       Player.currentUrl = url;
       Player.currentMime = mime;
       Player.setStatus('Connexion…');
-      // Direct : 15 s pour démarrer (10 s pour le second lecteur), puis serveur
+      // Direct : 12 s pour démarrer (10 s pour le second lecteur), puis serveur
       // suivant (la fenêtre des serveurs ou l'accueil en choisit un autre) ; film : 30 s.
-      Player.watch(limit || (Player.m && !Player.m.vod ? 15000 : 30000));
+      Player.watch(limit || (Player.m && !Player.m.vod ? 12000 : 30000));
       Player.engine.load(Player.url(url), mime, Player.library).then(function () {
         var attempt = Player.video.play();
         if (attempt && attempt.catch) attempt.catch(function () { /* lecture automatique refusée : OK relance */ });
