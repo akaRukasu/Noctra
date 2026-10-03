@@ -1,0 +1,180 @@
+/* Noctra 200.0.128 — « Passer », « À suivre » et transition entre épisodes. */
+
+/* Le bouton et l'écran « À suivre » de Noctra remplacent ceux de Jellyfin. */
+body.noctra-episode-flow .skip-button-container,
+body.noctra-episode-flow .skip-button,
+body.noctra-episode-flow .upNextContainer { display:none !important; }
+
+.noctra-skip-segment {
+  position:fixed;
+  right:max(2rem, env(safe-area-inset-right));
+  bottom:calc(7.2rem + env(safe-area-inset-bottom));
+  z-index:100010;
+  display:inline-flex;
+  align-items:center;
+  gap:.6rem;
+  min-height:48px;
+  padding:.75rem 1.35rem;
+  border:0;
+  border-radius:999px;
+  background:rgba(245,247,250,.95);
+  color:#0b0d12;
+  font:inherit;
+  font-size:1rem;
+  font-weight:800;
+  letter-spacing:.01em;
+  box-shadow:0 .55rem 1.8rem rgba(0,0,0,.45);
+  cursor:pointer;
+  opacity:0;
+  pointer-events:none;
+  transform:translateY(.6rem) scale(.97);
+  transition:opacity .28s ease, transform .38s cubic-bezier(.2,.8,.2,1), background .15s ease;
+}
+.noctra-skip-segment[data-visible="true"] { opacity:1; pointer-events:auto; transform:none; }
+.noctra-skip-segment:hover, .noctra-skip-segment:focus-visible { background:#fff; outline:none; box-shadow:0 0 0 3px rgba(130,110,255,.65), 0 .55rem 1.8rem rgba(0,0,0,.45); }
+.noctra-skip-segment-icon { font-style:normal; font-size:1.05em; }
+
+.noctra-up-next {
+  position:fixed;
+  right:max(2rem, env(safe-area-inset-right));
+  bottom:calc(6.6rem + env(safe-area-inset-bottom));
+  z-index:100011;
+  display:grid;
+  grid-template-columns:minmax(0, 15rem) minmax(0, 20rem);
+  gap:1.1rem;
+  align-items:center;
+  max-width:calc(100vw - 2.5rem);
+  padding:1rem;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:1.3rem;
+  background:linear-gradient(135deg, rgba(14,17,30,.94), rgba(8,10,20,.9));
+  color:#eef1f8;
+  box-shadow:0 1.6rem 3.6rem rgba(0,0,0,.55);
+  opacity:0;
+  transform:translateY(1rem) scale(.98);
+  transition:opacity .4s ease, transform .55s cubic-bezier(.2,.8,.2,1);
+}
+.noctra-up-next[data-visible="true"] { opacity:1; transform:none; }
+.noctra-up-next-art {
+  position:relative;
+  overflow:hidden;
+  aspect-ratio:16 / 9;
+  border-radius:.85rem;
+  background:#151a2b;
+}
+.noctra-up-next-art img { width:100%; height:100%; object-fit:cover; display:block; }
+.noctra-up-next-ring {
+  position:absolute;
+  inset:50% auto auto 50%;
+  width:3.4rem;
+  height:3.4rem;
+  transform:translate(-50%, -50%);
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:rgba(5,7,15,.55);
+}
+.noctra-up-next-ring svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+.noctra-up-next-ring circle { fill:none; stroke:rgba(255,255,255,.18); stroke-width:2.6; }
+.noctra-up-next-ring .noctra-up-next-ring-value { stroke:#fff; stroke-linecap:round; stroke-dasharray:100.5; stroke-dashoffset:100.5; transition:stroke-dashoffset .95s linear; }
+.noctra-up-next-ring b { position:relative; font-size:1.05rem; font-variant-numeric:tabular-nums; }
+.noctra-up-next-copy { display:grid; gap:.32rem; min-width:0; }
+.noctra-up-next-eyebrow { margin:0; color:#9aa3b8; font-size:.68rem; font-weight:700; letter-spacing:.16em; }
+.noctra-up-next-logo { max-width:13rem; max-height:3.2rem; object-fit:contain; object-position:left center; filter:drop-shadow(0 2px 10px rgba(0,0,0,.5)); }
+.noctra-up-next-series { font-size:.95rem; }
+.noctra-up-next-title { margin:0; font-size:1.02rem; line-height:1.25; }
+.noctra-up-next-overview {
+  margin:0;
+  color:#aeb6c8;
+  font-size:.8rem;
+  line-height:1.4;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.noctra-up-next-status { color:#9aa3b8; font-size:.72rem; }
+.noctra-up-next-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.3rem; }
+.noctra-up-next-actions button {
+  position:relative;
+  overflow:hidden;
+  min-height:40px;
+  padding:.55rem 1rem;
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;
+  background:rgba(255,255,255,.06);
+  color:#eef1f8;
+  font:inherit;
+  font-size:.86rem;
+  font-weight:700;
+  cursor:pointer;
+}
+.noctra-up-next-actions button:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(130,110,255,.65); }
+.noctra-up-next-play { background:#f5f7fa !important; color:#0b0d12 !important; border-color:transparent !important; }
+.noctra-up-next-play > span:last-child { position:relative; }
+.noctra-up-next-fill {
+  position:absolute;
+  inset:0;
+  background:rgba(111,86,239,.28);
+  transform-origin:left center;
+  transform:scaleX(var(--noctra-up-next-progress, 0));
+  transition:transform .95s linear;
+}
+@media (max-width:760px) {
+  .noctra-up-next {
+    left:max(.75rem, env(safe-area-inset-left));
+    right:max(.75rem, env(safe-area-inset-right));
+    bottom:calc(5.6rem + env(safe-area-inset-bottom));
+    grid-template-columns:7.5rem minmax(0, 1fr);
+    gap:.75rem;
+    padding:.75rem;
+  }
+  .noctra-up-next-overview { display:none; }
+  .noctra-up-next-logo { max-height:2.2rem; }
+  .noctra-skip-segment { right:max(1rem, env(safe-area-inset-right)); bottom:calc(5.8rem + env(safe-area-inset-bottom)); font-size:.92rem; }
+}
+
+/* Transition vers l'épisode suivant : image et titre pendant le chargement. */
+.noctra-episode-transition {
+  position:fixed;
+  inset:0;
+  z-index:100012;
+  display:grid;
+  align-items:end;
+  padding:clamp(1.5rem, 6vw, 5rem);
+  background:
+    linear-gradient(90deg, rgba(4,6,14,.92) 0%, rgba(4,6,14,.55) 45%, rgba(4,6,14,.2) 100%),
+    linear-gradient(0deg, rgba(4,6,14,.95) 0%, rgba(4,6,14,0) 55%),
+    var(--noctra-transition-image, none) center / cover no-repeat,
+    #04060e;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .6s ease;
+}
+.noctra-episode-transition[data-visible="true"] { opacity:1; }
+.noctra-episode-transition-copy { display:grid; gap:.7rem; max-width:min(36rem, 90vw); color:#f2f4fa; }
+.noctra-episode-transition-copy img { max-width:min(26rem, 70vw); max-height:7rem; object-fit:contain; object-position:left bottom; filter:drop-shadow(0 4px 18px rgba(0,0,0,.55)); }
+.noctra-episode-transition-copy strong { font-size:clamp(1.6rem, 4vw, 2.6rem); line-height:1.1; }
+.noctra-episode-transition-copy span { font-size:clamp(1rem, 2vw, 1.3rem); color:#c9d0e2; }
+.noctra-episode-transition-bar {
+  display:block;
+  width:9rem;
+  height:3px;
+  overflow:hidden;
+  border-radius:3px;
+  background:rgba(255,255,255,.14);
+}
+.noctra-episode-transition-bar::after {
+  content:'';
+  display:block;
+  width:40%;
+  height:100%;
+  border-radius:inherit;
+  background:#fff;
+}
+@media (prefers-reduced-motion:no-preference) {
+  .noctra-episode-transition-copy { animation:noctra-transition-rise .7s cubic-bezier(.2,.8,.2,1) both .1s; }
+  .noctra-episode-transition-bar::after { animation:noctra-transition-load 1.2s ease-in-out infinite; }
+}
+@keyframes noctra-transition-rise { from { opacity:0; transform:translateY(1rem); } to { opacity:1; transform:none; } }
+@keyframes noctra-transition-load { from { transform:translateX(-100%); } to { transform:translateX(250%); } }

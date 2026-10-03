@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.127 — logo de l'œuvre sur l'affiche d'accueil
+# Version actuelle : 200.0.128 — chaînes réunies, serveurs testés, génériques et épisodes comme sur Noctra TV
+
+La TV s'ouvre sur les chaînes de toutes les sources réunies (« Toutes les chaînes », « Chaînes sport »), avec la détection de serveurs de Noctra TV : serveurs testés, le meilleur vérifié lancé, relais automatique. Séries et animés : bouton « Passer l'intro / le générique », carte « À suivre » et transition entre épisodes. Détails : [MISE-A-JOUR-V200128.md](MISE-A-JOUR-V200128.md). Validation : `npm run test:v200128`.
+
+# Historique : 200.0.127 — logo de l'œuvre sur l'affiche d'accueil
 
 Comme sur la version TV, l'affiche « Continuer à regarder » montre le logo du film ou de la série à la place du titre. Logos préchargés et décodés d'avance : aucun délai à la rotation. Sans logo, le titre texte reste. Détails : [MISE-A-JOUR-V200127.md](MISE-A-JOUR-V200127.md). Validation : `npm run test:v200127`.
 
