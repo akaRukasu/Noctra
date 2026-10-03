@@ -375,7 +375,9 @@
   var LITE_UI = document.documentElement.classList.contains('web-host');
   function scrollTo(scroller, left, top) {
     var now = Date.now();
-    var smooth = !LITE_UI && !repeating && now - (scroller._movedAt || 0) > 450;
+    // LG / Samsung : défilement doux pour un appui isolé aussi, mais jamais
+    // pendant une rafale (touche maintenue).
+    var smooth = !repeating && now - (scroller._movedAt || 0) > (LITE_UI ? 600 : 450);
     scroller._movedAt = now;
     var options = { behavior: smooth ? 'smooth' : 'auto' };
     if (left !== null) options.left = left;
@@ -3429,7 +3431,17 @@
   // préparés par le serveur (affichés en cadre) ne peuvent pas s'ouvrir.
   function tvBrowserHost() { return Boolean(S.caps && S.caps.webPlayer === false); }
   function unavailableHere(option) {
-    if (!tvBrowserHost() || serverOrigin() === location.origin || optionKind(option) !== 'web') return false;
+    if (!tvBrowserHost()) return false;
+    var kind = optionKind(option);
+    // Flux direct qui exige une identité (Referer, Origin, User-Agent, cookie) :
+    // seul le lecteur Android l'envoie, un navigateur de téléviseur ne le peut pas.
+    if (kind === 'native' && option.headers && typeof option.headers === 'object') {
+      var needs = Object.keys(option.headers).some(function (name) { return /^(?:referr?er|origin|user-agent|cookie)$/i.test(name) && option.headers[name]; });
+      var relayed = false;
+      try { relayed = absolute(option.streamUrl).indexOf(serverOrigin() + '/') === 0; } catch (error) { relayed = false; }
+      if (needs && !relayed) return true;
+    }
+    if (serverOrigin() === location.origin || kind !== 'web') return false;
     try { return absolute(option.url).indexOf(serverOrigin() + '/') === 0; } catch (error) { return false; }
   }
   function rankOptions(options, key, provider) {
@@ -3612,27 +3624,43 @@
       return;
     }
     else if (seconds) {
+      var probes = probeServers(sheet, state);
       sheet.countdown(seconds, function () {
         if (!document.body.contains(sheet.node)) return;
-        // Premier serveur disponible : ceux trouvés hors ligne sont sautés.
-        var pick = null;
-        state.options.some(function (option, index) {
-          if (state.failed[index] || option._offline || unavailableHere(option)) return false;
-          pick = sheet.list.children[index];
-          return true;
+        // Premier serveur disponible : ceux trouvés hors ligne sont sautés. Si
+        // le test du premier candidat n'a pas encore répondu, il est attendu
+        // (4 s au plus) : on ne lance pas un serveur qui va échouer.
+        function choose() {
+          var pick = null;
+          state.options.some(function (option, index) {
+            if (state.failed[index] || option._offline || unavailableHere(option)) return false;
+            pick = sheet.list.children[index];
+            return true;
+          });
+          return pick;
+        }
+        var first = choose();
+        var firstIndex = first ? Array.prototype.indexOf.call(sheet.list.children, first) : -1;
+        var pending = firstIndex >= 0 && probes[firstIndex];
+        if (!pending) { (first || target).click(); return; }
+        sheet.status('Vérification du serveur…');
+        var timeout = new Promise(function (resolve) { setTimeout(resolve, 4000); });
+        Promise.race([pending, timeout]).then(function () {
+          if (!document.body.contains(sheet.node)) return;
+          (choose() || target).click();
         });
-        (pick || target).click();
       });
-      probeServers(sheet, state);
     }
     else sheet.status('Choisissez un serveur.');
     if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
   }
   // Vérification des serveurs pendant le compte à rebours (4 au plus à la fois).
   function probeServers(sheet, state) {
+    // Tests en cours, par position du serveur : le lancement automatique attend celui du premier.
+    var running = {};
     state.options.slice(0, 6).forEach(function (option, index) {
       if (state.failed[index] || !option._probe) return;
-      probeOption(option).then(function (result) {
+      running[index] = probeOption(option).then(function (result) {
         if (!result || !document.body.contains(sheet.node)) return;
         option._offline = result === 'down';
         if (option._offline) {
@@ -3646,6 +3674,7 @@
         option._probe.textContent = result === 'up' ? 'En ligne' : 'Hors ligne';
       });
     });
+    return running;
   }
   // Moteur web trop ancien (Android TV) : mise à jour proposée (Play Store).
   function addEngineButton(node) {

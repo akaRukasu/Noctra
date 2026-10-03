@@ -282,7 +282,7 @@ assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-nativ
 assert.match(tvApp, /S\.caps\.jellyfinPlayer !== false/);
 assert.match(tvApp, /S\.caps\.webPlayer !== false && native\('webPlayer'/);
 // Défilement : pas d'animations qui se chevauchent.
-assert.match(tvApp, /var smooth = !LITE_UI && !repeating && now - \(scroller\._movedAt \|\| 0\) > 450;/);
+assert.match(tvApp, /var smooth = !repeating && now - \(scroller\._movedAt \|\| 0\) > \(LITE_UI \? 600 : 450\);/);
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
 assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
 assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);
@@ -415,11 +415,19 @@ assert.match(tvApp, /function unavailableHere\(option\) \{/, 'LG / Samsung : lec
 assert.match(tvApp, /if \(!pass && candidate && \(candidate\._offline \|\| unavailableHere\(candidate\)\)\) continue;/, 'Bascule : serveurs hors ligne sautés');
 assert.match(webHost, /maxBufferSize: 40 \* 1000 \* 1000, backBufferLength: 10,/, 'hls.js : mémoire des téléviseurs');
 assert.match(webHost, /capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000/);
-assert.match(webHost, /Player\.watch\(Player\.m && !Player\.m\.vod \? 15000 : 30000\);/);
+assert.match(webHost, /Player\.watch\(limit \|\| \(Player\.m && !Player\.m\.vod \? 15000 : 30000\)\);/);
+// Coupure réseau : pas de second essai long avec l'autre bibliothèque.
+assert.match(webHost, /var networkError = Player\.video && Player\.video\.error && Player\.video\.error\.code === 2;/);
+assert.match(webHost, /Player\.start\(Player\.currentUrl, Player\.currentMime, 10000\)/);
 // LG / Samsung : affichage léger (pas de dégradés plein écran, flou, transitions ; défilement immédiat).
 assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \.aurora \{ display: none; \}/);
-assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\.web-host \*::before, html\.web-host \*::after \{ transition: none !important; \}/);
-assert.match(tvApp, /var smooth = !LITE_UI && !repeating/);
+// Allègement LG : seules les animations légères (transform/opacity) restent.
+assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\.web-host \*::before, html\.web-host \*::after \{ transition-property: transform, opacity !important; \}/);
+// Sources à en-têtes non relayées par le serveur : indisponibles sur LG/Samsung.
+assert.match(tvApp, /referr\?er\|origin\|user-agent\|cookie/);
+// Lancement automatique : attend le test du premier serveur.
+assert.match(tvApp, /Vérification du serveur…/);
+assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
 assert.match(tvApp, /if \(LITE_UI && \(Date\.now\(\) - lastMove < 4000/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);
 assert.match(webHost, /headers: token \? \{ 'x-noctra-token': token \} : undefined/);

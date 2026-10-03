@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.26';
+  var VERSION = '1.1.27';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -565,13 +565,13 @@
       if (Player.m && Player.m.vod && session && url.indexOf(JF + '/') === 0 && url.indexOf('ApiKey=') < 0) url += (url.indexOf('?') < 0 ? '?' : '&') + 'ApiKey=' + encodeURIComponent(session.token);
       return url;
     },
-    start: function (url, mime) {
+    start: function (url, mime, limit) {
       Player.currentUrl = url;
       Player.currentMime = mime;
       Player.setStatus('Connexion…');
-      // Direct : 15 s pour démarrer, puis serveur suivant (la fenêtre des
-      // serveurs ou l'accueil en choisit un autre) ; film : 30 s.
-      Player.watch(Player.m && !Player.m.vod ? 15000 : 30000);
+      // Direct : 15 s pour démarrer (10 s pour le second lecteur), puis serveur
+      // suivant (la fenêtre des serveurs ou l'accueil en choisit un autre) ; film : 30 s.
+      Player.watch(limit || (Player.m && !Player.m.vod ? 15000 : 30000));
       Player.engine.load(Player.url(url), mime, Player.library).then(function () {
         var attempt = Player.video.play();
         if (attempt && attempt.catch) attempt.catch(function () { /* lecture automatique refusée : OK relance */ });
@@ -586,10 +586,13 @@
     fail: function (message) {
       if (!Player.node || Player.finished) return;
       clearTimeout(Player.stallTimer);
-      // Lecteur du téléviseur en échec : second essai avec hls.js / mpegts.js.
-      if (!Player.library && Player.engine.canFallback() && !Player.played) {
+      // Lecteur du téléviseur en échec : second essai avec hls.js / mpegts.js
+      // (format mal reconnu), sauf erreur réseau (le flux ne répond pas : un
+      // autre lecteur n'y changerait rien, on passe au serveur suivant).
+      var networkError = Player.video && Player.video.error && Player.video.error.code === 2;
+      if (!Player.library && Player.engine.canFallback() && !Player.played && !networkError) {
         Player.library = true;
-        Player.start(Player.currentUrl, Player.currentMime);
+        Player.start(Player.currentUrl, Player.currentMime, 10000);
         return;
       }
       // Coupure après une lecture réussie : reconnexion espacée (1, 2, 4, 8 s).

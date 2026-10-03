@@ -654,17 +654,18 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 
 /* ── LG webOS / Samsung Tizen : affichage léger ─────────────────────
    Processeur et carte graphique de téléviseur : pas de fond en dégradés
-   plein écran, de flou, d'animations ni de transitions (chaque image
-   affichée coûte) ; la sélection change instantanément. */
+   plein écran ni de flou. Les animations de navigation restent (léger
+   agrandissement de l'élément choisi, en transformation seulement : rien à
+   redessiner) ; les transitions de couleurs et d'ombres, coûteuses, sont
+   retirées et la sélection est marquée par un contour. */
 html.web-host .aurora { display: none; }
 html.web-host body { background: #090a0f; }
 html.web-host #top { will-change: auto; background: #090a0f; }
-html.web-host *, html.web-host *::before, html.web-host *::after { transition: none !important; }
+html.web-host *, html.web-host *::before, html.web-host *::after { transition-property: transform, opacity !important; }
+html.web-host .card, html.web-host .tile, html.web-host .bouquet, html.web-host .lib-tile, html.web-host .chip, html.web-host .btn, html.web-host .nav { transition-duration: .12s !important; }
 html.web-host .premiere-ambient { display: none; }
-html.web-host .premiere-slide { will-change: auto; }
-html.web-host .reveal, html.web-host .premiere-copy.fresh { animation: none; }
-html.web-host .card:focus, html.web-host .tile:focus, html.web-host .bouquet:focus, html.web-host .lib-tile:focus { transform: none; }
-html.web-host .chip:focus, html.web-host .btn:focus, html.web-host .nav:focus { transform: none; }
+html.web-host .premiere-slide { will-change: auto; transition-duration: .35s !important; }
+html.web-host .reveal { animation: none; }
 /* Sélection : contour simple (moins coûteux qu'une ombre agrandie). */
 html.web-host .card:focus .art { box-shadow: none; outline: .22rem solid var(--focus); outline-offset: 0; }
 html.web-host .tile:focus, html.web-host .bouquet:focus, html.web-host .lib-tile:focus { box-shadow: none; outline: .2rem solid var(--focus); outline-offset: 0; }
