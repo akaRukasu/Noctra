@@ -3466,9 +3466,11 @@
         var health = optionHealth(option, key, entry.index, provider);
         var base = weight[optionKind(option)] + (option.compatPage ? 3 : 0) + (option.manualOnly ? 4 : 0) + (option.fallback ? 0.5 : 0)
           + (oldEngine && optionKind(option) === 'web' ? 1 : 0) + (host && optionKind(option) === 'web' ? 1.5 : 0)
-          + (unavailableHere(option) ? 20 : 0) - health.score;
+          + (unavailableHere(option) ? 20 : 0) - health.score
+          // Test du serveur : vérifié en ligne d'abord, hors ligne en dernier.
+          + (option._probeState === 'up' ? -6 : option._probeState === 'down' ? 8 : 0);
         // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
-        if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail') return base - 10;
+        if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail' && option._probeState !== 'down') return base - 10;
         return base;
       }
       return score(a) - score(b) || a.index - b.index;
@@ -3477,24 +3479,68 @@
   function engineOutdated() {
     return Boolean(S.engine && S.engine.major > 0 && S.engine.major < (S.engine.recommended || 110));
   }
-  // Disponibilité vérifiée pendant le compte à rebours : les flux relayés
-  // par le serveur Noctra (même origine) sont demandés ; une réponse qui
-  // n'est pas une liste de lecture marque le serveur « Hors ligne ».
+  // Disponibilité vérifiée pendant le compte à rebours, comme le ferait le
+  // lecteur : liste de lecture, sous-liste de qualité puis dernier segment
+  // (seuls les en-têtes sont attendus). Flux continu (MPEG-TS) : la réponse
+  // suffit. Résultat : 'up', 'down', ou '' (non testable ou trop lent : inconnu,
+  // jamais compté comme un échec). Les serveurs « automatiques » sont résolus
+  // puis leur premier flux est testé.
+  var PROBE_MS = 9000;
   function probeOption(option) {
-    if (optionKind(option) !== 'native' || option.headers) return Promise.resolve('');
+    var kind = optionKind(option);
+    if (kind === 'resolve') return probeResolve(option);
+    if (kind !== 'native' || option.headers) return Promise.resolve('');
     var url = absolute(option.streamUrl);
     if (url.indexOf(serverOrigin() + '/') !== 0) return Promise.resolve('');
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
-    var timer = setTimeout(function () { if (controller) controller.abort(); }, 7000);
-    return fetch(url, { headers: { 'x-noctra-token': S.token }, credentials: 'omit', cache: 'no-store', signal: controller ? controller.signal : undefined })
-      .then(function (response) {
+    var timedOut = false;
+    var timer = setTimeout(function () { timedOut = true; if (controller) controller.abort(); }, PROBE_MS);
+    function get(address) {
+      var own = address.indexOf(serverOrigin() + '/') === 0;
+      return fetch(address, { headers: own ? { 'x-noctra-token': S.token } : {}, credentials: 'omit', cache: 'no-store', signal: controller ? controller.signal : undefined });
+    }
+    function playlist(address, depth) {
+      return get(address).then(function (response) {
         if (!response.ok) return 'down';
         var type = String(response.headers.get('content-type') || '').toLowerCase();
-        // Flux continu (MPEG-TS…) : la réponse suffit, sans tout télécharger.
-        if (!/mpegurl|text|json/.test(type)) { if (controller) controller.abort(); return 'up'; }
-        return response.text().then(function (text) { return /^\s*#EXTM3U/.test(text) ? 'up' : 'down'; });
-      }, function () { return 'down'; })
-      .then(function (result) { clearTimeout(timer); return result; });
+        if (!/mpegurl|text|json/.test(type)) return depth ? 'up' : 'up';
+        return response.text().then(function (text) {
+          if (!/^\s*#EXTM3U/.test(text)) return 'down';
+          var uris = text.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(function (line) { return line && line.charAt(0) !== '#'; });
+          if (!uris.length) return 'down';
+          var base = response.url || address;
+          // Liste principale : première qualité ; liste de segments : le plus récent.
+          if (/#EXT-X-STREAM-INF/.test(text)) {
+            if (depth >= 2) return 'up';
+            return playlist(new URL(uris[0], base).toString(), depth + 1);
+          }
+          var segment = new URL(uris[uris.length - 1], base).toString();
+          // Segment chez un tiers : non vérifiable depuis la page (CORS), la liste suffit.
+          if (segment.indexOf(serverOrigin() + '/') !== 0) return 'up';
+          return get(segment).then(function (answer) { return answer.ok ? 'up' : 'down'; });
+        });
+      });
+    }
+    return playlist(url, 0).then(function (result) { return result; }, function () { return timedOut ? '' : 'down'; })
+      .then(function (result) { clearTimeout(timer); if (controller) controller.abort(); return result; });
+  }
+  function probeResolve(option) {
+    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 12000); });
+    return Promise.race([resolveOptions(option.resolveUrl).then(null, function () { return []; }), timeout]).then(function (list) {
+      if (!list) return '';
+      if (!list.length) return 'down';
+      list.forEach(function (item) {
+        item.renewUrl = option.resolveUrl;
+        if (!item.label) item.label = option.label;
+        inheritSource(item, option);
+      });
+      // Gardés pour le lancement : pas de seconde résolution.
+      option._resolved = list;
+      option._resolvedAt = Date.now();
+      var first = list.filter(function (item) { return optionKind(item) === 'native'; })[0];
+      if (!first) return '';
+      return probeOption(first).then(function (result) { first._probeState = result; return result; });
+    });
   }
 
   var playback = null;
@@ -3635,54 +3681,93 @@
       var probes = probeServers(sheet, state);
       sheet.countdown(seconds, function () {
         if (!document.body.contains(sheet.node)) return;
-        // Premier serveur disponible : ceux trouvés hors ligne sont sautés. Si
-        // le test du premier candidat n'a pas encore répondu, il est attendu
-        // (4 s au plus) : on ne lance pas un serveur qui va échouer.
-        function choose() {
-          var pick = null;
-          state.options.some(function (option, index) {
-            if (state.failed[index] || option._offline || unavailableHere(option)) return false;
-            pick = sheet.list.children[index];
-            return true;
-          });
-          return pick;
+        // Serveur lancé : le premier vérifié « en ligne », sans attendre au-delà
+        // de 6 s les tests en cours. Les serveurs placés avant lui doivent avoir
+        // fini leur test (un meilleur serveur pourrait encore répondre).
+        // Sans serveur vérifié : le premier qui n'est ni hors ligne ni en échec.
+        var deadline = Date.now() + 6000;
+        sheet.status('Vérification des serveurs…');
+        function usable(option, index) { return !state.failed[index] && option._probeState !== 'down' && !unavailableHere(option); }
+        function decide(final) {
+          var waiting = false;
+          for (var index = 0; index < state.options.length; index++) {
+            var option = state.options[index];
+            if (!usable(option, index)) continue;
+            if (option._probeState === 'up') return waiting && !final ? -1 : index;
+            if (probes.pending[index]) waiting = true;
+          }
+          if (waiting && !final) return -1;
+          for (index = 0; index < state.options.length; index++) if (usable(state.options[index], index)) return index;
+          return -2;
         }
-        var first = choose();
-        var firstIndex = first ? Array.prototype.indexOf.call(sheet.list.children, first) : -1;
-        var pending = firstIndex >= 0 && probes[firstIndex];
-        if (!pending) { (first || target).click(); return; }
-        sheet.status('Vérification du serveur…');
-        var timeout = new Promise(function (resolve) { setTimeout(resolve, 4000); });
-        Promise.race([pending, timeout]).then(function () {
-          if (!document.body.contains(sheet.node)) return;
-          (choose() || target).click();
-        });
+        function go(final) {
+          if (!document.body.contains(sheet.node)) return true;
+          var index = decide(final);
+          if (index === -1) return false;
+          launchBest(state, index >= 0 ? index : Math.max(0, first));
+          return true;
+        }
+        if (go(false)) return;
+        probes.onSettled = function () { if (Date.now() < deadline) { if (go(false)) probes.onSettled = null; } };
+        setTimeout(function () { if (probes.onSettled) { probes.onSettled = null; go(true); } }, Math.max(0, deadline - Date.now()));
       });
     }
     else sheet.status('Choisissez un serveur.');
     if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
   }
-  // Vérification des serveurs pendant le compte à rebours (4 au plus à la fois).
+  // Vérification des serveurs dès l'ouverture de la fenêtre : les 12 premiers,
+  // 4 à la fois, dans l'ordre de la liste.
   function probeServers(sheet, state) {
-    // Tests en cours, par position du serveur : le lancement automatique attend celui du premier.
-    var running = {};
-    state.options.slice(0, 6).forEach(function (option, index) {
-      if (state.failed[index] || !option._probe) return;
-      running[index] = probeOption(option).then(function (result) {
-        if (!result || !document.body.contains(sheet.node)) return;
-        option._offline = result === 'down';
-        if (option._offline) {
-          // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
-          recordHealth(state, index, false);
-          var recommended = option._probe.parentNode && option._probe.parentNode.querySelector('.tag.ok');
-          if (recommended) recommended.remove();
-        }
-        option._probe.style.display = '';
-        option._probe.className = 'tag ' + (result === 'up' ? 'good' : 'bad');
-        option._probe.textContent = result === 'up' ? 'En ligne' : 'Hors ligne';
-      });
+    var probes = { pending: {}, onSettled: null };
+    var queue = [];
+    state.options.slice(0, 12).forEach(function (option, index) {
+      if (state.failed[index] || !option._probe || unavailableHere(option)) return;
+      var kind = optionKind(option);
+      if (kind === 'web' || (kind === 'native' && option.headers)) return;
+      probes.pending[index] = true;
+      queue.push(index);
     });
-    return running;
+    function next() {
+      var index = queue.shift();
+      if (index === undefined) return;
+      var option = state.options[index];
+      option._probe.style.display = '';
+      option._probe.className = 'tag probe';
+      option._probe.textContent = 'Test…';
+      probeOption(option).then(function (result) {
+        delete probes.pending[index];
+        option._probeState = result;
+        if (document.body.contains(sheet.node)) {
+          if (result === 'down') {
+            // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
+            recordHealth(state, index, false);
+            var recommended = option._probe.parentNode && option._probe.parentNode.querySelector('.tag.ok');
+            if (recommended) recommended.remove();
+          }
+          option._probe.className = 'tag ' + (result === 'up' ? 'good' : result === 'down' ? 'bad' : 'probe');
+          option._probe.textContent = result === 'up' ? 'En ligne' : result === 'down' ? 'Hors ligne' : 'Sans réponse';
+        }
+        if (probes.onSettled) probes.onSettled();
+        next();
+      });
+    }
+    for (var worker = 0; worker < 4; worker++) next();
+    return probes;
+  }
+  // Lancement automatique : les serveurs sont reclassés avec le résultat des
+  // tests (vérifiés d'abord, hors ligne à la fin), pour que le changement de
+  // serveur en cas d'échec suive le même ordre.
+  function launchBest(state, index) {
+    var chosen = state.options[index];
+    var failed = state.options.filter(function (option, position) { return state.failed[position]; });
+    var ranked = rankOptions(state.options.filter(function (option) { return option !== chosen; }), state.key, state.channel.provider);
+    state.options = [chosen].concat(ranked);
+    state.failed = {};
+    state.options.forEach(function (option, position) { if (failed.indexOf(option) >= 0) state.failed[position] = true; });
+    closeLayer(true);
+    state.index = 0;
+    playback = state;
+    playOption();
   }
   // Moteur web trop ancien (Android TV) : mise à jour proposée (Play Store).
   function addEngineButton(node) {
@@ -3707,7 +3792,8 @@
     var label = state.channel._entries || option._prefix ? optionLabel(option, state.index) : [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
     if (optionKind(option) === 'resolve') {
       toast('Connexion à ' + optionLabel(option, state.index) + '…');
-      resolveOptions(option.resolveUrl).then(function (list) {
+      var fresh = option._resolved && Date.now() - option._resolvedAt < 60000;
+      (fresh ? Promise.resolve(option._resolved) : resolveOptions(option.resolveUrl)).then(function (list) {
         if (!list.length) throw new Error('Serveur vide');
         list.forEach(function (item) {
           item.renewUrl = option.resolveUrl;
@@ -3776,14 +3862,15 @@
     }
     markFailed(state);
     var next = -1;
-    // Serveur suivant : ni en échec, ni « hors ligne » au test, ni impossible ici
-    // (sauf s'il ne reste que ceux-là).
-    for (var pass = 0; pass < 2 && next < 0; pass++) {
+    // Serveur suivant : d'abord ceux vérifiés en ligne, puis ceux ni « hors
+    // ligne » au test ni impossibles ici, puis les autres.
+    for (var pass = 0; pass < 3 && next < 0; pass++) {
       for (var step = 1; step <= state.options.length; step++) {
         var index = (state.index + step) % state.options.length;
         var candidate = state.options[index];
         if (state.failed[index]) continue;
-        if (!pass && candidate && (candidate._offline || unavailableHere(candidate))) continue;
+        if (pass === 0 && !(candidate && candidate._probeState === 'up' && !unavailableHere(candidate))) continue;
+        if (pass === 1 && candidate && (candidate._probeState === 'down' || unavailableHere(candidate))) continue;
         next = index;
         break;
       }
@@ -3829,7 +3916,8 @@
   function failOption(state, message) {
     markFailed(state);
     var next = -1;
-    state.options.some(function (option, index) { if (!state.failed[index] && !option._offline && !unavailableHere(option)) { next = index; return true; } return false; });
+    state.options.some(function (option, index) { if (!state.failed[index] && option._probeState === 'up' && !unavailableHere(option)) { next = index; return true; } return false; });
+    if (next < 0) state.options.some(function (option, index) { if (!state.failed[index] && option._probeState !== 'down' && !unavailableHere(option)) { next = index; return true; } return false; });
     if (next < 0) state.options.some(function (option, index) { if (!state.failed[index]) { next = index; return true; } return false; });
     if (next < 0) {
       playback = null;

@@ -412,7 +412,8 @@ assert.match(webHost, /function needsToken\(url\) \{/, 'Flux du serveur Noctra :
 assert.match(webHost, /Player\.diag = el\('div', \{ class: 'nw-diag' \}\);/, 'Journal visible du lecteur LG / Samsung');
 assert.match(webHost, /Pas une liste HLS : essai en flux MPEG-TS/);
 assert.match(tvApp, /function unavailableHere\(option\) \{/, 'LG / Samsung : lecteurs web du serveur signalés « Indisponible ici »');
-assert.match(tvApp, /if \(!pass && candidate && \(candidate\._offline \|\| unavailableHere\(candidate\)\)\) continue;/, 'Bascule : serveurs hors ligne sautés');
+assert.match(tvApp, /if \(pass === 1 && candidate && \(candidate\._probeState === 'down' \|\| unavailableHere\(candidate\)\)\) continue;/, 'Bascule : serveurs hors ligne sautés');
+assert.match(tvApp, /if \(pass === 0 && !\(candidate && candidate\._probeState === 'up'/, 'Bascule : serveurs vérifiés en ligne d’abord');
 assert.match(webHost, /maxBufferSize: 40 \* 1000 \* 1000, backBufferLength: 10,/, 'hls.js : mémoire des téléviseurs');
 assert.match(webHost, /capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000/);
 assert.match(webHost, /Player\.watch\(limit \|\| \(Player\.m && !Player\.m\.vod \? 15000 : 30000\)\);/);
@@ -434,7 +435,13 @@ assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\
 // Sources à en-têtes non relayées par le serveur : indisponibles sur LG/Samsung.
 assert.match(tvApp, /referr\?er\|origin\|user-agent\|cookie/);
 // Lancement automatique : attend le test du premier serveur.
-assert.match(tvApp, /Vérification du serveur…/);
+assert.match(tvApp, /Vérification des serveurs…/);
+// Tests : liste, sous-liste et segment ; serveurs automatiques résolus et testés ; résultat dans le classement.
+assert.match(tvApp, /function probeResolve\(option\)/);
+assert.match(tvApp, /#EXT-X-STREAM-INF/);
+assert.match(tvApp, /option\._probeState === 'up' \? -6 : option\._probeState === 'down' \? 8 : 0/);
+assert.match(tvApp, /function launchBest\(state, index\)/);
+assert.match(tvApp, /state\.options\.slice\(0, 12\)/);
 assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
 assert.match(tvApp, /if \(LITE_UI && \(Date\.now\(\) - lastMove < 4000/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);
