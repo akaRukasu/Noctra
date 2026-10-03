@@ -282,7 +282,7 @@ assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-nativ
 assert.match(tvApp, /S\.caps\.jellyfinPlayer !== false/);
 assert.match(tvApp, /S\.caps\.webPlayer !== false && native\('webPlayer'/);
 // Défilement : pas d'animations qui se chevauchent.
-assert.match(tvApp, /var smooth = !repeating && now - \(scroller\._movedAt \|\| 0\) > 450;/);
+assert.match(tvApp, /var smooth = !LITE_UI && !repeating && now - \(scroller\._movedAt \|\| 0\) > 450;/);
 assert.match(tvApp, /function guideRow\(channel, onSelect\)/);
 assert.match(tvApp, /if \(event\.event === 'zap'\) \{ zap\(Number\(event\.delta\) \|\| 0\); return; \}/);
 assert.match(tvApp, /if \(result\.playSessionId && state\.playId && result\.playSessionId !== state\.playId\) return;/);
@@ -416,6 +416,11 @@ assert.match(tvApp, /if \(!pass && candidate && \(candidate\._offline \|\| unava
 assert.match(webHost, /maxBufferSize: 40 \* 1000 \* 1000, backBufferLength: 10,/, 'hls.js : mémoire des téléviseurs');
 assert.match(webHost, /capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000/);
 assert.match(webHost, /Player\.watch\(Player\.m && !Player\.m\.vod \? 15000 : 30000\);/);
+// LG / Samsung : affichage léger (pas de dégradés plein écran, flou, transitions ; défilement immédiat).
+assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \.aurora \{ display: none; \}/);
+assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\.web-host \*::before, html\.web-host \*::after \{ transition: none !important; \}/);
+assert.match(tvApp, /var smooth = !LITE_UI && !repeating/);
+assert.match(tvApp, /if \(LITE_UI && \(Date\.now\(\) - lastMove < 4000/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);
 assert.match(webHost, /headers: token \? \{ 'x-noctra-token': token \} : undefined/);
 assert.doesNotMatch(webHost, /label: '[⏯☰⇄💬]/, 'Icônes dessinées dans le lecteur LG / Samsung');

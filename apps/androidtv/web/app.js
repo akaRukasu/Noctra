@@ -371,9 +371,11 @@
   // Défilement animé seulement pour un appui isolé : des animations qui se
   // chevauchent (appuis rapprochés, touche maintenue) font sauter l'affichage ;
   // pendant une rafale, chaque déplacement est immédiat.
+  // LG webOS / Samsung Tizen (pont web) : affichage léger, défilement immédiat.
+  var LITE_UI = document.documentElement.classList.contains('web-host');
   function scrollTo(scroller, left, top) {
     var now = Date.now();
-    var smooth = !repeating && now - (scroller._movedAt || 0) > 450;
+    var smooth = !LITE_UI && !repeating && now - (scroller._movedAt || 0) > 450;
     scroller._movedAt = now;
     var options = { behavior: smooth ? 'smooth' : 'auto' };
     if (left !== null) options.left = left;
@@ -1608,9 +1610,12 @@
       timer = setTimeout(function () {
         if (!document.body.contains(node)) return;
         if (node.contains(document.activeElement) || layer.firstChild) { sync(); return; }
+        // LG / Samsung : pas de nouvelle image (décodage coûteux) pendant la
+        // navigation ni quand le carrousel n'est plus à l'écran.
+        if (LITE_UI && (Date.now() - lastMove < 4000 || main.scrollTop > node.offsetHeight / 2)) { sync(); return; }
         step(1);
         sync();
-      }, 8000);
+      }, LITE_UI ? 15000 : 8000);
     }
     render();
     sync();
