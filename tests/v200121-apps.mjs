@@ -409,6 +409,8 @@ assert.match(launcherJs, /location\.replace\('tv\/index\.html\?platform=' \+ enc
 assert.match(launcherJs, /function apiReachable\(base, done\) \{/);
 assert.match(webHost, /var SERVER = String\(params\.get\('server'\) \|\| ''\)/);
 assert.match(webHost, /function needsToken\(url\) \{/, 'Flux du serveur Noctra : jeton joint depuis l’appli');
+assert.match(webHost, /Player\.diag = el\('div', \{ class: 'nw-diag' \}\);/, 'Journal visible du lecteur LG / Samsung');
+assert.match(webHost, /Pas une liste HLS : essai en flux MPEG-TS/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);
 assert.match(webHost, /headers: token \? \{ 'x-noctra-token': token \} : undefined/);
 assert.doesNotMatch(webHost, /label: '[⏯☰⇄💬]/, 'Icônes dessinées dans le lecteur LG / Samsung');

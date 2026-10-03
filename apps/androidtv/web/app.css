@@ -648,3 +648,6 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .server:focus .tag.stat { color: #0b0d12; border-color: rgba(11, 13, 18, .25); }
 /* Icônes des boutons du lecteur LG / Samsung (dessinées, sans dépendre des polices du téléviseur). */
 .nw-btn .nw-icon { width: 1.15rem; height: 1.15rem; margin-right: .55rem; vertical-align: -.2rem; flex: none; }
+/* Journal du lecteur LG / Samsung : moteur, erreurs et réponses du serveur (à photographier). */
+.nw-diag { position: absolute; left: 2rem; bottom: 6.5rem; max-width: 60%; padding: .6rem .9rem; border-radius: .7rem; background: rgba(9, 10, 15, .82); color: #e7b96e; font-size: .78rem; line-height: 1.45; white-space: pre-line; z-index: 3; }
+.nw-diag:empty { display: none; }

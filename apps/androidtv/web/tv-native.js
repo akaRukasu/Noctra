@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.23';
+  var VERSION = '1.1.24';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -338,9 +338,10 @@
   });
 
   // ── Moteur vidéo (HLS / MPEG-TS / fichier) ────────────────────────────
-  function Engine(video, onFatal) {
+  function Engine(video, onFatal, onInfo) {
     this.video = video;
     this.onFatal = onFatal;
+    this.onInfo = onInfo || function () {};
     this.hls = null;
     this.ts = null;
   }
@@ -351,6 +352,14 @@
     this.ts = null;
     try { this.video.removeAttribute('src'); this.video.load(); } catch (error) { /* vidéo retirée */ }
   };
+  // Adresse abrégée pour le journal du lecteur : hôte et fin du chemin.
+  function shortUrl(url) {
+    try {
+      var parsed = new URL(url, location.href);
+      var path = parsed.pathname.length > 28 ? '…' + parsed.pathname.slice(-26) : parsed.pathname;
+      return (parsed.origin === SERVER_ORIGIN ? 'serveur Noctra' : parsed.hostname) + path;
+    } catch (error) { return String(url).slice(0, 40); }
+  }
   // Flux relayé par le serveur Noctra, depuis l'interface intégrée à l'appli :
   // le serveur exige le jeton (pas de cookie de session ici). Le lecteur du
   // téléviseur ne peut pas l'envoyer : hls.js / mpegts.js le joignent à
@@ -365,6 +374,8 @@
     this.destroy();
     var token = needsToken(url) ? session.token : '';
     if (token) library = true;
+    var where = shortUrl(url);
+    if (String(mime || '').indexOf('mp2t') < 0) this.triedTs = false;
     var hint = String(mime || '').toLowerCase();
     var ts = hint.indexOf('mp2t') >= 0 || /\.ts(\?|$)/i.test(url);
     var file = /\.(mp4|m4v|mkv|webm|mov)(\?|$)/i.test(url);
@@ -372,6 +383,7 @@
     var nativeHls = Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'));
     var nativeTs = Boolean(video.canPlayType('video/mp2t'));
     if (!library && ((hls && nativeHls) || (ts && nativeTs) || (!hls && !ts))) {
+      self.onInfo('Lecteur du téléviseur · ' + where);
       video.src = url;
       return Promise.resolve('native');
     }
@@ -381,16 +393,22 @@
         self.ts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: url },
           { enableStashBuffer: true, liveBufferLatencyChasing: false, headers: token ? { 'x-noctra-token': token } : undefined });
         self.ts.attachMediaElement(video);
-        self.ts.on(mpegts.Events.ERROR, function (type, detail) { self.onFatal('Flux MPEG-TS : ' + detail); });
+        self.onInfo('mpegts.js' + (token ? ' · jeton joint' : '') + ' · ' + where);
+        self.ts.on(mpegts.Events.ERROR, function (type, detail, info) {
+          self.onInfo('Erreur MPEG-TS : ' + type + ' / ' + detail + (info && info.code ? ' · HTTP ' + info.code : ''));
+          self.onFatal('Flux MPEG-TS : ' + detail);
+        });
         self.ts.load();
         return 'mpegts';
       });
     }
     return loadScript(BASE + '/vendor/hls.min.js').then(function () {
       if (!window.Hls || !Hls.isSupported()) {
+        self.onInfo('hls.js indisponible sur ce téléviseur' + (token ? ' : le jeton ne peut pas être joint' : ''));
         if (nativeHls) { video.src = url; return 'native'; }
         throw new Error('HLS non pris en charge par ce téléviseur');
       }
+      self.onInfo('hls.js ' + (Hls.version || '') + (token ? ' · jeton joint' : '') + ' · ' + where);
       var retries = 0;
       // Direct : le lecteur ne charge que jusqu'au bord du direct ; 5 segments
       // derrière (au lieu de 3) et pas d'accélération pour le rattraper : plus
@@ -399,7 +417,25 @@
         maxLiveSyncPlaybackRate: 1, fragLoadingMaxRetry: 8, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6,
         xhrSetup: token ? function (xhr, address) { if (String(address).indexOf(BASE + '/') === 0) xhr.setRequestHeader('x-noctra-token', token); } : undefined });
       self.hls.on(Hls.Events.ERROR, function (event, data) {
-        if (!data || !data.fatal) return;
+        if (!data) return;
+        var code = data.response && data.response.code;
+        self.onInfo((data.fatal ? 'Erreur HLS : ' : 'Alerte HLS : ') + data.type + ' / ' + data.details + (code !== undefined ? ' · HTTP ' + code : '')
+          + (data.url || (data.frag && data.frag.url) ? ' · ' + shortUrl(data.url || data.frag.url) : ''));
+        if (!data.fatal) return;
+        // Pas une liste HLS (flux MPEG-TS continu relayé par le serveur) : essai
+        // avec mpegts.js, comme le lecteur Android TV (HLS puis flux direct).
+        if (!self.triedTs && (data.details === 'manifestParsingError' || data.details === 'manifestIncompatibleCodecsError')) {
+          self.triedTs = true;
+          self.onInfo('Pas une liste HLS : essai en flux MPEG-TS');
+          // Après l'événement : hls.js n'est pas détruit pendant son propre traitement.
+          setTimeout(function () {
+            self.load(url, 'video/mp2t', true).then(function () {
+              var attempt = video.play();
+              if (attempt && attempt.catch) attempt.catch(function () { /* lecture automatique refusée */ });
+            }, function (error) { self.onFatal(error.message); });
+          }, 0);
+          return;
+        }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && retries < 3) { retries++; self.hls.startLoad(); return; }
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && retries < 3) { retries++; self.hls.recoverMediaError(); return; }
         self.onFatal('Flux HLS : ' + (data.details || 'erreur'));
@@ -446,6 +482,10 @@
       Player.next = el('div', { class: 'nw-next' });
       Player.banner = el('div', { class: 'nw-banner' }, Player.title, Player.subtitle, Player.now, Player.bar, Player.next);
       Player.status = el('div', { class: 'nw-state' });
+      // Journal du lecteur (moteur, erreurs, réponses du serveur) : visible tant
+      // que la lecture n'a pas démarré, et avec le bandeau (OK).
+      Player.diag = el('div', { class: 'nw-diag' });
+      Player.diagLines = [];
       Player.sync = el('div', { class: 'nw-sync', text: m.sync ? 'SyncPlay · en attente du groupe…' : '' });
       Player.time = el('div', { class: 'nw-time' });
       Player.seek = el('div', { class: 'nw-seek' }, el('i'));
@@ -454,13 +494,14 @@
       Player.panelTitle = el('h3');
       Player.panelList = el('div', { class: 'nw-list' });
       Player.panel = el('div', { class: 'nw-panel' }, Player.panelTitle, el('p', { class: 'nw-muted', text: 'OK : choisir · Retour : fermer' }), Player.panelList);
-      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.sync, Player.controls, Player.panel);
+      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.diag, Player.sync, Player.controls, Player.panel);
       if (!m.sync) Player.sync.style.display = 'none';
       document.body.appendChild(Player.node);
-      Player.engine = new Engine(video, function (message) { Player.fail(message); });
+      Player.engine = new Engine(video, function (message) { Player.fail(message); }, function (line) { Player.log(line); });
       video.addEventListener('playing', function () {
         clearTimeout(Player.stallTimer);
         Player.setStatus(null);
+        Player.diag.style.display = 'none';
         if (!Player.played && Player.report) Player.report.start(Player.position());
         // Direct lancé : signalé à l'accueil (fiabilité du serveur).
         if (!Player.played && !m.vod) send({ type: 'playerEvent', event: 'live', action: 'playing', playSessionId: Player.playSessionId });
@@ -476,6 +517,7 @@
       video.addEventListener('error', function () {
         // Vidéo vidée lors d'un changement de flux : pas une erreur.
         if (!video.getAttribute('src') && !video.currentSrc) return;
+        Player.log('Erreur vidéo du téléviseur : ' + (video.error ? 'code ' + video.error.code + (video.error.message ? ' · ' + video.error.message : '') : 'inconnue'));
         Player.fail('Lecture impossible (' + (video.error ? 'code ' + video.error.code : 'erreur') + ').');
       });
       video.addEventListener('ended', function () { if (m.vod) Player.finish(true, null, false, true); else Player.fail('Le direct s’est arrêté.'); });
@@ -549,6 +591,7 @@
         setTimeout(function () { if (Player.node && !Player.finished) Player.start(Player.currentUrl, Player.currentMime); }, delay);
         return;
       }
+      Player.log('Échec : ' + (message || 'flux indisponible'));
       if (Player.managed() && !Player.failure) {
         // L'accueil choisit un autre serveur et renvoie son flux (« load »).
         Player.failure = message || 'Flux indisponible.';
@@ -559,6 +602,14 @@
         return;
       }
       Player.finish(false, message);
+    },
+    log: function (line) {
+      if (!Player.diag) return;
+      var time = new Date();
+      Player.diagLines.push(('0' + time.getMinutes()).slice(-2) + ':' + ('0' + time.getSeconds()).slice(-2) + '  ' + line);
+      if (Player.diagLines.length > 6) Player.diagLines.shift();
+      Player.diag.textContent = Player.diagLines.join('\n');
+      if (!Player.played) Player.diag.style.display = '';
     },
     position: function () { return Player.video ? Math.floor((Player.video.currentTime || 0) * 1000) : 0; },
     setStatus: function (text) {
@@ -592,8 +643,12 @@
       if (!Player.banner) return;
       Player.renderGuide();
       Player.banner.classList.add('shown');
+      if (Player.diag && Player.diagLines.length) Player.diag.style.display = '';
       clearTimeout(Player.bannerTimer);
-      Player.bannerTimer = setTimeout(function () { if (Player.banner) Player.banner.classList.remove('shown'); }, Player.epg ? 7000 : 5000);
+      Player.bannerTimer = setTimeout(function () {
+        if (Player.banner) Player.banner.classList.remove('shown');
+        if (Player.diag && Player.played) Player.diag.style.display = 'none';
+      }, Player.epg ? 7000 : 5000);
     },
 
     // Barre de commandes : lecture/pause, pistes, chaînes, serveurs, quitter.
