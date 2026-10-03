@@ -293,7 +293,7 @@ assert.match(tvApp, /function openStoredChannel\(entry\) \{/);
 assert.match(tvApp, /if \(favoriteMode\) \{ toggleFavorite\(channel, source, ctx\); refreshFavoriteMarks\(channel, source\); \}/);
 assert.match(tvApp, /favorite = h\('button', \{ class: 'btn f picker-fav'/);
 // Santé des serveurs, vérification pendant le compte à rebours, moteur web ancien.
-assert.match(tvApp, /var HEALTH_KEY = 'noctra-tv-health-v1';/);
+assert.match(tvApp, /var HEALTH_KEY = 'noctra-tv-health-v2';/);
 assert.match(tvApp, /function probeOption\(option\) \{/);
 assert.match(tvApp, /if \(event\.event === 'live'\)/);
 assert.match(tvApp, /native\('updateWebEngine'\)/);
@@ -416,6 +416,14 @@ assert.match(tvApp, /if \(!pass && candidate && \(candidate\._offline \|\| unava
 assert.match(webHost, /maxBufferSize: 40 \* 1000 \* 1000, backBufferLength: 10,/, 'hls.js : mémoire des téléviseurs');
 assert.match(webHost, /capLevelToPlayerSize: true, abrEwmaDefaultEstimate: 6000000/);
 assert.match(webHost, /Player\.watch\(limit \|\| \(Player\.m && !Player\.m\.vod \? 15000 : 30000\)\);/);
+// Flux MPEG-TS continus (Northlive, Movix, RénéVéo : transport « mpegts ») lus comme tels.
+assert.match(tvApp, /function tsTransport\(item\)/);
+assert.match(tvApp, /tsTransport\(option\) \|\| tsTransport\(state\.channel\) \? 'video\/mp2t'/);
+assert.doesNotMatch(tvApp, /transport === 'ts'/);
+// Flux relayé de type inconnu : premiers octets lus (HLS ou MPEG-TS continu).
+assert.match(webHost, /function sniffStream\(url, token\)/);
+assert.match(webHost, /if \(hls && !hint && url\.indexOf\('\/api\/tv\/stream\/'\) >= 0\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivity.java'), /matches\("\(\?i\)ts\|mpegts\|mpeg-ts"\)/);
 // Coupure réseau : pas de second essai long avec l'autre bibliothèque.
 assert.match(webHost, /var networkError = Player\.video && Player\.video\.error && Player\.video\.error\.code === 2;/);
 assert.match(webHost, /Player\.start\(Player\.currentUrl, Player\.currentMime, 10000\)/);

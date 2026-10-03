@@ -3280,6 +3280,11 @@
   }
 
   // ── Serveurs d'une chaîne ──────────────────────────────────────────
+  // Flux MPEG-TS continu (« ts » des catalogues, « mpegts » de Northlive, Movix,
+  // RénéVéo) : à lire comme tel, pas comme une liste HLS qui ne se termine jamais.
+  function tsTransport(item) {
+    return Boolean(item && (/^(?:ts|mpegts|mpeg-ts)$/i.test(String(item.transport || '')) || /^mpeg-ts$/i.test(String(item.streamKind || ''))));
+  }
   function optionKind(option) {
     if (option.streamUrl || option.playbackType === 'stream') return 'native';
     if (option.resolveUrl && !option.url) return 'resolve';
@@ -3344,7 +3349,10 @@
   // d'une chaîne, et de chaque famille de serveurs (fournisseur + type de
   // lecteur + hôte), toutes chaînes confondues. Un échec récent fait passer
   // le serveur après les autres ; un serveur fiable passe devant.
-  var HEALTH_KEY = 'noctra-tv-health-v1';
+  // v2 : historique remis à zéro (échecs dus aux flux MPEG-TS mal reconnus
+  // sur LG/Samsung, qui écartaient à tort Northlive, Movix et RénéVéo).
+  var HEALTH_KEY = 'noctra-tv-health-v2';
+  try { localStorage.removeItem('noctra-tv-health-v1'); } catch (error) { /* stockage indisponible */ }
   var HEALTH_RECENT_MS = 20 * 60000;
   var healthData = null;
   function healthStore() {
@@ -3718,7 +3726,7 @@
     }
     state.startedAt = Date.now();
     if (option.streamUrl) {
-      var mime = option.mime || (option.transport === 'ts' || state.channel.transport === 'ts' ? 'video/mp2t' : '');
+      var mime = option.mime || (tsTransport(option) || tsTransport(state.channel) ? 'video/mp2t' : '');
       state.playId = playId();
       var request = { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null, epg: epgPayload(state), playSessionId: state.playId };
       // Zapping : même lecteur, nouveau flux.
@@ -4118,7 +4126,7 @@
     options.forEach(function (option, index) {
       if (option.manualOnly) return;
       var label = optionLabel(option, index);
-      if (option.streamUrl) list.push({ label: label, url: absolute(option.streamUrl), mime: option.transport === 'ts' || channel.transport === 'ts' ? 'video/mp2t' : '' });
+      if (option.streamUrl) list.push({ label: label, url: absolute(option.streamUrl), mime: tsTransport(option) || tsTransport(channel) ? 'video/mp2t' : '' });
       else if (optionKind(option) === 'resolve') list.push({ label: label, resolve: absolute(option.resolveUrl) });
     });
     // Serveurs directs d'abord.
@@ -4140,7 +4148,7 @@
         list.push({
           title: channel.name, subtitle: channel.provider || '',
           group: entry.label + (channel.group ? ' · ' + channel.group : ''),
-          stream: stream, resolver: resolver, mime: channel.transport === 'ts' ? 'video/mp2t' : ''
+          stream: stream, resolver: resolver, mime: tsTransport(channel) ? 'video/mp2t' : ''
         });
       });
     });

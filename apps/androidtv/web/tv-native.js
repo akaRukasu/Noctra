@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.27';
+  var VERSION = '1.1.28';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -344,8 +344,44 @@
     this.onInfo = onInfo || function () {};
     this.hls = null;
     this.ts = null;
+    this.loads = 0;
+  }
+  // Flux relayé sans type connu : ses premiers octets disent s'il s'agit d'une
+  // liste HLS (« #EXTM3U ») ou d'un flux MPEG-TS continu (octet de synchro 0x47),
+  // que hls.js attendrait sans fin comme une liste. 6 s au plus, sinon HLS.
+  function sniffStream(url, token) {
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      var done = false;
+      function finish(kind) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { xhr.abort(); } catch (error) { /* déjà fermé */ }
+        resolve(kind);
+      }
+      function check() {
+        var text = xhr.responseText || '';
+        if (/^\s*#EXTM3U/.test(text) || /#EXT-X-/.test(text)) return finish('hls');
+        var start = text.replace(/^\s+/, '');
+        if (start.length && (start.charCodeAt(0) & 0xff) === 0x47 && text.length >= 188) return finish('ts');
+        if (text.length > 4096) finish('');
+      }
+      var timer = setTimeout(function () { finish(''); }, 6000);
+      try {
+        xhr.open('GET', url, true);
+        if (token) xhr.setRequestHeader('x-noctra-token', token);
+        xhr.overrideMimeType('text/plain; charset=x-user-defined');
+        xhr.onprogress = check;
+        xhr.onreadystatechange = function () { if (xhr.readyState >= 3) check(); if (xhr.readyState === 4) finish(''); };
+        xhr.onerror = function () { finish(''); };
+        xhr.send();
+      } catch (error) { finish(''); }
+    });
   }
   Engine.prototype.destroy = function () {
+    // Un test de type en cours (sniffStream) n'aboutit plus à un chargement.
+    this.loads++;
     try { if (this.hls) this.hls.destroy(); } catch (error) { /* déjà libéré */ }
     try { if (this.ts) { this.ts.unload(); this.ts.detachMediaElement(); this.ts.destroy(); } } catch (error) { /* déjà libéré */ }
     this.hls = null;
@@ -386,6 +422,18 @@
       self.onInfo('Lecteur du téléviseur · ' + where);
       video.src = url;
       return Promise.resolve('native');
+    }
+    if (hls && !hint && url.indexOf('/api/tv/stream/') >= 0) {
+      var load = this.loads;
+      return sniffStream(url, token).then(function (kind) {
+        if (load !== self.loads) return 'replaced';
+        self.onInfo(kind === 'ts' ? 'Flux MPEG-TS continu détecté' : kind === 'hls' ? 'Liste HLS détectée' : 'Type du flux non reconnu : essai HLS');
+        // Laisse au serveur le temps de fermer la connexion du test (fournisseurs à connexion unique).
+        return new Promise(function (resolve) { setTimeout(resolve, kind === 'ts' ? 300 : 0); }).then(function () {
+          if (load !== self.loads) return 'replaced';
+          return self.load(url, kind === 'ts' ? 'video/mp2t' : 'application/vnd.apple.mpegurl', true);
+        });
+      });
     }
     if (ts) {
       return loadScript(BASE + '/vendor/mpegts.js').then(function () {
@@ -1239,7 +1287,7 @@
           var direct = [], automatic = [];
           list.forEach(function (item, i) {
             if (!item || item.manualOnly) return;
-            if (item.streamUrl) direct.push({ label: item.label || 'Flux direct', url: new URL(item.streamUrl, channel.resolver).toString(), mime: item.transport === 'ts' ? 'video/mp2t' : (channel.mime || '') });
+            if (item.streamUrl) direct.push({ label: item.label || 'Flux direct', url: new URL(item.streamUrl, channel.resolver).toString(), mime: /^(?:ts|mpegts|mpeg-ts)$/i.test(String(item.transport || '')) ? 'video/mp2t' : (channel.mime || '') });
             else if (item.resolveUrl && !item.url) automatic.push({ label: item.label || 'Serveur ' + (i + 1), resolve: new URL(item.resolveUrl, channel.resolver).toString(), mime: channel.mime || '' });
           });
           return direct.concat(automatic);

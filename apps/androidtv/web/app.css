@@ -341,6 +341,7 @@ h1, h2, h3, p { margin: 0; }
 .server.failed .name { color: var(--muted); text-decoration: line-through; }
 .server:focus { outline: none; transform: scale(1.02); background: var(--text); color: #0b0d12; }
 .server:focus b { background: #0b0d12; color: var(--text); }
+.server:focus .name { color: #0b0d12; }
 .tag { display: inline-block; margin-left: .4rem; padding: .15rem .5rem; border-radius: .4rem; font-size: .72rem; font-weight: 800; background: rgba(255, 255, 255, .08); color: var(--muted); }
 .tag.native { color: var(--accent); }
 .tag.resolve { color: var(--blue); }

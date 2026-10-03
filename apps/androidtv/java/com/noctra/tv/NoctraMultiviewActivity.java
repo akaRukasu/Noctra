@@ -556,7 +556,7 @@ public class NoctraMultiviewActivity extends Activity {
                 option.label = item.optString("label", "");
                 option.url = "";
                 option.resolve = "";
-                option.mime = "ts".equals(item.optString("transport")) ? "video/mp2t" : mime;
+                option.mime = item.optString("transport").matches("(?i)ts|mpegts|mpeg-ts") ? "video/mp2t" : mime;
                 if (!stream.isEmpty()) {
                     option.url = new URL(base, stream).toString();
                     if (option.label.isEmpty()) option.label = "Flux direct";
