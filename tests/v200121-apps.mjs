@@ -562,4 +562,7 @@ const streamJavaFast = await read('apps/androidtv/java/com/noctra/tv/NoctraStrea
 assert.match(streamJavaFast, /LIVE_START_MS = 15000/);
 assert.match(streamJavaFast, /attempt == 0 \? LIVE_START_MS : LIVE_RETRY_START_MS/);
 assert.match(streamJavaFast, /new DefaultLoadErrorHandlingPolicy\(live && !played \? 3 : 6\)/);
+// Doublons : abréviations et anciens noms rapprochés (TF1SF, TCM, Canal+ Family, Nat Geo, France 3 National, OCS Ciné+…).
+assert.match(tvApp, /tf1sf: 'tf1seriesfilms', tcm: 'tcmcinema', canalplusfamily: 'canalpluskids'/);
+assert.match(tvApp, /key = key\.replace\(\/\^ocs\(\?=cineplus\)\/, ''\);/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

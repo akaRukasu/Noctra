@@ -2269,7 +2269,13 @@
   // Anciens noms et écritures courantes → un seul nom.
   var NAME_ALIASES = { hd1: 'tf1seriesfilms', tf1seriefilm: 'tf1seriesfilms', nt1: 'tfx', numero23: 'rmcstory', d8: 'c8', d17: 'cstar', itele: 'cnews',
     lequipe21: 'lequipe', lequipetv: 'lequipe', franceinfotv: 'franceinfo', lcpan: 'lcp', lcpassembleenationale: 'lcp', artefrance: 'arte',
-    canal: 'canalplus', canalplusfrance: 'canalplus', eurosport: 'eurosport1', beinsport: 'beinsport1', rmcsport: 'rmcsport1', tv5: 'tv5monde', france24fr: 'france24' };
+    canal: 'canalplus', canalplusfrance: 'canalplus', eurosport: 'eurosport1', beinsport: 'beinsport1', rmcsport: 'rmcsport1', tv5: 'tv5monde', france24fr: 'france24',
+    // Abréviations, noms longs et anciens noms vus dans les listes.
+    tf1sf: 'tf1seriesfilms', tcm: 'tcmcinema', canalplusfamily: 'canalpluskids', cineplusfamiz: 'cineplusfamily', cineplusclassique: 'cineplusclassic',
+    cinepremier: 'cinepluspremier', natgeo: 'nationalgeographic', natgeowild: 'nationalgeographicwild', france3national: 'france3', okoofrance4: 'france4',
+    canalplusfootball: 'canalplusfoot', canalplusdocumentaires: 'canalplusdocs', automotolachaine: 'automoto', lachaineinfo: 'lci',
+    lachaineparlementaire: 'lcp', tv5mondefbs: 'tv5monde', tv5mondefrancebelgiquesuisse: 'tv5monde', disneyjr: 'disneyjunior', l1plus: 'ligue1plus',
+    bfmgrandparis: 'bfmparis', i24newsfrancais: 'i24news' };
   var unifiedName = remembered(function (name) {
     var words = brandName(name).replace(/^la chaine (?=l ?equipe)/, '').split(' ').filter(Boolean).map(function (word, index) {
       if (word === 'sports') return 'sport';
@@ -2284,6 +2290,8 @@
     var key = words.join('');
     if (key.length > 4 && /tv$/.test(key) && !/^(?:tv|mtv|btv)/.test(key)) key = key.slice(0, -2);
     key = key.replace(/^cplus/, 'canalplus').replace(/^beinsports?/, 'beinsport').replace(/^bein(?=max\d|\d)/, 'beinsport');
+    // « OCS Ciné+ Frisson » : ancien nom des chaînes Ciné+.
+    key = key.replace(/^ocs(?=cineplus)/, '');
     return NAME_ALIASES[key] || key;
   });
   // Clé de rapprochement : même nom et même pays (« DE: Eurosport 1 » n'est
