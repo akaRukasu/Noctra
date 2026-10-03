@@ -401,6 +401,16 @@ const compatJava = await read('apps/androidtv/java/com/noctra/tv/NoctraJsCompat.
 assert.match(compatJava, /String tag = "<script>" \+ POLYFILL \+ HLS_TUNING \+ "<\/script>";/, 'Lecteurs hls.js : réserve plus grande');
 assert.match(tvApp, /fillPicker\(sheet, playback, trusted \? 2 : 3\);/, 'Fiabilité des serveurs affichée avant le lancement');
 assert.match(tvApp, /function healthText\(option, key, index, provider\) \{/);
+// LG webOS et Samsung Tizen : interface Android TV intégrée au paquet (tv/).
+const buildTv = await read('apps/scripts/build-tv.mjs');
+assert.match(buildTv, /files\.set\('tv\/' \+ relative\(tvRoot, file\)/);
+const launcherJs = await read('apps/shared/launcher/launcher.js');
+assert.match(launcherJs, /location\.replace\('tv\/index\.html\?platform=' \+ encodeURIComponent\(platform\) \+ '&server=' \+ encodeURIComponent\(base\)\);/);
+assert.match(launcherJs, /function apiReachable\(base, done\) \{/);
+assert.match(webHost, /var SERVER = String\(params\.get\('server'\) \|\| ''\)/);
+assert.match(tvApp, /function serverOrigin\(\) \{/);
+assert.match(serverCode, /if \(path\.startsWith\('\/api\/'\) && req\.headers\.origin\) \{\n\s*res\.setHeader\('access-control-allow-origin', '\*'\);/);
+assert.doesNotMatch(serverCode, /access-control-allow-credentials/, 'Pas de cookie lisible depuis une autre origine');
 assert.match(tvData, /"iptvLogos":"[^"]*\b13rue i:/);
 assert.match(tvApp, /var LOGO_BASE = 'https:\/\/cdn\.jsdelivr\.net\/gh\/tv-logo\/tv-logos@main\/countries\/france\/';/);
 assert.match(tvApp, /var sniff = Boolean\(option\.sniff\) && !option\.noSniff && !mode\.noSniff;/);

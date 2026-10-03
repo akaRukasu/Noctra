@@ -34,6 +34,11 @@
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   function year(value) { var m = String(value || '').match(/^(\d{4})/); return m ? m[1] : ''; }
   function absolute(url) { return new URL(url, S.noctra + '/').toString(); }
+  // Origine du serveur Noctra : celle de la page sur Android TV (/tv-app/ du
+  // serveur), différente quand l'interface est intégrée à l'appli LG ou Samsung.
+  function serverOrigin() {
+    try { return new URL(S.noctra + '/').origin; } catch (error) { return location.origin; }
+  }
   function tmdb(path, size) { return path ? 'https://image.tmdb.org/t/p/' + (size || 'w342') + path : ''; }
 
   var icons = {
@@ -3356,7 +3361,7 @@
     try {
       var url = new URL(absolute(raw), location.href);
       // Flux relayés par le serveur Noctra : l'hôte ne distingue rien.
-      return url.origin === location.origin ? 'noctra' : url.hostname.replace(/^www\./, '');
+      return url.origin === serverOrigin() ? 'noctra' : url.hostname.replace(/^www\./, '');
     } catch (error) { return ''; }
   }
   function healthIds(option, key, index, provider) {
@@ -3441,7 +3446,7 @@
   function probeOption(option) {
     if (optionKind(option) !== 'native' || option.headers) return Promise.resolve('');
     var url = absolute(option.streamUrl);
-    if (url.indexOf(location.origin + '/') !== 0) return Promise.resolve('');
+    if (url.indexOf(serverOrigin() + '/') !== 0) return Promise.resolve('');
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = setTimeout(function () { if (controller) controller.abort(); }, 7000);
     return fetch(url, { headers: { 'x-noctra-token': S.token }, credentials: 'omit', cache: 'no-store', signal: controller ? controller.signal : undefined })
@@ -3836,7 +3841,7 @@
     var referrer = option.referrer || (channel.liveWatchDocsEmbed ? 'no-referrer' : 'strict-origin-when-cross-origin');
     var target = null;
     try { target = new URL(url, location.href); } catch (error) { return { sandbox: DEFAULT_SANDBOX, referrer: referrer }; }
-    var local = target.origin === location.origin;
+    var local = target.origin === serverOrigin();
     if (['BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].indexOf(provider) >= 0) {
       if (!local && /^https?:$/.test(target.protocol)) return { sandbox: null, referrer: referrer };
       if (local) return { sandbox: DEFAULT_SANDBOX, referrer: referrer };
@@ -3934,7 +3939,7 @@
   }
   function openEmbedFrame(state, option, label) {
     var url = absolute(option.url);
-    var external = url.indexOf(location.origin + '/') !== 0;
+    var external = url.indexOf(serverOrigin() + '/') !== 0;
     var hint = h('div', { class: 'hint' }, h('b', { text: state.channel.name }), ' · ' + label,
       h('div', { class: 'keys', text: '◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · Retour quitter' }));
     var config = frameConfig(state.channel, option, url);

@@ -35,6 +35,12 @@ async function collect(platformDir, exclude = []) {
       files.set(name, await readFile(file));
     }
   }
+  // Interface Noctra TV (la même que l'appli Android TV), intégrée au paquet
+  // dans tv/ : elle ne dépend plus de la version du serveur.
+  const tvRoot = join(appsRoot, 'androidtv', 'web');
+  for (const file of await listFiles(tvRoot)) {
+    files.set('tv/' + relative(tvRoot, file).split(sep).join('/'), await readFile(file));
+  }
   return files;
 }
 

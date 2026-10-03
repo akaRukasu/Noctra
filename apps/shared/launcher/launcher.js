@@ -90,15 +90,43 @@
   }
 
   function openServer(base, serverTvApp) {
-    // LG webOS et Samsung Tizen : interface Noctra TV (comme l'appli Android
-    // TV), si le serveur la propose (/health : tvApp) ; sinon, et ailleurs,
-    // l'interface web complète.
-    var tvApp = (platform === 'webos' || platform === 'tizen') && config.tvInterface !== false && serverTvApp === true;
-    var target = tvApp
-      ? base + '/tv-app/index.html?platform=' + encodeURIComponent(platform)
-      : base + '/client/index.html' + (platform ? '?noctraApp=' + encodeURIComponent(platform) : '');
-    if (postNative('openServer', { base: base, url: target })) return;
-    location.replace(target);
+    // LG webOS et Samsung Tizen : interface Noctra TV, la même que l'appli
+    // Android TV. Celle du serveur s'il la propose (/health : tvApp, toujours
+    // la plus récente) ; sinon celle intégrée à l'appli (tv/), si le
+    // téléviseur peut joindre l'API Noctra depuis l'appli ; en dernier
+    // recours, et ailleurs, l'interface web complète.
+    var tvHost = (platform === 'webos' || platform === 'tizen') && config.tvInterface !== false;
+    var web = base + '/client/index.html' + (platform ? '?noctraApp=' + encodeURIComponent(platform) : '');
+    function go(target) {
+      if (postNative('openServer', { base: base, url: target })) return;
+      location.replace(target);
+    }
+    if (tvHost && serverTvApp === true) { go(base + '/tv-app/index.html?platform=' + encodeURIComponent(platform)); return; }
+    if (!tvHost) { go(web); return; }
+    apiReachable(base, function (ok) {
+      if (ok) location.replace('tv/index.html?platform=' + encodeURIComponent(platform) + '&server=' + encodeURIComponent(base));
+      else go(web);
+    });
+  }
+
+  // API Noctra joignable depuis l'appli (autre origine) : requête avec
+  // l'en-tête de jeton, comme celles de l'interface. Une réponse lisible
+  // (même 401) suffit ; 0 = requête refusée par le téléviseur.
+  function apiReachable(base, done) {
+    var finished = false;
+    var finish = function (ok) { if (!finished) { finished = true; done(ok); } };
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', base + '/api/tv/sources', true);
+      xhr.setRequestHeader('x-noctra-token', 'probe');
+      xhr.timeout = 9000;
+      xhr.onload = function () { finish(xhr.status > 0); };
+      xhr.onerror = function () { finish(false); };
+      xhr.ontimeout = function () { finish(false); };
+      xhr.send();
+    } catch (error) {
+      finish(false);
+    }
   }
 
   // ── Adresse du serveur ──────────────────────────────────────────────────

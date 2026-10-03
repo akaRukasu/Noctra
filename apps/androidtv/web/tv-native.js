@@ -22,10 +22,14 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.21';
+  var VERSION = '1.1.22';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
-  var BASE = location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
-  var JF = String(params.get('jellyfin') || location.origin + '/jellyfin').replace(/\/+$/, '');
+  // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
+  // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
+  var SERVER = String(params.get('server') || '').replace(/\/+$/, '');
+  var BASE = SERVER || location.origin + location.pathname.replace(/\/tv-app\/.*$/, '');
+  var SERVER_ORIGIN = (function () { try { return new URL(BASE).origin; } catch (error) { return location.origin; } })();
+  var JF = String(params.get('jellyfin') || SERVER_ORIGIN + '/jellyfin').replace(/\/+$/, '');
   var STORE = 'noctra-tv-web-session-v1';
 
   var appPort = null;
@@ -75,7 +79,7 @@
   function noctraFetch(url) {
     var headers = {};
     if (session && url.indexOf(BASE + '/') === 0) headers['x-noctra-token'] = session.token;
-    return fetch(url, { headers: headers, credentials: 'same-origin' }).then(function (response) {
+    return fetch(url, { headers: headers, credentials: SERVER ? 'omit' : 'same-origin' }).then(function (response) {
       if (!response.ok) throw new Error('Erreur ' + response.status);
       return response.json();
     });

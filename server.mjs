@@ -12726,6 +12726,22 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Interface Noctra TV intégrée aux applis LG webOS et Samsung Tizen (page
+    // locale de l'appli, donc autre origine) : l'API est lisible depuis une
+    // autre origine, authentifiée par l'en-tête x-noctra-token. Sans cookie
+    // (pas d'« allow-credentials ») : un site tiers ne peut rien lire avec la
+    // session de l'utilisateur.
+    if (path.startsWith('/api/') && req.headers.origin) {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-headers', 'x-noctra-token, content-type, authorization, range, accept');
+      res.setHeader('access-control-allow-methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader('access-control-expose-headers', 'content-length, content-type, content-range');
+      if (req.method === 'OPTIONS' && req.headers['access-control-request-method']) {
+        res.writeHead(204, { 'access-control-max-age': '600' });
+        return res.end();
+      }
+    }
+
     if (path.startsWith('/api/')) {
       const ohaBridgeToken = ohaBridgeTokenFromPath(path);
       const trustedOhaBridgeRequest = Boolean(ohaBridgeToken && validOhaBridgeToken(ohaBridgeToken));
