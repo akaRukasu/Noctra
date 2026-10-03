@@ -14,6 +14,8 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import org.jellyfin.androidtv.util.PlaybackHelper;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.koin.java.KoinJavaComponent;
 
 import java.lang.ref.WeakReference;
@@ -61,6 +63,114 @@ public final class NoctraPlayback {
 
     private NoctraPlayback() { }
 
+    // ── Suivi du lecteur Jellyfin ─────────────────────────────────────────
+    // Toutes les 2 s : titre et position lus dans le lecteur (par réflexion).
+    // Au retour dans Noctra, l'accueil reçoit la dernière position (reprise
+    // gardée même si Jellyfin l'efface sous son seuil de 5 %) et les sauts en
+    // avant faits au début d'un épisode (générique passé à la main, appris
+    // pour la série).
+    private static final long TRACK_MS = 2000;
+    private static String trackItem;
+    private static String trackSeries;
+    private static long trackPosition = -1;
+    private static long trackRuntime;
+    private static long trackAt;
+    private static long[] pendingSkip;
+    private static JSONArray learned = new JSONArray();
+    private static boolean tracking;
+    private static final Runnable tracker = new Runnable() {
+        @Override
+        public void run() {
+            Activity activity = main.get();
+            boolean alive = activity != null && !activity.isFinishing();
+            if (alive) { sample(); handler.postDelayed(this, TRACK_MS); }
+            else { commitSkip(true); tracking = false; }
+        }
+    };
+
+    private static Object call(Object target, String name) throws Exception {
+        return target.getClass().getMethod(name).invoke(target);
+    }
+
+    private static void sample() {
+        try {
+            Object container = KoinJavaComponent.get(Class.forName("org.jellyfin.androidtv.ui.playback.PlaybackControllerContainer"));
+            Object controller = call(container, "getPlaybackController");
+            if (controller == null) return;
+            Object item = call(controller, "getCurrentlyPlayingItem");
+            if (item == null) return;
+            Object id = call(item, "getId");
+            Object series = call(item, "getSeriesId");
+            Object runtime = call(item, "getRunTimeTicks");
+            long position = ((Number) call(controller, "getCurrentPosition")).longValue();
+            long now = System.currentTimeMillis();
+            String itemId = id == null ? null : id.toString().replace("-", "");
+            if (itemId == null || position < 0) return;
+            if (!itemId.equals(trackItem)) {
+                commitSkip(true);
+                trackItem = itemId;
+                trackPosition = -1;
+            }
+            trackSeries = series == null ? null : series.toString().replace("-", "");
+            trackRuntime = runtime instanceof Number ? ((Number) runtime).longValue() / 10000L : 0;
+            if (trackPosition >= 0 && trackSeries != null) {
+                long jump = position - trackPosition - (now - trackAt);
+                // Saut en avant de plus de 20 s au début de l'épisode : générique passé.
+                if (jump > 20000 && trackPosition < 10 * 60000L) {
+                    if (pendingSkip != null && now - pendingSkip[2] < 8000 && Math.abs(trackPosition - pendingSkip[1]) < 6000) pendingSkip[1] = position;
+                    else { commitSkip(true); pendingSkip = new long[] { trackPosition, position, now }; }
+                    pendingSkip[2] = now;
+                }
+            }
+            commitSkip(false);
+            if (position > 0) trackPosition = position;
+            trackAt = now;
+        } catch (Throwable ignored) {
+            // Lecteur Jellyfin différent : suivi indisponible, lecture inchangée.
+        }
+    }
+
+    private static void commitSkip(boolean force) {
+        if (pendingSkip == null || trackSeries == null) { if (force) pendingSkip = null; return; }
+        if (!force && System.currentTimeMillis() - pendingSkip[2] < 8000) return;
+        long start = pendingSkip[0], end = pendingSkip[1];
+        pendingSkip = null;
+        if (end - start < 20000 || end - start > 200000) return;
+        try {
+            JSONObject skip = new JSONObject();
+            skip.put("seriesId", trackSeries);
+            skip.put("itemId", trackItem);
+            skip.put("startMs", start);
+            skip.put("endMs", end);
+            learned.put(skip);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Dernière lecture du lecteur Jellyfin (une seule fois) : {itemId, positionMs, runtimeMs, skips}. */
+    static JSONObject takePlayback() {
+        if (trackItem == null) return null;
+        // Lecteur encore ouvert (retour à Noctra pas encore fait) : rien à donner.
+        Activity activity = main.get();
+        if (opened(activity)) return null;
+        handler.removeCallbacks(tracker);
+        tracking = false;
+        commitSkip(true);
+        try {
+            JSONObject played = new JSONObject();
+            played.put("itemId", trackItem);
+            played.put("positionMs", trackPosition);
+            played.put("runtimeMs", trackRuntime);
+            played.put("skips", learned);
+            trackItem = null;
+            trackPosition = -1;
+            learned = new JSONArray();
+            return played;
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
     /** @param positionTicks position de départ, ou null pour la reprise enregistrée par Jellyfin. */
     public static boolean play(Context context, UUID itemId, Long positionTicks) {
         try {
@@ -99,6 +209,7 @@ public final class NoctraPlayback {
     /** Appelé par le lecteur Jellyfin à sa fermeture : retour à l'accueil Noctra. */
     public static boolean close(Activity activity) {
         if (!opened(activity)) return false;
+        sample();
         activity.finish();
         return true;
     }
@@ -111,6 +222,11 @@ public final class NoctraPlayback {
         pendingItem = null;
         handler.removeCallbacks(watchdog);
         uncover(activity);
+        if (!tracking) {
+            tracking = true;
+            handler.removeCallbacks(tracker);
+            handler.postDelayed(tracker, TRACK_MS);
+        }
     }
 
     /**

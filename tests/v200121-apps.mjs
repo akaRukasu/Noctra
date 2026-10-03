@@ -227,7 +227,7 @@ assert.match(webPlayer, /public boolean onCreateWindow\(WebView view, boolean is
 assert.match(webPlayer, /text\.contains\("X-Frame-Options"\) \|\| text\.contains\("frame-ancestors"\)/);
 assert.match(webPlayer, /public void onReceivedHttpError/);
 // Contenu du serveur : lecteur Jellyfin (pistes audio, sous-titres), retour à Noctra à sa fermeture.
-assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks \}\)/);
+assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks, segments: segments, seriesIntros: intros \}\)/);
 assert.match(androidtv, /\.method public closePlayer\(\)V/);
 assert.match(androidtv, /:cond_0\n\$\{fragmentActivity\(overlay\)\}\$\{closeCheck\('noctra_jellyfin_screens'\)\}/, 'Retour à Noctra après le contrôle « navigating » (épisode suivant)');
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->close\(Landroid\/app\/Activity;\)Z/);
@@ -439,7 +439,7 @@ assert.match(tvApp, /Vérification des serveurs…/);
 // Tests : liste, sous-liste et segment ; serveurs automatiques résolus et testés ; résultat dans le classement.
 assert.match(tvApp, /function probeResolve\(option\)/);
 assert.match(tvApp, /#EXT-X-STREAM-INF/);
-assert.match(tvApp, /option\._probeState === 'up' \? -6 : option\._probeState === 'down' \? 8 : 0/);
+assert.match(tvApp, /option\._probeState === 'up' \? -6 \+ probePenalty\(option\) : option\._probeState === 'down' \? 8 : 0/);
 assert.match(tvApp, /function launchBest\(state, index\)/);
 assert.match(tvApp, /state\.options\.slice\(0, 12\)/);
 assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
@@ -528,4 +528,27 @@ const shell = await read('public/noctra-shell.js');
 assert.ok(!shell.includes('.card:is('), 'Pas de :is() (Chromium 88)');
 assert.match(shell, /function focusVisible\(element\) \{/);
 
+// Génériques : segments Jellyfin, chapitres, intro apprise ; bouton « Passer » sur tous les lecteurs.
+assert.match(tvApp, /jf\('\/MediaSegments\/' \+ item\.Id\)/);
+assert.match(tvApp, /function chapterSegments\(item\)/);
+assert.match(tvApp, /function learnIntro\(seriesId, startMs, endMs\)/);
+assert.match(tvApp, /event\.event === 'introSkip'/);
+assert.match(webHost, /skip: function \(\)/);
+assert.match(webHost, /'Épisode suivant' : 'Passer le générique'/);
+assert.match(webHost, /event: 'introSkip'/);
+const playerJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(playerJava, /private void skipSegment\(\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraSegments.java'), /public static synchronized List merge\(UUID itemId, UUID seriesId, List found\)/);
+assert.match(await read('apps/scripts/build-androidtv.mjs'), /Lcom\/noctra\/tv\/NoctraSegments;->merge/);
+// Reprise : position remise sous le seuil de Jellyfin, pages relues après la lecture.
+assert.match(tvApp, /function ensureResume\(itemId, positionMs, runtimeMs\)/);
+assert.match(tvApp, /'\/UserItems\/' \+ hexId\(itemId\) \+ '\/UserData\?userId='/);
+assert.match(tvApp, /refreshTimers = \[2500, 8000\]/);
+assert.match(tvApp, /var played = data && data\.jellyfinPlayed;/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayback.java'), /static JSONObject takePlayback\(\)/);
+assert.match(webHost, /document\.addEventListener\('visibilitychange'/);
+assert.match(webHost, /if \(keepalive\) init\.keepalive = true;/);
+// Serveurs TV : rapidité prise en compte, 6 tests à la fois.
+assert.match(tvApp, /function probePenalty\(option\)/);
+assert.match(tvApp, /for \(var worker = 0; worker < 6; worker\+\+\) next\(\);/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

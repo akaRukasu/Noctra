@@ -23,6 +23,7 @@ import android.widget.TextView;
 
 import androidx.media3.ui.PlayerView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
@@ -69,6 +70,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_PLAY_SESSION_ID = "noctra_play_session_id";
     static final String EXTRA_DEVICE_ID = "noctra_device_id";
     static final String EXTRA_START_MS = "noctra_start_ms";
+    static final String EXTRA_SEGMENTS = "noctra_segments";
+    static final String EXTRA_EPISODE = "noctra_episode";
+    static final String EXTRA_SERIES_ID = "noctra_series_id";
     static final String EXTRA_POSITION_MS = "noctra_position_ms";
     static final String EXTRA_ENDED = "noctra_ended";
     // SyncPlay : départ en pause, le groupe pilote la lecture.
@@ -96,6 +100,14 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private TextView nowView;
     private TextView nextView;
     private TextView statsView;
+    // Génériques (intro, récap, fin) : bouton « Passer » affiché pendant le segment.
+    private TextView skipView;
+    private JSONArray segments;
+    private JSONObject activeSegment;
+    private boolean episode;
+    private String seriesId;
+    private long lastSkipPosition = -1, lastSkipAt;
+    private long[] pendingLearn;
     private final Runnable updateStats = new Runnable() {
         @Override
         public void run() {
@@ -172,6 +184,88 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         }
     };
 
+    // Toutes les 0,5 s : segment en cours (bouton « Passer ») et sauts en avant
+    // faits au début d'un épisode (générique passé à la main, appris pour la série).
+    private final Runnable skipTick = new Runnable() {
+        @Override
+        public void run() {
+            if (stream == null || finished) return;
+            long position = stream.positionMs();
+            long now = System.currentTimeMillis();
+            JSONObject found = null;
+            if (segments != null) {
+                for (int i = 0; i < segments.length(); i++) {
+                    JSONObject segment = segments.optJSONObject(i);
+                    if (segment == null || segment.optBoolean("dismissed")) continue;
+                    if (position >= segment.optLong("startMs") - 500 && position < segment.optLong("endMs") - 1500) { found = segment; break; }
+                }
+            }
+            if (found != activeSegment) {
+                activeSegment = found;
+                if (found == null) skipView.setVisibility(TextView.GONE);
+                else {
+                    skipView.setText(skipLabel(found) + "  ·  OK");
+                    skipView.setVisibility(TextView.VISIBLE);
+                }
+            }
+            if (episode && seriesId != null && lastSkipPosition >= 0 && stream.hasPlayed()) {
+                long jump = position - lastSkipPosition - (now - lastSkipAt);
+                if (jump > 20000 && lastSkipPosition < 10 * 60000L) {
+                    if (pendingLearn != null && now - pendingLearn[2] < 8000 && Math.abs(lastSkipPosition - pendingLearn[1]) < 6000) pendingLearn[1] = position;
+                    else { flushLearn(); pendingLearn = new long[] { lastSkipPosition, position, now }; }
+                    pendingLearn[2] = now;
+                }
+            }
+            if (pendingLearn != null && now - pendingLearn[2] >= 8000) flushLearn();
+            lastSkipPosition = position;
+            lastSkipAt = now;
+            handler.postDelayed(this, 500);
+        }
+    };
+
+    private String skipLabel(JSONObject segment) {
+        String type = segment.optString("type");
+        if ("outro".equals(type)) return episode ? "Épisode suivant" : "Passer le générique";
+        if ("recap".equals(type)) return "Passer le récap";
+        if ("preview".equals(type)) return "Passer l’aperçu";
+        return "Passer l’intro";
+    }
+
+    private void skipSegment() {
+        JSONObject segment = activeSegment;
+        if (segment == null || stream == null) return;
+        try { segment.put("dismissed", true); } catch (Exception ignored) { }
+        activeSegment = null;
+        skipView.setVisibility(TextView.GONE);
+        long end = segment.optLong("endMs");
+        long duration = stream.durationMs();
+        if ("outro".equals(segment.optString("type")) && (episode || duration <= 0 || end >= duration - 10000)) {
+            // Fin du titre : l'accueil propose l'épisode suivant.
+            ended = true;
+            finishWith(true, null);
+            return;
+        }
+        stream.seek(end);
+        lastSkipPosition = end;
+        lastSkipAt = System.currentTimeMillis();
+    }
+
+    private void flushLearn() {
+        long[] learn = pendingLearn;
+        pendingLearn = null;
+        if (learn == null || seriesId == null) return;
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "playerEvent");
+            message.put("event", "introSkip");
+            message.put("seriesId", seriesId);
+            message.put("startMs", learn[0]);
+            message.put("endMs", learn[1]);
+            NoctraPlayerBus.fromPlayer(message);
+        } catch (Exception ignored) {
+        }
+    }
+
     private final Runnable hideBanner = new Runnable() {
         @Override
         public void run() {
@@ -231,6 +325,25 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         bannerParams.setMargins(dp(40), dp(32), dp(40), 0);
         root.addView(banner, bannerParams);
 
+        skipView = text("", 18, Color.rgb(11, 13, 18));
+        skipView.setPadding(dp(26), dp(12), dp(26), dp(12));
+        android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
+        pill.setColor(Color.argb(240, 245, 247, 250));
+        pill.setCornerRadius(dp(40));
+        skipView.setBackground(pill);
+        skipView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        skipView.setVisibility(TextView.GONE);
+        FrameLayout.LayoutParams skipParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        skipParams.setMargins(0, 0, dp(48), dp(120));
+        root.addView(skipView, skipParams);
+        try {
+            segments = intent.hasExtra(EXTRA_SEGMENTS) ? new JSONArray(intent.getStringExtra(EXTRA_SEGMENTS)) : null;
+        } catch (Exception error) {
+            segments = null;
+        }
+        episode = intent.getBooleanExtra(EXTRA_EPISODE, false);
+        seriesId = intent.getStringExtra(EXTRA_SERIES_ID);
+
         status = text("", 18, Color.rgb(242, 246, 244));
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(24), dp(12), dp(24), dp(12));
@@ -272,6 +385,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                     intent.getStringExtra(EXTRA_PLAY_SESSION_ID), intent.getStringExtra(EXTRA_DEVICE_ID));
                 handler.postDelayed(progress, 1000);
             }
+            handler.postDelayed(skipTick, 1000);
         } else {
             stream = liveStream(url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_HEADERS), intent.getStringExtra(EXTRA_TOKEN));
         }
@@ -692,6 +806,17 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // Bouton « Passer » affiché (commandes fermées) : OK passe le générique.
+        int pressed = event.getKeyCode();
+        if (vod && activeSegment != null && skipView.getVisibility() == TextView.VISIBLE
+            && (pressed == KeyEvent.KEYCODE_DPAD_CENTER || pressed == KeyEvent.KEYCODE_ENTER || pressed == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+            boolean controls = false;
+            try { controls = playerView.isControllerFullyVisible(); } catch (Throwable ignored) { }
+            if (!controls) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) skipSegment();
+                return true;
+            }
+        }
         // Panneau ouvert : la liste reçoit les flèches et OK ; ◀ / Retour le ferment.
         if (panelOpen()) {
             int code = event.getKeyCode();
@@ -852,6 +977,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         if (finished) return;
         finished = true;
         handler.removeCallbacks(progress);
+        handler.removeCallbacks(skipTick);
+        flushLearn();
         handler.removeCallbacks(sendSeek);
         handler.removeCallbacks(sendZap);
         handler.removeCallbacks(tickGuide);

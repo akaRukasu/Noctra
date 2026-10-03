@@ -239,6 +239,12 @@
   // Retour depuis une fiche ou une lecture : reprises et « À suivre » à jour.
   function appResumed(data) {
     forget('resume'); forget('nextup'); forget('item:');
+    // Retour du lecteur Jellyfin : génériques passés à la main appris, reprise gardée.
+    var played = data && data.jellyfinPlayed;
+    if (played && played.itemId) {
+      (played.skips || []).forEach(function (skip) { learnIntro(skip.seriesId, skip.startMs, skip.endMs); });
+      refreshAfterPlayback(ensureResume(played.itemId, played.positionMs, played.runtimeMs));
+    }
     // Le lecteur Jellyfin ne s'est pas ouvert : lecture avec le lecteur Noctra.
     if (data && /^[0-9a-f]{32}$/i.test(String(data.jellyfinFailed || ''))) {
       toast('Le lecteur Jellyfin n’a pas démarré : lecture avec le lecteur Noctra.');
@@ -301,6 +307,9 @@
   var views = {};
   var stack = [];
   var current = null;
+  // Dernier appui de touche : pas de mise à jour de page pendant la navigation.
+  var lastKeyAt = 0;
+  document.addEventListener('keydown', function () { lastKeyAt = Date.now(); }, true);
   var cache = {};
   var renderToken = 0;
 
@@ -751,6 +760,107 @@
     var url = S.jf + path.replace('{userId}', encodeURIComponent(S.userId));
     return request(url, { method: method, headers: { Authorization: jfAuthorization() } });
   }
+  function jfJson(method, path, body) {
+    var url = S.jf + path.replace('{userId}', encodeURIComponent(S.userId));
+    return request(url, { method: method, headers: { Authorization: jfAuthorization(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  }
+  function later(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  // ── Génériques (intro, récap, générique de fin) ────────────────────
+  // Par ordre de préférence : segments du serveur Jellyfin (extension de
+  // détection, ex. Intro Skipper), chapitres nommés du fichier, puis intro
+  // apprise pour la série (générique passé à la main sur ce téléviseur).
+  var INTRO_STORE = 'noctra-tv-intros';
+  function learnedIntros() {
+    try { var store = JSON.parse(localStorage.getItem(INTRO_STORE) || '{}'); return store && typeof store === 'object' ? store : {}; } catch (error) { return {}; }
+  }
+  function hexId(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
+  function learnIntro(seriesId, startMs, endMs) {
+    var key = hexId(seriesId);
+    if (!/^[0-9a-f]{32}$/.test(key) || !(endMs - startMs >= 20000 && endMs - startMs <= 200000) || startMs > 10 * 60000) return;
+    var store = learnedIntros();
+    var old = store[key];
+    // Même générique qu'avant (fin à moins de 30 s près) : moyenne ; sinon remplacé.
+    if (old && Math.abs(old.endMs - endMs) < 30000) {
+      var n = Math.min(old.n || 1, 4);
+      store[key] = { startMs: Math.round((Math.min(old.startMs, startMs) * 2 + (old.startMs * n + startMs) / (n + 1)) / 3), endMs: Math.round((old.endMs * n + endMs) / (n + 1)), n: n + 1, at: Date.now() };
+    } else store[key] = { startMs: Math.round(startMs), endMs: Math.round(endMs), n: 1, at: Date.now() };
+    var keys = Object.keys(store);
+    if (keys.length > 300) keys.sort(function (a, b) { return (store[a].at || 0) - (store[b].at || 0); }).slice(0, keys.length - 300).forEach(function (old) { delete store[old]; });
+    try { localStorage.setItem(INTRO_STORE, JSON.stringify(store)); } catch (error) { /* stockage indisponible */ }
+  }
+  var SEGMENT_TYPES = { Intro: 'intro', Outro: 'outro', Recap: 'recap', Preview: 'preview' };
+  function chapterSegments(item) {
+    var chapters = (item.Chapters || []).filter(function (chapter) { return typeof chapter.StartPositionTicks === 'number'; })
+      .sort(function (a, b) { return a.StartPositionTicks - b.StartPositionTicks; });
+    var runtime = (item.RunTimeTicks || 0) / 10000;
+    var out = [];
+    chapters.forEach(function (chapter, index) {
+      var name = String(chapter.Name || '').trim();
+      var type = /(?:end ?credits|credits|crédits|ending|outro|générique de fin|generique de fin)/i.test(name) || /^ed\d*$/i.test(name) ? 'outro'
+        : /(?:^intro|introduction|opening|générique|generique|ouverture)/i.test(name) || /^op\d*$/i.test(name) ? 'intro'
+        : /(?:recap|récap|previously|précédemment)/i.test(name) ? 'recap'
+        : /(?:preview|aperçu|prochainement|next time)/i.test(name) ? 'preview' : '';
+      if (!type) return;
+      var start = chapter.StartPositionTicks / 10000;
+      var end = index + 1 < chapters.length ? chapters[index + 1].StartPositionTicks / 10000 : runtime;
+      if (end - start >= 5000 && end - start <= 15 * 60000) out.push({ type: type, startMs: Math.round(start), endMs: Math.round(end), source: 'chapitres' });
+    });
+    return out;
+  }
+  function segmentsFor(item) {
+    var fromServer = jf('/MediaSegments/' + item.Id).then(function (data) {
+      return ((data && data.Items) || []).filter(function (segment) { return SEGMENT_TYPES[segment.Type] && segment.EndTicks > segment.StartTicks; })
+        .map(function (segment) { return { type: SEGMENT_TYPES[segment.Type], startMs: Math.round(segment.StartTicks / 10000), endMs: Math.round(segment.EndTicks / 10000), source: 'jellyfin' }; });
+    }, function () { return []; });
+    var details = item.Chapters ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id, { Fields: 'Chapters' }).catch(function () { return item; });
+    var all = Promise.all([fromServer, details]).then(function (result) {
+      if (result[0].length) return result[0];
+      var chapters = chapterSegments(result[1]);
+      if (chapters.length) return chapters;
+      var learned = item.Type === 'Episode' && learnedIntros()[hexId(item.SeriesId)];
+      return learned ? [{ type: 'intro', startMs: learned.startMs, endMs: learned.endMs, source: 'appris' }] : [];
+    });
+    // Jamais plus de 2,5 s d'attente avant la lecture.
+    return Promise.race([all, later(2500).then(function () { return []; })]);
+  }
+
+  // ── Reprise ────────────────────────────────────────────────────────
+  // Jellyfin efface la position d'un titre arrêté avant 5 % (réglage par
+  // défaut du serveur) : il n'apparaît pas dans « Continuer à regarder ».
+  // Après une minute de lecture, la position est remise par Noctra.
+  function ensureResume(itemId, positionMs, runtimeMs) {
+    if (!/^[0-9a-f]{32}$/i.test(hexId(itemId)) || !(positionMs >= 60000)) return Promise.resolve(false);
+    if (runtimeMs > 0 && positionMs >= runtimeMs * 0.9) return Promise.resolve(false);
+    // Le temps que Jellyfin traite l'arrêt de la lecture.
+    return later(2500).then(function () { return jf('/Users/{userId}/Items/' + hexId(itemId)); }).then(function (item) {
+      var data = (item && item.UserData) || {};
+      if (data.Played || data.PlaybackPositionTicks > 0) return false;
+      var runtime = item.RunTimeTicks ? item.RunTimeTicks / 10000 : runtimeMs;
+      if (runtime && positionMs >= runtime * 0.9) return false;
+      var body = { PlaybackPositionTicks: Math.round(positionMs) * 10000, LastPlayedDate: new Date().toISOString() };
+      return jfJson('POST', '/UserItems/' + hexId(itemId) + '/UserData?userId=' + encodeURIComponent(S.userId), body)
+        .catch(function () { return jfJson('POST', '/Users/{userId}/Items/' + hexId(itemId) + '/UserData', body); })
+        .then(function () { return true; });
+    }).catch(function () { return false; });
+  }
+  // Après une lecture : « Continuer à regarder » relu quand Jellyfin a fini
+  // d'enregistrer (2,5 s puis 8 s), la page affichée est mise à jour si
+  // l'utilisateur n'est pas en train de naviguer.
+  var refreshTimers = [];
+  function refreshAfterPlayback(extra) {
+    refreshTimers.forEach(clearTimeout);
+    refreshTimers = [2500, 8000].map(function (delay) {
+      return setTimeout(function () {
+        forget('resume'); forget('nextup'); forget('item:');
+        if (!current || (current.name !== 'home' && current.name !== 'item') || layer.firstChild) return;
+        if (Date.now() - lastKeyAt < 1500) return;
+        remember(current);
+        show(false);
+      }, delay);
+    });
+    if (extra) extra.then(function (changed) { if (changed) refreshAfterPlayback(); });
+  }
   function jfAuthorization() {
     return 'MediaBrowser Client="Noctra TV", Device="Android TV", DeviceId="' + deviceId() + '", Version="1", Token="' + S.token + '"';
   }
@@ -833,10 +943,24 @@
     // modifiables pendant la lecture) ; à sa fermeture, retour ici.
     if (!options.sync && !options.noctraPlayer && S.caps.jellyfinPlayer !== false) {
       var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
-      if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks })) return Promise.resolve();
+      // Génériques connus de Noctra (chapitres, intro apprise) : bouton « Passer »
+      // du lecteur Jellyfin même sans détection sur le serveur.
+      return segmentsFor(item).then(function (segments) {
+        var series = hexId(item.Type === 'Series' ? item.Id : item.SeriesId);
+        var intros = {};
+        if (series && learnedIntros()[series]) intros[series] = learnedIntros()[series];
+        if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks, segments: segments, seriesIntros: intros })) return;
+        var fallback = {};
+        Object.keys(options).forEach(function (key) { fallback[key] = options[key]; });
+        fallback.noctraPlayer = true;
+        return playItem(item, fallback);
+      });
     }
     var load = item.MediaSources ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id);
     return load.then(function (full) {
+      return segmentsFor(full).then(function (segments) { return { full: full, segments: segments }; });
+    }).then(function (loaded) {
+      var full = loaded.full;
       var source = (full.MediaSources || [])[0];
       if (!source) { toast('Aucune vidéo disponible pour ce titre.', true); return; }
       var playSessionId = (Date.now().toString(16) + Math.random().toString(16).slice(2)).slice(0, 32);
@@ -848,6 +972,8 @@
         sync: Boolean(options.sync),
         url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
         vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs,
+        // Génériques : bouton « Passer » ; épisode : générique passé à la main appris pour la série.
+        segments: loaded.segments, seriesId: full.Type === 'Episode' ? hexId(full.SeriesId) : '', episode: full.Type === 'Episode',
         // Pistes proposées dans le lecteur (pont web : changement pendant la lecture).
         tracks: {
           audio: streamsOf(full, 'Audio').map(function (stream) { return { index: stream.Index, label: trackLabel(stream), language: stream.Language || '' }; }),
@@ -880,6 +1006,8 @@
     if (!result.ok && result.error) toast(result.error, true);
     if (entry && result.ended && entry.item.Type === 'Episode') { nextEpisode(entry.item); return; }
     if (current && (current.name === 'item' || current.name === 'home') && !layer.firstChild) { remember(current); show(false); }
+    // Reprise gardée même sous le seuil de Jellyfin, puis pages relues.
+    refreshAfterPlayback(entry && !result.ended && result.played !== false ? ensureResume(entry.item.Id, result.positionMs, (entry.item.RunTimeTicks || 0) / 10000) : null);
   }
   // Fin d'épisode : le suivant est proposé, lancé seul après 10 s.
   function nextEpisode(episode) {
@@ -1333,6 +1461,8 @@
   }
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
+    // Générique d'épisode passé à la main (avance rapide) : appris pour la série.
+    if (event.event === 'introSkip') { learnIntro(event.seriesId, Number(event.startMs), Number(event.endMs)); return; }
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
     if (event.event === 'zapTo') {
       // Chaînes numérotées : numéro tapé → chaîne de ce numéro (dans la liste
@@ -2611,12 +2741,13 @@
     });
   }
   // Chaîne réunie : les serveurs « automatiques » de chaque source sont
-  // demandés tout de suite (5 s au plus chacun), pour classer l'ensemble des
-  // serveurs par fiabilité ; un serveur qui ne répond pas à temps reste proposé.
+  // demandés tout de suite (2,5 s au plus chacun, la fenêtre s'ouvre sans les
+  // attendre davantage) ; un serveur qui ne répond pas à temps reste proposé
+  // et sera résolu puis testé pendant le compte à rebours.
   function expandOptions(options) {
     return Promise.all(options.map(function (option) {
       if (optionKind(option) !== 'resolve') return Promise.resolve([option]);
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 5000); });
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 2500); });
       return Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
         if (!list || !list.length) return [option];
         return list.map(function (item) {
@@ -3468,7 +3599,7 @@
           + (oldEngine && optionKind(option) === 'web' ? 1 : 0) + (host && optionKind(option) === 'web' ? 1.5 : 0)
           + (unavailableHere(option) ? 20 : 0) - health.score
           // Test du serveur : vérifié en ligne d'abord, hors ligne en dernier.
-          + (option._probeState === 'up' ? -6 : option._probeState === 'down' ? 8 : 0);
+          + (option._probeState === 'up' ? -6 + probePenalty(option) : option._probeState === 'down' ? 8 : 0);
         // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
         if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail' && option._probeState !== 'down') return base - 10;
         return base;
@@ -3486,6 +3617,13 @@
   // jamais compté comme un échec). Les serveurs « automatiques » sont résolus
   // puis leur premier flux est testé.
   var PROBE_MS = 9000;
+  // Serveur en ligne mais lent à répondre (liste + segment) : un peu moins bien
+  // classé que les rapides (0 à 2 points entre 0,8 s et 6 s), signe d'un relais
+  // chargé qui coupera plus souvent.
+  function probePenalty(option) {
+    var ms = option._probeMs || 0;
+    return ms > 800 ? Math.min(2, (ms - 800) / 2600) : 0;
+  }
   function probeOption(option) {
     var kind = optionKind(option);
     if (kind === 'resolve') return probeResolve(option);
@@ -3688,12 +3826,17 @@
         var deadline = Date.now() + 6000;
         sheet.status('Vérification des serveurs…');
         function usable(option, index) { return !state.failed[index] && option._probeState !== 'down' && !unavailableHere(option); }
+        // Parmi les serveurs vérifiés : le mieux classé (fiabilité, type, rapidité).
+        function bestVerified() {
+          var verified = state.options.filter(function (option, index) { return usable(option, index) && option._probeState === 'up'; });
+          return state.options.indexOf(rankOptions(verified, state.key, state.channel.provider)[0]);
+        }
         function decide(final) {
           var waiting = false;
           for (var index = 0; index < state.options.length; index++) {
             var option = state.options[index];
             if (!usable(option, index)) continue;
-            if (option._probeState === 'up') return waiting && !final ? -1 : index;
+            if (option._probeState === 'up') return waiting && !final ? -1 : bestVerified();
             if (probes.pending[index]) waiting = true;
           }
           if (waiting && !final) return -1;
@@ -3716,7 +3859,7 @@
     if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
   }
   // Vérification des serveurs dès l'ouverture de la fenêtre : les 12 premiers,
-  // 4 à la fois, dans l'ordre de la liste.
+  // 6 à la fois, dans l'ordre de la liste.
   function probeServers(sheet, state) {
     var probes = { pending: {}, onSettled: null };
     var queue = [];
@@ -3734,9 +3877,11 @@
       option._probe.style.display = '';
       option._probe.className = 'tag probe';
       option._probe.textContent = 'Test…';
+      var began = Date.now();
       probeOption(option).then(function (result) {
         delete probes.pending[index];
         option._probeState = result;
+        option._probeMs = Date.now() - began;
         if (document.body.contains(sheet.node)) {
           if (result === 'down') {
             // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
@@ -3745,13 +3890,13 @@
             if (recommended) recommended.remove();
           }
           option._probe.className = 'tag ' + (result === 'up' ? 'good' : result === 'down' ? 'bad' : 'probe');
-          option._probe.textContent = result === 'up' ? 'En ligne' : result === 'down' ? 'Hors ligne' : 'Sans réponse';
+          option._probe.textContent = result === 'up' ? (option._probeMs > 3500 ? 'En ligne · lent' : 'En ligne') : result === 'down' ? 'Hors ligne' : 'Sans réponse';
         }
         if (probes.onSettled) probes.onSettled();
         next();
       });
     }
-    for (var worker = 0; worker < 4; worker++) next();
+    for (var worker = 0; worker < 6; worker++) next();
     return probes;
   }
   // Lancement automatique : les serveurs sont reclassés avec le résultat des

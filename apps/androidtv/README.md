@@ -57,6 +57,8 @@ Les téléchargements et l’administration de Noctra ne sont pas proposés sur 
   - `NoctraPlayerActivity` : lecteur plein écran des chaînes ;
   - `NoctraMultiviewActivity` : jusqu’à 12 chaînes à l’écran, ajout et retrait depuis le multiview ;
   - `NoctraPlayback` : ouvre le lecteur Jellyfin sans ses écrans et revient à Noctra à sa fermeture ;
+  - `NoctraPlayback` suit aussi le lecteur Jellyfin (titre et position toutes les 2 s) : au retour, l’accueil reçoit la dernière position (reprise remise si Jellyfin l’a effacée sous son seuil de 5 %) et les génériques passés à la main ;
+  - `NoctraSegments` : génériques préparés par Noctra (chapitres, intro apprise pour la série), donnés au lecteur Jellyfin quand le serveur n’en fournit pas (patch de `MediaSegmentRepositoryImpl`), pour son bouton « Passer » ;
   - `NoctraWebPlayerActivity` (processus `:webplayer`) : lecteurs web des chaînes ;
   - `NoctraPlaybackReport` : suivi de lecture envoyé à Jellyfin ;
   - `NoctraRemote` : commandes « Lire sur… » et « Afficher » reçues d’un autre appareil ;

@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.29';
+  var VERSION = '1.1.30';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -68,10 +68,12 @@
     return 'MediaBrowser Client="Noctra TV", Device="' + DEVICE_NAME + '", DeviceId="' + (device || deviceId()) + '", Version="' + VERSION + '"'
       + (token ? ', Token="' + token + '"' : '');
   }
-  function jellyfin(method, path, body, token, device) {
+  function jellyfin(method, path, body, token, device, keepalive) {
     var headers = { 'Authorization': authorization(token, device), 'Accept': 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    return fetch(JF + path, { method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body) }).then(function (response) {
+    var init = { method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body) };
+    if (keepalive) init.keepalive = true;
+    return fetch(JF + path, init).then(function (response) {
       if (!response.ok) { var error = new Error('Jellyfin : erreur ' + response.status); error.status = response.status; throw error; }
       return response.status === 204 ? null : response.text().then(function (text) { return text ? JSON.parse(text) : null; });
     });
@@ -548,7 +550,12 @@
       Player.panelTitle = el('h3');
       Player.panelList = el('div', { class: 'nw-list' });
       Player.panel = el('div', { class: 'nw-panel' }, Player.panelTitle, el('p', { class: 'nw-muted', text: 'OK : choisir · Retour : fermer' }), Player.panelList);
-      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.diag, Player.sync, Player.controls, Player.panel);
+      // Bouton « Passer l'intro / le générique » (OK pendant qu'il est affiché).
+      Player.skipButton = el('div', { class: 'nw-skip' });
+      Player.skipButton.style.display = 'none';
+      Player.segment = null;
+      Player.skipLearn = null;
+      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.diag, Player.sync, Player.skipButton, Player.controls, Player.panel);
       if (!m.sync) Player.sync.style.display = 'none';
       document.body.appendChild(Player.node);
       Player.engine = new Engine(video, function (message) { Player.fail(message); }, function (line) { Player.log(line); });
@@ -581,6 +588,7 @@
         Player.showSubtitles();
       });
       video.addEventListener('timeupdate', Player.renderTime);
+      video.addEventListener('timeupdate', Player.updateSkip);
       // Fin de film ou d'épisode : certains téléviseurs n'envoient pas
       // « ended » à la fin d'un flux HLS (image figée sur la dernière seconde).
       video.addEventListener('timeupdate', function () {
@@ -765,6 +773,63 @@
       Player.sync.style.display = '';
       Player.sync.textContent = 'SyncPlay · ' + text;
     },
+    // Génériques : segment en cours (intro, récap, aperçu, générique de fin).
+    updateSkip: function () {
+      var m = Player.m, video = Player.video;
+      if (!m || !m.vod || !video || !Player.skipButton) return;
+      var at = video.currentTime * 1000;
+      var found = null;
+      (m.segments || []).forEach(function (segment) {
+        if (!found && at >= segment.startMs - 500 && at < segment.endMs - 1500) found = segment;
+      });
+      if (found === Player.segment) return;
+      Player.segment = found;
+      if (!found || found.dismissed) { Player.skipButton.style.display = 'none'; return; }
+      Player.skipButton.textContent = Player.skipLabel(found) + '  ·  OK';
+      Player.skipButton.style.display = '';
+    },
+    skipLabel: function (segment) {
+      if (segment.type === 'outro') return Player.m.episode ? 'Épisode suivant' : 'Passer le générique';
+      if (segment.type === 'recap') return 'Passer le récap';
+      if (segment.type === 'preview') return 'Passer l’aperçu';
+      return 'Passer l’intro';
+    },
+    skip: function () {
+      var segment = Player.segment, video = Player.video;
+      if (!segment || !video) return;
+      segment.dismissed = true;
+      Player.segment = null;
+      Player.skipButton.style.display = 'none';
+      var duration = video.duration && isFinite(video.duration) ? video.duration * 1000 : 0;
+      // Générique de fin jusqu'au bout : fin du titre (épisode suivant proposé).
+      if (segment.type === 'outro' && (Player.m.episode || !duration || segment.endMs >= duration - 10000)) { Player.finish(true, null, false, true); return; }
+      Player.skipping = true;
+      try { video.currentTime = segment.endMs / 1000; } catch (error) { /* position refusée */ }
+      setTimeout(function () { Player.skipping = false; }, 1500);
+      if (Player.report) Player.report.progress(segment.endMs, video.paused);
+    },
+    // Avance rapide de plus de 20 s dans les 10 premières minutes d'un épisode :
+    // générique passé à la main, appris pour la série (bouton aux épisodes suivants).
+    learnSkip: function (fromMs, toMs) {
+      var m = Player.m;
+      if (!m || !m.episode || !m.seriesId || Player.skipping) return;
+      var now = Date.now();
+      var learn = Player.skipLearn;
+      if (toMs - fromMs > 20000 && fromMs < 10 * 60000) {
+        if (learn && now - learn.at < 8000 && Math.abs(fromMs - learn.endMs) < 6000) learn.endMs = toMs;
+        else { Player.flushSkip(); learn = Player.skipLearn = { startMs: fromMs, endMs: toMs }; }
+        learn.at = now;
+        clearTimeout(Player.learnTimer);
+        Player.learnTimer = setTimeout(Player.flushSkip, 8000);
+      }
+    },
+    flushSkip: function () {
+      var learn = Player.skipLearn;
+      Player.skipLearn = null;
+      clearTimeout(Player.learnTimer);
+      if (!learn || !Player.m) return;
+      send({ type: 'playerEvent', event: 'introSkip', seriesId: Player.m.seriesId, startMs: learn.startMs, endMs: learn.endMs });
+    },
     seekBy: function (deltaMs) {
       var video = Player.video;
       if (!video) return;
@@ -780,6 +845,7 @@
         Player.pendingSeek = -1;
         if (target < 0) return;
         if (Player.m.sync) { Player.event('user', 'seek', target); Player.syncLabel('aller à ' + clock(target / 1000)); return; }
+        Player.learnSkip(video.currentTime * 1000, target);
         try { video.currentTime = target / 1000; } catch (error) { /* position refusée */ }
         if (!Player.controlsOpen) setTimeout(function () { if (!Player.controlsOpen && Player.controls) Player.controls.classList.remove('shown'); }, 1500);
       }, 700);
@@ -933,6 +999,7 @@
         if (is(event, 'back') || is(event, 'up')) { Player.hideControls(); return true; }
         if (is(event, 'down')) return true;
       }
+      if (is(event, 'enter') && Player.segment && !Player.segment.dismissed && Player.skipButton.style.display !== 'none') { Player.skip(); return true; }
       if (is(event, 'back')) { Player.finish(true, null); return true; }
       if (is(event, 'playPause') || is(event, 'play') || is(event, 'pause')) {
         if (is(event, 'play') && !video.paused && !m.sync) return true;
@@ -997,6 +1064,7 @@
       Player.typed = '';
       Player.endTimer = 0;
       clearInterval(Player.progressTimer);
+      if (Player.skipLearn) Player.flushSkip();
       if (Player.report) { Player.report.stop(position, Player.played); Player.report = null; }
       Player.engine.destroy();
       Player.node.remove();
@@ -1013,6 +1081,12 @@
     }
   };
   handlers.push({ active: function () { return Boolean(Player.node); }, key: Player.key });
+  // Touche Accueil, mise en veille ou appli fermée : la position est envoyée
+  // tout de suite (« Continuer à regarder » à jour même sans arrêt du lecteur).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'hidden' || !Player.report || !Player.played) return;
+    Player.report.progress(Player.position(), true);
+  });
 
   // Suivi de lecture Jellyfin (reprise, « Vu », sessions du tableau de bord).
   function Report(m) {
@@ -1028,7 +1102,7 @@
   };
   Report.prototype.post = function (path, body) {
     if (!session) return;
-    jellyfin('POST', path, body, session.token, this.device).catch(function () { /* suivi facultatif */ });
+    jellyfin('POST', path, body, session.token, this.device, true).catch(function () { /* suivi facultatif */ });
   };
   Report.prototype.start = function (positionMs) { this.started = true; this.post('/Sessions/Playing', this.body(positionMs, false)); };
   Report.prototype.progress = function (positionMs, paused) { if (this.started) this.post('/Sessions/Playing/Progress', this.body(positionMs, paused, 'timeupdate')); };

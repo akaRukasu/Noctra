@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 43;
+const noctraRevision = 44;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -286,6 +286,36 @@ ${fragmentActivity(overlay)}
 `
   ]
 ]);
+// Génériques (intro, fin) : sans segments fournis par le serveur Jellyfin,
+// ceux préparés par Noctra (chapitres, intro apprise pour la série) ;
+// le lecteur Jellyfin affiche alors son bouton « Passer ».
+const segmentItem = 'Lorg/jellyfin/androidtv/ui/playback/segment/MediaSegmentRepositoryImpl$getSegmentsForItem$2$1;->$item:Lorg/jellyfin/sdk/model/api/BaseItemDto;';
+await patch(smali('ui/playback/segment/MediaSegmentRepositoryImpl$getSegmentsForItem$2$1.smali'), [[
+  `    invoke-virtual {p1}, Lorg/jellyfin/sdk/model/api/MediaSegmentDtoQueryResult;->getItems()Ljava/util/List;
+
+    move-result-object p1
+
+    return-object p1`,
+  `    invoke-virtual {p1}, Lorg/jellyfin/sdk/model/api/MediaSegmentDtoQueryResult;->getItems()Ljava/util/List;
+
+    move-result-object p1
+
+    iget-object v1, p0, ${segmentItem}
+
+    invoke-virtual {v1}, Lorg/jellyfin/sdk/model/api/BaseItemDto;->getId()Ljava/util/UUID;
+
+    move-result-object v2
+
+    invoke-virtual {v1}, Lorg/jellyfin/sdk/model/api/BaseItemDto;->getSeriesId()Ljava/util/UUID;
+
+    move-result-object v3
+
+    invoke-static {v2, v3, p1}, Lcom/noctra/tv/NoctraSegments;->merge(Ljava/util/UUID;Ljava/util/UUID;Ljava/util/List;)Ljava/util/List;
+
+    move-result-object p1
+
+    return-object p1`
+]]);
 await patch(smali('ui/home/HomeFragment.smali'), [[
   `# virtual methods
 `,

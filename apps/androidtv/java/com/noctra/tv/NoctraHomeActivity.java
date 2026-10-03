@@ -396,6 +396,7 @@ public class NoctraHomeActivity extends Activity {
             // Film ou épisode du serveur : lecteur Jellyfin (pistes, sous-titres…).
             java.util.UUID id = NoctraPlayback.uuid(message.optString("itemId"));
             if (id == null) return;
+            NoctraSegments.put(message);
             Long position = message.has("positionTicks") && !message.isNull("positionTicks") ? Long.valueOf(message.optLong("positionTicks")) : null;
             if (!NoctraPlayback.play(this, id, position)) {
                 try {
@@ -475,6 +476,10 @@ public class NoctraHomeActivity extends Activity {
                 intent.putExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID, message.optString("playSessionId"));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_DEVICE_ID, deviceId);
                 intent.putExtra(NoctraPlayerActivity.EXTRA_START_MS, message.optLong("startMs", 0));
+                JSONArray segments = message.optJSONArray("segments");
+                if (segments != null && segments.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_SEGMENTS, segments.toString());
+                intent.putExtra(NoctraPlayerActivity.EXTRA_EPISODE, message.optBoolean("episode", false));
+                if (message.optString("seriesId").matches("[0-9a-fA-F]{32}")) intent.putExtra(NoctraPlayerActivity.EXTRA_SERIES_ID, message.optString("seriesId"));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_SYNC, message.optBoolean("sync", false));
                 if (!sameOrigin(Uri.parse(message.optString("jellyfin")), jellyfin)) return;
             }
@@ -688,6 +693,9 @@ public class NoctraHomeActivity extends Activity {
                 message.put("jellyfinFailed", failure[0]);
                 if (failure[1] != null) message.put("positionTicks", Long.parseLong(failure[1]));
             }
+            // Lecture faite avec le lecteur Jellyfin : position finale et génériques passés.
+            JSONObject played = NoctraPlayback.takePlayback();
+            if (played != null) message.put("jellyfinPlayed", played);
             send(message);
         } catch (Exception ignored) {
         }
