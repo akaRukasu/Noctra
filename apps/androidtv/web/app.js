@@ -3599,7 +3599,7 @@
           + (oldEngine && optionKind(option) === 'web' ? 1 : 0) + (host && optionKind(option) === 'web' ? 1.5 : 0)
           + (unavailableHere(option) ? 20 : 0) - health.score
           // Test du serveur : vérifié en ligne d'abord, hors ligne en dernier.
-          + (option._probeState === 'up' ? -6 + probePenalty(option) : option._probeState === 'down' ? 8 : 0);
+          + (option._probeState === 'up' ? -6 * probeTrust(option) + probePenalty(option) : option._probeState === 'down' ? 8 : 0);
         // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
         if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail' && option._probeState !== 'down') return base - 10;
         return base;
@@ -3620,10 +3620,67 @@
   // Serveur en ligne mais lent à répondre (liste + segment) : un peu moins bien
   // classé que les rapides (0 à 2 points entre 0,8 s et 6 s), signe d'un relais
   // chargé qui coupera plus souvent.
+  function probeKey(option) { return 'p|' + (option.provider || option._prefix || '') + '|' + optionHost(option); }
+  // Confiance dans le test « En ligne » de ce fournisseur (1 : toujours juste,
+  // jusqu'à 0,25 après plusieurs serveurs « en ligne » qui n'ont pas lu).
+  function probeTrust(option) {
+    var entry = healthStore()[probeKey(option)];
+    if (!entry) return 1;
+    return Math.max(0.25, (entry.ok + 2) / (entry.ok + entry.fail + 2));
+  }
+  function recordProbe(option, ok) {
+    if (!option || option._probeState !== 'up') return;
+    var store = healthStore();
+    var entry = store[probeKey(option)] || (store[probeKey(option)] = { ok: 0, fail: 0 });
+    if (ok) { entry.ok = Math.min(30, entry.ok + 1); entry.o = Date.now(); }
+    else { entry.fail = Math.min(30, entry.fail + 1); entry.f = Date.now(); }
+    if (entry.ok + entry.fail > 12) { entry.ok = Math.round(entry.ok * 0.7); entry.fail = Math.round(entry.fail * 0.7); }
+    saveHealth();
+  }
   function probePenalty(option) {
     var ms = option._probeMs || 0;
     return ms > 800 ? Math.min(2, (ms - 800) / 2600) : 0;
   }
+  // Premiers octets d'une réponse (null : lecture impossible ici, non vérifiable).
+  function firstBytes(response, want) {
+    if (!response.body || !response.body.getReader || typeof Uint8Array === 'undefined') return Promise.resolve(null);
+    var reader = response.body.getReader();
+    var parts = [], size = 0;
+    function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done || !chunk.value) return;
+        parts.push(chunk.value);
+        size += chunk.value.length;
+        if (size < want) return pump();
+      });
+    }
+    return pump().then(function () {
+      try { reader.cancel(); } catch (error) { /* déjà fermé */ }
+      var bytes = new Uint8Array(size), offset = 0;
+      parts.forEach(function (part) { bytes.set(part, offset); offset += part.length; });
+      return bytes;
+    });
+  }
+  // Vraie vidéo ? MPEG-TS (synchro 0x47 tous les 188 octets, même après un faux
+  // en-tête d'image), MP4 fragmenté, audio (ID3, ADTS) ; refusés : vide, page
+  // HTML, JSON ou message d'erreur en texte servis avec un code 200.
+  function looksLikeMedia(bytes) {
+    if (!bytes) return true;
+    if (!bytes.length) return false;
+    var first = 0;
+    while (first < bytes.length && (bytes[first] <= 0x20 || bytes[first] === 0xEF || bytes[first] === 0xBB || bytes[first] === 0xBF)) first++;
+    if (bytes[first] === 0x3C || bytes[first] === 0x7B) return false;
+    for (var i = 0; i < Math.min(bytes.length - 188, 1024); i++) if (bytes[i] === 0x47 && bytes[i + 188] === 0x47) return true;
+    if (bytes.length >= 8 && /^(?:ftyp|styp|moof|sidx|moov|emsg|prft)$/.test(String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]))) return true;
+    if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
+    if (bytes[0] === 0xFF && (bytes[1] & 0xF0) === 0xF0) return true;
+    // Que du texte lisible : message d'erreur. Autre contenu binaire : accepté.
+    var n = Math.min(bytes.length, 256), printable = 0;
+    for (i = 0; i < n; i++) if ((bytes[i] >= 0x20 && bytes[i] < 0x7F) || bytes[i] === 0x0A || bytes[i] === 0x0D || bytes[i] === 0x09) printable++;
+    return printable < n * 0.9;
+  }
+  // Résultat : 'up', 'down', 'bad' (répond sans vidéo), 'stale' (direct figé),
+  // ou '' (non testable ou trop lent : inconnu, jamais compté comme un échec).
   function probeOption(option) {
     var kind = optionKind(option);
     if (kind === 'resolve') return probeResolve(option);
@@ -3632,16 +3689,39 @@
     if (url.indexOf(serverOrigin() + '/') !== 0) return Promise.resolve('');
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
     var timedOut = false;
+    var began = Date.now();
     var timer = setTimeout(function () { timedOut = true; if (controller) controller.abort(); }, PROBE_MS);
     function get(address) {
       var own = address.indexOf(serverOrigin() + '/') === 0;
       return fetch(address, { headers: own ? { 'x-noctra-token': S.token } : {}, credentials: 'omit', cache: 'no-store', signal: controller ? controller.signal : undefined });
     }
+    function media(response) {
+      if (!response.ok) return 'down';
+      return firstBytes(response, 4096).then(function (bytes) { return looksLikeMedia(bytes) ? 'up' : 'bad'; });
+    }
+    // Liste d'un direct : relue après une durée de segment ; inchangée (même
+    // numéro de séquence, même dernier segment), le direct est figé.
+    function moving(address, text) {
+      if (/#EXT-X-ENDLIST/.test(text)) return Promise.resolve(true);
+      var target = Number((/#EXT-X-TARGETDURATION:(\d+(?:\.\d+)?)/.exec(text) || [])[1]) || 0;
+      if (!target || target > 6) return Promise.resolve(true);
+      var wait = target * 1000 + 600 - (Date.now() - began);
+      if (Date.now() - began + Math.max(0, wait) > PROBE_MS - 1500) return Promise.resolve(true);
+      var signature = function (body) {
+        var lines = body.split(/\r?\n/).filter(function (line) { return line && line.charAt(0) !== '#'; });
+        return ((/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(body) || [])[1] || '') + '|' + (lines[lines.length - 1] || '');
+      };
+      return later(Math.max(0, wait)).then(function () { return get(address); }).then(function (again) {
+        if (!again.ok) return true;
+        return again.text().then(function (body) { return signature(body) !== signature(text); });
+      }, function () { return true; });
+    }
     function playlist(address, depth) {
       return get(address).then(function (response) {
         if (!response.ok) return 'down';
         var type = String(response.headers.get('content-type') || '').toLowerCase();
-        if (!/mpegurl|text|json/.test(type)) return depth ? 'up' : 'up';
+        // Flux continu (MPEG-TS…) : ses premiers octets doivent être de la vidéo.
+        if (!/mpegurl|text|json/.test(type)) return media(response);
         return response.text().then(function (text) {
           if (!/^\s*#EXTM3U/.test(text)) return 'down';
           var uris = text.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(function (line) { return line && line.charAt(0) !== '#'; });
@@ -3654,8 +3734,11 @@
           }
           var segment = new URL(uris[uris.length - 1], base).toString();
           // Segment chez un tiers : non vérifiable depuis la page (CORS), la liste suffit.
-          if (segment.indexOf(serverOrigin() + '/') !== 0) return 'up';
-          return get(segment).then(function (answer) { return answer.ok ? 'up' : 'down'; });
+          var check = segment.indexOf(serverOrigin() + '/') !== 0 ? Promise.resolve('up') : get(segment).then(media);
+          return check.then(function (result) {
+            if (result !== 'up') return result;
+            return moving(address, text).then(function (alive) { return alive ? 'up' : 'stale'; });
+          });
         });
       });
     }
@@ -3677,7 +3760,10 @@
       option._resolvedAt = Date.now();
       var first = list.filter(function (item) { return optionKind(item) === 'native'; })[0];
       if (!first) return '';
-      return probeOption(first).then(function (result) { first._probeState = result; return result; });
+      return probeOption(first).then(function (result) {
+        first._probeState = result === 'bad' || result === 'stale' ? 'down' : result;
+        return result;
+      });
     });
   }
 
@@ -3840,6 +3926,9 @@
             if (probes.pending[index]) waiting = true;
           }
           if (waiting && !final) return -1;
+          // Aucun serveur vérifié : d'abord ceux qu'on ne peut pas tester ici,
+          // puis ceux restés sans réponse au test (souvent en panne).
+          for (index = 0; index < state.options.length; index++) if (usable(state.options[index], index) && !state.options[index]._probed) return index;
           for (index = 0; index < state.options.length; index++) if (usable(state.options[index], index)) return index;
           return -2;
         }
@@ -3878,9 +3967,12 @@
       option._probe.className = 'tag probe';
       option._probe.textContent = 'Test…';
       var began = Date.now();
-      probeOption(option).then(function (result) {
+      probeOption(option).then(function (detail) {
         delete probes.pending[index];
+        // « Pas de vidéo » et « Direct figé » : hors ligne pour le choix du serveur.
+        var result = detail === 'bad' || detail === 'stale' ? 'down' : detail;
         option._probeState = result;
+        option._probed = true;
         option._probeMs = Date.now() - began;
         if (document.body.contains(sheet.node)) {
           if (result === 'down') {
@@ -3890,7 +3982,8 @@
             if (recommended) recommended.remove();
           }
           option._probe.className = 'tag ' + (result === 'up' ? 'good' : result === 'down' ? 'bad' : 'probe');
-          option._probe.textContent = result === 'up' ? (option._probeMs > 3500 ? 'En ligne · lent' : 'En ligne') : result === 'down' ? 'Hors ligne' : 'Sans réponse';
+          option._probe.textContent = result === 'up' ? (option._probeMs > 3500 ? 'En ligne · lent' : 'En ligne')
+            : detail === 'bad' ? 'Pas de vidéo' : detail === 'stale' ? 'Direct figé' : result === 'down' ? 'Hors ligne' : 'Sans réponse';
         }
         if (probes.onSettled) probes.onSettled();
         next();
@@ -4005,6 +4098,9 @@
       }).catch(function () { if (playback === state) playerFailed({ message: event.message }); });
       return;
     }
+    // Serveur annoncé « en ligne » par le test mais qui n'a jamais lu : le test
+    // de ce fournisseur comptera moins la prochaine fois.
+    if (!event.played) recordProbe(option, false);
     markFailed(state);
     var next = -1;
     // Serveur suivant : d'abord ceux vérifiés en ligne, puis ceux ni « hors
@@ -4081,6 +4177,7 @@
     state.okIndex = state.index;
     state.okOption = option;
     recordHealth(state, state.index, true);
+    recordProbe(option, true);
   }
   function quickExit(state) {
     return state.options.length > 1 && Date.now() - state.startedAt < 25000;

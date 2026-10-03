@@ -439,7 +439,12 @@ assert.match(tvApp, /Vérification des serveurs…/);
 // Tests : liste, sous-liste et segment ; serveurs automatiques résolus et testés ; résultat dans le classement.
 assert.match(tvApp, /function probeResolve\(option\)/);
 assert.match(tvApp, /#EXT-X-STREAM-INF/);
-assert.match(tvApp, /option\._probeState === 'up' \? -6 \+ probePenalty\(option\) : option\._probeState === 'down' \? 8 : 0/);
+assert.match(tvApp, /option\._probeState === 'up' \? -6 \* probeTrust\(option\) \+ probePenalty\(option\) : option\._probeState === 'down' \? 8 : 0/);
+// Test des serveurs : vraie vidéo dans le segment, direct qui avance, confiance apprise par fournisseur.
+assert.match(tvApp, /function looksLikeMedia\(bytes\)/);
+assert.match(tvApp, /'Pas de vidéo' : detail === 'stale' \? 'Direct figé'/);
+assert.match(tvApp, /if \(!event\.played\) recordProbe\(option, false\);/);
+assert.match(tvApp, /recordProbe\(option, true\);/);
 assert.match(tvApp, /function launchBest\(state, index\)/);
 assert.match(tvApp, /state\.options\.slice\(0, 12\)/);
 assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
