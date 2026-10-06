@@ -347,7 +347,10 @@
     var ranged = results[2] && !results[2].error ? results[2].mbps : 0;
     var parallel = results[3] && !results[3].error ? results[3].mbps : 0;
     var verdict;
-    if (internet >= 15 && films < 8 && ranged >= 8) verdict = 'Le serveur des films n’envoie presque rien aux demandes sans plage d’octets (' + Math.round(films * 10) / 10 + ' Mb/s), mais ' + Math.round(ranged) + ' Mb/s avec une plage. Le lecteur Noctra demande toujours une plage : films et épisodes doivent passer sans coupure avec lui.';
+    // Une seule connexion tantôt rapide, tantôt bloquée : serveur irrégulier
+    // (stockage distant ou disque chargé) ; plusieurs connexions passent.
+    var single = Math.min(films || 0, ranged || 0), best = Math.max(films || 0, ranged || 0);
+    if (internet >= 15 && results[2] && single < 5 && (best >= 15 || parallel >= 15)) verdict = 'Le serveur des films envoie de façon irrégulière : une même lecture est tantôt rapide (' + Math.round(Math.max(best, parallel)) + ' Mb/s), tantôt bloquée plusieurs secondes. C’est typique de films stockés à distance (Real-Debrid, Google Drive… montés sur la seedbox) ou d’un disque très chargé. Le lecteur Noctra (conversion par le serveur, 3 morceaux chargés d’avance, 1 min de réserve) absorbe ces blocages ; le lecteur standard, qui lit le fichier directement, coupe.';
     else if (internet >= 15 && films < 15 && parallel >= Math.max(8, films * 3)) verdict = 'Le serveur des films est bridé connexion par connexion : ' + Math.round(films * 10) / 10 + ' Mb/s avec une seule, ' + Math.round(parallel) + ' Mb/s avec quatre. Les lecteurs qui lisent le film d’un seul tenant coupent ; il faut lire en plusieurs morceaux (lecteur Noctra) ou lever ce bridage sur le serveur.';
     else if (internet && internet < 15) verdict = 'Cet appareil ne reçoit que ' + Math.round(internet) + ' Mb/s : son Wi-Fi est la cause des coupures (un film demande 5 à 25 Mb/s, une chaîne 3 à 8 Mb/s). Rapprochez la box ou le répéteur, préférez le Wi-Fi 5 GHz, ou un adaptateur Ethernet USB.';
     else if (internet && results[1] && films < 15) verdict = 'Internet arrive bien (' + Math.round(internet) + ' Mb/s), mais le serveur des films n’envoie que ' + Math.round(films) + ' Mb/s vers cet appareil : le ralentissement est du côté du serveur ou de sa route vers chez vous.';

@@ -134,11 +134,6 @@ final class NoctraStream {
         this.callback = callback;
         this.url = url;
         this.headers = headers == null ? new HashMap<String, String>() : new HashMap<String, String>(headers);
-        // Films et épisodes (serveur Jellyfin) : toujours une demande « à partir
-        // de l'octet 0 » (Range). Mesuré chez un utilisateur : sans plage, la
-        // seedbox n'envoyait presque rien ; avec, 18 Mb/s par connexion. Le
-        // lecteur remplace cette valeur pour une lecture à une autre position.
-        if (!live && !this.headers.containsKey("Range")) this.headers.put("Range", "bytes=0-");
         this.compact = compact;
         this.live = live;
         this.startMs = Math.max(0, startMs);
