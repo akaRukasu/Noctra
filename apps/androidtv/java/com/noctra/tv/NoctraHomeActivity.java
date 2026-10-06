@@ -479,6 +479,7 @@ public class NoctraHomeActivity extends Activity {
                 intent.putExtra(NoctraPlayerActivity.EXTRA_DEVICE_ID, deviceId);
                 intent.putExtra(NoctraPlayerActivity.EXTRA_START_MS, message.optLong("startMs", 0));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_BITRATE, Math.max(0, message.optLong("bitrate", 0)));
+                if (message.optString("sourceVideo").matches("[A-Za-z0-9]{1,16} [0-9]{1,5} [0-9]{1,5}")) intent.putExtra(NoctraPlayerActivity.EXTRA_SOURCE_VIDEO, message.optString("sourceVideo"));
                 JSONArray segments = message.optJSONArray("segments");
                 if (segments != null && segments.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_SEGMENTS, segments.toString());
                 intent.putExtra(NoctraPlayerActivity.EXTRA_EPISODE, message.optBoolean("episode", false));

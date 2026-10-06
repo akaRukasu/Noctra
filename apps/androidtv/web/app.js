@@ -1089,6 +1089,8 @@
         vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs,
         // Débit du film, montré dans le diagnostic (limité si une qualité est choisie).
         bitrate: vodQuality() ? Math.min(source.Bitrate || 0, vodQuality() * 1000000) : (source.Bitrate || 0),
+        // Vidéo du fichier (« hevc 1920 800 ») : le lecteur dit si l'image reçue est d'origine ou convertie.
+        sourceVideo: (function (video) { return video && video.Codec && video.Width ? video.Codec + ' ' + video.Width + ' ' + (video.Height || 0) : ''; })(streamsOf(full, 'Video')[0]),
         // Génériques : bouton « Passer » ; épisode : générique passé à la main appris pour la série.
         segments: loaded.segments, seriesId: full.Type === 'Episode' ? hexId(full.SeriesId) : '', episode: full.Type === 'Episode',
         // Pistes proposées dans le lecteur (pont web : changement pendant la lecture).

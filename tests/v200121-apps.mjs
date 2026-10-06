@@ -629,4 +629,10 @@ assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.
 assert.match(tvApp, /VideoBitrate: \(vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000\) - 400000,/);
 assert.match(tvApp, /EnableAdaptiveBitrateStreaming: 'false'/);
 assert.match(tvApp, /return text\.filter\(chosen\)\[0\] \|\| subs\.filter\(chosen\)\[0\] \|\| null;/);
+// Films : image reçue (format du décodeur) comparée à la vidéo du fichier : d'origine ou convertie.
+const streamReceived = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamReceived, /player\.getClass\(\)\.getMethod\("getVideoFormat"\)\.invoke\(player\)/);
+assert.match(streamReceived, /" \(d'origine\)" : " · convertie par le serveur \(original "/);
+assert.match(tvApp, /sourceVideo: \(function \(video\)/);
+assert.match(homeJava, /EXTRA_SOURCE_VIDEO, message\.optString\("sourceVideo"\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

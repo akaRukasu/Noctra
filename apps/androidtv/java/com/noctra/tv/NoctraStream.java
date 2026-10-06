@@ -252,6 +252,49 @@ final class NoctraStream {
         sourceBitrate = Math.max(0, bitrate);
     }
 
+    // Film : vidéo du fichier d'origine (format, définition), comparée à l'image reçue.
+    private String sourceCodec = "";
+    private int sourceWidth, sourceHeight;
+
+    void setSourceVideo(String codec, int width, int height) {
+        sourceCodec = codec == null ? "" : codec;
+        sourceWidth = width;
+        sourceHeight = height;
+    }
+
+    private static String codecName(String value) {
+        String codec = value == null ? "" : value.toLowerCase(java.util.Locale.ROOT);
+        if (codec.contains("hevc") || codec.contains("h265") || codec.startsWith("hvc") || codec.startsWith("hev")) return "HEVC";
+        if (codec.contains("avc") || codec.contains("h264")) return "H264";
+        if (codec.contains("av01") || codec.contains("av1")) return "AV1";
+        if (codec.contains("vp9")) return "VP9";
+        if (codec.contains("mpeg2")) return "MPEG2";
+        return codec.replace("video/", "").toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /** Image reçue par l'appareil (format du décodeur), d'origine ou convertie par le serveur. */
+    private String receivedVideo() {
+        if (player == null) return null;
+        try {
+            // Par réflexion : méthode présente dans le lecteur de l'APK, pas forcément dans son interface.
+            Object format = player.getClass().getMethod("getVideoFormat").invoke(player);
+            if (format == null) return null;
+            Class<?> type = format.getClass();
+            String mime = (String) type.getField("sampleMimeType").get(format);
+            int width = type.getField("width").getInt(format), height = type.getField("height").getInt(format);
+            String codec = codecName(mime);
+            StringBuilder text = new StringBuilder("Image reçue : ").append(codec);
+            if (width > 0 && height > 0) text.append(" ").append(width).append("×").append(height);
+            if (!sourceCodec.isEmpty() && sourceWidth > 0) {
+                boolean same = codec.equals(codecName(sourceCodec)) && Math.abs(width - sourceWidth) <= 8;
+                text.append(same ? " (d'origine)" : " · convertie par le serveur (original " + codecName(sourceCodec) + " " + sourceWidth + "×" + sourceHeight + ")");
+            }
+            return text.toString();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     /**
      * Diagnostic du direct, affiché dans le bandeau et pendant une coupure :
      * « Réserve 12 s · Réception 8,4 Mb/s · dernier segment 1,2 s · 3 coupures · relais Noctra ».
@@ -268,6 +311,8 @@ final class NoctraStream {
         if (!live && sourceBitrate > 0) text.append(" · film ").append(Math.round(sourceBitrate / 1e6)).append(" Mb/s");
         if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
         text.append(!live ? " · serveur Jellyfin" : url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
+        String received = live ? null : receivedVideo();
+        if (received != null) text.append("\n").append(received);
         // Film coupé plusieurs fois : la réception ne suit pas son débit.
         if (!live && stalls >= 2) text.append("\nCoupures répétées : choisir une qualité plus basse (menu du compte › Qualité des films).");
         return text.toString();

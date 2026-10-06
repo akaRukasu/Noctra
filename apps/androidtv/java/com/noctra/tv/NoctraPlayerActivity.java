@@ -64,6 +64,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     // Films et épisodes (lecture Jellyfin) :
     static final String EXTRA_VOD = "noctra_vod";
     static final String EXTRA_BITRATE = "noctra_bitrate";
+    static final String EXTRA_SOURCE_VIDEO = "noctra_source_video";
     static final String EXTRA_AUTHORIZATION = "noctra_authorization";
     static final String EXTRA_JELLYFIN_BASE = "noctra_jellyfin_base";
     static final String EXTRA_ITEM_ID = "noctra_item_id";
@@ -135,7 +136,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                 banner.animate().cancel();
                 banner.setAlpha(1f);
                 String server = report == null ? null : report.transcoding();
-                statsView.setText(stream.diagnostics() + (server == null ? "" : "\n" + server));
+                statsView.setText(stream.diagnostics() + (server == null ? "" : "\n" + server) + "\nNoctra TV " + NoctraConfig.VERSION);
                 statsView.setVisibility(TextView.VISIBLE);
             } else if (banner.getAlpha() == 1f) {
                 hideBanner.run();
@@ -407,6 +408,11 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, false,
                 intent.getLongExtra(EXTRA_START_MS, 0));
             stream.setSourceBitrate(intent.getLongExtra(EXTRA_BITRATE, 0));
+            // « hevc 1920 800 » : vidéo du fichier, comparée à l'image reçue.
+            String[] source = String.valueOf(intent.getStringExtra(EXTRA_SOURCE_VIDEO)).split(" ");
+            if (source.length == 3) {
+                try { stream.setSourceVideo(source[0], Integer.parseInt(source[1]), Integer.parseInt(source[2])); } catch (NumberFormatException ignored) { }
+            }
             if (authorization != null) {
                 report = new NoctraPlaybackReport(intent.getStringExtra(EXTRA_JELLYFIN_BASE), authorization,
                     intent.getStringExtra(EXTRA_ITEM_ID), intent.getStringExtra(EXTRA_MEDIA_SOURCE_ID),
