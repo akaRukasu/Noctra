@@ -49,6 +49,13 @@ final class NoctraCleanDataSource implements DataSource {
     private static long lastSegmentBytes;
     private static int segments;
     private static int failures;
+    // Dernière réception d'octets (tous segments) : un blocage pendant lequel
+    // des données arrivent encore est une réception lente, pas un flux coupé.
+    private static volatile long lastDataAt;
+
+    static long lastDataAt() {
+        return lastDataAt;
+    }
 
     /** « Réception 8,4 Mb/s · segment chargé en 1,2 s », ou vide. */
     static String receptionSummary() {
@@ -114,7 +121,10 @@ final class NoctraCleanDataSource implements DataSource {
     @Override
     public int read(byte[] buffer, int offset, int length) throws IOException {
         int count = readInner(buffer, offset, length);
-        if (count > 0) bytes += count;
+        if (count > 0) {
+            bytes += count;
+            lastDataAt = System.currentTimeMillis();
+        }
         return count;
     }
 

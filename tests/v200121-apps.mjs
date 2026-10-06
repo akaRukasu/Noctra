@@ -589,4 +589,8 @@ assert.match(streamVod, /if \(played && now - bufferingSince > 1500 && !edgeSoug
 assert.match(tvApp, /native\('speedTest', \{ targets: targets \}\)/);
 assert.match(homeJava, /private JSONObject measure\(String label, String address\)/);
 assert.match(homeJava, /"speed\.cloudflare\.com"\.equals\(target\.getHost\(\)\) \|\| jellyfin != null \|\| sameOrigin\(target, server\)/);
+// Réception lente : pas de reconnexion tant que des données arrivent (1 min au plus).
+const streamSlow = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamSlow, /if \(quiet < SLOW_QUIET_MS && now - bufferingSince < SLOW_WAIT_MS\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraCleanDataSource.java'), /lastDataAt = System\.currentTimeMillis\(\);/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

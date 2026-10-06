@@ -69,6 +69,8 @@ final class NoctraStream {
     private static final long LIVE_START_MS = 15000;
     private static final long LIVE_RETRY_START_MS = 10000;
     private static final long STALL_TIMEOUT_MS = 15000;
+    private static final long SLOW_QUIET_MS = 8000;
+    private static final long SLOW_WAIT_MS = 60000;
     private static final long SOFT_STALL_MS = 7000;
     private static final int MAX_SOFT_RETRIES = 2;
     private static final long STABLE_MS = 30000;
@@ -477,8 +479,16 @@ final class NoctraStream {
                 try { player.seekToDefaultPosition(); } catch (Exception ignored) { }
             }
             if (played && now - bufferingSince > (live ? STALL_TIMEOUT_MS : STALL_TIMEOUT_MS * 3)) {
-                recover("Le flux ne répond plus.");
-                return;
+                // Des données arrivent encore (réception lente, Wi-Fi faible) :
+                // on attend (1 min au plus) ; reconnecter viderait la réserve
+                // et ferait repartir de zéro. Rien reçu depuis 8 s : flux coupé.
+                long quiet = now - NoctraCleanDataSource.lastDataAt();
+                if (quiet < SLOW_QUIET_MS && now - bufferingSince < SLOW_WAIT_MS) {
+                    callback.onStatus(this, "Réception lente… " + diagnostics());
+                } else {
+                    recover("Le flux ne répond plus.");
+                    return;
+                }
             }
         } else if (state == Player.STATE_ENDED) {
             if (!live) {
