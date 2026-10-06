@@ -601,4 +601,7 @@ assert.match(prefetchJava, /private static final int AHEAD = 3;/);
 assert.match(prefetchJava, /private void schedule\(String url\)/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /if \(!compact && !headers\.containsKey\("x-noctra-doh"\)\) http = new NoctraPrefetchDataSource\.Factory\(http, headers, agent\);/);
 assert.match(tvApp, /localStorage\.getItem\('noctra-tv-vod-player'\) === 'jellyfin' \? 'jellyfin' : 'noctra'/);
+// Films : demandes toujours avec plage d'octets (seedbox lente sans plage) ; test « 1 connexion avec plage ».
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /if \(!live && !this\.headers\.containsKey\("Range"\)\) this\.headers\.put\("Range", "bytes=0-"\);/);
+assert.match(tvApp, /label: 'Serveur des films \(1 connexion avec plage\)', url: address, range: true/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

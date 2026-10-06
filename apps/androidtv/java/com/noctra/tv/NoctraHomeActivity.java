@@ -800,7 +800,7 @@ public class NoctraHomeActivity extends Activity {
                     int parallel = Math.max(1, Math.min(6, target.optInt("parallel", 1)));
                     results.put(parallel > 1
                         ? measureParallel(target.optString("label"), target.optString("url"), parallel, target.optLong("size", 0))
-                        : measure(target.optString("label"), target.optString("url"), -1, -1));
+                        : measure(target.optString("label"), target.optString("url"), target.optBoolean("range") ? 0 : -1, -1));
                 }
                 runOnUiThread(new Runnable() {
                     @Override
@@ -877,7 +877,7 @@ public class NoctraHomeActivity extends Activity {
             // Jeton seulement pour le serveur Jellyfin ou Noctra connu.
             if (jellyfin != null) connection.setRequestProperty("Authorization", NoctraPlaybackReport.authorization(session.accessToken, "noctra-tv-speedtest"));
             else if (sameOrigin(target, server)) connection.setRequestProperty("x-noctra-token", session.accessToken);
-            if (rangeFrom >= 0) connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-" + rangeTo);
+            if (rangeFrom >= 0) connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-" + (rangeTo >= 0 ? String.valueOf(rangeTo) : ""));
             long began = System.currentTimeMillis();
             int status = connection.getResponseCode();
             if (status >= 400) throw new java.io.IOException("HTTP " + status);
