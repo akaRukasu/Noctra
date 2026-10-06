@@ -48,7 +48,15 @@ final class NoctraParallelDataSource implements DataSource {
     private static final int MAX_REPLACEMENTS = 8;
     private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+)");
 
+    // Compte › « Films : chargement » : 4 connexions (défaut) ou 1, exactement
+    // comme l'appli Jellyfin d'origine (lecteur standard, pour comparer).
+    static volatile boolean enabled = true;
+
     /** Appelé par le lecteur standard (patch de VideoManager) à la création de son lecteur. */
+    static DataSource.Factory standard(DataSource.Factory upstream) {
+        return enabled ? wrap(upstream) : upstream;
+    }
+
     static DataSource.Factory wrap(final DataSource.Factory upstream) {
         return new DataSource.Factory() {
             @Override
@@ -60,6 +68,7 @@ final class NoctraParallelDataSource implements DataSource {
 
     /** Réserve du lecteur standard : départ avec 6 s, reprise avec 15 s, jusqu'à 90 s. */
     static void tune(ExoPlayer.Builder builder) {
+        if (!enabled) return;
         try {
             builder.setLoadControl(new DefaultLoadControl.Builder().setBufferDurationsMs(50000, 90000, 6000, 15000).build());
         } catch (Throwable ignored) {

@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 64;
+const noctraRevision = 65;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -295,7 +295,7 @@ await patch(smali('ui/playback/VideoManager.smali'), [[
     invoke-direct {v4, p1, v5}, Landroidx/media3/datasource/DefaultDataSource$Factory;-><init>(Landroid/content/Context;Landroidx/media3/datasource/DataSource$Factory;)V`,
   `    iget-object v5, p0, Lorg/jellyfin/androidtv/ui/playback/VideoManager;->exoPlayerHttpDataSourceFactory:Landroidx/media3/datasource/HttpDataSource$Factory;
 
-    invoke-static {v5}, Lcom/noctra/tv/NoctraParallelDataSource;->wrap(Landroidx/media3/datasource/DataSource$Factory;)Landroidx/media3/datasource/DataSource$Factory;
+    invoke-static {v5}, Lcom/noctra/tv/NoctraParallelDataSource;->standard(Landroidx/media3/datasource/DataSource$Factory;)Landroidx/media3/datasource/DataSource$Factory;
 
     move-result-object v5
 

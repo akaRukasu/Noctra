@@ -77,6 +77,7 @@ public class NoctraHomeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        NoctraParallelDataSource.enabled = getSharedPreferences("noctra", MODE_PRIVATE).getBoolean("parallel", true);
         session = NoctraSession.read(this);
         if (session == null) {
             // Session illisible : l'appli Jellyfin reste utilisable telle quelle.
@@ -321,6 +322,7 @@ public class NoctraHomeActivity extends Activity {
             message.put("codecs", codecs());
             // Appareil modeste (projecteur, clé TV : 2 Go de mémoire ou moins) : affichage allégé.
             message.put("lowEnd", lowEnd());
+            message.put("parallelLoading", NoctraParallelDataSource.enabled);
             // Moteur web du téléviseur : les lecteurs web récents exigent une version récente.
             JSONObject engine = new JSONObject();
             String engineVersion = NoctraWebEngine.version(this);
@@ -502,6 +504,10 @@ public class NoctraHomeActivity extends Activity {
             }
         } else if (action.equals("speedTest")) {
             speedTest(message.optJSONArray("targets"));
+        } else if (action.equals("parallelLoading")) {
+            boolean on = message.optBoolean("on", true);
+            NoctraParallelDataSource.enabled = on;
+            getSharedPreferences("noctra", MODE_PRIVATE).edit().putBoolean("parallel", on).apply();
         } else if (action.equals("keepScreenOn")) {
             if (message.optBoolean("data", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

@@ -641,7 +641,7 @@ assert.match(parallelJava, /private static final int PARALLEL = 4;/);
 assert.match(parallelJava, /void replace\(long now\)/);
 assert.match(parallelJava, /return path\.contains\("\/videos\/"\) && path\.contains\("\/stream"\) && !path\.contains\("\.m3u8"\);/);
 const buildScript = await read('apps/scripts/build-androidtv.mjs');
-assert.match(buildScript, /NoctraParallelDataSource;->wrap\(Landroidx\/media3\/datasource\/DataSource\$Factory;\)/);
+assert.match(buildScript, /NoctraParallelDataSource;->standard\(Landroidx\/media3\/datasource\/DataSource\$Factory;\)/);
 assert.match(buildScript, /NoctraParallelDataSource;->tune\(Landroidx\/media3\/exoplayer\/ExoPlayer\$Builder;\)V/);
 // Direct : fluidité mesurée pendant la lecture dans le classement ; coupures répétées → serveur plus rapide.
 const liveJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
@@ -667,4 +667,7 @@ assert.match(homeJava, /if \(direct\.startsWith\("http"\) && sameOrigin\(Uri\.pa
 assert.match(tvApp, /function directUrl\(item, source, playSessionId, subtitle\)/);
 assert.match(tvApp, /'\/stream\?static=true&MediaSourceId='/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.java'), /playMethod = direct \? "DirectPlay" : "Transcode";/);
+// Lecteur standard : 4 connexions ou 1 (comme l'appli d'origine), au choix pour comparer.
+assert.match(homeJava, /getSharedPreferences\("noctra", MODE_PRIVATE\)\.getBoolean\("parallel", true\)/);
+assert.match(tvApp, /'Lecteur standard : ' \+ \(S\.parallelLoading \? '4 connexions' : '1 connexion \(d’origine\)'\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

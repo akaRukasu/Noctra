@@ -207,6 +207,7 @@
     S.noctra = String(data.noctraUrl || '').replace(/\/+$/, '');
     S.codecs = data.codecs || {};
     S.lowEnd = Boolean(data.lowEnd);
+    S.parallelLoading = data.parallelLoading !== false;
     applyDisplay();
     // Capacités de l'hôte : Android TV (lecteur Jellyfin, lecteur web séparé…)
     // ou pont web de LG webOS / Samsung Tizen (tv-native.js).
@@ -311,6 +312,12 @@
         closeLayer();
         toast(next ? 'Films et épisodes (lecteur Noctra) : ' + next + ' Mb/s au plus, convertis par le serveur si besoin.' : 'Films et épisodes : qualité originale.');
       } }, icon('settings'), 'Qualité des films : ' + vodQualityLabel(vodQuality())),
+      S.caps.jellyfinPlayer !== false && S.platform === 'androidtv' ? h('button', { class: 'btn f', onclick: function () {
+        S.parallelLoading = !S.parallelLoading;
+        native('parallelLoading', { on: S.parallelLoading });
+        closeLayer();
+        toast(S.parallelLoading ? 'Lecteur standard : film chargé sur 4 connexions à la fois.' : 'Lecteur standard : 1 connexion, exactement comme l’appli d’origine (pour comparer).');
+      } }, icon('settings'), 'Lecteur standard : ' + (S.parallelLoading ? '4 connexions' : '1 connexion (d’origine)')) : null,
       S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () { closeLayer(); speedTest(); } }, icon('live'), 'Tester la connexion') : null,
       document.documentElement.classList.contains('web-host') ? null : h('button', { class: 'btn f', onclick: function () {
         var order = ['auto', 'lite', 'full'];
