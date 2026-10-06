@@ -425,6 +425,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             handler.post(vodInfo);
         } else {
             stream = liveStream(url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_HEADERS), intent.getStringExtra(EXTRA_TOKEN));
+            if (canManage()) handler.postDelayed(liveHealth, 60000);
         }
         if (sync) stream.setAutoplay(false);
         stream.start();
@@ -757,6 +758,18 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             event("state", ready ? "ready" : "buffering", stream.positionMs());
             vodReady = ready;
         }
+        // Direct : coupures répétées (3 en 5 min, réserve revenue à zéro) signalées
+        // à l'accueil, qui passe sur un serveur plus rapide s'il en connaît un.
+        if (source == stream && !vod && !ready && stream.hasPlayed() && canManage()) {
+            long now = System.currentTimeMillis();
+            liveStalls.add(now);
+            while (!liveStalls.isEmpty() && now - liveStalls.get(0) > 300000) liveStalls.remove(0);
+            if (liveStalls.size() >= 3 && now - struggleSentAt > 300000) {
+                struggleSentAt = now;
+                liveStalls.clear();
+                sendLive("struggling", null);
+            }
+        }
         // Direct : premier démarrage de ce flux signalé à l'accueil (fiabilité du serveur).
         if (source == stream && !vod && ready && !reportedLive) {
             reportedLive = true;
@@ -772,6 +785,49 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         }
     }
     private boolean reportedLive;
+    private final List<Long> liveStalls = new ArrayList<Long>();
+    private long struggleSentAt;
+    // Fluidité du serveur en cours, envoyée chaque minute : coupures et temps regardé.
+    private int healthStalls;
+    private long healthAt;
+    private final Runnable liveHealth = new Runnable() {
+        @Override
+        public void run() {
+            if (finished || vod || stream == null) return;
+            reportLiveHealth();
+            handler.postDelayed(this, 60000);
+        }
+    };
+
+    private void reportLiveHealth() {
+        long now = System.currentTimeMillis();
+        if (stream == null || !stream.hasPlayed() || healthAt == 0) {
+            healthAt = now;
+            healthStalls = stream == null ? 0 : stream.stallCount();
+            return;
+        }
+        int stalls = stream.stallCount();
+        try {
+            JSONObject data = new JSONObject();
+            data.put("stalls", Math.max(0, stalls - healthStalls));
+            data.put("playedMs", now - healthAt);
+            sendLive("liveHealth", data);
+        } catch (Exception ignored) {
+        }
+        healthAt = now;
+        healthStalls = stalls;
+    }
+
+    private void sendLive(String name, JSONObject data) {
+        try {
+            JSONObject message = data == null ? new JSONObject() : data;
+            message.put("type", "playerEvent");
+            message.put("event", name);
+            message.put("playSessionId", playSessionId == null ? "" : playSessionId);
+            NoctraPlayerBus.fromPlayer(message);
+        } catch (Exception ignored) {
+        }
+    }
 
     @Override
     public void onCommand(JSONObject command) {
@@ -812,12 +868,16 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             if (!url.startsWith("https://") && !url.startsWith("http://")) return;
             handler.removeCallbacks(failTimeout);
             failure = null;
+            // Serveur remplacé : sa fluidité est comptée jusqu'ici.
+            if (canManage()) reportLiveHealth();
             if (stream != null) stream.release();
             JSONObject headers = command.optJSONObject("headers");
             stream = liveStream(url, command.optString("mime"), headers == null ? null : headers.toString(),
                 command.has("token") ? command.optString("token") : null);
             playSessionId = command.optString("playSessionId", playSessionId);
             reportedLive = false;
+            liveStalls.clear();
+            healthAt = 0;
             titleView.setText(command.optString("title"));
             subtitleView.setText(command.optString("subtitle"));
             JSONObject guide = command.optJSONObject("epg");
@@ -1019,6 +1079,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         handler.removeCallbacks(progress);
         handler.removeCallbacks(skipTick);
         handler.removeCallbacks(vodInfo);
+        handler.removeCallbacks(liveHealth);
+        if (!vod && canManage()) reportLiveHealth();
         flushLearn();
         handler.removeCallbacks(sendSeek);
         handler.removeCallbacks(sendZap);

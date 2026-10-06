@@ -27,8 +27,8 @@ import java.util.Map;
  * pensée pour les connexions instables :
  * - tampon plus large qu'à l'origine, et une réserve plus grande après une
  *   coupure pour éviter les coupures à répétition ;
- * - réserve agrandie sur le direct : 8 s de recul une fois le flux prêt, 6 s
- *   de plus après chaque blocage (30 s au plus, jamais trop près du début de
+ * - réserve agrandie sur le direct : 12 s de recul une fois le flux prêt, 6 s
+ *   de plus après chaque blocage (36 s au plus, jamais trop près du début de
  *   la fenêtre du flux) ;
  * - direct à vitesse fixe (pas de rattrapage qui revide la réserve),
  *   définition plafonnée si les coupures se répètent ;
@@ -154,18 +154,19 @@ final class NoctraStream {
 
     // Sur un direct, le lecteur ne peut charger que jusqu'au bord du direct :
     // la réserve est la distance au direct. Une fois le flux prêt (démarrage
-    // au point prévu par le flux), la lecture recule de 8 s pour agrandir la
-    // réserve, puis de 6 s de plus après chaque blocage (30 s au plus), sans
+    // au point prévu par le flux), la lecture recule de 12 s pour agrandir la
+    // réserve (place pour charger plusieurs segments à la fois), puis de 6 s
+    // de plus après chaque blocage (36 s au plus), sans
     // jamais s'approcher à moins de 8 s du début de la fenêtre du direct
     // (segments bientôt effacés). Vitesse fixe : l'avance reste acquise.
-    private static long extraOffsetMs = 8000;
+    private static long extraOffsetMs = 12000;
     private static final long WINDOW_SAFETY_MS = 8000;
     private boolean reserveApplied;
     // Mise en mémoire qui suit ce recul : pas un blocage.
     private boolean reserveSeeking;
 
     private static void widenLiveOffset() {
-        extraOffsetMs = Math.min(30000, extraOffsetMs + 6000);
+        extraOffsetMs = Math.min(36000, extraOffsetMs + 6000);
     }
 
     // Coupures répétées (2 en 3 min) : définition plafonnée (720p, puis 540p)
@@ -215,6 +216,11 @@ final class NoctraStream {
         HashMap<String, String> map = new HashMap<String, String>();
         if (token != null && !token.isEmpty()) map.put("x-noctra-token", token);
         return map;
+    }
+
+    /** Coupures depuis l'ouverture de ce flux. */
+    int stallCount() {
+        return stalls;
     }
 
     boolean hasPlayed() {

@@ -390,7 +390,7 @@ assert.match(tvApp, /else focusChannelCard\(state\);/);
 assert.match(streamJava, /long target = Math\.max\(WINDOW_SAFETY_MS, position - extraOffsetMs\);/, 'Réserve du direct prise après un blocage, sans quitter la fenêtre');
 assert.doesNotMatch(streamJava, /setTargetOffsetMs/, 'Démarrage au point prévu par le flux');
 assert.match(streamJava, /\.setMinPlaybackSpeed\(1f\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct à vitesse fixe : la réserve reste acquise');
-assert.match(streamJava, /private static long extraOffsetMs = 8000;/, 'Réserve agrandie dès le démarrage');
+assert.match(streamJava, /private static long extraOffsetMs = 12000;/, 'Réserve agrandie dès le démarrage');
 assert.doesNotMatch(streamJava, /NoctraDns\.plainClient\(\)/, 'Direct : connexion HTTP d’origine');
 assert.match(streamJava, /String diagnostics\(\) \{/, 'Diagnostic du direct');
 assert.match(streamJava, /callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
@@ -635,4 +635,21 @@ assert.match(streamReceived, /player\.getClass\(\)\.getMethod\("getVideoFormat"\
 assert.match(streamReceived, /" \(d'origine\)" : " · convertie par le serveur \(original "/);
 assert.match(tvApp, /sourceVideo: \(function \(video\)/);
 assert.match(homeJava, /EXTRA_SOURCE_VIDEO, message\.optString\("sourceVideo"\)/);
+// Lecteur standard : fichier lu en morceaux parallèles, connexion muette remplacée ; réserve plus grande.
+const parallelJava = await read('apps/androidtv/java/com/noctra/tv/NoctraParallelDataSource.java');
+assert.match(parallelJava, /private static final int PARALLEL = 4;/);
+assert.match(parallelJava, /void replace\(long now\)/);
+assert.match(parallelJava, /return path\.contains\("\/videos\/"\) && path\.contains\("\/stream"\) && !path\.contains\("\.m3u8"\);/);
+const buildScript = await read('apps/scripts/build-androidtv.mjs');
+assert.match(buildScript, /NoctraParallelDataSource;->wrap\(Landroidx\/media3\/datasource\/DataSource\$Factory;\)/);
+assert.match(buildScript, /NoctraParallelDataSource;->tune\(Landroidx\/media3\/exoplayer\/ExoPlayer\$Builder;\)V/);
+// Direct : fluidité mesurée pendant la lecture dans le classement ; coupures répétées → serveur plus rapide.
+const liveJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(liveJava, /sendLive\("liveHealth", data\);/);
+assert.match(liveJava, /if \(liveStalls\.size\(\) >= 3 && now - struggleSentAt > 300000\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /private static long extraOffsetMs = 12000;/);
+assert.match(tvApp, /function recordSmooth\(state, index, stalls, playedMs\)/);
+assert.match(tvApp, /if \(event\.event === 'struggling'\)/);
+assert.match(tvApp, /'Coupures répétées · passage sur '/);
+assert.match(tvApp, /health\.verdict !== 'choppy'/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

@@ -1605,6 +1605,8 @@
     if (event.event === 'servers') { sendServers(); return; }
     if (event.event === 'server') { pickServer(Number(event.index) || 0); return; }
     if (event.event === 'failed') { playerFailed(event); return; }
+    if (event.event === 'liveHealth') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) recordSmooth(playback, playback.index, Number(event.stalls) || 0, Number(event.playedMs) || 0); return; }
+    if (event.event === 'struggling') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) struggling(playback); return; }
     // Direct lancé : serveur fiable pour cette chaîne (historique de santé).
     if (event.event === 'live') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) succeeded(playback); return; }
     // Piste choisie dans le lecteur : retenue pour les épisodes suivants.
@@ -3665,7 +3667,27 @@
     });
     saveHealth();
   }
-  // Fiabilité estimée : 'good', 'recent-fail', 'unstable' ou '' (inconnue).
+  // Fluidité mesurée pendant la lecture (Android TV) : coupures pour 10 min
+  // regardées, moyenne glissante par serveur et par famille de serveurs.
+  // Un serveur qui démarre mais coupe sans cesse passe après les fluides.
+  function recordSmooth(state, index, stalls, playedMs) {
+    var option = state && state.options[index];
+    if (!option || !(playedMs >= 30000)) return;
+    var rate = Math.min(10, stalls / (playedMs / 600000));
+    // Moins de 2 min regardées : la mesure compte moins.
+    var weight = Math.min(0.4, 0.4 * playedMs / 120000);
+    var store = healthStore();
+    var now = Date.now();
+    healthIds(option, state.key, index, state.channel.provider).forEach(function (id) {
+      var entry = store[id] || (store[id] = { ok: 0, fail: 0 });
+      entry.cut = typeof entry.cut === 'number' ? entry.cut * (1 - weight) + rate * weight : rate;
+      entry.cut = Math.round(entry.cut * 100) / 100;
+      entry.o = entry.o || now;
+    });
+    saveHealth();
+  }
+  function choppy(entry) { return Boolean(entry && typeof entry.cut === 'number' && entry.cut >= 2); }
+  // Fiabilité estimée : 'good', 'recent-fail', 'unstable', 'choppy' ou '' (inconnue).
   function optionHealth(option, key, index, provider) {
     var store = healthStore();
     var ids = healthIds(option, key, index, provider);
@@ -3682,7 +3704,10 @@
       score += (rate - 0.5) * 2 * weight;
       var failedRecently = entry.f && now - entry.f < HEALTH_RECENT_MS && (!entry.o || entry.f > entry.o);
       if (failedRecently) score -= 2 * weight;
+      // Coupures fréquentes (2 ou plus pour 10 min) : jusqu'à 3 points.
+      if (typeof entry.cut === 'number') score -= Math.min(3, entry.cut * 0.75) * weight;
       if (level === 0 && failedRecently) verdict = 'recent-fail';
+      else if (!verdict && level === 0 && choppy(entry)) verdict = 'choppy';
       else if (!verdict && level === 0 && entry.fail >= 2 && rate < 0.45) verdict = 'unstable';
       else if (!verdict && level === 0 && entry.ok >= 2 && rate >= 0.75) verdict = 'good';
     });
@@ -3695,7 +3720,7 @@
     var own = store[ids[0]];
     var family = store[ids[1]];
     var health = optionHealth(option, key, index, provider);
-    var label = health.verdict === 'good' ? 'Fiable' : health.verdict === 'unstable' ? 'Instable' : health.verdict === 'recent-fail' ? 'Échec récent' : '';
+    var label = health.verdict === 'good' ? 'Fiable' : health.verdict === 'unstable' ? 'Instable' : health.verdict === 'recent-fail' ? 'Échec récent' : health.verdict === 'choppy' ? 'Coupures fréquentes' : '';
     if (own && own.ok + own.fail) return (label || 'Essayé') + ' · ' + own.ok + '/' + (own.ok + own.fail) + ' réussites';
     if (family && family.ok + family.fail) return 'Même fournisseur · ' + family.ok + '/' + (family.ok + family.fail) + ' réussites';
     return 'Jamais essayé';
@@ -3736,7 +3761,7 @@
           // Test du serveur : vérifié en ligne d'abord, hors ligne en dernier.
           + (option._probeState === 'up' ? -6 * probeTrust(option) + probePenalty(option) : option._probeState === 'down' ? 8 : 0);
         // Dernier serveur fonctionnel en tête, sauf s'il vient d'échouer.
-        if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail' && option._probeState !== 'down') return base - 10;
+        if (remembered && optionLabel(option, entry.index) === remembered && health.verdict !== 'recent-fail' && health.verdict !== 'choppy' && option._probeState !== 'down') return base - 10;
         return base;
       }
       return score(a) - score(b) || a.index - b.index;
@@ -4325,6 +4350,35 @@
     state.renewed = false;
     delete state.failed[index];
     native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(state.options[index], index), epg: epgPayload(state), message: 'Connexion à ' + optionLabel(state.options[index], index) + '…' });
+    playOption(true);
+  }
+  // Coupures répétées sur le serveur en cours (3 en 5 min) : passage sur un
+  // serveur vérifié en ligne, plus rapide au test et sans coupures connues ;
+  // au plus une fois toutes les 5 min. Sans meilleur candidat, on reste
+  // (le lecteur garde alors plus de réserve à chaque coupure).
+  function struggling(state) {
+    var current = state.options[state.index];
+    if (!current || (state.switchedAt && Date.now() - state.switchedAt < 300000)) return;
+    var store = healthStore();
+    var currentMargin = current._probeMargin || 0;
+    var best = -1, bestScore = Infinity;
+    state.options.forEach(function (option, index) {
+      if (index === state.index || state.failed[index] || option._probeState !== 'up' || unavailableHere(option) || optionKind(option) !== 'native') return;
+      var margin = option._probeMargin || 0;
+      if (margin && margin < 1.5) return;
+      if (margin && currentMargin && margin < currentMargin * 1.2) return;
+      var own = store[healthIds(option, state.key, index, state.channel.provider)[0]];
+      if (choppy(own)) return;
+      var score = probePenalty(option) - optionHealth(option, state.key, index, state.channel.provider).score;
+      if (score < bestScore) { bestScore = score; best = index; }
+    });
+    // Le serveur quitté garde la trace de ses coupures (3 en 5 min au moins).
+    recordSmooth(state, state.index, 3, 300000);
+    if (best < 0) return;
+    state.switchedAt = Date.now();
+    native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(state.options[best], best), epg: epgPayload(state), message: 'Coupures répétées · passage sur ' + optionLabel(state.options[best], best) + '…' });
+    state.index = best;
+    state.renewed = false;
     playOption(true);
   }
   function failOption(state, message) {
