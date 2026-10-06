@@ -3736,27 +3736,38 @@
     saveHealth();
   }
   function probePenalty(option) {
+    // Marge mesurée sur un segment entier : 3 et plus, rien ; 1,5 : 1 point ;
+    // 1 : 2,5 points ; en dessous, jusqu'à 5 (lecture à peine possible).
+    if (option._probeMargin > 0) {
+      var margin = option._probeMargin;
+      return margin >= 3 ? 0 : margin >= 1 ? Math.min(2.5, (3 - margin) * 1.25) : Math.min(5, 2.5 + (1 - margin) * 5);
+    }
     var ms = option._probeMs || 0;
     return ms > 800 ? Math.min(2, (ms - 800) / 2600) : 0;
   }
   // Premiers octets d'une réponse (null : lecture impossible ici, non vérifiable).
   function firstBytes(response, want) {
+    return readBody(response, want, 0).then(function (body) { return body && body.head; });
+  }
+  // Réponse lue jusqu'à `limit` octets ou jusqu'à l'heure `until` (0 : sans
+  // limite de temps) : ses 4 premiers Ko, la quantité lue et si elle est complète.
+  function readBody(response, limit, until) {
     if (!response.body || !response.body.getReader || typeof Uint8Array === 'undefined') return Promise.resolve(null);
     var reader = response.body.getReader();
-    var parts = [], size = 0;
+    var parts = [], kept = 0, size = 0, complete = false;
     function pump() {
       return reader.read().then(function (chunk) {
-        if (chunk.done || !chunk.value) return;
-        parts.push(chunk.value);
+        if (chunk.done || !chunk.value) { complete = true; return; }
+        if (kept < 4096) { parts.push(chunk.value); kept += chunk.value.length; }
         size += chunk.value.length;
-        if (size < want) return pump();
+        if (size < limit && (!until || Date.now() < until)) return pump();
       });
     }
     return pump().then(function () {
-      try { reader.cancel(); } catch (error) { /* déjà fermé */ }
-      var bytes = new Uint8Array(size), offset = 0;
-      parts.forEach(function (part) { bytes.set(part, offset); offset += part.length; });
-      return bytes;
+      if (!complete) { try { reader.cancel(); } catch (error) { /* déjà fermé */ } }
+      var head = new Uint8Array(kept), offset = 0;
+      parts.forEach(function (part) { head.set(part, offset); offset += part.length; });
+      return { head: head, size: size, complete: complete };
     });
   }
   // Vraie vidéo ? MPEG-TS (synchro 0x47 tous les 188 octets, même après un faux
@@ -3797,6 +3808,32 @@
       if (!response.ok) return 'down';
       return firstBytes(response, 4096).then(function (bytes) { return looksLikeMedia(bytes) ? 'up' : 'bad'; });
     }
+    // Segment d'un direct téléchargé en entier (4 Mo et 7 s au plus) : sa durée
+    // divisée par son temps de chargement donne la marge de ce serveur sur
+    // CETTE connexion (2 : deux fois plus vite que la lecture ; sous 1, le
+    // flux arrive moins vite qu'il ne se lit). Un segment pas fini à temps
+    // compte comme une marge inférieure à ce qui a été mesuré.
+    function timedSegment(address, duration) {
+      var sent = Date.now();
+      return get(address).then(function (response) {
+        if (!response.ok) return 'down';
+        var until = Math.min(sent + 7000, began + PROBE_MS - 1500);
+        return readBody(response, 4 * 1024 * 1024, until).then(function (body) {
+          if (!body) return 'up';
+          if (!looksLikeMedia(body.head)) return 'bad';
+          var took = Math.max(1, Date.now() - sent);
+          if (duration > 0 && body.size > 0) {
+            var margin = duration * 1000 / took;
+            option._probeMargin = body.complete ? margin : Math.min(margin, 0.9);
+          }
+          return 'up';
+        });
+      });
+    }
+    function lastDuration(text) {
+      var all = text.match(/#EXTINF:\s*([\d.]+)/g);
+      return all && all.length ? Number(all[all.length - 1].replace(/#EXTINF:\s*/, '')) || 0 : 0;
+    }
     // Liste d'un direct : relue après une durée de segment ; inchangée (même
     // numéro de séquence, même dernier segment), le direct est figé.
     function moving(address, text) {
@@ -3832,7 +3869,7 @@
           }
           var segment = new URL(uris[uris.length - 1], base).toString();
           // Segment chez un tiers : non vérifiable depuis la page (CORS), la liste suffit.
-          var check = segment.indexOf(serverOrigin() + '/') !== 0 ? Promise.resolve('up') : get(segment).then(media);
+          var check = segment.indexOf(serverOrigin() + '/') !== 0 ? Promise.resolve('up') : timedSegment(segment, lastDuration(text));
           return check.then(function (result) {
             if (result !== 'up') return result;
             return moving(address, text).then(function (alive) { return alive ? 'up' : 'stale'; });
@@ -3860,6 +3897,7 @@
       if (!first) return '';
       return probeOption(first).then(function (result) {
         first._probeState = result === 'bad' || result === 'stale' ? 'down' : result;
+        if (first._probeMargin) option._probeMargin = first._probeMargin;
         return result;
       });
     });
@@ -4079,8 +4117,8 @@
             var recommended = option._probe.parentNode && option._probe.parentNode.querySelector('.tag.ok');
             if (recommended) recommended.remove();
           }
-          option._probe.className = 'tag ' + (result === 'up' ? 'good' : result === 'down' ? 'bad' : 'probe');
-          option._probe.textContent = result === 'up' ? (option._probeMs > 3500 ? 'En ligne · lent' : 'En ligne')
+          option._probe.className = 'tag ' + (result === 'up' ? (option._probeMargin > 0 && option._probeMargin < 1.2 ? 'warn' : 'good') : result === 'down' ? 'bad' : 'probe');
+          option._probe.textContent = result === 'up' ? (option._probeMargin > 0 ? (option._probeMargin < 1.2 ? 'En ligne · trop lent ici' : option._probeMargin < 2 ? 'En ligne · juste' : 'En ligne') : option._probeMs > 3500 ? 'En ligne · lent' : 'En ligne')
             : detail === 'bad' ? 'Pas de vidéo' : detail === 'stale' ? 'Direct figé' : result === 'down' ? 'Hors ligne' : 'Sans réponse';
         }
         if (probes.onSettled) probes.onSettled();

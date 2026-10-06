@@ -605,4 +605,8 @@ assert.match(tvApp, /localStorage\.getItem\('noctra-tv-vod-player'\) === 'jellyf
 assert.ok(!/headers\.put\("Range"/.test(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java')), 'Plage d’octets forcée retirée (hypothèse démentie)');
 assert.match(tvApp, /Le serveur des films envoie de façon irrégulière/);
 assert.match(tvApp, /label: 'Serveur des films \(1 connexion avec plage\)', url: address, range: true/);
+// Direct : marge mesurée sur un segment entier (durée / temps de chargement) pour classer les serveurs selon la connexion.
+assert.match(tvApp, /function timedSegment\(address, duration\)/);
+assert.match(tvApp, /option\._probeMargin = body\.complete \? margin : Math\.min\(margin, 0\.9\);/);
+assert.match(tvApp, /'En ligne · trop lent ici'/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');
