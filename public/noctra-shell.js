@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.129';
+  const NOCTRA_BUILD_VERSION = '200.0.130';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -7032,6 +7032,13 @@
   function renderTvStreamOptions(options = [], activeIndex = 0) {
     const target = document.querySelector('[data-tv-stream-options]');
     if (!target) return;
+    // 200.0.130 : serveur déplié d'une chaîne réunie : tous les serveurs de la
+    // source sont déjà dans la liste « Serveurs » au-dessus.
+    if (tvUnifiedActive() && tvUnifiedRun.servers[tvUnifiedRun.index]?.option) {
+      target.hidden = true;
+      target.innerHTML = '';
+      return;
+    }
     target.hidden = !options.length;
     target.innerHTML = options.length > 1
       ? options.map((item, index) => `<button type="button" data-tv-embed-option="${index}" data-tv-embed-compat="${item.compatPage ? 'true' : 'false'}" data-active="${index === activeIndex}">${escapeHtml(item.label || `Serveur ${index + 1}`)}</button>`).join('')
@@ -10707,36 +10714,109 @@
     });
   }
 
-  // Test d'un serveur : flux direct relayé par Noctra (liste, qualité, dernier
-  // segment) ; serveur « automatique » : résolu puis son premier flux testé
-  // (le résultat sert ensuite au lancement, sans seconde résolution).
-  async function probeTvUnifiedServer(server, signal) {
-    const unifiedApi = window.NoctraTvUnified;
-    const item = server.entry.channel;
-    if (server.kind === 'native') return unifiedApi.probeStream(appPath(item.streamUrl), signal);
-    if (server.kind !== 'resolve') return '';
-    let result = null;
-    try {
-      result = await api(item.resolverUrl, { timeoutMs: 12_000, signal });
-    } catch (error) {
-      return signal?.aborted || !Number(error?.status) ? '' : 'down';
-    }
+  function tvUnifiedResultOptions(result) {
     const options = Array.isArray(result?.options)
       ? result.options.filter(option => option?.url || option?.streamUrl || option?.resolveUrl)
       : (result?.streamUrl || result?.url ? [result] : []);
+    // OHA : les autres serveurs natifs sont listés à part (serverChoices).
+    const labels = new Set(options.map(option => String(option.label || '')));
+    const choices = Array.isArray(result?.serverChoices)
+      ? result.serverChoices.filter(choice => (choice?.resolveUrl || choice?.url || choice?.streamUrl) && !labels.has(String(choice.label || '')))
+      : [];
+    return [...options, ...choices];
+  }
+
+  // 200.0.130 : comme sur Noctra TV, une source « automatique » (LiveWatch VIP,
+  // OHA, WiTV…) est remplacée dans la liste par tous ses serveurs (Serveur 1,
+  // 2, VIP…), préfixés du nom de la source, testés et classés avec les autres.
+  function tvUnifiedExpand(server, result) {
+    const options = tvUnifiedResultOptions(result).map((option, index) => ({ ...option, label: option.label || `Serveur ${index + 1}` }));
+    if (!options.length) return null;
+    return options.map((option, optionIndex) => ({
+      entry: server.entry,
+      sourceId: server.sourceId,
+      label: `${server.label} · ${option.label}`,
+      kind: option.streamUrl || option.playbackType === 'stream' ? 'native' : option.resolveUrl && !option.url ? 'resolve' : 'web',
+      option,
+      group: options,
+      optionIndex,
+      compatPage: Boolean(option.compatPage),
+      manualOnly: Boolean(option.manualOnly),
+      fallback: Boolean(option.fallback),
+      probeState: '',
+      probeMs: 0,
+      probed: false,
+      failed: false
+    }));
+  }
+
+  // Résolution arrivée : la source est dépliée sur place (sauf si elle est
+  // déjà en lecture), ses nouveaux serveurs sont ensuite testés.
+  function expandTvUnifiedServer(run, server, outcome) {
+    run.pending.delete(server);
+    if (run.stopped || !run.servers.includes(server)) return [];
+    if (outcome?.error) {
+      if (Number(outcome.error?.status)) {
+        server.probeState = 'down';
+        server.probed = true;
+        window.NoctraTvUnified.recordHealth(server, run.key, false);
+      }
+      return [];
+    }
+    const playing = run.playSequence !== undefined && run.servers[run.index] === server;
+    const expanded = tvUnifiedExpand(server, outcome?.result);
+    if (!expanded) {
+      server.probeState = 'down';
+      server.probed = true;
+      return [];
+    }
+    if (playing) return [];
+    // Même flux proposé par deux sources : un seul serveur.
+    const known = new Set(run.servers.map(item => item.option?.streamUrl || item.option?.url || item.entry.channel.streamUrl || '').filter(Boolean));
+    const fresh = expanded.filter(item => {
+      const address = item.option.streamUrl || item.option.url || '';
+      if (address && known.has(address)) return false;
+      if (address) known.add(address);
+      return true;
+    });
+    const position = run.servers.indexOf(server);
+    run.servers.splice(position, 1, ...fresh);
+    if (run.playSequence !== undefined && run.index > position) run.index += fresh.length - 1;
+    return fresh;
+  }
+
+  // Test d'un serveur : flux direct relayé par Noctra (liste, qualité, dernier
+  // segment) ; serveur imbriqué (« automatique ») : résolu puis son premier
+  // flux testé. Lecteur web : non testable.
+  async function probeTvUnifiedServer(server, signal) {
+    const unifiedApi = window.NoctraTvUnified;
+    const option = server.option;
+    if (server.kind === 'native') return unifiedApi.probeStream(appPath(option ? option.streamUrl : server.entry.channel.streamUrl), signal);
+    if (server.kind !== 'resolve' || !option?.resolveUrl) return '';
+    let result = null;
+    try {
+      result = await api(option.resolveUrl, { timeoutMs: 12_000, signal });
+    } catch (error) {
+      return signal?.aborted || !Number(error?.status) ? '' : 'down';
+    }
+    const options = tvUnifiedResultOptions(result);
     if (!options.length) return 'down';
-    server.resolved = { result, at: Date.now() };
-    const first = options.find(option => option?.streamUrl);
+    const first = options.find(item => item?.streamUrl);
     return first ? unifiedApi.probeStream(appPath(first.streamUrl), signal) : '';
   }
 
   function startTvUnifiedProbes(run) {
     const listeners = new Set();
-    const queue = run.servers.slice(0, TV_UNIFIED_PROBE_LIMIT).filter(server => server.kind !== 'web');
+    const testable = server => server.kind === 'native' || (server.kind === 'resolve' && server.option?.resolveUrl);
+    const queue = run.servers.filter(testable).slice(0, TV_UNIFIED_PROBE_LIMIT);
     queue.forEach(server => run.pending.add(server));
+    let active = 0;
+    let queued = queue.length;
+    const settled = () => listeners.forEach(listener => { try { listener(); } catch {} });
     const next = async () => {
       const server = queue.shift();
       if (!server || run.stopped) return;
+      active += 1;
       const began = performance.now();
       const result = await probeTvUnifiedServer(server, run.controller.signal).catch(() => '');
       run.pending.delete(server);
@@ -10746,13 +10826,26 @@
       server.probed = true;
       // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
       if (result === 'down') window.NoctraTvUnified.recordHealth(server, run.key, false);
+      active -= 1;
       renderTvUnifiedServers(run);
-      listeners.forEach(listener => { try { listener(); } catch {} });
+      settled();
       await next();
     };
     for (let worker = 0; worker < TV_UNIFIED_PROBE_WORKERS; worker += 1) void next();
     renderTvUnifiedServers(run);
-    return { onSettled: listener => listeners.add(listener), off: listener => listeners.delete(listener) };
+    return {
+      onSettled: listener => listeners.add(listener),
+      off: listener => listeners.delete(listener),
+      settled,
+      // Serveurs dépliés après coup : testés à leur tour (12 au plus en tout).
+      add(servers) {
+        const extra = servers.filter(testable).slice(0, Math.max(0, TV_UNIFIED_PROBE_LIMIT - queued));
+        queued += extra.length;
+        extra.forEach(server => { run.pending.add(server); queue.push(server); });
+        for (let worker = active; worker < TV_UNIFIED_PROBE_WORKERS && queue.length; worker += 1) void next();
+        renderTvUnifiedServers(run);
+      }
+    };
   }
 
   // Serveur lancé : le mieux classé parmi ceux vérifiés « en ligne », sans
@@ -10761,7 +10854,7 @@
   // pas hors ligne (même règle que Noctra TV).
   function decideTvUnifiedServer(run, probes) {
     const unifiedApi = window.NoctraTvUnified;
-    const usable = server => !server.failed && server.probeState !== 'down';
+    const usable = server => !server.failed && !server.manualOnly && server.probeState !== 'down';
     const bestVerified = () => {
       const verified = run.servers.filter(server => usable(server) && server.probeState === 'up');
       return run.servers.indexOf(unifiedApi.rankServers(verified, run.key)[0]);
@@ -10812,7 +10905,8 @@
     target.hidden = false;
     target.innerHTML = `<p><strong>Serveurs</strong><small>${run.servers.length} serveur${run.servers.length > 1 ? 's' : ''} · ${sources} source${sources > 1 ? 's' : ''}${run.pending.size ? ' · test en cours…' : ''}</small></p><div>${run.servers.map((server, index) => {
       const health = unifiedApi.serverHealth(server, run.key);
-      const tags = [[server.kind === 'native' ? 'kind' : server.kind === 'resolve' ? 'kind' : 'web', server.kind === 'native' ? 'Direct' : server.kind === 'resolve' ? 'Automatique' : 'Lecteur web']];
+      const tags = [[server.kind === 'web' ? 'web' : 'kind', server.kind === 'native' ? 'Direct' : server.kind === 'resolve' ? 'Automatique' : server.compatPage ? 'Page web' : 'Lecteur web']];
+      if (server.manualOnly) tags.push(['warn', 'Secours manuel']);
       if (run.pending.has(server)) tags.push(['probe', 'Test…']);
       else if (server.probeState === 'up') tags.push(['good', server.probeMs > 3_500 ? 'En ligne · lent' : 'En ligne']);
       else if (server.probeState === 'down') tags.push(['bad', 'Hors ligne']);
@@ -10856,9 +10950,32 @@
       return;
     }
     recordTvDiagnostic('unified-channel', { servers: run.servers.length, sources: channel._sources?.length || 1 });
-    setTvPlaybackStatus(`Test des serveurs de ${channel._sources?.length || 1} source${(channel._sources?.length || 1) > 1 ? 's' : ''}…`, 'loading');
+    setTvPlaybackStatus(`Recherche des serveurs de ${channel._sources?.length || 1} source${(channel._sources?.length || 1) > 1 ? 's' : ''}…`, 'loading');
+    // Sources « automatiques » : leurs serveurs sont demandés tout de suite, en
+    // parallèle ; la liste s'ouvre sans attendre plus de 2,5 s, les retardataires
+    // sont dépliés et testés à leur arrivée (comme sur Noctra TV).
+    const resolving = run.servers.filter(server => server.kind === 'resolve' && !server.option);
+    resolving.forEach(server => {
+      run.pending.add(server);
+      server.resolution = api(server.entry.channel.resolverUrl, { timeoutMs: 15_000, signal: run.controller.signal })
+        .then(result => ({ result }), error => ({ error }))
+        .then(outcome => { server.outcome = outcome; return outcome; });
+    });
+    renderTvUnifiedServers(run);
+    if (resolving.length) await Promise.race([Promise.all(resolving.map(server => server.resolution)), tvUnifiedDelay(2_500)]);
+    if (tvUnifiedRun !== run || run.stopped || playbackSequence !== tvPlaybackSequence) return;
+    resolving.filter(server => server.outcome).forEach(server => expandTvUnifiedServer(run, server, server.outcome));
+    run.servers = unifiedApi.rankServers(run.servers, key);
+    setTvPlaybackStatus(`Test de ${run.servers.length} serveur${run.servers.length > 1 ? 's' : ''}…`, 'loading');
     const probes = startTvUnifiedProbes(run);
-    const chosen = run.servers.length === 1 ? 0 : await decideTvUnifiedServer(run, probes);
+    resolving.filter(server => !server.outcome).forEach(server => {
+      server.resolution.then(outcome => {
+        if (tvUnifiedRun !== run || run.stopped) return;
+        probes.add(expandTvUnifiedServer(run, server, outcome));
+        probes.settled();
+      });
+    });
+    const chosen = run.servers.length === 1 && !run.pending.size ? 0 : await decideTvUnifiedServer(run, probes);
     if (tvUnifiedRun !== run || run.stopped || playbackSequence !== tvPlaybackSequence) return;
     // Serveurs reclassés avec le résultat des tests (vérifiés d'abord, hors
     // ligne à la fin) : en cas d'échec, le suivant est pris dans cet ordre.
@@ -10890,10 +11007,16 @@
         if (tvUnifiedRun === run && run.playSequence === playbackSequence && !run.played) failTvUnifiedServer(run, 'Ce serveur ne démarre pas.');
       }, TV_UNIFIED_START_TIMEOUT_MS);
     }
-    const prefetched = server.resolved && Date.now() - server.resolved.at < 60_000 ? server.resolved.result : null;
-    server.resolved = null;
+    const prefetched = server.outcome?.result || null;
     try {
-      await playTvSourceChannel({ ...server.entry.channel }, run.channelIndex, playbackSequence, { prefetched, unified: true });
+      if (server.option) {
+        // Serveur d'une source « automatique » : ses voisins restent les secours
+        // internes de la source (reprise, autre serveur du même fournisseur).
+        tvState.resolvedEmbeds = server.group.slice();
+        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence, false);
+      } else {
+        await playTvSourceChannel({ ...server.entry.channel }, run.channelIndex, playbackSequence, { prefetched, unified: true });
+      }
     } catch (error) {
       if (tvUnifiedRun !== run || run.playSequence !== playbackSequence) return;
       failTvUnifiedServer(run, error?.message || 'Serveur indisponible.');
@@ -10917,7 +11040,7 @@
       for (let step = 1; step <= run.servers.length; step += 1) {
         const index = (run.index + step) % run.servers.length;
         const candidate = run.servers[index];
-        if (!candidate || candidate.failed) continue;
+        if (!candidate || candidate.failed || candidate.manualOnly) continue;
         if (pass === 0 && candidate.probeState !== 'up') continue;
         if (pass === 1 && candidate.probeState === 'down') continue;
         next = index;

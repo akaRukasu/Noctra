@@ -12678,12 +12678,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.129', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.130', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.129',
+        version: '200.0.130',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

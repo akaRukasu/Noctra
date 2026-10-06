@@ -36,7 +36,7 @@ vm.createContext(context);
 vm.runInContext(dataJs, context);
 vm.runInContext(unifiedJs, context);
 const U = context.NoctraTvUnified;
-assert.match(U.version, /^200\.0\.12[89]$/);
+assert.match(U.version, /^200\.0\.1(2[89]|3\d)$/);
 const ch = (name, extra = {}) => ({ name, playbackType: 'stream', streamUrl: `/s/${encodeURIComponent(name)}.m3u8`, ...extra });
 const merged = U.mergeChannels([
   { source: { id: 'lw', name: 'LiveWatch', section: 'channels' }, channels: [ch('FR: TF1 HD'), ch('beIN SPORTS 1 · SAT · HD', { iptvOrgId: 'BeINSports1.fr' }), ch('France 2'), ch('UK: Sky Sports Main Event')] },

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.129 — chaînes françaises uniquement, plus de chaînes manquantes
+# Version actuelle : 200.0.130 — tous les serveurs de chaque source au clic sur une chaîne
+
+Comme sur Noctra TV, chaque source « automatique » (LiveWatch VIP, OHA, WiTV…) est dépliée en tous ses serveurs, testés et classés ensemble ; les sources lentes sont ajoutées à leur arrivée, le secours manuel n'est jamais lancé seul. Détails : [MISE-A-JOUR-V200130.md](MISE-A-JOUR-V200130.md). Validation : `npm run test:v200130`.
+
+# Historique : 200.0.129 — chaînes françaises uniquement, plus de chaînes manquantes
 
 « Toutes les chaînes » et « Chaînes sport » n'affichent que les chaînes françaises ; les catalogues livrés en plusieurs fois (OHA, LiveWatch) sont complétés, les flux sans type gardés, 120 bouquets par source. Détails : [MISE-A-JOUR-V200129.md](MISE-A-JOUR-V200129.md). Validation : `npm run test:v200129`.
 

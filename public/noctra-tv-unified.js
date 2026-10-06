@@ -594,7 +594,8 @@
     var weight = { native: 0, resolve: 1, web: 2 };
     function score(server) {
       var health = serverHealth(server, key);
-      var base = weight[server.kind] - health.score
+      // Page web préparée, secours manuel, secours : après les autres (comme la TV).
+      var base = weight[server.kind] + (server.compatPage ? 3 : 0) + (server.manualOnly ? 4 : 0) + (server.fallback ? 0.5 : 0) - health.score
         + (server.probeState === 'up' ? -6 + probePenalty(server) : server.probeState === 'down' ? 8 : 0);
       if (remembered && server.label === remembered && health.verdict !== 'recent-fail' && server.probeState !== 'down') return base - 10;
       return base;
@@ -658,7 +659,7 @@
   }
 
   window.NoctraTvUnified = {
-    version: '200.0.129',
+    version: '200.0.130',
     normalize: normalize,
     cleanChannelName: cleanChannelName,
     unifiedName: unifiedName,
