@@ -117,7 +117,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         @Override
         public void run() {
             if (statsView == null || stream == null || banner.getAlpha() == 0f) return;
-            statsView.setText(stream.diagnostics());
+            statsView.setText(stream.diagnostics() + "\nNoctra TV " + NoctraConfig.VERSION);
             statsView.setVisibility(TextView.VISIBLE);
             handler.postDelayed(this, 1000);
         }

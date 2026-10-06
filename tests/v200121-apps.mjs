@@ -395,7 +395,7 @@ assert.doesNotMatch(streamJava, /NoctraDns\.plainClient\(\)/, 'Direct : connexio
 assert.match(streamJava, /String diagnostics\(\) \{/, 'Diagnostic du direct');
 assert.match(streamJava, /callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraCleanDataSource.java'), /static String receptionSummary\(\) \{/);
-assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /statsView\.setText\(stream\.diagnostics\(\)\);/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /statsView\.setText\(stream\.diagnostics\(\) \+ "\\nNoctra TV " \+ NoctraConfig\.VERSION\);/);
 assert.match(streamJava, /private static final int\[\]\[\] CAPS = \{ \{ 1280, 720 \}, \{ 960, 540 \} \};/);
 const compatJava = await read('apps/androidtv/java/com/noctra/tv/NoctraJsCompat.java');
 assert.match(compatJava, /String tag = "<script>" \+ POLYFILL \+ HLS_TUNING \+ "<\/script>";/, 'Lecteurs hls.js : réserve plus grande');
@@ -672,4 +672,9 @@ assert.match(homeJava, /getSharedPreferences\("noctra", MODE_PRIVATE\)\.getBoole
 assert.match(tvApp, /'Lecteur standard : ' \+ \(S\.parallelLoading \? '4 connexions' : '1 connexion \(d’origine\)'\)/);
 // Chaque révision Noctra augmente le numéro de version (installation reconnue comme mise à jour).
 assert.match(await read('apps/scripts/build-androidtv.mjs'), /versionCode: \$\{Number\(code\) \+ noctraRevision\}/);
+// Direct : segment attendu muet 3 s → redemandé sur une nouvelle connexion ; délais plus courts.
+const prefetchHedge = await read('apps/androidtv/java/com/noctra/tv/NoctraPrefetchDataSource.java');
+assert.match(prefetchHedge, /private static final long HEDGE_MS = 3000;/);
+assert.match(prefetchHedge, /entry = hedge\(servingUrl, entry\);/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /\.setReadTimeoutMs\(live \? 8000 : 20000\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

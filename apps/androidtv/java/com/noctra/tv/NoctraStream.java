@@ -358,6 +358,8 @@ final class NoctraStream {
         String reception = NoctraCleanDataSource.receptionSummary();
         if (!reception.isEmpty()) text.append(text.length() > 0 ? " · " : "").append(reception);
         text.append(text.length() > 0 ? " · " : "").append(stalls).append(stalls > 1 ? " coupures" : " coupure");
+        int hedges = NoctraPrefetchDataSource.hedgeCount();
+        if (live && hedges > 0) text.append(" · ").append(hedges).append(hedges > 1 ? " segments relancés" : " segment relancé");
         if (!live && sourceBitrate > 0) text.append(" · film ").append(Math.round(sourceBitrate / 1e6)).append(" Mb/s");
         if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
         text.append(!live ? (isDirect() ? " · fichier d'origine (" + NoctraParallelDataSource.summary() + ")" : " · serveur Jellyfin")
@@ -467,8 +469,10 @@ final class NoctraStream {
             http = new DefaultHttpDataSource.Factory()
                 .setUserAgent(agent)
                 .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(12000)
-                .setReadTimeoutMs(20000)
+                // Direct : une connexion muette est abandonnée plus tôt (8 s) et
+                // la requête relancée, au lieu de vider la réserve en attendant.
+                .setConnectTimeoutMs(live ? 8000 : 12000)
+                .setReadTimeoutMs(live ? 8000 : 20000)
                 .setDefaultRequestProperties(headers);
         }
         // Direct : segments « déguisés » (faux en-tête d'image) nettoyés avant lecture.

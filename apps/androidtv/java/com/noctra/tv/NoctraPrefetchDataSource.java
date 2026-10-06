@@ -32,6 +32,10 @@ import java.util.concurrent.ThreadFactory;
  * le lecteur demande (3 d'avance, chacun sur sa propre connexion) ; quand le
  * lecteur les demande, ils sont déjà en mémoire (ou en cours d'arrivée).
  *
+ * Segment attendu par le lecteur qui n'avance plus (connexion bloquée sans
+ * rien envoyer : un segment de 400 Ko mettait 40 s) : redemandé aussitôt sur
+ * une nouvelle connexion, la plus rapide des deux sert la suite.
+ *
  * Les listes de lecture lues par le lecteur donnent l'ordre des segments ;
  * rien n'est chargé hors de ces listes. Mémoire bornée (48 Mo), segments
  * oubliés une fois lus ou au bout d'une minute.
@@ -42,6 +46,9 @@ final class NoctraPrefetchDataSource implements DataSource {
     private static final long KEEP_MS = 60000;
     private static final int PLAYLIST_LIMIT = 2 * 1024 * 1024;
     private static final int END = -1;
+    // Segment attendu sans nouvel octet depuis 3 s : nouvelle connexion (4 fois au plus).
+    private static final long HEDGE_MS = 3000;
+    private static final int MAX_HEDGES = 4;
 
     static final class Factory implements DataSource.Factory {
         private final DataSource.Factory upstream;
@@ -67,6 +74,7 @@ final class NoctraPrefetchDataSource implements DataSource {
         boolean done;
         IOException error;
         final long at = System.currentTimeMillis();
+        volatile long lastDataAt = at;
 
         synchronized void append(byte[] buffer, int count) {
             if (size + count > data.length) {
@@ -76,6 +84,7 @@ final class NoctraPrefetchDataSource implements DataSource {
             }
             System.arraycopy(buffer, 0, data, size, count);
             size += count;
+            lastDataAt = System.currentTimeMillis();
             notifyAll();
         }
 
@@ -97,9 +106,25 @@ final class NoctraPrefetchDataSource implements DataSource {
             return thread;
         }
     });
+    // Relances : hors de la file (ses connexions peuvent toutes être bloquées).
+    private static final ExecutorService HEDGES = Executors.newCachedThreadPool(new ThreadFactory() {
+        @Override
+        public Thread newThread(Runnable runnable) {
+            Thread thread = new Thread(runnable, "noctra-prefetch-hedge");
+            thread.setDaemon(true);
+            return thread;
+        }
+    });
+    private static volatile int hedges;
+
+    /** Segments redemandés sur une nouvelle connexion depuis l'ouverture du flux. */
+    static int hedgeCount() {
+        return hedges;
+    }
 
     /** Nouveau flux : segments et listes du précédent oubliés. */
     static void reset() {
+        hedges = 0;
         synchronized (LOCK) {
             CACHE.clear();
             PLAYLISTS.clear();
@@ -111,6 +136,7 @@ final class NoctraPrefetchDataSource implements DataSource {
     private final String agent;
     private Entry serving;
     private int servingPosition;
+    private int servingHedges;
     private String servingUrl;
     private Uri uri;
     private boolean upstreamOpen;
@@ -151,6 +177,7 @@ final class NoctraPrefetchDataSource implements DataSource {
                 serving = entry;
                 servingUrl = url;
                 servingPosition = 0;
+                servingHedges = 0;
                 return -1;
             }
         }
@@ -167,15 +194,32 @@ final class NoctraPrefetchDataSource implements DataSource {
         if (length == 0) return 0;
         if (serving != null) {
             Entry entry = serving;
-            synchronized (entry) {
-                while (servingPosition >= entry.size && !entry.done) {
-                    try {
-                        entry.wait(1000);
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("lecture interrompue");
+            while (true) {
+                synchronized (entry) {
+                    if (servingPosition < entry.size || (entry.done && entry.error == null)) break;
+                    if (!entry.done) {
+                        try {
+                            entry.wait(500);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("lecture interrompue");
+                        }
+                        if (servingPosition < entry.size || (entry.done && entry.error == null)) break;
+                        if (!entry.done && System.currentTimeMillis() - entry.lastDataAt < HEDGE_MS) continue;
+                    }
+                    // Plus de relance possible : on attend la fin (ou l'erreur) de celle-ci.
+                    if (servingHedges >= MAX_HEDGES) {
+                        if (entry.done) break;
+                        continue;
                     }
                 }
+                // Connexion muette : le segment repart sur une nouvelle connexion
+                // (depuis le début ; les octets déjà servis sont sautés).
+                entry = hedge(servingUrl, entry);
+                serving = entry;
+                servingHedges++;
+            }
+            synchronized (entry) {
                 if (servingPosition >= entry.size) {
                     if (entry.error != null) throw entry.error;
                     return END;
@@ -304,12 +348,35 @@ final class NoctraPrefetchDataSource implements DataSource {
         }
     }
 
+    private Entry hedge(final String address, Entry stalled) {
+        final Entry fresh = new Entry();
+        hedges++;
+        synchronized (LOCK) {
+            if (CACHE.get(address) == stalled) CACHE.put(address, fresh);
+        }
+        HEDGES.execute(new Runnable() {
+            @Override
+            public void run() { fetch(address, fresh); }
+        });
+        // Le premier des deux qui avance sert la suite : l'ancien est gardé
+        // s'il reprend avant le nouveau.
+        final Entry[] winner = new Entry[1];
+        synchronized (fresh) {
+            long until = System.currentTimeMillis() + HEDGE_MS;
+            while (fresh.size <= servingPosition && !fresh.done && System.currentTimeMillis() < until) {
+                synchronized (stalled) { if (stalled.size > servingPosition || stalled.done) { winner[0] = stalled; break; } }
+                try { fresh.wait(200); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+            }
+        }
+        return winner[0] != null && !(stalled.done && stalled.error != null) ? stalled : fresh;
+    }
+
     private void fetch(String address, Entry entry) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(address).openConnection();
-            connection.setConnectTimeout(12000);
-            connection.setReadTimeout(20000);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(12000);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("User-Agent", agent);
             for (Map.Entry<String, String> header : headers.entrySet()) {
