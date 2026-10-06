@@ -677,4 +677,18 @@ const prefetchHedge = await read('apps/androidtv/java/com/noctra/tv/NoctraPrefet
 assert.match(prefetchHedge, /private static final long HEDGE_MS = 3000;/);
 assert.match(prefetchHedge, /entry = hedge\(servingUrl, entry\);/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /\.setReadTimeoutMs\(live \? 8000 : 20000\)/);
+// Classes Noctra appelées depuis le code Jellyfin (patchs smali, autre paquet) :
+// classe et méthode publiques, sinon IllegalAccessError au lancement (noctra.67).
+{
+  const script = await read('apps/scripts/build-androidtv.mjs');
+  const calls = new Set();
+  for (const match of script.matchAll(/Lcom\/noctra\/tv\/(\w+);->(\w+)\(/g)) calls.add(match[1] + '.' + match[2]);
+  assert.ok(calls.size >= 8, 'appels Noctra repérés dans les patchs');
+  for (const call of calls) {
+    const [cls, method] = call.split('.');
+    const source = await read(`apps/androidtv/java/com/noctra/tv/${cls}.java`);
+    assert.match(source, new RegExp(`^public (?:final )?class ${cls}\\b`, 'm'), `${cls} doit être publique (appelée par Jellyfin)`);
+    assert.match(source, new RegExp(`public static (?:synchronized )?[^\\s(]+ ${method}\\(`), `${cls}.${method} doit être publique et statique`);
+  }
+}
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

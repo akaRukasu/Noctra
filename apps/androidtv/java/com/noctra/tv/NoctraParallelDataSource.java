@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 
 /**
  * Lecteur standard (Jellyfin) : film lu en plusieurs morceaux à la fois.
+ * Classe et méthodes appelées par le lecteur Jellyfin (autre paquet) : publiques.
  *
  * Le lecteur standard lit le fichier du film d'un seul tenant, sur une seule
  * connexion. Quand le serveur bride ou bloque chaque connexion (seedbox :
@@ -37,7 +38,7 @@ import java.util.regex.Pattern;
  * Seuls les fichiers lus tels quels (/Videos/…/stream) sont concernés ; les
  * flux convertis (HLS) et le reste passent sans changement.
  */
-final class NoctraParallelDataSource implements DataSource {
+public final class NoctraParallelDataSource implements DataSource {
     private static final int CHUNK = 3 * 1024 * 1024;
     private static final int PARALLEL = 4;
     private static final int AHEAD = 6;
@@ -53,7 +54,7 @@ final class NoctraParallelDataSource implements DataSource {
     static volatile boolean enabled = true;
 
     /** Appelé par le lecteur standard (patch de VideoManager) à la création de son lecteur. */
-    static DataSource.Factory standard(DataSource.Factory upstream) {
+    public static DataSource.Factory standard(DataSource.Factory upstream) {
         return enabled ? wrap(upstream) : upstream;
     }
 
@@ -67,7 +68,7 @@ final class NoctraParallelDataSource implements DataSource {
     }
 
     /** Réserve du lecteur standard : départ avec 6 s, reprise avec 15 s, jusqu'à 90 s. */
-    static void tune(ExoPlayer.Builder builder) {
+    public static void tune(ExoPlayer.Builder builder) {
         if (!enabled) return;
         try {
             builder.setLoadControl(new DefaultLoadControl.Builder().setBufferDurationsMs(50000, 90000, 6000, 15000).build());

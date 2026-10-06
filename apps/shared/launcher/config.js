@@ -6,7 +6,7 @@
    tvInterface : LG webOS et Samsung Tizen ouvrent l'interface Noctra TV
    (/tv-app/, comme l'appli Android TV) ; false = interface web complète. */
 window.NOCTRA_LAUNCHER_CONFIG = {
-  appVersion: '1.1.48',
+  appVersion: '1.1.49',
   defaultServerUrl: 'https://akarukasu.merlion.usbx.me/noctra',
   autoConnectDelaySeconds: 0,
   tvInterface: true
