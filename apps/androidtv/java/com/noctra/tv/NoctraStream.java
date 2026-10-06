@@ -372,7 +372,10 @@ final class NoctraStream {
             .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(live && !played ? 3 : 6));
         DefaultLoadControl buffer = compact
             ? new DefaultLoadControl.Builder().setBufferDurationsMs(12000, 30000, 2000, 4000).build()
-            : new DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 2500, 6000).build();
+            // Réception Wi-Fi irrégulière (projecteurs, clés TV) : démarrage avec 3 s
+            // d'avance et reprise après une coupure avec 8 s (au lieu de 2,5 s et
+            // 6 s), pour ne pas repartir aussitôt vers une nouvelle coupure.
+            : new DefaultLoadControl.Builder().setBufferDurationsMs(30000, 60000, 3000, 8000).build();
         ExoPlayer exoPlayer = new ExoPlayer.Builder(context, renderers())
             .setMediaSourceFactory(sources)
             .setLoadControl(buffer)

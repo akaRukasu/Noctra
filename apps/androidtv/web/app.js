@@ -170,6 +170,7 @@
       if (data.type === 'session') startSession(data);
       else if (data.type === 'playerClosed') { if (data.vod) vodClosed(data); else playerClosed(data); }
       else if (data.type === 'resumed') appResumed(data);
+      else if (data.type === 'hidden') appHidden = Boolean(data.hidden);
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
       else if (data.type === 'playerEvent') playerEvent(data);
@@ -307,6 +308,8 @@
   var views = {};
   var stack = [];
   var current = null;
+  // Accueil caché par un lecteur (Android TV) : rien d'inutile pendant la vidéo.
+  var appHidden = false;
   // Dernier appui de touche : pas de mise à jour de page pendant la navigation.
   var lastKeyAt = 0;
   document.addEventListener('keydown', function () { lastKeyAt = Date.now(); }, true);
@@ -1742,6 +1745,9 @@
       timer = setTimeout(function () {
         if (!document.body.contains(node)) return;
         if (node.contains(document.activeElement) || layer.firstChild) { sync(); return; }
+        // Lecteur ouvert par-dessus : pas de nouvelle image (décodage qui
+        // prenait du processeur à la vidéo, d'où des coupures régulières).
+        if (appHidden || document.hidden) { sync(); return; }
         // LG / Samsung : pas de nouvelle image (décodage coûteux) pendant la
         // navigation ni quand le carrousel n'est plus à l'écran.
         if (LITE_UI && (Date.now() - lastMove < 4000 || main.scrollTop > node.offsetHeight / 2)) { sync(); return; }

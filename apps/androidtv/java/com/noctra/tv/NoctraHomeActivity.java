@@ -397,6 +397,7 @@ public class NoctraHomeActivity extends Activity {
             java.util.UUID id = NoctraPlayback.uuid(message.optString("itemId"));
             if (id == null) return;
             NoctraSegments.put(message);
+            jellyfinPlaying = true;
             Long position = message.has("positionTicks") && !message.isNull("positionTicks") ? Long.valueOf(message.optLong("positionTicks")) : null;
             if (!NoctraPlayback.play(this, id, position)) {
                 try {
@@ -676,6 +677,11 @@ public class NoctraHomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (webView == null) return;
+        // Retour du lecteur Jellyfin : scripts de l'accueil relancés.
+        if (timersPaused) {
+            timersPaused = false;
+            webView.resumeTimers();
+        }
         webView.onResume();
         // Changement d'utilisateur dans les écrans Jellyfin : nouvelle session.
         NoctraSession current = NoctraSession.read(this);
@@ -708,6 +714,48 @@ public class NoctraHomeActivity extends Activity {
             webView.onPause();
         }
         super.onPause();
+    }
+
+    // Accueil caché par un lecteur : il se met en sommeil (carrousel arrêté,
+    // plus de mise à jour de la page), pour laisser tout le processeur et la
+    // mémoire à la vidéo. Sur les petits appareils (projecteurs, clés TV), la
+    // page web tourne dans le même processus que le lecteur : son carrousel
+    // (une grande image décodée toutes les 8 s) faisait des coupures
+    // régulières. Lecteur Jellyfin (films, épisodes) : l'accueil n'a rien à
+    // faire avant le retour, ses scripts sont entièrement suspendus.
+    private boolean timersPaused;
+    private boolean jellyfinPlaying;
+
+    @Override
+    protected void onStop() {
+        if (webView != null) {
+            try {
+                JSONObject message = new JSONObject();
+                message.put("type", "hidden");
+                message.put("hidden", true);
+                send(message);
+            } catch (Exception ignored) {
+            }
+            if (jellyfinPlaying && !timersPaused) {
+                timersPaused = true;
+                webView.pauseTimers();
+            }
+        }
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        jellyfinPlaying = false;
+        if (webView == null) return;
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "hidden");
+            message.put("hidden", false);
+            send(message);
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
