@@ -565,4 +565,7 @@ assert.match(streamJavaFast, /new DefaultLoadErrorHandlingPolicy\(live && !playe
 // Doublons : abréviations et anciens noms rapprochés (TF1SF, TCM, Canal+ Family, Nat Geo, France 3 National, OCS Ciné+…).
 assert.match(tvApp, /tf1sf: 'tf1seriesfilms', tcm: 'tcmcinema', canalplusfamily: 'canalpluskids'/);
 assert.match(tvApp, /key = key\.replace\(\/\^ocs\(\?=cineplus\)\/, ''\);/);
+// Pays : marque française (beIN Sports 1-3, Canal+…) avant le pays fourni par la source ou iptv-org (beIN → Qatar).
+assert.match(tvApp, /var FRENCH_BRANDS = \/\^\(\?:bein \?sports\? \(\?:max \?\)\?\(\?:\[1-9\]\|10\)\$\|ligue \?1\|tf1\|/);
+assert.ok(tvApp.indexOf("if (FRENCH_BRANDS.test(brandName(name))) return 'fr';") < tvApp.indexOf('found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country)'), 'Marque française avant le pays de la source');
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

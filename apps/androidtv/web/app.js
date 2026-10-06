@@ -2115,7 +2115,7 @@
     gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique du Sud',
     afrique: 'Afrique francophone', lu: 'Luxembourg', mc: 'Monaco', ht: 'Haïti' };
   // Chaînes françaises connues (reconnues même sans indication de pays).
-  var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
+  var FRENCH_BRANDS = /^(?:bein ?sports? (?:max ?)?(?:[1-9]|10)$|ligue ?1|tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
   // Chaînes étrangères souvent rangées parmi les françaises (liste à la main,
   // prioritaire sur tout le reste : Africa 24 est enregistrée « FR » chez iptv-org).
   var FOREIGN_BRANDS = [
@@ -2165,15 +2165,13 @@
     return channel._cc;
   }
   function computeCountry(channel) {
-    // Pays du référentiel iptv-org (ajouté par le serveur) : le plus fiable.
     var name = String(channel.name || '');
     // Chaînes francophones d'autres pays (Afrique, Belgique, Québec…) et chaînes
     // arabes, souvent rangées dans les listes « FR » des sources.
     var found = foreignCountry(name);
     if (found) return found;
-    found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
-    if (found) return found;
-    // Drapeau (🇫🇷, 🇬🇧…) dans le nom.
+    // 1. Ce que dit le nom : drapeau (🇫🇷, 🇬🇧…), code en tête (« AR: »), en
+    //    fin (« (UK) ») ou pays en toutes lettres (« … Arabia »).
     var flag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(name);
     if (flag) {
       found = countryOfCode(String.fromCharCode(97 + flag[1].charCodeAt(0) - 0xDDE6, 97 + flag[2].charCodeAt(0) - 0xDDE6));
@@ -2186,8 +2184,7 @@
     var words = normalize(name).split(' ');
     var last = words[words.length - 1];
     if (words.length > 1 && COUNTRY_WORDS[last]) return COUNTRY_WORDS[last];
-    var id = /\.([a-z]{2})(?:@|$)/i.exec(String(channel.iptvOrgId || channel.epgId || ''));
-    if (id) { found = countryOfCode(id[1]); if (found) return found; }
+    // 2. La catégorie où la source range la chaîne (« Arabic », « 🇬🇧 UK »…).
     var group = String(channel.group || '');
     var groupFlag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(group);
     if (groupFlag) {
@@ -2197,8 +2194,16 @@
     var groupCode = /(?:^|[^A-Za-z])([A-Z]{2,3})(?:[^A-Za-z]|$)/.exec(group);
     found = countryOfWords(group) || (groupCode ? countryOfCode(groupCode[1]) : '');
     if (found) return found;
-    if (/^(?:fr|fra|fre|french|francais|français)$/i.test(String(channel.language || '').trim())) return 'fr';
+    // 3. Marque française sans autre indice : française, même si la source ou
+    //    le référentiel iptv-org donne le pays du groupe (beIN Sports → Qatar,
+    //    Canal+ → Pologne) ; sinon ses serveurs quittaient la chaîne française.
     if (FRENCH_BRANDS.test(brandName(name))) return 'fr';
+    // 4. Pays fourni par la source ou le référentiel iptv-org.
+    found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
+    if (found) return found;
+    var id = /\.([a-z]{2})(?:@|$)/i.exec(String(channel.iptvOrgId || channel.epgId || ''));
+    if (id) { found = countryOfCode(id[1]); if (found) return found; }
+    if (/^(?:fr|fra|fre|french|francais|français)$/i.test(String(channel.language || '').trim())) return 'fr';
     return '';
   }
   // Code pays en tête du nom : « FR: », « FR| », « [FR] », « (UK) », « FR - », « FR TF1 »…
