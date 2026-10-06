@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.130';
+  const NOCTRA_BUILD_VERSION = '200.0.131';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -10418,7 +10418,13 @@
       const loaded = parts.filter(Boolean);
       const channels = unifiedApi.mergeChannels(loaded);
       const pending = sources.filter(source => !loaded.some(part => part.source.id === source.id) && !failed.includes(source.name)).map(source => source.name);
-      const data = { channels, count: channels.length, pending, failedSources: failed.slice(), at: Date.now() };
+      // Apport de chaque source (chaînes gardées, bouquets compris) : affiché
+      // sous le titre pour repérer une source absente de la liste réunie.
+      const coverage = {};
+      loaded.forEach(part => {
+        coverage[part.source.name] = (coverage[part.source.name] || 0) + part.channels.filter(channel => unifiedApi.keepChannel(channel, part.source)).length;
+      });
+      const data = { channels, count: channels.length, pending, failedSources: failed.slice(), coverage, at: Date.now() };
       if (failed.length) data.warning = `Sources indisponibles pour le moment : ${failed.join(', ')}.`;
       return data;
     };
@@ -10602,11 +10608,17 @@
       .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b, 'fr'));
     const groupOrder = [...categories, ...others, ...(counts['Pays non indiqué'] ? ['Pays non indiqué'] : [])];
     const pending = Array.isArray(data.pending) && data.pending.length ? ` En attente : ${data.pending.slice(0, 6).join(', ')}${data.pending.length > 6 ? '…' : ''}.` : '';
+    const coverage = Object.entries(data.coverage || {}).sort((a, b) => b[1] - a[1]);
+    const coverageText = [
+      coverage.length ? `${coverage.length} sources réunies : ${coverage.map(([name, count]) => `${name} ${count}`).join(' · ')}` : '',
+      data.pending?.length ? `en attente : ${data.pending.join(', ')}` : '',
+      data.failedSources?.length ? `indisponibles : ${data.failedSources.join(', ')}` : ''
+    ].filter(Boolean).join(' — ');
     return {
       name: selected.name,
       unified: true,
       logosReady: true,
-      source: selected,
+      source: coverageText ? { ...selected, description: coverageText } : selected,
       channels,
       groups: [],
       count: channels.length,

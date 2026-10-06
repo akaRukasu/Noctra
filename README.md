@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.130 — tous les serveurs de chaque source au clic sur une chaîne
+# Version actuelle : 200.0.131 — serveurs de toutes les sources sous chaque chaîne
+
+Le pays deviné par iptv-org ne sépare plus une même chaîne entre sources (beIN Sport 1 retrouve ses serveurs LiveWatch, OHA…) ; l'apport de chaque source est affiché sous « Toutes les chaînes ». Détails : [MISE-A-JOUR-V200131.md](MISE-A-JOUR-V200131.md). Validation : `npm run test:v200131`.
+
+# Historique : 200.0.130 — tous les serveurs de chaque source au clic sur une chaîne
 
 Comme sur Noctra TV, chaque source « automatique » (LiveWatch VIP, OHA, WiTV…) est dépliée en tous ses serveurs, testés et classés ensemble ; les sources lentes sont ajoutées à leur arrivée, le secours manuel n'est jamais lancé seul. Détails : [MISE-A-JOUR-V200130.md](MISE-A-JOUR-V200130.md). Validation : `npm run test:v200130`.
 

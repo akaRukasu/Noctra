@@ -137,7 +137,13 @@
     // arabes, souvent rangées dans les listes « FR » des sources.
     var found = foreignCountry(name);
     if (found) return found;
-    found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country) || countryOfWords(channel.country);
+    // 200.0.131 (client web) : le pays iptv-org est deviné par le serveur
+    // d'après le nom (« beIN Sports 1 » existe aussi au Qatar) : il passe après
+    // les indications explicites (pays de la source, drapeau, « FR: », « … UK »)
+    // et après les marques françaises connues. Avant, une même chaîne pouvait
+    // être française dans une source et étrangère dans une autre : elle n'était
+    // plus réunie, et ses serveurs « étrangers » disparaissaient.
+    found = countryOfCode(channel.country) || countryOfWords(channel.country);
     if (found) return found;
     // Drapeau (🇫🇷, 🇬🇧…) dans le nom.
     var flag = /\uD83C([\uDDE6-\uDDFF])\uD83C([\uDDE6-\uDDFF])/.exec(name);
@@ -152,6 +158,9 @@
     var words = normalize(name).split(' ');
     var last = words[words.length - 1];
     if (words.length > 1 && COUNTRY_WORDS[last]) return COUNTRY_WORDS[last];
+    if (FRENCH_BRANDS.test(brandName(name))) return 'fr';
+    found = countryOfCode(channel.iptvOrgCountry);
+    if (found) return found;
     var id = /\.([a-z]{2})(?:@|$)/i.exec(String(channel.iptvOrgId || channel.epgId || ''));
     if (id) { found = countryOfCode(id[1]); if (found) return found; }
     var group = String(channel.group || '');
@@ -659,7 +668,7 @@
   }
 
   window.NoctraTvUnified = {
-    version: '200.0.130',
+    version: '200.0.131',
     normalize: normalize,
     cleanChannelName: cleanChannelName,
     unifiedName: unifiedName,
