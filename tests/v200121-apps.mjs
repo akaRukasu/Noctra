@@ -609,4 +609,16 @@ assert.match(tvApp, /label: 'Serveur des films \(1 connexion avec plage\)', url:
 assert.match(tvApp, /function timedSegment\(address, duration\)/);
 assert.match(tvApp, /option\._probeMargin = body\.complete \? margin : Math\.min\(margin, 0\.9\);/);
 assert.match(tvApp, /'En ligne · trop lent ici'/);
+// Films : diagnostic visible (démarrage, coupure, commandes), débit du film, qualité au choix, réserve plus longue.
+const vodPlayerJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
+assert.match(vodPlayerJava, /boolean show = controls \|\| !vodReady \|\| System\.currentTimeMillis\(\) - vodShownAt < VOD_INFO_MS;/);
+assert.match(vodPlayerJava, /stream\.setSourceBitrate\(intent\.getLongExtra\(EXTRA_BITRATE, 0\)\);/);
+const streamVodInfo = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamVodInfo, /setBufferDurationsMs\(50000, 90000, 6000, 15000\)/);
+assert.match(streamVodInfo, /"Démarrage du film… "/);
+assert.match(streamVodInfo, /Qualité des films/);
+assert.match(homeJava, /EXTRA_BITRATE, Math\.max\(0, message\.optLong\("bitrate", 0\)\)/);
+assert.match(tvApp, /var VOD_QUALITIES = \[0, 20, 12, 8, 4\];/);
+assert.match(tvApp, /MaxStreamingBitrate: vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000/);
+assert.match(tvApp, /'Qualité des films : ' \+ vodQualityLabel\(vodQuality\(\)\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

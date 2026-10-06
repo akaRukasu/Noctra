@@ -63,6 +63,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_PLAYED = "noctra_played";
     // Films et épisodes (lecture Jellyfin) :
     static final String EXTRA_VOD = "noctra_vod";
+    static final String EXTRA_BITRATE = "noctra_bitrate";
     static final String EXTRA_AUTHORIZATION = "noctra_authorization";
     static final String EXTRA_JELLYFIN_BASE = "noctra_jellyfin_base";
     static final String EXTRA_ITEM_ID = "noctra_item_id";
@@ -114,6 +115,30 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             if (statsView == null || stream == null || banner.getAlpha() == 0f) return;
             statsView.setText(stream.diagnostics());
             statsView.setVisibility(TextView.VISIBLE);
+            handler.postDelayed(this, 1000);
+        }
+    };
+    // Film : bandeau et diagnostic affichés au démarrage (20 s), pendant une
+    // coupure et tant que les commandes du lecteur sont à l'écran (OK).
+    private static final long VOD_INFO_MS = 20000;
+    private boolean vodReady;
+    private long vodShownAt;
+    private final Runnable vodInfo = new Runnable() {
+        @Override
+        public void run() {
+            if (finished || stream == null) return;
+            boolean controls = false;
+            try { controls = playerView.isControllerFullyVisible(); } catch (Throwable ignored) { }
+            boolean show = controls || !vodReady || System.currentTimeMillis() - vodShownAt < VOD_INFO_MS;
+            if (show) {
+                handler.removeCallbacks(hideBanner);
+                banner.animate().cancel();
+                banner.setAlpha(1f);
+                statsView.setText(stream.diagnostics());
+                statsView.setVisibility(TextView.VISIBLE);
+            } else if (banner.getAlpha() == 1f) {
+                hideBanner.run();
+            }
             handler.postDelayed(this, 1000);
         }
     };
@@ -379,6 +404,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             if (authorization != null) headers.put("Authorization", authorization);
             stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, false,
                 intent.getLongExtra(EXTRA_START_MS, 0));
+            stream.setSourceBitrate(intent.getLongExtra(EXTRA_BITRATE, 0));
             if (authorization != null) {
                 report = new NoctraPlaybackReport(intent.getStringExtra(EXTRA_JELLYFIN_BASE), authorization,
                     intent.getStringExtra(EXTRA_ITEM_ID), intent.getStringExtra(EXTRA_MEDIA_SOURCE_ID),
@@ -386,6 +412,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                 handler.postDelayed(progress, 1000);
             }
             handler.postDelayed(skipTick, 1000);
+            vodShownAt = System.currentTimeMillis();
+            handler.removeCallbacks(hideBanner);
+            handler.post(vodInfo);
         } else {
             stream = liveStream(url, intent.getStringExtra(EXTRA_MIME), intent.getStringExtra(EXTRA_HEADERS), intent.getStringExtra(EXTRA_TOKEN));
         }
@@ -716,7 +745,10 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public void onReadyChanged(NoctraStream source, boolean ready) {
-        if (source == stream && vod) event("state", ready ? "ready" : "buffering", stream.positionMs());
+        if (source == stream && vod) {
+            event("state", ready ? "ready" : "buffering", stream.positionMs());
+            vodReady = ready;
+        }
         // Direct : premier démarrage de ce flux signalé à l'accueil (fiabilité du serveur).
         if (source == stream && !vod && ready && !reportedLive) {
             reportedLive = true;
@@ -978,6 +1010,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         finished = true;
         handler.removeCallbacks(progress);
         handler.removeCallbacks(skipTick);
+        handler.removeCallbacks(vodInfo);
         flushLearn();
         handler.removeCallbacks(sendSeek);
         handler.removeCallbacks(sendZap);

@@ -300,6 +300,12 @@
         closeLayer();
         toast(next === 'noctra' ? 'Films et épisodes : lecteur Noctra (diagnostic de réception pendant une coupure).' : 'Films et épisodes : lecteur standard.');
       } }, icon('play'), 'Lecteur des films : ' + (vodPlayer() === 'noctra' ? 'Noctra' : 'standard')) : null,
+      h('button', { class: 'btn f', onclick: function () {
+        var next = VOD_QUALITIES[(VOD_QUALITIES.indexOf(vodQuality()) + 1) % VOD_QUALITIES.length];
+        try { localStorage.setItem('noctra-tv-vod-quality', String(next)); } catch (error) { /* stockage indisponible */ }
+        closeLayer();
+        toast(next ? 'Films et épisodes (lecteur Noctra) : ' + next + ' Mb/s au plus, convertis par le serveur si besoin.' : 'Films et épisodes : qualité originale.');
+      } }, icon('settings'), 'Qualité des films : ' + vodQualityLabel(vodQuality())),
       S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () { closeLayer(); speedTest(); } }, icon('live'), 'Tester la connexion') : null,
       h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
       h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
@@ -998,7 +1004,9 @@
       AudioStreamIndex: audio ? audio.Index : '',
       SubtitleStreamIndex: subtitle ? subtitle.Index : '',
       SubtitleMethod: subtitle ? (subtitle.IsTextSubtitleStream ? 'Hls' : 'Encode') : '',
-      MaxStreamingBitrate: 80000000, TranscodingMaxAudioChannels: 6, SegmentContainer: 'ts', MinSegments: 1,
+      MaxStreamingBitrate: vodQuality() ? vodQuality() * 1000000 : 80000000, TranscodingMaxAudioChannels: 6,
+      // Qualité limitée : vidéo convertie par le serveur sous ce débit.
+      VideoBitrate: vodQuality() ? vodQuality() * 1000000 - 400000 : '', SegmentContainer: 'ts', MinSegments: 1,
       BreakOnNonKeyFrames: 'True', AllowVideoStreamCopy: 'true', AllowAudioStreamCopy: 'true', RequireAvc: 'false',
       'h264-profile': 'high,main,baseline,constrained baseline', 'h264-level': '51', 'hevc-profile': 'main,main10'
     };
@@ -1012,6 +1020,16 @@
   function vodPlayer() {
     try { return localStorage.getItem('noctra-tv-vod-player') === 'jellyfin' ? 'jellyfin' : 'noctra'; } catch (error) { return 'noctra'; }
   }
+  // Qualité des films (lecteur Noctra) : originale, ou débit maximal en Mb/s
+  // (conversion par le serveur) quand la réception ne suit pas le film.
+  var VOD_QUALITIES = [0, 20, 12, 8, 4];
+  function vodQuality() {
+    try {
+      var value = Number(localStorage.getItem('noctra-tv-vod-quality')) || 0;
+      return VOD_QUALITIES.indexOf(value) >= 0 ? value : 0;
+    } catch (error) { return 0; }
+  }
+  function vodQualityLabel(value) { return value ? value + ' Mb/s' : 'originale'; }
   function jellyfinPlayerUsed() { return S.caps.jellyfinPlayer !== false && vodPlayer() !== 'noctra'; }
   function playItem(item, options) {
     options = options || {};
@@ -1024,6 +1042,11 @@
     // Hors groupe : lecteur Jellyfin (langue audio, sous-titres, qualité…
     // modifiables pendant la lecture) ; à sa fermeture, retour ici.
     if (!options.sync && !options.noctraPlayer && jellyfinPlayerUsed()) {
+      // Le lecteur standard n'affiche ni diagnostic ni réglage de qualité Noctra.
+      if (!S.standardPlayerHint) {
+        S.standardPlayerHint = true;
+        toast('Lecteur standard : pas de diagnostic. Menu du compte › Lecteur des films : Noctra.');
+      }
       var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
       // Génériques connus de Noctra (chapitres, intro apprise) : bouton « Passer »
       // du lecteur Jellyfin même sans détection sur le serveur.
@@ -1054,6 +1077,8 @@
         sync: Boolean(options.sync),
         url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
         vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs,
+        // Débit du film, montré dans le diagnostic (limité si une qualité est choisie).
+        bitrate: vodQuality() ? Math.min(source.Bitrate || 0, vodQuality() * 1000000) : (source.Bitrate || 0),
         // Génériques : bouton « Passer » ; épisode : générique passé à la main appris pour la série.
         segments: loaded.segments, seriesId: full.Type === 'Episode' ? hexId(full.SeriesId) : '', episode: full.Type === 'Episode',
         // Pistes proposées dans le lecteur (pont web : changement pendant la lecture).

@@ -245,6 +245,12 @@ final class NoctraStream {
     }
 
     private int stalls;
+    // Film : débit annoncé par le serveur (b/s), affiché dans le diagnostic.
+    private long sourceBitrate;
+
+    void setSourceBitrate(long bitrate) {
+        sourceBitrate = Math.max(0, bitrate);
+    }
 
     /**
      * Diagnostic du direct, affiché dans le bandeau et pendant une coupure :
@@ -259,8 +265,11 @@ final class NoctraStream {
         String reception = NoctraCleanDataSource.receptionSummary();
         if (!reception.isEmpty()) text.append(text.length() > 0 ? " · " : "").append(reception);
         text.append(text.length() > 0 ? " · " : "").append(stalls).append(stalls > 1 ? " coupures" : " coupure");
+        if (!live && sourceBitrate > 0) text.append(" · film ").append(Math.round(sourceBitrate / 1e6)).append(" Mb/s");
         if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
         text.append(!live ? " · serveur Jellyfin" : url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
+        // Film coupé plusieurs fois : la réception ne suit pas son débit.
+        if (!live && stalls >= 2) text.append("\nCoupures répétées : choisir une qualité plus basse (menu du compte › Qualité des films).");
         return text.toString();
     }
 
@@ -381,7 +390,11 @@ final class NoctraStream {
             // Réception Wi-Fi irrégulière (projecteurs, clés TV) : démarrage avec 3 s
             // d'avance et reprise après une coupure avec 8 s (au lieu de 2,5 s et
             // 6 s), pour ne pas repartir aussitôt vers une nouvelle coupure.
-            : new DefaultLoadControl.Builder().setBufferDurationsMs(30000, 60000, 3000, 8000).build();
+            : live ? new DefaultLoadControl.Builder().setBufferDurationsMs(30000, 60000, 3000, 8000).build()
+            // Film : la réserve peut se remplir à l'avance (rien n'est « en direct ») ;
+            // départ avec 6 s et reprise avec 15 s pour éviter les coupures en série
+            // quand le serveur répond par à-coups (seedbox).
+            : new DefaultLoadControl.Builder().setBufferDurationsMs(50000, 90000, 6000, 15000).build();
         ExoPlayer exoPlayer = new ExoPlayer.Builder(context, renderers())
             .setMediaSourceFactory(sources)
             .setLoadControl(buffer)
@@ -504,6 +517,10 @@ final class NoctraStream {
             // Un direct ne se termine pas : fin de playlist = coupure côté source.
             recover("Le direct s'est interrompu.");
             return;
+        }
+        // Film : démarrage suivi à l'écran (préparation par le serveur, premiers segments).
+        if (!live && !played && now - startedAt > 3000) {
+            callback.onStatus(this, "Démarrage du film… " + (now - startedAt) / 1000 + " s");
         }
         // Film : le serveur peut mettre du temps à préparer la conversion.
         if (!played && now - startedAt > (live ? (attempt == 0 ? LIVE_START_MS : LIVE_RETRY_START_MS) : START_TIMEOUT_MS * 2)) {
