@@ -240,6 +240,7 @@ final class NoctraStream {
         released = false;
         stalls = 0;
         NoctraCleanDataSource.resetStats();
+        if (!compact) NoctraPrefetchDataSource.reset();
         open();
     }
 
@@ -366,6 +367,10 @@ final class NoctraStream {
         }
         // Direct : segments « déguisés » (faux en-tête d'image) nettoyés avant lecture.
         // Films aussi : mesure de la réception des segments (diagnostic des coupures).
+        // Segments suivants chargés plusieurs à la fois (débit bridé par
+        // connexion : seedbox, relais) ; pas avec le DNS sécurisé (OkHttp), ni
+        // en multiview (jusqu'à 12 flux : trop de requêtes à la fois).
+        if (!compact && !headers.containsKey("x-noctra-doh")) http = new NoctraPrefetchDataSource.Factory(http, headers, agent);
         DataSource.Factory data = new NoctraCleanDataSource.Factory(http);
         DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(data)
             // Avant la première image d'un direct : 3 nouvelles tentatives par

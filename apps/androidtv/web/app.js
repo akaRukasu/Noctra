@@ -998,10 +998,11 @@
       .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
     return S.jf + '/Videos/' + item.Id + '/master.m3u8?' + query;
   }
-  // Lecteur des films et épisodes (Android TV) : Jellyfin (par défaut) ou Noctra
-  // (diagnostic de réception affiché pendant une coupure).
+  // Lecteur des films et épisodes (Android TV) : Noctra par défaut (segments
+  // chargés plusieurs à la fois, diagnostic pendant une coupure), ou le lecteur
+  // standard (Jellyfin), qui lit d'un seul tenant sur une seule connexion.
   function vodPlayer() {
-    try { return localStorage.getItem('noctra-tv-vod-player') === 'noctra' ? 'noctra' : 'jellyfin'; } catch (error) { return 'jellyfin'; }
+    try { return localStorage.getItem('noctra-tv-vod-player') === 'jellyfin' ? 'jellyfin' : 'noctra'; } catch (error) { return 'noctra'; }
   }
   function jellyfinPlayerUsed() { return S.caps.jellyfinPlayer !== false && vodPlayer() !== 'noctra'; }
   function playItem(item, options) {

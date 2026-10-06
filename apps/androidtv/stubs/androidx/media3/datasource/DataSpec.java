@@ -6,4 +6,5 @@ import android.net.Uri;
 public final class DataSpec {
     public final Uri uri = null;
     public final long position = 0;
+    public final long length = -1;
 }

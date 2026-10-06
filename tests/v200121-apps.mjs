@@ -595,4 +595,10 @@ assert.match(homeJava, /"speed\.cloudflare\.com"\.equals\(target\.getHost\(\)\) 
 const streamSlow = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
 assert.match(streamSlow, /if \(quiet < SLOW_QUIET_MS && now - bufferingSince < SLOW_WAIT_MS\)/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraCleanDataSource.java'), /lastDataAt = System\.currentTimeMillis\(\);/);
+// Segments chargés plusieurs à la fois (films, épisodes, chaînes) ; lecteur Noctra par défaut pour les films.
+const prefetchJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPrefetchDataSource.java');
+assert.match(prefetchJava, /private static final int AHEAD = 3;/);
+assert.match(prefetchJava, /private void schedule\(String url\)/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /if \(!compact && !headers\.containsKey\("x-noctra-doh"\)\) http = new NoctraPrefetchDataSource\.Factory\(http, headers, agent\);/);
+assert.match(tvApp, /localStorage\.getItem\('noctra-tv-vod-player'\) === 'jellyfin' \? 'jellyfin' : 'noctra'/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');
