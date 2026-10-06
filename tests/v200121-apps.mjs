@@ -670,4 +670,6 @@ assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.
 // Lecteur standard : 4 connexions ou 1 (comme l'appli d'origine), au choix pour comparer.
 assert.match(homeJava, /getSharedPreferences\("noctra", MODE_PRIVATE\)\.getBoolean\("parallel", true\)/);
 assert.match(tvApp, /'Lecteur standard : ' \+ \(S\.parallelLoading \? '4 connexions' : '1 connexion \(d’origine\)'\)/);
+// Chaque révision Noctra augmente le numéro de version (installation reconnue comme mise à jour).
+assert.match(await read('apps/scripts/build-androidtv.mjs'), /versionCode: \$\{Number\(code\) \+ noctraRevision\}/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

@@ -207,6 +207,8 @@
     S.noctra = String(data.noctraUrl || '').replace(/\/+$/, '');
     S.codecs = data.codecs || {};
     S.lowEnd = Boolean(data.lowEnd);
+    // Version de l'appli (« 0.19.10-noctra.66 »), affichée dans le menu du compte.
+    S.version = String(data.version || '');
     S.parallelLoading = data.parallelLoading !== false;
     applyDisplay();
     // Capacités de l'hôte : Android TV (lecteur Jellyfin, lecteur web séparé…)
@@ -298,7 +300,7 @@
   }
   function accountMenu() {
     var list = h('div', { class: 'list scroll' },
-      h('h2', null, S.userName || 'Compte', h('small', { text: 'Noctra TV' })),
+      h('h2', null, S.userName || 'Compte', h('small', { text: 'Noctra TV' + (S.version ? ' · ' + S.version : '') })),
       h('button', { class: 'btn f', onclick: function () { closeLayer(); syncSheet(); } }, icon('people'), sync.group ? 'SyncPlay · ' + sync.group.name : 'SyncPlay · regarder ensemble'),
       S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () {
         var next = vodPlayer() === 'noctra' ? 'jellyfin' : 'noctra';

@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 65;
+const noctraRevision = 66;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -131,7 +131,10 @@ const yml = join(decoded, 'apktool.yml');
 let apktoolYml = await readFile(yml, 'utf8');
 apktoolYml = apktoolYml
   .replace(/minSdkVersion: \d+/, `minSdkVersion: ${minSdk}`)
-  .replace(/versionName: .*/, `versionName: ${versionName}`);
+  .replace(/versionName: .*/, `versionName: ${versionName}`)
+  // Numéro de version augmenté à chaque révision Noctra : chaque APK est
+  // reconnu comme une mise à jour (même numéro : installation parfois ignorée).
+  .replace(/versionCode: '?(\d+)'?/, (match, code) => `versionCode: ${Number(code) + noctraRevision}`);
 await writeFile(yml, apktoolYml);
 
 // ── 3. Marque Noctra ─────────────────────────────────────────────────────
