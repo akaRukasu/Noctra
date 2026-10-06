@@ -678,11 +678,7 @@ public class NoctraHomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (webView == null) return;
-        // Retour du lecteur Jellyfin : scripts de l'accueil relancés.
-        if (timersPaused) {
-            timersPaused = false;
-            webView.resumeTimers();
-        }
+        webView.resumeTimers();
         webView.onResume();
         // Changement d'utilisateur dans les écrans Jellyfin : nouvelle session.
         NoctraSession current = NoctraSession.read(this);
@@ -722,17 +718,12 @@ public class NoctraHomeActivity extends Activity {
     // mémoire à la vidéo. Sur les petits appareils (projecteurs, clés TV), la
     // page web tourne dans le même processus que le lecteur : son carrousel
     // (une grande image décodée toutes les 8 s) faisait des coupures
-    // régulières. Lecteur Jellyfin (films, épisodes) : l'accueil n'a rien à
-    // faire avant le retour, ses scripts sont entièrement suspendus.
-    private final android.os.Handler sleepHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private boolean timersPaused;
+    // régulières. Film ou épisode : la page est en plus masquée.
     private boolean jellyfinPlaying;
     private boolean vodPlaying;
-    private boolean isStarted;
 
     @Override
     protected void onStop() {
-        isStarted = false;
         if (webView != null) {
             try {
                 JSONObject message = new JSONObject();
@@ -743,18 +734,7 @@ public class NoctraHomeActivity extends Activity {
                 send(message);
             } catch (Exception ignored) {
             }
-            // Scripts suspendus une fois la page vidée (1,5 s plus tard).
-            if (jellyfinPlaying && !timersPaused) {
-                final WebView target = webView;
-                sleepHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!jellyfinPlaying || timersPaused || isStarted) return;
-                        timersPaused = true;
-                        target.pauseTimers();
-                    }
-                }, 1500);
-            }
+
         }
         super.onStop();
     }
@@ -762,13 +742,12 @@ public class NoctraHomeActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
-        isStarted = true;
         jellyfinPlaying = false;
         vodPlaying = false;
-        if (timersPaused && webView != null) {
-            timersPaused = false;
-            webView.resumeTimers();
-        }
+        // Les scripts des pages web ne sont jamais suspendus (pauseTimers vaut
+        // pour toute l'appli : un accueil recréé pendant un film restait figé).
+        // Relancés à chaque retour, au cas où une version précédente les aurait laissés suspendus.
+        if (webView != null) webView.resumeTimers();
         if (webView == null) return;
         try {
             JSONObject message = new JSONObject();

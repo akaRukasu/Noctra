@@ -671,3 +671,5 @@ html.web-host .reveal { animation: none; }
 /* Sélection : contour simple (moins coûteux qu'une ombre agrandie). */
 html.web-host .card:focus .art { box-shadow: none; outline: .22rem solid var(--focus); outline-offset: 0; }
 html.web-host .tile:focus, html.web-host .bouquet:focus, html.web-host .lib-tile:focus { box-shadow: none; outline: .2rem solid var(--focus); outline-offset: 0; }
+/* Film en lecture (Android TV) : accueil masqué, réaffiché tel quel au retour. */
+body.asleep #main, body.asleep #top { visibility: hidden; }

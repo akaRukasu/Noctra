@@ -316,24 +316,16 @@
   var current = null;
   // Accueil caché par un lecteur (Android TV) : rien d'inutile pendant la vidéo.
   var appHidden = false;
-  // Film ou épisode : la page est vidée (images libérées) pendant la lecture
-  // et reconstruite au retour, à la même place. Sur les petits appareils
-  // (projecteurs, clés TV : 1 à 2 Go), la mémoire des images de l'accueil
-  // (affiches, fonds, logos des chaînes) manquait au lecteur : coupures.
-  var homeAsleep = false;
+  // Film ou épisode : la page est masquée pendant la lecture (plus rien à
+  // dessiner ; le moteur web peut libérer les images décodées) et réaffichée
+  // telle quelle au retour. Jamais vidée : rien à reconstruire, rien à perdre.
   function sleepHome(deep) {
     appHidden = true;
-    if (!deep || homeAsleep || !current) return;
-    homeAsleep = true;
-    remember(current);
-    renderToken++;
-    clear(main);
+    if (deep) document.body.classList.add('asleep');
   }
   function wakeHome() {
     appHidden = false;
-    if (!homeAsleep) return;
-    homeAsleep = false;
-    if (current && !layer.firstChild) show(false);
+    document.body.classList.remove('asleep');
   }
   // Dernier appui de touche : pas de mise à jour de page pendant la navigation.
   var lastKeyAt = 0;

@@ -570,14 +570,16 @@ assert.match(tvApp, /var FRENCH_BRANDS = \/\^\(\?:bein \?sports\? \(\?:max \?\)\
 assert.ok(tvApp.indexOf("if (FRENCH_BRANDS.test(brandName(name))) return 'fr';") < tvApp.indexOf('found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country)'), 'Marque française avant le pays de la source');
 // Coupures régulières sur petits appareils : accueil en sommeil derrière les lecteurs.
 const homeJava = await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java');
-assert.match(homeJava, /if \(!jellyfinPlaying \|\| timersPaused \|\| isStarted\) return;\s*timersPaused = true;\s*target\.pauseTimers\(\);/);
-assert.match(homeJava, /webView\.resumeTimers\(\);/);
+// Scripts jamais suspendus (pauseTimers figeait toute l'appli si l'accueil était recréé) ; relancés à chaque retour.
+assert.ok(!/\.pauseTimers\(\)/.test(homeJava), 'pauseTimers interdit');
+assert.match(homeJava, /if \(webView != null\) webView\.resumeTimers\(\);/);
 assert.match(tvApp, /else if \(data\.type === 'hidden'\) \{ if \(data\.hidden\) sleepHome\(Boolean\(data\.deep\)\); else wakeHome\(\); \}/);
 assert.match(tvApp, /if \(appHidden \|\| document\.hidden\) \{ sync\(\); return; \}/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /setBufferDurationsMs\(30000, 60000, 3000, 8000\)/);
 // Films : accueil vidé pendant la lecture (mémoire), lecteur des films au choix, diagnostic des coupures.
 assert.match(tvApp, /function sleepHome\(deep\)/);
 assert.match(tvApp, /function wakeHome\(\)/);
+assert.ok(!/function sleepHome[\s\S]{0,300}clear\(main\)/.test(tvApp), 'Accueil jamais vidé pendant un film');
 assert.match(tvApp, /'Lecteur des films : ' \+ \(vodPlayer\(\) === 'noctra' \? 'Noctra' : 'standard'\)/);
 assert.match(homeJava, /message\.put\("deep", jellyfinPlaying \|\| vodPlaying\);/);
 const streamVod = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
