@@ -65,6 +65,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_VOD = "noctra_vod";
     static final String EXTRA_BITRATE = "noctra_bitrate";
     static final String EXTRA_SOURCE_VIDEO = "noctra_source_video";
+    static final String EXTRA_DIRECT_URL = "noctra_direct_url";
+    static final String EXTRA_AUDIO_LANGUAGE = "noctra_audio_language";
+    static final String EXTRA_TEXT_LANGUAGE = "noctra_text_language";
     static final String EXTRA_AUTHORIZATION = "noctra_authorization";
     static final String EXTRA_JELLYFIN_BASE = "noctra_jellyfin_base";
     static final String EXTRA_ITEM_ID = "noctra_item_id";
@@ -199,7 +202,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         @Override
         public void run() {
             if (report == null || stream == null) return;
-            report.checkTranscoding();
+            report.setDirect(stream.isDirect());
+            if (!stream.isDirect()) report.checkTranscoding();
             if (stream.hasPlayed()) {
                 if (!reportedStart) {
                     reportedStart = true;
@@ -408,6 +412,10 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             stream = new NoctraStream(this, playerView, this, url, intent.getStringExtra(EXTRA_MIME), headers, false, false,
                 intent.getLongExtra(EXTRA_START_MS, 0));
             stream.setSourceBitrate(intent.getLongExtra(EXTRA_BITRATE, 0));
+            // Fichier d'origine lu directement quand l'appareil sait le lire.
+            if (intent.hasExtra(EXTRA_DIRECT_URL)) {
+                stream.setDirect(intent.getStringExtra(EXTRA_DIRECT_URL), intent.getStringExtra(EXTRA_AUDIO_LANGUAGE), intent.getStringExtra(EXTRA_TEXT_LANGUAGE));
+            }
             // « hevc 1920 800 » : vidéo du fichier, comparée à l'image reçue.
             String[] source = String.valueOf(intent.getStringExtra(EXTRA_SOURCE_VIDEO)).split(" ");
             if (source.length == 3) {

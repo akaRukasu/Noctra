@@ -67,6 +67,31 @@ final class NoctraParallelDataSource implements DataSource {
         }
     }
 
+    // ── Diagnostic : débit des morceaux (moyenne glissante) et relances ──
+    private static final Object STATS = new Object();
+    private static double chunkMbps;
+    private static int replaced;
+
+    static void resetStats() {
+        synchronized (STATS) { chunkMbps = 0; replaced = 0; }
+    }
+
+    private static void noteChunk(int bytes, long ms) {
+        if (bytes < 256 * 1024 || ms <= 0) return;
+        double mbps = bytes * 8.0 / ms / 1000.0;
+        synchronized (STATS) { chunkMbps = chunkMbps == 0 ? mbps : chunkMbps * 0.7 + mbps * 0.3; }
+    }
+
+    /** « réception ≈ 42 Mb/s sur 4 connexions · 2 relances », ou « 4 connexions ». */
+    static String summary() {
+        synchronized (STATS) {
+            String text = chunkMbps > 0
+                ? String.format(Locale.FRANCE, "réception ≈ %.0f Mb/s sur %d connexions", chunkMbps * PARALLEL, PARALLEL)
+                : PARALLEL + " connexions";
+            return replaced > 0 ? text + " · " + replaced + (replaced > 1 ? " relances" : " relance") : text;
+        }
+    }
+
     static boolean progressive(Uri uri) {
         if (uri == null || uri.getScheme() == null || !uri.getScheme().startsWith("http")) return false;
         String path = String.valueOf(uri.getPath()).toLowerCase(Locale.ROOT);
@@ -90,6 +115,7 @@ final class NoctraParallelDataSource implements DataSource {
         int generation;
         DataSource active;
         volatile long lastDataAt = System.currentTimeMillis();
+        long requestedAt;
 
         Chunk(long start, int size) {
             this.start = start;
@@ -103,6 +129,7 @@ final class NoctraParallelDataSource implements DataSource {
 
         void attempt(int gen, DataSource opened) {
             int failures = 0;
+            synchronized (this) { if (requestedAt == 0) requestedAt = System.currentTimeMillis(); }
             byte[] buffer = new byte[64 * 1024];
             DataSource source = opened;
             while (!stop.get() && current(gen)) {
@@ -142,7 +169,13 @@ final class NoctraParallelDataSource implements DataSource {
                     source = null;
                     synchronized (this) {
                         if (generation != gen) return;
-                        if (filled >= size) { done = true; active = null; notifyAll(); return; }
+                        if (filled >= size) {
+                            done = true;
+                            active = null;
+                            notifyAll();
+                            noteChunk(size, System.currentTimeMillis() - requestedAt);
+                            return;
+                        }
                     }
                     // Fin de réponse avant la fin du morceau : la suite est redemandée.
                     throw new IOException("morceau incomplet");
@@ -167,6 +200,7 @@ final class NoctraParallelDataSource implements DataSource {
                 if (done || generation >= MAX_REPLACEMENTS) return;
                 generation++;
                 gen = generation;
+                synchronized (STATS) { replaced++; }
                 stalled = active;
                 active = null;
                 lastDataAt = now;

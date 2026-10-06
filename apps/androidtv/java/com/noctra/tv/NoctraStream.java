@@ -254,6 +254,50 @@ final class NoctraStream {
     // Film : débit annoncé par le serveur (b/s), affiché dans le diagnostic.
     private long sourceBitrate;
 
+    // Film : fichier d'origine lu directement (4 connexions, sans conversion
+    // par le serveur), avec repli sur le flux préparé par le serveur si
+    // l'appareil ne sait pas le lire. Langues audio et sous-titres choisies.
+    private String directUrl;
+    private boolean directFailed;
+    private String audioLanguage = "";
+    private String textLanguage = "";
+
+    void setDirect(String address, String audio, String text) {
+        directUrl = address;
+        audioLanguage = audio == null ? "" : audio;
+        textLanguage = text == null ? "" : text;
+    }
+
+    boolean isDirect() {
+        return !live && directUrl != null && !directFailed;
+    }
+
+    // Langues voulues, appliquées par réflexion (méthodes présentes dans le lecteur de l'APK).
+    private void applyTrackPreferences() {
+        if (player == null) return;
+        try {
+            Object parameters = player.getClass().getMethod("getTrackSelectionParameters").invoke(player);
+            Object builder = parameters.getClass().getMethod("buildUpon").invoke(parameters);
+            Class<?> type = builder.getClass();
+            if (!audioLanguage.isEmpty()) builder = type.getMethod("setPreferredAudioLanguage", String.class).invoke(builder, audioLanguage);
+            if (textLanguage.isEmpty()) {
+                builder = type.getMethod("setTrackTypeDisabled", int.class, boolean.class).invoke(builder, 3, true);
+            } else {
+                builder = type.getMethod("setTrackTypeDisabled", int.class, boolean.class).invoke(builder, 3, false);
+                builder = type.getMethod("setPreferredTextLanguage", String.class).invoke(builder, textLanguage);
+            }
+            Object built = builder.getClass().getMethod("build").invoke(builder);
+            for (java.lang.reflect.Method method : player.getClass().getMethods()) {
+                if (method.getName().equals("setTrackSelectionParameters") && method.getParameterTypes().length == 1) {
+                    method.invoke(player, built);
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Pistes par défaut du fichier.
+        }
+    }
+
     void setSourceBitrate(long bitrate) {
         sourceBitrate = Math.max(0, bitrate);
     }
@@ -316,7 +360,8 @@ final class NoctraStream {
         text.append(text.length() > 0 ? " · " : "").append(stalls).append(stalls > 1 ? " coupures" : " coupure");
         if (!live && sourceBitrate > 0) text.append(" · film ").append(Math.round(sourceBitrate / 1e6)).append(" Mb/s");
         if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
-        text.append(!live ? " · serveur Jellyfin" : url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
+        text.append(!live ? (isDirect() ? " · fichier d'origine (" + NoctraParallelDataSource.summary() + ")" : " · serveur Jellyfin")
+            : url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
         String received = live ? null : receivedVideo();
         if (received != null) text.append("\n").append(received);
         // Film coupé plusieurs fois : la réception ne suit pas son débit.
@@ -410,6 +455,7 @@ final class NoctraStream {
         // Flux repéré dans une page web : même identité que la page (sinon refus).
         String agent = headers.containsKey("User-Agent") ? headers.get("User-Agent") : "NoctraTV/" + NoctraConfig.VERSION;
         DataSource.Factory http;
+        boolean direct = isDirect();
         if (headers.containsKey("x-noctra-doh")) {
             // Site bloqué par le DNS du fournisseur d'accès : OkHttp et DNS sécurisé.
             HashMap<String, String> properties = new HashMap<String, String>(headers);
@@ -430,8 +476,15 @@ final class NoctraStream {
         // Segments suivants chargés plusieurs à la fois (débit bridé par
         // connexion : seedbox, relais) ; pas avec le DNS sécurisé (OkHttp), ni
         // en multiview (jusqu'à 12 flux : trop de requêtes à la fois).
-        if (!compact && !headers.containsKey("x-noctra-doh")) http = new NoctraPrefetchDataSource.Factory(http, headers, agent);
-        DataSource.Factory data = new NoctraCleanDataSource.Factory(http);
+        DataSource.Factory data;
+        if (direct) {
+            // Fichier d'origine : morceaux lus 4 à la fois (voir NoctraParallelDataSource).
+            NoctraParallelDataSource.resetStats();
+            data = NoctraParallelDataSource.wrap(http);
+        } else {
+            if (!compact && !headers.containsKey("x-noctra-doh")) http = new NoctraPrefetchDataSource.Factory(http, headers, agent);
+            data = new NoctraCleanDataSource.Factory(http);
+        }
         DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(data)
             // Avant la première image d'un direct : 3 nouvelles tentatives par
             // requête (erreur vite constatée) ; ensuite 6 (coupures passagères).
@@ -452,9 +505,10 @@ final class NoctraStream {
             .build();
         player = exoPlayer;
         applyMaxVideoSize();
-        MediaItem.Builder item = new MediaItem.Builder().setUri(url);
-        String mime = attempts.get(attempt);
+        MediaItem.Builder item = new MediaItem.Builder().setUri(direct ? directUrl : url);
+        String mime = direct ? "" : attempts.get(attempt);
         if (!mime.isEmpty()) item.setMimeType(mime);
+        if (!live) applyTrackPreferences();
         if (live) {
             // Vitesse fixe : après une coupure, le lecteur ne rattrape plus le
             // direct en accélérant (ce qui revidait la réserve). Le point de
@@ -574,7 +628,7 @@ final class NoctraStream {
             callback.onStatus(this, "Démarrage du film… " + (now - startedAt) / 1000 + " s");
         }
         // Film : le serveur peut mettre du temps à préparer la conversion.
-        if (!played && now - startedAt > (live ? (attempt == 0 ? LIVE_START_MS : LIVE_RETRY_START_MS) : START_TIMEOUT_MS * 2)) {
+        if (!played && now - startedAt > (live ? (attempt == 0 ? LIVE_START_MS : LIVE_RETRY_START_MS) : isDirect() ? START_TIMEOUT_MS : START_TIMEOUT_MS * 2)) {
             recover("Le flux ne répond pas.");
             return;
         }
@@ -582,6 +636,13 @@ final class NoctraStream {
     }
 
     private void recover(String message) {
+        // Fichier d'origine illisible ici (format, décodeur) : flux préparé par le serveur.
+        if (!played && isDirect()) {
+            directFailed = true;
+            callback.onStatus(this, "Lecture directe impossible · fichier préparé par le serveur…");
+            open();
+            return;
+        }
         if (!played && attempt + 1 < attempts.size()) {
             attempt++;
             callback.onStatus(this, "Nouvelle tentative…");

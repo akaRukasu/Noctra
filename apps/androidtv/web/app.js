@@ -1050,6 +1050,25 @@
       .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
     return S.jf + '/Videos/' + item.Id + '/master.m3u8?' + query;
   }
+  // Fichier d'origine lu directement par le lecteur Noctra (Android TV) :
+  // qualité d'origine, aucune préparation par le serveur (qui ne suit pas
+  // toujours), morceaux lus 4 à la fois. Seulement si l'appareil décode la
+  // vidéo et qu'aucune qualité réduite n'est choisie ; sinon (ou si la lecture
+  // directe échoue) flux HLS préparé par le serveur.
+  var DIRECT_CONTAINERS = ['mkv', 'webm', 'mp4', 'm4v', 'mov', 'ts', 'mpegts'];
+  function directUrl(item, source, playSessionId, subtitle) {
+    if (vodQuality() || S.platform !== 'androidtv') return '';
+    var containers = String(source.Container || '').toLowerCase().split(',');
+    if (!containers.some(function (name) { return DIRECT_CONTAINERS.indexOf(name.trim()) >= 0; })) return '';
+    var video = streamsOf(item, 'Video')[0];
+    var codec = String(video && video.Codec || '').toLowerCase();
+    var codecs = S.codecs || {};
+    if (!(codec === 'h264' || (codec === 'hevc' && codecs.hevc) || (codec === 'vp9' && codecs.vp9))) return '';
+    // Sous-titres dans un fichier à part : seul le serveur les ajoute.
+    if (subtitle && subtitle.IsExternal) return '';
+    return S.jf + '/Videos/' + item.Id + '/stream?static=true&MediaSourceId=' + encodeURIComponent(source.Id)
+      + '&DeviceId=' + encodeURIComponent(deviceId()) + '&PlaySessionId=' + encodeURIComponent(playSessionId);
+  }
   // Lecteur des films et épisodes (Android TV) : Noctra par défaut (segments
   // chargés plusieurs à la fois, diagnostic pendant une coupure), ou le lecteur
   // standard (Jellyfin), qui lit d'un seul tenant sur une seule connexion.
@@ -1115,6 +1134,9 @@
         vod: true, jellyfin: S.jf, itemId: full.Id, mediaSourceId: source.Id, playSessionId: playSessionId, deviceId: deviceId(), startMs: startMs,
         // Débit du film, montré dans le diagnostic (limité si une qualité est choisie).
         bitrate: vodQuality() ? Math.min(source.Bitrate || 0, vodQuality() * 1000000) : (source.Bitrate || 0),
+        directUrl: directUrl(full, source, playSessionId, pickSubtitle(full)),
+        audioLanguage: (pickAudio(full) || {}).Language || '',
+        textLanguage: pickSubtitle(full) ? (pickSubtitle(full).Language || 'und') : '',
         // Vidéo du fichier (« hevc 1920 800 ») : le lecteur dit si l'image reçue est d'origine ou convertie.
         sourceVideo: (function (video) { return video && video.Codec && video.Width ? video.Codec + ' ' + video.Width + ' ' + (video.Height || 0) : ''; })(streamsOf(full, 'Video')[0]),
         // Génériques : bouton « Passer » ; épisode : générique passé à la main appris pour la série.

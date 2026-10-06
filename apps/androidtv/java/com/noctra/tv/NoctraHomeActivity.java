@@ -481,6 +481,13 @@ public class NoctraHomeActivity extends Activity {
                 intent.putExtra(NoctraPlayerActivity.EXTRA_DEVICE_ID, deviceId);
                 intent.putExtra(NoctraPlayerActivity.EXTRA_START_MS, message.optLong("startMs", 0));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_BITRATE, Math.max(0, message.optLong("bitrate", 0)));
+                // Fichier d'origine (même serveur Jellyfin : le jeton n'en sort pas).
+                String direct = message.optString("directUrl");
+                if (direct.startsWith("http") && sameOrigin(Uri.parse(direct), jellyfin)) {
+                    intent.putExtra(NoctraPlayerActivity.EXTRA_DIRECT_URL, direct);
+                    intent.putExtra(NoctraPlayerActivity.EXTRA_AUDIO_LANGUAGE, message.optString("audioLanguage"));
+                    intent.putExtra(NoctraPlayerActivity.EXTRA_TEXT_LANGUAGE, message.optString("textLanguage"));
+                }
                 if (message.optString("sourceVideo").matches("[A-Za-z0-9]{1,16} [0-9]{1,5} [0-9]{1,5}")) intent.putExtra(NoctraPlayerActivity.EXTRA_SOURCE_VIDEO, message.optString("sourceVideo"));
                 JSONArray segments = message.optJSONArray("segments");
                 if (segments != null && segments.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_SEGMENTS, segments.toString());

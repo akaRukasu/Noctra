@@ -583,7 +583,7 @@ assert.ok(!/function sleepHome[\s\S]{0,300}clear\(main\)/.test(tvApp), 'Accueil 
 assert.match(tvApp, /'Lecteur des films : ' \+ \(vodPlayer\(\) === 'noctra' \? 'Noctra' : 'standard'\)/);
 assert.match(homeJava, /message\.put\("deep", jellyfinPlaying \|\| vodPlaying\);/);
 const streamVod = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
-assert.match(streamVod, /DataSource\.Factory data = new NoctraCleanDataSource\.Factory\(http\);/);
+assert.match(streamVod, /data = new NoctraCleanDataSource\.Factory\(http\);/);
 assert.match(streamVod, /if \(played && now - bufferingSince > 1500 && !edgeSought\) callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
 // Test de connexion depuis l'appareil (Internet, serveur des films).
 assert.match(tvApp, /native\('speedTest', \{ targets: targets \}\)/);
@@ -658,4 +658,13 @@ assert.match(tvApp, /var lite = document\.documentElement\.classList\.contains\(
 const liteCss = await read('apps/androidtv/web/app.css');
 assert.match(liteCss, /html\.web-host \.premiere-ambient, html\.lite \.premiere-ambient \{ display: none; \}/);
 assert.match(liteCss, /html\.web-host \.aurora, html\.lite \.aurora \{ display: none; \}/);
+// Lecteur Noctra : fichier d'origine lu directement (4 connexions), repli sur le flux du serveur.
+const directJava = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(directJava, /if \(!played && isDirect\(\)\) \{\s*directFailed = true;/);
+assert.match(directJava, /data = NoctraParallelDataSource\.wrap\(http\);/);
+assert.match(directJava, /getMethod\("setPreferredAudioLanguage", String\.class\)/);
+assert.match(homeJava, /if \(direct\.startsWith\("http"\) && sameOrigin\(Uri\.parse\(direct\), jellyfin\)\)/);
+assert.match(tvApp, /function directUrl\(item, source, playSessionId, subtitle\)/);
+assert.match(tvApp, /'\/stream\?static=true&MediaSourceId='/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.java'), /playMethod = direct \? "DirectPlay" : "Transcode";/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

@@ -44,6 +44,13 @@ final class NoctraPlaybackReport {
         post("/Sessions/Playing", body(positionMs, false, null));
     }
 
+    // « DirectPlay » quand le fichier d'origine est lu directement.
+    private volatile String playMethod = "Transcode";
+
+    void setDirect(boolean direct) {
+        playMethod = direct ? "DirectPlay" : "Transcode";
+    }
+
     void progress(long positionMs, boolean paused) {
         post("/Sessions/Playing/Progress", body(positionMs, paused, "timeupdate"));
     }
@@ -169,7 +176,7 @@ final class NoctraPlaybackReport {
             json.put("PositionTicks", positionMs * 10000L);
             json.put("CanSeek", true);
             json.put("IsPaused", paused);
-            json.put("PlayMethod", "Transcode");
+            json.put("PlayMethod", playMethod);
             if (event != null) json.put("EventName", event);
             return json.toString();
         } catch (Exception error) {
