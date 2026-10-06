@@ -319,6 +319,8 @@ public class NoctraHomeActivity extends Activity {
             message.put("jellyfinUrl", NoctraConfig.JELLYFIN_URL);
             message.put("version", NoctraConfig.VERSION);
             message.put("codecs", codecs());
+            // Appareil modeste (projecteur, clé TV : 2 Go de mémoire ou moins) : affichage allégé.
+            message.put("lowEnd", lowEnd());
             // Moteur web du téléviseur : les lecteurs web récents exigent une version récente.
             JSONObject engine = new JSONObject();
             String engineVersion = NoctraWebEngine.version(this);
@@ -915,6 +917,19 @@ public class NoctraHomeActivity extends Activity {
             if (sameOrigin(target, stored)) return stored;
         }
         return null;
+    }
+
+    private boolean lowEnd() {
+        try {
+            android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (manager == null) return false;
+            if (manager.isLowRamDevice()) return true;
+            android.app.ActivityManager.MemoryInfo memory = new android.app.ActivityManager.MemoryInfo();
+            manager.getMemoryInfo(memory);
+            return memory.totalMem > 0 && memory.totalMem < 2600L * 1024 * 1024;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     // Décodeurs du téléviseur : le serveur ne convertit que ce qui ne passe pas.

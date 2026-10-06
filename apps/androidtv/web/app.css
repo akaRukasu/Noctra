@@ -654,22 +654,23 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 .nw-diag { position: absolute; left: 2rem; bottom: 6.5rem; max-width: 60%; padding: .6rem .9rem; border-radius: .7rem; background: rgba(9, 10, 15, .82); color: #e7b96e; font-size: .78rem; line-height: 1.45; white-space: pre-line; z-index: 3; }
 .nw-diag:empty { display: none; }
 
-/* ── LG webOS / Samsung Tizen : affichage léger ─────────────────────
+/* ── Affichage léger : LG webOS / Samsung Tizen (web-host), appareils
+   Android TV modestes ou choix du menu du compte (lite) ──────────────
    Processeur et carte graphique de téléviseur : pas de fond en dégradés
    plein écran ni de flou. Les animations de navigation restent (léger
    agrandissement de l'élément choisi, en transformation seulement : rien à
    redessiner) ; les transitions de couleurs et d'ombres, coûteuses, sont
    retirées et la sélection est marquée par un contour. */
-html.web-host .aurora { display: none; }
-html.web-host body { background: #090a0f; }
-html.web-host #top { will-change: auto; background: #090a0f; }
-html.web-host *, html.web-host *::before, html.web-host *::after { transition-property: transform, opacity !important; }
-html.web-host .card, html.web-host .tile, html.web-host .bouquet, html.web-host .lib-tile, html.web-host .chip, html.web-host .btn, html.web-host .nav { transition-duration: .12s !important; }
-html.web-host .premiere-ambient { display: none; }
-html.web-host .premiere-slide { will-change: auto; transition-duration: .35s !important; }
-html.web-host .reveal { animation: none; }
+html.web-host .aurora, html.lite .aurora { display: none; }
+html.web-host body, html.lite body { background: #090a0f; }
+html.web-host #top, html.lite #top { will-change: auto; background: #090a0f; }
+html.web-host *, html.web-host *::before, html.web-host *::after, html.lite *, html.lite *::before, html.lite *::after { transition-property: transform, opacity !important; }
+html.web-host .card, html.web-host .tile, html.web-host .bouquet, html.web-host .lib-tile, html.web-host .chip, html.web-host .btn, html.web-host .nav, html.lite .card, html.lite .tile, html.lite .bouquet, html.lite .lib-tile, html.lite .chip, html.lite .btn, html.lite .nav { transition-duration: .12s !important; }
+html.web-host .premiere-ambient, html.lite .premiere-ambient { display: none; }
+html.web-host .premiere-slide, html.lite .premiere-slide { will-change: auto; transition-duration: .35s !important; }
+html.web-host .reveal, html.lite .reveal { animation: none; }
 /* Sélection : contour simple (moins coûteux qu'une ombre agrandie). */
-html.web-host .card:focus .art { box-shadow: none; outline: .22rem solid var(--focus); outline-offset: 0; }
-html.web-host .tile:focus, html.web-host .bouquet:focus, html.web-host .lib-tile:focus { box-shadow: none; outline: .2rem solid var(--focus); outline-offset: 0; }
+html.web-host .card:focus .art, html.lite .card:focus .art { box-shadow: none; outline: .22rem solid var(--focus); outline-offset: 0; }
+html.web-host .tile:focus, html.web-host .bouquet:focus, html.web-host .lib-tile:focus, html.lite .tile:focus, html.lite .bouquet:focus, html.lite .lib-tile:focus { box-shadow: none; outline: .2rem solid var(--focus); outline-offset: 0; }
 /* Film en lecture (Android TV) : accueil masqué, réaffiché tel quel au retour. */
 body.asleep #main, body.asleep #top { visibility: hidden; }

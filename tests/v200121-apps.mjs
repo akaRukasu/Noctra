@@ -429,9 +429,9 @@ assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraMultiviewActivi
 assert.match(webHost, /var networkError = Player\.video && Player\.video\.error && Player\.video\.error\.code === 2;/);
 assert.match(webHost, /Player\.start\(Player\.currentUrl, Player\.currentMime, 10000\)/);
 // LG / Samsung : affichage léger (pas de dégradés plein écran, flou, transitions ; défilement immédiat).
-assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \.aurora \{ display: none; \}/);
+assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \.aurora, html\.lite \.aurora \{ display: none; \}/);
 // Allègement LG : seules les animations légères (transform/opacity) restent.
-assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\.web-host \*::before, html\.web-host \*::after \{ transition-property: transform, opacity !important; \}/);
+assert.match(await read('apps/androidtv/web/app.css'), /html\.web-host \*, html\.web-host \*::before, html\.web-host \*::after, html\.lite \*, html\.lite \*::before, html\.lite \*::after \{ transition-property: transform, opacity !important; \}/);
 // Sources à en-têtes non relayées par le serveur : indisponibles sur LG/Samsung.
 assert.match(tvApp, /referr\?er\|origin\|user-agent\|cookie/);
 // Lancement automatique : attend le test du premier serveur.
@@ -652,4 +652,10 @@ assert.match(tvApp, /function recordSmooth\(state, index, stalls, playedMs\)/);
 assert.match(tvApp, /if \(event\.event === 'struggling'\)/);
 assert.match(tvApp, /'Coupures répétées · passage sur '/);
 assert.match(tvApp, /health\.verdict !== 'choppy'/);
+// Affichage allégé (lite) : appareils Android TV modestes ou choix du compte, mêmes règles que LG/Samsung.
+assert.match(homeJava, /message\.put\("lowEnd", lowEnd\(\)\);/);
+assert.match(tvApp, /var lite = document\.documentElement\.classList\.contains\('web-host'\) \|\| mode === 'lite' \|\| \(mode === 'auto' && S\.lowEnd\);/);
+const liteCss = await read('apps/androidtv/web/app.css');
+assert.match(liteCss, /html\.web-host \.premiere-ambient, html\.lite \.premiere-ambient \{ display: none; \}/);
+assert.match(liteCss, /html\.web-host \.aurora, html\.lite \.aurora \{ display: none; \}/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

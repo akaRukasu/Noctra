@@ -149,7 +149,10 @@
   }
   function jfImage(id, type, tag, height) {
     if (!id) return '';
-    return S.jf + '/Items/' + id + '/Images/' + (type || 'Primary') + '?maxHeight=' + (height || 420) + '&quality=85' + (tag ? '&tag=' + encodeURIComponent(tag) : '');
+    // Affichage allégé : images un peu plus petites (moins de mémoire et de décodage).
+    var size = height || 420;
+    if (LITE_UI) size = Math.round(size * 0.8);
+    return S.jf + '/Items/' + id + '/Images/' + (type || 'Primary') + '?maxHeight=' + size + '&quality=' + (LITE_UI ? 80 : 85) + (tag ? '&tag=' + encodeURIComponent(tag) : '');
   }
 
   // ── Canal natif (NoctraHomeActivity) ───────────────────────────────
@@ -203,6 +206,8 @@
     S.userName = data.userName || '';
     S.noctra = String(data.noctraUrl || '').replace(/\/+$/, '');
     S.codecs = data.codecs || {};
+    S.lowEnd = Boolean(data.lowEnd);
+    applyDisplay();
     // Capacités de l'hôte : Android TV (lecteur Jellyfin, lecteur web séparé…)
     // ou pont web de LG webOS / Samsung Tizen (tv-native.js).
     S.caps = data.caps || {};
@@ -307,6 +312,14 @@
         toast(next ? 'Films et épisodes (lecteur Noctra) : ' + next + ' Mb/s au plus, convertis par le serveur si besoin.' : 'Films et épisodes : qualité originale.');
       } }, icon('settings'), 'Qualité des films : ' + vodQualityLabel(vodQuality())),
       S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () { closeLayer(); speedTest(); } }, icon('live'), 'Tester la connexion') : null,
+      document.documentElement.classList.contains('web-host') ? null : h('button', { class: 'btn f', onclick: function () {
+        var order = ['auto', 'lite', 'full'];
+        var next = order[(order.indexOf(displayMode()) + 1) % order.length];
+        try { localStorage.setItem('noctra-tv-display', next); } catch (error) { /* stockage indisponible */ }
+        applyDisplay();
+        closeLayer();
+        toast(next === 'auto' ? 'Affichage automatique : allégé sur les appareils modestes.' : next === 'lite' ? 'Affichage allégé : navigation plus fluide.' : 'Affichage complet : tous les effets.');
+      } }, icon('settings'), 'Affichage : ' + (displayMode() === 'auto' ? 'automatique' + (S.lowEnd ? ' (allégé)' : '') : displayMode() === 'lite' ? 'allégé' : 'complet')),
       h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
       h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
@@ -463,6 +476,19 @@
   // pendant une rafale, chaque déplacement est immédiat.
   // LG webOS / Samsung Tizen (pont web) : affichage léger, défilement immédiat.
   var LITE_UI = document.documentElement.classList.contains('web-host');
+  // Affichage allégé (classe « lite ») : LG / Samsung, appareils Android TV
+  // modestes (2 Go de mémoire ou moins), ou choisi dans le menu du compte.
+  // Mêmes animations de navigation, sans flou, dégradés plein écran ni
+  // transitions de couleurs et d'ombres.
+  function displayMode() {
+    try { var mode = localStorage.getItem('noctra-tv-display'); return mode === 'lite' || mode === 'full' ? mode : 'auto'; } catch (error) { return 'auto'; }
+  }
+  function applyDisplay() {
+    var mode = displayMode();
+    var lite = document.documentElement.classList.contains('web-host') || mode === 'lite' || (mode === 'auto' && S.lowEnd);
+    if (lite) document.documentElement.classList.add('lite'); else document.documentElement.classList.remove('lite');
+    LITE_UI = lite;
+  }
   function scrollTo(scroller, left, top) {
     var now = Date.now();
     // LG / Samsung : défilement doux pour un appui isolé aussi, mais jamais
@@ -1728,6 +1754,7 @@
   };
 
   function backdropUrl(item, width) {
+    if (LITE_UI) width = Math.min(width, 1280);
     if (item.BackdropImageTags && item.BackdropImageTags.length) return S.jf + '/Items/' + item.Id + '/Images/Backdrop?maxWidth=' + width + '&quality=90&tag=' + item.BackdropImageTags[0];
     if (item.ParentBackdropItemId) return S.jf + '/Items/' + item.ParentBackdropItemId + '/Images/Backdrop?maxWidth=' + width + '&quality=90' + (item.ParentBackdropImageTags && item.ParentBackdropImageTags[0] ? '&tag=' + item.ParentBackdropImageTags[0] : '');
     // Sans image large : affiche en bonne définition (présentée entière).
