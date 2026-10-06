@@ -797,7 +797,10 @@ public class NoctraHomeActivity extends Activity {
                 for (int i = 0; i < Math.min(4, targets.length()); i++) {
                     JSONObject target = targets.optJSONObject(i);
                     if (target == null) continue;
-                    results.put(measure(target.optString("label"), target.optString("url")));
+                    int parallel = Math.max(1, Math.min(6, target.optInt("parallel", 1)));
+                    results.put(parallel > 1
+                        ? measureParallel(target.optString("label"), target.optString("url"), parallel, target.optLong("size", 0))
+                        : measure(target.optString("label"), target.optString("url"), -1, -1));
                 }
                 runOnUiThread(new Runnable() {
                     @Override
@@ -816,7 +819,49 @@ public class NoctraHomeActivity extends Activity {
         }, "noctra-speedtest").start();
     }
 
-    private JSONObject measure(String label, String address) {
+    // Plusieurs connexions en même temps, chacune sur une autre partie du
+    // fichier : si le total dépasse nettement une seule connexion, le débit
+    // est bridé connexion par connexion (serveur ou route).
+    private JSONObject measureParallel(final String label, final String address, int count, long size) {
+        final JSONObject[] parts = new JSONObject[count];
+        Thread[] threads = new Thread[count];
+        long step = size > 0 ? size / (count + 1) : 64L * 1024 * 1024;
+        for (int i = 0; i < count; i++) {
+            final int index = i;
+            final long from = step * (i + 1) / 2;
+            threads[i] = new Thread(new Runnable() {
+                @Override
+                public void run() { parts[index] = measure(label, address, from, from + 40L * 1024 * 1024); }
+            });
+            threads[i].start();
+        }
+        double total = 0;
+        long bytes = 0;
+        String error = null;
+        for (int i = 0; i < count; i++) {
+            try { threads[i].join(20000); } catch (InterruptedException ignored) { }
+            JSONObject part = parts[i];
+            if (part == null) continue;
+            if (part.has("error")) { error = part.optString("error"); continue; }
+            total += part.optDouble("mbps", 0);
+            bytes += part.optLong("bytes", 0);
+        }
+        JSONObject result = new JSONObject();
+        try {
+            result.put("label", label);
+            result.put("parallel", count);
+            if (total == 0 && error != null) result.put("error", error);
+            else {
+                result.put("mbps", total);
+                result.put("bytes", bytes);
+                result.put("seconds", 8);
+            }
+        } catch (Exception ignored) {
+        }
+        return result;
+    }
+
+    private JSONObject measure(String label, String address, long rangeFrom, long rangeTo) {
         JSONObject result = new JSONObject();
         java.net.HttpURLConnection connection = null;
         try {
@@ -832,6 +877,7 @@ public class NoctraHomeActivity extends Activity {
             // Jeton seulement pour le serveur Jellyfin ou Noctra connu.
             if (jellyfin != null) connection.setRequestProperty("Authorization", NoctraPlaybackReport.authorization(session.accessToken, "noctra-tv-speedtest"));
             else if (sameOrigin(target, server)) connection.setRequestProperty("x-noctra-token", session.accessToken);
+            if (rangeFrom >= 0) connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-" + rangeTo);
             long began = System.currentTimeMillis();
             int status = connection.getResponseCode();
             if (status >= 400) throw new java.io.IOException("HTTP " + status);
@@ -849,6 +895,7 @@ public class NoctraHomeActivity extends Activity {
             long elapsed = Math.max(1, now - first);
             result.put("ttfbMs", first == 0 ? -1 : first - began);
             result.put("bytes", bytes);
+            result.put("seconds", elapsed / 1000.0);
             result.put("mbps", bytes * 8.0 / elapsed / 1000.0);
         } catch (Exception error) {
             try { result.put("error", error.getMessage() == null ? "échec" : error.getMessage()); } catch (Exception ignored) { }

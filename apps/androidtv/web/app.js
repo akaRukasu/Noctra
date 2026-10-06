@@ -312,7 +312,7 @@
   // chemin depuis le serveur.
   var speedSheet = null;
   function speedTest() {
-    var note = h('p', { class: 'hint-text', text: 'Mesure en cours depuis cet appareil (environ 20 s)…' });
+    var note = h('p', { class: 'hint-text', text: 'Mesure en cours depuis cet appareil (environ 30 s)…' });
     speedSheet = h('div', { class: 'list scroll' }, h('h2', null, 'Test de connexion', h('small', { text: 'Débit reçu par cet appareil' })), note,
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
     speedSheet._note = note;
@@ -322,7 +322,12 @@
     }, function () { return null; }).then(function (movie) {
       var targets = [{ label: 'Internet', url: 'https://speed.cloudflare.com/__down?bytes=50000000' }];
       var source = movie && (movie.MediaSources || [])[0];
-      if (movie) targets.push({ label: 'Serveur des films', url: S.jf + '/Videos/' + movie.Id + '/stream?static=true' + (source ? '&mediaSourceId=' + encodeURIComponent(source.Id) : '') });
+      if (movie) {
+        var address = S.jf + '/Videos/' + movie.Id + '/stream?static=true' + (source ? '&mediaSourceId=' + encodeURIComponent(source.Id) : '');
+        targets.push({ label: 'Serveur des films (1 connexion)', url: address });
+        // Même fichier, 4 connexions à la fois : bridage par connexion ?
+        targets.push({ label: 'Serveur des films (4 connexions)', url: address, parallel: 4, size: (source && source.Size) || 0 });
+      }
       if (!native('speedTest', { targets: targets })) note.textContent = 'Disponible dans l’appli Noctra TV.';
     });
   }
@@ -330,13 +335,16 @@
     if (!speedSheet || !document.body.contains(speedSheet)) return;
     var lines = results.map(function (result) {
       var value = result.error ? 'échec (' + result.error + ')' : (Math.round(result.mbps * 10) / 10).toString().replace('.', ',') + ' Mb/s'
+        + ' (' + (Math.round((result.bytes || 0) / 104857.6) / 10).toString().replace('.', ',') + ' Mo en ' + Math.round(result.seconds || 0) + ' s)'
         + (result.ttfbMs >= 0 ? ' · réponse en ' + result.ttfbMs + ' ms' : '');
       return h('p', null, h('b', { text: result.label + ' : ' }), value);
     });
     var internet = results[0] && !results[0].error ? results[0].mbps : 0;
     var films = results[1] && !results[1].error ? results[1].mbps : 0;
+    var parallel = results[2] && !results[2].error ? results[2].mbps : 0;
     var verdict;
-    if (internet && internet < 15) verdict = 'Cet appareil ne reçoit que ' + Math.round(internet) + ' Mb/s : son Wi-Fi est la cause des coupures (un film demande 5 à 25 Mb/s, une chaîne 3 à 8 Mb/s). Rapprochez la box ou le répéteur, préférez le Wi-Fi 5 GHz, ou un adaptateur Ethernet USB.';
+    if (internet >= 15 && films < 15 && parallel >= Math.max(8, films * 3)) verdict = 'Le serveur des films est bridé connexion par connexion : ' + Math.round(films * 10) / 10 + ' Mb/s avec une seule, ' + Math.round(parallel) + ' Mb/s avec quatre. Les lecteurs qui lisent le film d’un seul tenant coupent ; il faut lire en plusieurs morceaux (lecteur Noctra) ou lever ce bridage sur le serveur.';
+    else if (internet && internet < 15) verdict = 'Cet appareil ne reçoit que ' + Math.round(internet) + ' Mb/s : son Wi-Fi est la cause des coupures (un film demande 5 à 25 Mb/s, une chaîne 3 à 8 Mb/s). Rapprochez la box ou le répéteur, préférez le Wi-Fi 5 GHz, ou un adaptateur Ethernet USB.';
     else if (internet && results[1] && films < 15) verdict = 'Internet arrive bien (' + Math.round(internet) + ' Mb/s), mais le serveur des films n’envoie que ' + Math.round(films) + ' Mb/s vers cet appareil : le ralentissement est du côté du serveur ou de sa route vers chez vous.';
     else if (internet) verdict = 'La connexion suffit (' + Math.round(internet) + ' Mb/s' + (films ? ', serveur ' + Math.round(films) + ' Mb/s' : '') + ') : les coupures ne viennent pas du débit de cet appareil.';
     else verdict = 'Mesure impossible : vérifiez la connexion de l’appareil.';

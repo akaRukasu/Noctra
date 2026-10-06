@@ -587,7 +587,9 @@ assert.match(streamVod, /DataSource\.Factory data = new NoctraCleanDataSource\.F
 assert.match(streamVod, /if \(played && now - bufferingSince > 1500 && !edgeSought\) callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
 // Test de connexion depuis l'appareil (Internet, serveur des films).
 assert.match(tvApp, /native\('speedTest', \{ targets: targets \}\)/);
-assert.match(homeJava, /private JSONObject measure\(String label, String address\)/);
+assert.match(homeJava, /private JSONObject measure\(String label, String address, long rangeFrom, long rangeTo\)/);
+assert.match(homeJava, /private JSONObject measureParallel\(/);
+assert.match(tvApp, /parallel: 4, size:/);
 assert.match(homeJava, /"speed\.cloudflare\.com"\.equals\(target\.getHost\(\)\) \|\| jellyfin != null \|\| sameOrigin\(target, server\)/);
 // Réception lente : pas de reconnexion tant que des données arrivent (1 min au plus).
 const streamSlow = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
