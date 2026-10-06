@@ -489,6 +489,8 @@ public class NoctraHomeActivity extends Activity {
                 startActivityForResult(intent, PLAYER_REQUEST);
             } catch (ActivityNotFoundException ignored) {
             }
+        } else if (action.equals("speedTest")) {
+            speedTest(message.optJSONArray("targets"));
         } else if (action.equals("keepScreenOn")) {
             if (message.optBoolean("data", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -778,6 +780,84 @@ public class NoctraHomeActivity extends Activity {
 
     // Origine Jellyfin autorisée à recevoir le jeton : l'adresse intégrée ou
     // celle de la session enregistrée par l'appli.
+    // ── Test de débit ──────────────────────────────────────────────────────
+    // Mesuré par l'appareil lui-même (le Wi-Fi d'un projecteur peut recevoir
+    // bien moins que la ligne) : Internet, puis le serveur Jellyfin. Chaque
+    // adresse est téléchargée 8 s au plus (40 Mo au plus) ; le débit est compté
+    // après le premier octet (le temps de réponse est donné à part).
+    private boolean speedTesting;
+
+    private void speedTest(final JSONArray targets) {
+        if (targets == null || speedTesting) return;
+        speedTesting = true;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final JSONArray results = new JSONArray();
+                for (int i = 0; i < Math.min(4, targets.length()); i++) {
+                    JSONObject target = targets.optJSONObject(i);
+                    if (target == null) continue;
+                    results.put(measure(target.optString("label"), target.optString("url")));
+                }
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        speedTesting = false;
+                        try {
+                            JSONObject message = new JSONObject();
+                            message.put("type", "speedTest");
+                            message.put("results", results);
+                            send(message);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                });
+            }
+        }, "noctra-speedtest").start();
+    }
+
+    private JSONObject measure(String label, String address) {
+        JSONObject result = new JSONObject();
+        java.net.HttpURLConnection connection = null;
+        try {
+            result.put("label", label);
+            Uri target = Uri.parse(address);
+            Uri jellyfin = jellyfinOrigin(target);
+            boolean allowed = "https".equals(target.getScheme())
+                && ("speed.cloudflare.com".equals(target.getHost()) || jellyfin != null || sameOrigin(target, server));
+            if (!allowed) throw new java.io.IOException("adresse refusée");
+            connection = (java.net.HttpURLConnection) new java.net.URL(address).openConnection();
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(8000);
+            // Jeton seulement pour le serveur Jellyfin ou Noctra connu.
+            if (jellyfin != null) connection.setRequestProperty("Authorization", NoctraPlaybackReport.authorization(session.accessToken, "noctra-tv-speedtest"));
+            else if (sameOrigin(target, server)) connection.setRequestProperty("x-noctra-token", session.accessToken);
+            long began = System.currentTimeMillis();
+            int status = connection.getResponseCode();
+            if (status >= 400) throw new java.io.IOException("HTTP " + status);
+            java.io.InputStream input = connection.getInputStream();
+            byte[] buffer = new byte[64 * 1024];
+            long first = 0, bytes = 0, now = began;
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                now = System.currentTimeMillis();
+                if (first == 0) first = now;
+                bytes += count;
+                if (now - first > 8000 || bytes > 40L * 1024 * 1024) break;
+            }
+            input.close();
+            long elapsed = Math.max(1, now - first);
+            result.put("ttfbMs", first == 0 ? -1 : first - began);
+            result.put("bytes", bytes);
+            result.put("mbps", bytes * 8.0 / elapsed / 1000.0);
+        } catch (Exception error) {
+            try { result.put("error", error.getMessage() == null ? "échec" : error.getMessage()); } catch (Exception ignored) { }
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        return result;
+    }
+
     private Uri jellyfinOrigin(Uri target) {
         Uri configured = Uri.parse(NoctraConfig.JELLYFIN_URL);
         if (sameOrigin(target, configured)) return configured;

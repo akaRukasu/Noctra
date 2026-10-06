@@ -170,6 +170,7 @@
       if (data.type === 'session') startSession(data);
       else if (data.type === 'playerClosed') { if (data.vod) vodClosed(data); else playerClosed(data); }
       else if (data.type === 'resumed') appResumed(data);
+      else if (data.type === 'speedTest') speedResults(data.results || []);
       else if (data.type === 'hidden') { if (data.hidden) sleepHome(Boolean(data.deep)); else wakeHome(); }
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
@@ -299,10 +300,48 @@
         closeLayer();
         toast(next === 'noctra' ? 'Films et épisodes : lecteur Noctra (diagnostic de réception pendant une coupure).' : 'Films et épisodes : lecteur standard.');
       } }, icon('play'), 'Lecteur des films : ' + (vodPlayer() === 'noctra' ? 'Noctra' : 'standard')) : null,
+      S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () { closeLayer(); speedTest(); } }, icon('live'), 'Tester la connexion') : null,
       h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
       h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
     openLayer(h('div', { class: 'modal' }, list));
+  }
+  // ── Test de connexion (Android TV) ─────────────────────────────────
+  // Débit reçu par l'appareil lui-même depuis Internet et depuis le serveur
+  // des films : dit si les coupures viennent du Wi-Fi de l'appareil ou du
+  // chemin depuis le serveur.
+  var speedSheet = null;
+  function speedTest() {
+    var note = h('p', { class: 'hint-text', text: 'Mesure en cours depuis cet appareil (environ 20 s)…' });
+    speedSheet = h('div', { class: 'list scroll' }, h('h2', null, 'Test de connexion', h('small', { text: 'Débit reçu par cet appareil' })), note,
+      h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
+    speedSheet._note = note;
+    openLayer(h('div', { class: 'modal' }, speedSheet));
+    jf('/Users/{userId}/Items', { IncludeItemTypes: 'Movie', Recursive: true, Limit: 1, SortBy: 'Random', Fields: 'MediaSources' }).then(function (data) {
+      return (data && data.Items && data.Items[0]) || null;
+    }, function () { return null; }).then(function (movie) {
+      var targets = [{ label: 'Internet', url: 'https://speed.cloudflare.com/__down?bytes=50000000' }];
+      var source = movie && (movie.MediaSources || [])[0];
+      if (movie) targets.push({ label: 'Serveur des films', url: S.jf + '/Videos/' + movie.Id + '/stream?static=true' + (source ? '&mediaSourceId=' + encodeURIComponent(source.Id) : '') });
+      if (!native('speedTest', { targets: targets })) note.textContent = 'Disponible dans l’appli Noctra TV.';
+    });
+  }
+  function speedResults(results) {
+    if (!speedSheet || !document.body.contains(speedSheet)) return;
+    var lines = results.map(function (result) {
+      var value = result.error ? 'échec (' + result.error + ')' : (Math.round(result.mbps * 10) / 10).toString().replace('.', ',') + ' Mb/s'
+        + (result.ttfbMs >= 0 ? ' · réponse en ' + result.ttfbMs + ' ms' : '');
+      return h('p', null, h('b', { text: result.label + ' : ' }), value);
+    });
+    var internet = results[0] && !results[0].error ? results[0].mbps : 0;
+    var films = results[1] && !results[1].error ? results[1].mbps : 0;
+    var verdict;
+    if (internet && internet < 15) verdict = 'Cet appareil ne reçoit que ' + Math.round(internet) + ' Mb/s : son Wi-Fi est la cause des coupures (un film demande 5 à 25 Mb/s, une chaîne 3 à 8 Mb/s). Rapprochez la box ou le répéteur, préférez le Wi-Fi 5 GHz, ou un adaptateur Ethernet USB.';
+    else if (internet && results[1] && films < 15) verdict = 'Internet arrive bien (' + Math.round(internet) + ' Mb/s), mais le serveur des films n’envoie que ' + Math.round(films) + ' Mb/s vers cet appareil : le ralentissement est du côté du serveur ou de sa route vers chez vous.';
+    else if (internet) verdict = 'La connexion suffit (' + Math.round(internet) + ' Mb/s' + (films ? ', serveur ' + Math.round(films) + ' Mb/s' : '') + ') : les coupures ne viennent pas du débit de cet appareil.';
+    else verdict = 'Mesure impossible : vérifiez la connexion de l’appareil.';
+    speedSheet._note.textContent = verdict;
+    lines.forEach(function (line) { speedSheet.insertBefore(line, speedSheet._note); });
   }
   function markNav(name) {
     Array.prototype.forEach.call(document.querySelectorAll('#nav .nav'), function (node) {

@@ -585,4 +585,8 @@ assert.match(homeJava, /message\.put\("deep", jellyfinPlaying \|\| vodPlaying\);
 const streamVod = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
 assert.match(streamVod, /DataSource\.Factory data = new NoctraCleanDataSource\.Factory\(http\);/);
 assert.match(streamVod, /if \(played && now - bufferingSince > 1500 && !edgeSought\) callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
+// Test de connexion depuis l'appareil (Internet, serveur des films).
+assert.match(tvApp, /native\('speedTest', \{ targets: targets \}\)/);
+assert.match(homeJava, /private JSONObject measure\(String label, String address\)/);
+assert.match(homeJava, /"speed\.cloudflare\.com"\.equals\(target\.getHost\(\)\) \|\| jellyfin != null \|\| sameOrigin\(target, server\)/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

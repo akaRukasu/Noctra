@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.37';
+  var VERSION = '1.1.38';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
