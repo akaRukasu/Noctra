@@ -465,6 +465,7 @@ public class NoctraHomeActivity extends Activity {
             // Le jeton ne part que vers le serveur Noctra, jamais vers un autre hôte.
             if (sameOrigin(target, server)) intent.putExtra(NoctraPlayerActivity.EXTRA_TOKEN, session.accessToken);
             if (message.optBoolean("vod", false)) {
+                vodPlaying = true;
                 // Film ou épisode : jeton Jellyfin seulement pour le serveur Jellyfin connu.
                 Uri jellyfin = jellyfinOrigin(target);
                 if (jellyfin == null) return;
@@ -723,22 +724,36 @@ public class NoctraHomeActivity extends Activity {
     // (une grande image décodée toutes les 8 s) faisait des coupures
     // régulières. Lecteur Jellyfin (films, épisodes) : l'accueil n'a rien à
     // faire avant le retour, ses scripts sont entièrement suspendus.
+    private final android.os.Handler sleepHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean timersPaused;
     private boolean jellyfinPlaying;
+    private boolean vodPlaying;
+    private boolean isStarted;
 
     @Override
     protected void onStop() {
+        isStarted = false;
         if (webView != null) {
             try {
                 JSONObject message = new JSONObject();
                 message.put("type", "hidden");
                 message.put("hidden", true);
+                // Film ou épisode : page vidée (mémoire des images rendue).
+                message.put("deep", jellyfinPlaying || vodPlaying);
                 send(message);
             } catch (Exception ignored) {
             }
+            // Scripts suspendus une fois la page vidée (1,5 s plus tard).
             if (jellyfinPlaying && !timersPaused) {
-                timersPaused = true;
-                webView.pauseTimers();
+                final WebView target = webView;
+                sleepHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!jellyfinPlaying || timersPaused || isStarted) return;
+                        timersPaused = true;
+                        target.pauseTimers();
+                    }
+                }, 1500);
             }
         }
         super.onStop();
@@ -747,7 +762,13 @@ public class NoctraHomeActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
+        isStarted = true;
         jellyfinPlaying = false;
+        vodPlaying = false;
+        if (timersPaused && webView != null) {
+            timersPaused = false;
+            webView.resumeTimers();
+        }
         if (webView == null) return;
         try {
             JSONObject message = new JSONObject();

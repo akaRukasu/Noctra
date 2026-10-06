@@ -170,7 +170,7 @@
       if (data.type === 'session') startSession(data);
       else if (data.type === 'playerClosed') { if (data.vod) vodClosed(data); else playerClosed(data); }
       else if (data.type === 'resumed') appResumed(data);
-      else if (data.type === 'hidden') appHidden = Boolean(data.hidden);
+      else if (data.type === 'hidden') { if (data.hidden) sleepHome(Boolean(data.deep)); else wakeHome(); }
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
       else if (data.type === 'playerEvent') playerEvent(data);
@@ -293,6 +293,12 @@
     var list = h('div', { class: 'list scroll' },
       h('h2', null, S.userName || 'Compte', h('small', { text: 'Noctra TV' })),
       h('button', { class: 'btn f', onclick: function () { closeLayer(); syncSheet(); } }, icon('people'), sync.group ? 'SyncPlay · ' + sync.group.name : 'SyncPlay · regarder ensemble'),
+      S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () {
+        var next = vodPlayer() === 'noctra' ? 'jellyfin' : 'noctra';
+        try { localStorage.setItem('noctra-tv-vod-player', next); } catch (error) { /* stockage indisponible */ }
+        closeLayer();
+        toast(next === 'noctra' ? 'Films et épisodes : lecteur Noctra (diagnostic de réception pendant une coupure).' : 'Films et épisodes : lecteur standard.');
+      } }, icon('play'), 'Lecteur des films : ' + (vodPlayer() === 'noctra' ? 'Noctra' : 'standard')) : null,
       h('button', { class: 'btn f', onclick: function () { closeLayer(); native('openSettings') || toast('Disponible dans l’appli Noctra TV.'); } }, icon('settings'), 'Paramètres de l’appli'),
       h('p', { class: 'hint-text', text: 'Changer de compte ou se déconnecter : Paramètres › Authentification.' }),
       h('button', { class: 'btn f', text: 'Fermer', onclick: closeLayer }));
@@ -310,6 +316,25 @@
   var current = null;
   // Accueil caché par un lecteur (Android TV) : rien d'inutile pendant la vidéo.
   var appHidden = false;
+  // Film ou épisode : la page est vidée (images libérées) pendant la lecture
+  // et reconstruite au retour, à la même place. Sur les petits appareils
+  // (projecteurs, clés TV : 1 à 2 Go), la mémoire des images de l'accueil
+  // (affiches, fonds, logos des chaînes) manquait au lecteur : coupures.
+  var homeAsleep = false;
+  function sleepHome(deep) {
+    appHidden = true;
+    if (!deep || homeAsleep || !current) return;
+    homeAsleep = true;
+    remember(current);
+    renderToken++;
+    clear(main);
+  }
+  function wakeHome() {
+    appHidden = false;
+    if (!homeAsleep) return;
+    homeAsleep = false;
+    if (current && !layer.firstChild) show(false);
+  }
   // Dernier appui de touche : pas de mise à jour de page pendant la navigation.
   var lastKeyAt = 0;
   document.addEventListener('keydown', function () { lastKeyAt = Date.now(); }, true);
@@ -934,6 +959,12 @@
       .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
     return S.jf + '/Videos/' + item.Id + '/master.m3u8?' + query;
   }
+  // Lecteur des films et épisodes (Android TV) : Jellyfin (par défaut) ou Noctra
+  // (diagnostic de réception affiché pendant une coupure).
+  function vodPlayer() {
+    try { return localStorage.getItem('noctra-tv-vod-player') === 'noctra' ? 'noctra' : 'jellyfin'; } catch (error) { return 'jellyfin'; }
+  }
+  function jellyfinPlayerUsed() { return S.caps.jellyfinPlayer !== false && vodPlayer() !== 'noctra'; }
   function playItem(item, options) {
     options = options || {};
     // En groupe SyncPlay : la lecture est lancée pour tout le groupe.
@@ -944,7 +975,7 @@
     }
     // Hors groupe : lecteur Jellyfin (langue audio, sous-titres, qualité…
     // modifiables pendant la lecture) ; à sa fermeture, retour ici.
-    if (!options.sync && !options.noctraPlayer && S.caps.jellyfinPlayer !== false) {
+    if (!options.sync && !options.noctraPlayer && jellyfinPlayerUsed()) {
       var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
       // Génériques connus de Noctra (chapitres, intro apprise) : bouton « Passer »
       // du lecteur Jellyfin même sans détection sur le serveur.
@@ -1164,7 +1195,7 @@
   function titlePage(item, alive) {
     // Pistes audio et sous-titres : choisies dans le lecteur Jellyfin
     // (trackButtons ne sert qu'hors de l'appli, avec le lecteur Noctra).
-    var actions = playButtons(item).concat(port && S.caps.jellyfinPlayer !== false ? [] : trackButtons(item), flagButtons(item));
+    var actions = playButtons(item).concat(port && jellyfinPlayerUsed() ? [] : trackButtons(item), flagButtons(item));
     if (item.Type === 'Episode' && item.SeriesId) actions.push(h('button', { class: 'btn f', onclick: function () { openItem(item.SeriesId); } }, icon('library'), 'Voir la série'));
     main.appendChild(detailHeader(item, actions));
     add(main, peopleRow(item));

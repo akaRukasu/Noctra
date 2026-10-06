@@ -111,7 +111,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private final Runnable updateStats = new Runnable() {
         @Override
         public void run() {
-            if (statsView == null || vod || stream == null || banner.getAlpha() == 0f) return;
+            if (statsView == null || stream == null || banner.getAlpha() == 0f) return;
             statsView.setText(stream.diagnostics());
             statsView.setVisibility(TextView.VISIBLE);
             handler.postDelayed(this, 1000);

@@ -570,9 +570,17 @@ assert.match(tvApp, /var FRENCH_BRANDS = \/\^\(\?:bein \?sports\? \(\?:max \?\)\
 assert.ok(tvApp.indexOf("if (FRENCH_BRANDS.test(brandName(name))) return 'fr';") < tvApp.indexOf('found = countryOfCode(channel.iptvOrgCountry) || countryOfCode(channel.country)'), 'Marque française avant le pays de la source');
 // Coupures régulières sur petits appareils : accueil en sommeil derrière les lecteurs.
 const homeJava = await read('apps/androidtv/java/com/noctra/tv/NoctraHomeActivity.java');
-assert.match(homeJava, /if \(jellyfinPlaying && !timersPaused\) \{\s*timersPaused = true;\s*webView\.pauseTimers\(\);/);
+assert.match(homeJava, /if \(!jellyfinPlaying \|\| timersPaused \|\| isStarted\) return;\s*timersPaused = true;\s*target\.pauseTimers\(\);/);
 assert.match(homeJava, /webView\.resumeTimers\(\);/);
-assert.match(tvApp, /else if \(data\.type === 'hidden'\) appHidden = Boolean\(data\.hidden\);/);
+assert.match(tvApp, /else if \(data\.type === 'hidden'\) \{ if \(data\.hidden\) sleepHome\(Boolean\(data\.deep\)\); else wakeHome\(\); \}/);
 assert.match(tvApp, /if \(appHidden \|\| document\.hidden\) \{ sync\(\); return; \}/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java'), /setBufferDurationsMs\(30000, 60000, 3000, 8000\)/);
+// Films : accueil vidé pendant la lecture (mémoire), lecteur des films au choix, diagnostic des coupures.
+assert.match(tvApp, /function sleepHome\(deep\)/);
+assert.match(tvApp, /function wakeHome\(\)/);
+assert.match(tvApp, /'Lecteur des films : ' \+ \(vodPlayer\(\) === 'noctra' \? 'Noctra' : 'standard'\)/);
+assert.match(homeJava, /message\.put\("deep", jellyfinPlaying \|\| vodPlaying\);/);
+const streamVod = await read('apps/androidtv/java/com/noctra/tv/NoctraStream.java');
+assert.match(streamVod, /DataSource\.Factory data = new NoctraCleanDataSource\.Factory\(http\);/);
+assert.match(streamVod, /if \(played && now - bufferingSince > 1500 && !edgeSought\) callback\.onStatus\(this, "Mise en mémoire… " \+ diagnostics\(\)\);/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');

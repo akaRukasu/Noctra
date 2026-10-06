@@ -237,7 +237,7 @@ final class NoctraStream {
     void start() {
         released = false;
         stalls = 0;
-        if (live) NoctraCleanDataSource.resetStats();
+        NoctraCleanDataSource.resetStats();
         open();
     }
 
@@ -253,13 +253,11 @@ final class NoctraStream {
             if (player != null) text.append("Réserve ").append(Math.max(0, player.getTotalBufferedDuration()) / 1000).append(" s");
         } catch (Throwable ignored) {
         }
-        if (live) {
-            String reception = NoctraCleanDataSource.receptionSummary();
-            if (!reception.isEmpty()) text.append(text.length() > 0 ? " · " : "").append(reception);
-        }
+        String reception = NoctraCleanDataSource.receptionSummary();
+        if (!reception.isEmpty()) text.append(text.length() > 0 ? " · " : "").append(reception);
         text.append(text.length() > 0 ? " · " : "").append(stalls).append(stalls > 1 ? " coupures" : " coupure");
         if (qualityCap > 0) text.append(" · définition limitée à ").append(CAPS[qualityCap - 1][1]).append("p");
-        text.append(url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
+        text.append(!live ? " · serveur Jellyfin" : url.contains("/api/tv/") ? " · relais du serveur Noctra" : " · flux direct");
         return text.toString();
     }
 
@@ -365,7 +363,8 @@ final class NoctraStream {
                 .setDefaultRequestProperties(headers);
         }
         // Direct : segments « déguisés » (faux en-tête d'image) nettoyés avant lecture.
-        DataSource.Factory data = live ? new NoctraCleanDataSource.Factory(http) : http;
+        // Films aussi : mesure de la réception des segments (diagnostic des coupures).
+        DataSource.Factory data = new NoctraCleanDataSource.Factory(http);
         DefaultMediaSourceFactory sources = new DefaultMediaSourceFactory(data)
             // Avant la première image d'un direct : 3 nouvelles tentatives par
             // requête (erreur vite constatée) ; ensuite 6 (coupures passagères).
@@ -458,9 +457,11 @@ final class NoctraStream {
             }
         } else if (state == Player.STATE_BUFFERING) {
             // Blocage en pleine lecture : réserve plus grande à la prochaine ouverture.
-            if (ready && live && !reserveSeeking) {
-                widenLiveOffset();
-                noteStall(now);
+            if (ready && !reserveSeeking) {
+                if (live) {
+                    widenLiveOffset();
+                    noteStall(now);
+                }
                 stalls++;
             }
             reserveSeeking = false;
@@ -468,7 +469,7 @@ final class NoctraStream {
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
             // Coupure en cours : chiffres affichés pour comprendre d'où elle vient.
-            if (played && live && now - bufferingSince > 1500 && !edgeSought) callback.onStatus(this, "Mise en mémoire… " + diagnostics());
+            if (played && now - bufferingSince > 1500 && !edgeSought) callback.onStatus(this, "Mise en mémoire… " + diagnostics());
             // Direct bloqué : d'abord un saut au bord du direct (segments récents).
             if (live && played && !edgeSought && now - bufferingSince > SOFT_STALL_MS) {
                 edgeSought = true;
