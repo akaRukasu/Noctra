@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.128';
+  const NOCTRA_BUILD_VERSION = '200.0.129';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -10356,14 +10356,36 @@
     return (tvState.sources || []).filter(source => !source.virtual && tvSourceSection(source) !== 'portals');
   }
 
-  // Catalogues de toutes les sources (et de leurs bouquets, 60 au plus), 6 à
-  // la fois ; un catalogue en échec est redemandé une fois. La liste s'affiche
-  // dès que tout est arrivé, ou au bout de 12 s avec ce qui est déjà reçu, puis
-  // se complète toute seule.
-  function loadTvUnified(onUpdate = null, onProgress = null) {
+  // Catalogues de toutes les sources (et de leurs bouquets, 120 au plus,
+  // français d'abord), 6 à la fois ; un catalogue en échec est redemandé une
+  // fois. La liste s'affiche dès que tout est arrivé, ou au bout de 12 s avec
+  // ce qui est déjà reçu, puis se complète toute seule.
+  // 200.0.129 : un catalogue livré en plusieurs fois (OHA, LiveWatch pendant
+  // son rafraîchissement : « progressive ») est redemandé jusqu'à être
+  // complet ; avant, seule sa première partie entrait dans la liste.
+  const TV_UNIFIED_GROUP_LIMIT = 120;
+  const TV_UNIFIED_PROGRESSIVE_DELAYS = [2_500, 5_000, 9_000, 15_000, 24_000, 40_000];
+  const tvUnifiedSubscribers = new Set();
+
+  function publishTvUnified(data) {
+    tvUnifiedSubscribers.forEach(listener => {
+      let keep = true;
+      try { keep = listener(data) !== false; } catch {}
+      if (!keep) tvUnifiedSubscribers.delete(listener);
+    });
+  }
+
+  function tvUnifiedGroupOrder(groups) {
+    const french = group => /(?:^|[^a-z])(?:fr|fra|france|french|français|francais|tnt)(?:[^a-z]|$)/i.test(String(group?.name || ''));
+    return groups.filter(group => group?.ref)
+      .map((group, index) => ({ group, index, first: french(group) ? 0 : 1 }))
+      .sort((a, b) => a.first - b.first || a.index - b.index)
+      .map(item => item.group);
+  }
+
+  function loadTvUnified(onProgress = null) {
     if (tvUnifiedCache && Date.now() - tvUnifiedCache.at < TV_UNIFIED_CACHE_MS) return Promise.resolve(tvUnifiedCache.data);
     if (tvUnifiedLoading) {
-      if (onUpdate) tvUnifiedLoading.listeners.add(onUpdate);
       if (onProgress) tvUnifiedLoading.progress.add(onProgress);
       return tvUnifiedLoading.first;
     }
@@ -10376,7 +10398,8 @@
     let total = 0;
     let done = 0;
     let running = 0;
-    const listeners = new Set(onUpdate ? [onUpdate] : []);
+    let finishedLoading = false;
+    let generation = 0;
     const progress = new Set(onProgress ? [onProgress] : []);
     let slot = 0;
     const enqueue = (source, ref = '') => {
@@ -10388,21 +10411,42 @@
       const loaded = parts.filter(Boolean);
       const channels = unifiedApi.mergeChannels(loaded);
       const pending = sources.filter(source => !loaded.some(part => part.source.id === source.id) && !failed.includes(source.name)).map(source => source.name);
-      return { channels, count: channels.length, pending, failedSources: failed.slice(), at: Date.now() };
+      const data = { channels, count: channels.length, pending, failedSources: failed.slice(), at: Date.now() };
+      if (failed.length) data.warning = `Sources indisponibles pour le moment : ${failed.join(', ')}.`;
+      return data;
     };
     let updateTimer = 0;
     let lastUpdate = 0;
     const notify = () => {
-      if (!listeners.size || updateTimer) return;
+      if (updateTimer) return;
       const wait = Math.max(0, 2_500 - (Date.now() - lastUpdate));
       updateTimer = window.setTimeout(() => {
         updateTimer = 0;
         lastUpdate = Date.now();
-        if (!tvUnifiedLoading) return;
+        // Chargement remplacé depuis (actualisation forcée) : plus rien à publier.
+        if (finishedLoading && tvUnifiedCache?.generation !== generation) return;
         const data = build();
-        data.partial = true;
-        listeners.forEach(listener => { try { listener(data, false); } catch {} });
+        if (!finishedLoading) data.partial = true;
+        else tvUnifiedCache.data = data;
+        publishTvUnified(data);
       }, wait);
+    };
+    // Catalogue encore incomplet côté serveur : redemandé plus tard, jusqu'à
+    // ce qu'il soit complet (au plus 6 fois, en 1 min 30 environ).
+    const followProgressive = (job, path, attempt = 0) => {
+      if (attempt >= TV_UNIFIED_PROGRESSIVE_DELAYS.length) return;
+      window.setTimeout(() => {
+        if (finishedLoading && tvUnifiedCache?.generation !== generation) return;
+        apiResponseCache.delete(path);
+        cachedApi(path, 5 * 60_000, { timeoutMs: 45_000 }).then(data => {
+          const channels = Array.isArray(data?.channels) ? data.channels : [];
+          if (channels.length) {
+            parts[job.index] = { source: job.source, channels };
+            notify();
+          }
+          if (data?.progressive) followProgressive(job, path, attempt + 1);
+        }, () => followProgressive(job, path, attempt + 1));
+      }, TV_UNIFIED_PROGRESSIVE_DELAYS[attempt]);
     };
     const finished = new Promise(resolve => {
       const pump = () => {
@@ -10415,9 +10459,11 @@
             : `/api/tv/catalog?source=${encodeURIComponent(job.source.id)}`;
           cachedApi(path, job.ref ? 90_000 : 5 * 60_000, { timeoutMs: 45_000 }).then(data => {
             parts[job.index] = { source: job.source, channels: Array.isArray(data?.channels) ? data.channels : [] };
-            // Source en bouquets : les chaînes de chaque bouquet (60 au plus).
+            if (data?.progressive) followProgressive(job, path);
+            // Source en bouquets : les chaînes de chaque bouquet (120 au plus,
+            // bouquets français d'abord).
             if (!job.ref) {
-              (Array.isArray(data?.groups) ? data.groups : []).filter(group => group?.ref).slice(0, 60)
+              tvUnifiedGroupOrder(Array.isArray(data?.groups) ? data.groups : []).slice(0, TV_UNIFIED_GROUP_LIMIT)
                 .forEach(group => enqueue(job.source, group.ref));
             }
             notify();
@@ -10436,11 +10482,13 @@
     });
     const final = finished.then(() => {
       window.clearTimeout(updateTimer);
+      updateTimer = 0;
+      finishedLoading = true;
+      generation = Date.now();
       const data = build();
-      if (failed.length) data.warning = `Sources indisponibles pour le moment : ${failed.join(', ')}.`;
-      tvUnifiedCache = { at: Date.now(), data };
+      tvUnifiedCache = { at: Date.now(), data, generation };
       tvUnifiedLoading = null;
-      listeners.forEach(listener => { try { listener(data, true); } catch {} });
+      publishTvUnified(data);
       return data;
     }).catch(error => {
       tvUnifiedLoading = null;
@@ -10453,7 +10501,7 @@
       partial.warning = 'Certaines sources répondent lentement : la liste se complète toute seule.';
       return partial;
     });
-    tvUnifiedLoading = { first, final, listeners, progress };
+    tvUnifiedLoading = { first, final, progress };
     return first;
   }
 
@@ -10482,6 +10530,14 @@
     return data._order;
   }
 
+  // « Chaînes sport » : catégorie Sport (nom de la chaîne ou catégorie de la
+  // source), ou chaîne (non-match) proposée par une source de l'univers Sports.
+  function tvUnifiedIsSport(channel) {
+    if (channel.category === 'Sport') return true;
+    return (channel._entries || []).some(entry => tvSourceSection(entry.source) === 'sports'
+      || /\bsports?\b|foot|ligue|rugby|tennis|basket|nba|nfl|f1\b|moto ?gp|ufc|boxe|golf/i.test(String(entry.channel?.group || '')));
+  }
+
   function tvUnifiedWebChannel(channel) {
     const known = tvUnifiedWebChannels.get(channel);
     if (known) return known;
@@ -10490,9 +10546,8 @@
     const sourceLogos = [channel.logo, ...channel._entries.map(entry => entry.channel.logo)].filter(Boolean);
     const logo = official || sourceLogos[0] || '';
     const secondaryLogo = sourceLogos.find(value => value !== logo) || '';
-    const group = channel.country === 'fr'
-      ? channel.category || 'Autres'
-      : channel.country ? `International · ${unifiedApi.countryLabel(channel.country)}` : 'Pays non indiqué';
+    // Chaînes françaises seulement (200.0.129) : rangées par catégorie.
+    const group = channel.category || 'Autres';
     const webChannel = {
       id: `u:${channel._key}`,
       name: channel.name,
@@ -10500,7 +10555,7 @@
       secondaryLogo,
       group,
       provider: channel.provider || '',
-      category: channel.country === 'fr' ? '' : channel.category || '',
+      category: '',
       isLive: Boolean(channel.isLive),
       now: channel.now || null,
       next: channel.next || null,
@@ -10509,6 +10564,8 @@
       lcn: channel._lcn || 0,
       playbackType: 'unified',
       unified: true,
+      // Recherche : la chaîne se trouve aussi par ses noms dans chaque source.
+      description: [...new Set(channel._entries.map(entry => String(entry.channel?.name || '')).filter(Boolean))].slice(0, 12).join(' · '),
       _entries: channel._entries,
       _sources: channel._sources || [],
       _key: channel._key
@@ -10517,10 +10574,19 @@
     return webChannel;
   }
 
+  // 200.0.129 : chaînes françaises uniquement. Pays reconnu « France », ou pays
+  // non indiqué mais rangée par une de ses sources dans une catégorie française.
+  function tvUnifiedIsFrench(channel) {
+    if (channel.country === 'fr') return true;
+    if (channel.country) return false;
+    return (channel._entries || []).some(entry => /(?:^|[^a-z])(?:fr|fra|france|french|français|francais|tnt)(?:[^a-z]|$)/i.test(String(entry.channel?.group || '')));
+  }
+
   function tvUnifiedCatalog(selected, data) {
     const sportOnly = selected.id === 'all-sport';
     const channels = tvUnifiedOrder(data)
-      .filter(channel => !sportOnly || channel.category === 'Sport')
+      .filter(tvUnifiedIsFrench)
+      .filter(channel => !sportOnly || tvUnifiedIsSport(channel))
       .map(tvUnifiedWebChannel);
     const counts = {};
     channels.forEach(channel => { counts[channel.group] = (counts[channel.group] || 0) + 1; });
@@ -10562,6 +10628,13 @@
         }
       }
     };
+    // Liste complétée ou mise à jour ensuite (sources lentes, catalogues livrés
+    // en plusieurs fois) : redessinée sur place, lecture en cours conservée.
+    tvUnifiedSubscribers.add(data => {
+      if (!current()) return false;
+      if (rendered) show(data);
+      return true;
+    });
     if (tvUnifiedCache && Date.now() - tvUnifiedCache.at < TV_UNIFIED_CACHE_MS) {
       show(tvUnifiedCache.data);
       return;
@@ -10574,9 +10647,8 @@
       const copy = document.querySelector('.noctra-tv-loading-stage strong');
       if (copy) copy.textContent = `Réunion des chaînes de toutes les sources… ${done} / ${total}`;
     };
-    const onUpdate = data => { if (rendered) show(data); };
     try {
-      const data = await loadTvUnified(onUpdate, onProgress);
+      const data = await loadTvUnified(onProgress);
       show(data);
     } catch (error) {
       if (!current()) return;
@@ -10630,7 +10702,7 @@
         }
       }
       const item = entry.channel;
-      const kind = item.playbackType === 'stream' && item.streamUrl ? 'native' : item.resolverUrl ? 'resolve' : 'web';
+      const kind = item.playbackType === 'resolver' && item.resolverUrl ? 'resolve' : item.streamUrl && item.playbackType !== 'embed' ? 'native' : item.resolverUrl ? 'resolve' : 'web';
       return { entry, label, kind, sourceId: String(source.id || ''), probeState: '', probeMs: 0, probed: false, resolved: null, failed: false };
     });
   }

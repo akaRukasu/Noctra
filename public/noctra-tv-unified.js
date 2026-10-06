@@ -80,7 +80,8 @@
     gr: 'Grèce', se: 'Suède', in: 'Inde', pk: 'Pakistan', ie: 'Irlande', at: 'Autriche', ma: 'Maroc', dz: 'Algérie', tn: 'Tunisie', za: 'Afrique du Sud',
     afrique: 'Afrique francophone', lu: 'Luxembourg', mc: 'Monaco', ht: 'Haïti' };
   // Chaînes françaises connues (reconnues même sans indication de pays).
-  var FRENCH_BRANDS = /^(?:tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
+  // 200.0.129 (client web) : beIN Sports 1 à 3, beIN Sports MAX 4 à 10 et Ligue 1+ (offre française).
+  var FRENCH_BRANDS = /^(?:bein ?sports? (?:max ?)?(?:[1-9]|10)$|ligue ?1|tf1|tfx|tmc|france ?[2345]|france ?info|franceinfo|france ?24|m6|6ter|w9|arte|c8|cstar|nrj ?12|lcp|public senat|bfm|cnews|lci|gulli|l ?equipe|bfm ?tv|13 ?e?(?:me)? ?rue|ab ?[13]|rtl ?9|nrj ?hits|trace|rmc|cherie 25|canal ?plus|c ?plus|ocs|cine ?plus|paris premiere|teva|m6 music|mcm|game ?one|tiji|piwi|planete ?plus|ushuaia|histoire tv|toute l ?histoire|seasons|chasse ?(?:et|&) ?peche|equidia|infosport|tv5 ?monde|tv ?breizh|serie ?club|13e ?rue|comedie ?plus|polar ?plus|action ?(?:tv)?$|novelas|mangas|j ?one|automoto|kto|i24|b ?smart|bfm ?business|la chaine meteo|eurosport ?[12]? ?france|bein sports? .*france|rmc sport|dazn france|l ?equipe ?tv|olympia|melody|m6 boutique|tf1 series films|franceinfo tv|lcp an|t18|novo19|w ?9|6 ?ter)(?:\s|$)/;
   // Chaînes étrangères souvent rangées parmi les françaises (liste à la main,
   // prioritaire sur tout le reste : Africa 24 est enregistrée « FR » chez iptv-org).
   var FOREIGN_BRANDS = [
@@ -263,8 +264,10 @@
     }
     return base;
   }
+  // 200.0.129 (client web) : toute chaîne que le lecteur sait ouvrir, même
+  // quand son flux direct n'est pas marqué « stream » par la source.
   function playable(channel) {
-    return Boolean((channel.playbackType === 'stream' && channel.streamUrl) || channel.resolverUrl || channel.embedUrl || channel.externalUrl || channel.vipFallbackUrl);
+    return Boolean(channel.streamUrl || channel.resolverUrl || channel.embedUrl || channel.externalUrl || channel.vipFallbackUrl);
   }
   // Événements (matchs du jour) : pas des chaînes. Les catalogues de chaînes
   // (LiveWatch, NorthTV, FrameTV, Daddy TV…) donnent parfois une date ou un
@@ -655,7 +658,7 @@
   }
 
   window.NoctraTvUnified = {
-    version: '200.0.128',
+    version: '200.0.129',
     normalize: normalize,
     cleanChannelName: cleanChannelName,
     unifiedName: unifiedName,

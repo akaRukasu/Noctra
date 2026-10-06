@@ -18,11 +18,11 @@ const [shell, unifiedJs, dataJs, flowJs, flowCss, unifiedCss, html, server, pkg]
 ]);
 
 // ── Chargement des modules ──
-assert.ok(html.indexOf('noctra-tv-data.js?v=200.128') < html.indexOf('noctra-tv-unified.js?v=200.128'));
-assert.ok(html.indexOf('noctra-tv-unified.js?v=200.128') < html.indexOf('noctra-shell.js?v=200.128'), 'Module des chaînes avant le shell');
-assert.ok(html.indexOf('noctra-shell.js?v=200.128') < html.indexOf('noctra-episode-flow.js?v=200.128'));
-assert.match(html, /noctra-tv-unified\.css\?v=200\.128/);
-assert.match(html, /noctra-episode-flow\.css\?v=200\.128/);
+const at = name => html.indexOf(`../${name}?v=`);
+assert.ok(at('noctra-tv-data.js') > 0 && at('noctra-tv-data.js') < at('noctra-tv-unified.js'));
+assert.ok(at('noctra-tv-unified.js') < at('noctra-shell.js'), 'Module des chaînes avant le shell');
+assert.ok(at('noctra-shell.js') < at('noctra-episode-flow.js'));
+assert.ok(at('noctra-tv-unified.css') > 0 && at('noctra-episode-flow.css') > 0);
 
 // ── Regroupement des chaînes (règles de la version TV) ──
 const storage = new Map();
@@ -36,7 +36,7 @@ vm.createContext(context);
 vm.runInContext(dataJs, context);
 vm.runInContext(unifiedJs, context);
 const U = context.NoctraTvUnified;
-assert.equal(U.version, '200.0.128');
+assert.match(U.version, /^200\.0\.12[89]$/);
 const ch = (name, extra = {}) => ({ name, playbackType: 'stream', streamUrl: `/s/${encodeURIComponent(name)}.m3u8`, ...extra });
 const merged = U.mergeChannels([
   { source: { id: 'lw', name: 'LiveWatch', section: 'channels' }, channels: [ch('FR: TF1 HD'), ch('beIN SPORTS 1 · SAT · HD', { iptvOrgId: 'BeINSports1.fr' }), ch('France 2'), ch('UK: Sky Sports Main Event')] },
@@ -78,7 +78,7 @@ assert.match(shell, /tvState\.sources = realSources\.length \? \[\.\.\.TV_UNIFIE
 assert.match(shell, /if \(selected\.virtual\) \{\s*await openTvUnified\(selected, sequence\);/);
 assert.match(shell, /const rememberedSourceId = '';/, 'Ouverture sur les chaînes réunies, comme sur la TV');
 assert.match(shell, /filter\(source => !source\.virtual && tvSourceSection\(source\) !== 'portals'\)/);
-assert.match(shell, /\.slice\(0, 60\)\s*\.forEach\(group => enqueue\(job\.source, group\.ref\)\)/, 'Bouquets : 60 au plus');
+assert.match(shell, /\.slice\(0, TV_UNIFIED_GROUP_LIMIT\)\s*\.forEach\(group => enqueue\(job\.source, group\.ref\)\)/, 'Bouquets limités (120 depuis 200.0.129)');
 assert.match(shell, /while \(running < 6 && queue\.length\)/, 'Catalogues : 6 à la fois');
 assert.match(shell, /const TV_UNIFIED_WAIT_MS = 12_000;/);
 assert.match(shell, /const TV_UNIFIED_PROBE_WORKERS = 6;/);
@@ -141,10 +141,5 @@ assert.match(flowJs, /if \(state\.nextQueued\) \{\s*state\.advancing = true;/, '
 assert.match(flowJs, /state\.stopAtEnd && remaining < 1_200/, '« Plus tard » : arrêt à la fin');
 assert.match(flowCss, /body\.noctra-episode-flow \.skip-button-container,\s*body\.noctra-episode-flow \.skip-button,\s*body\.noctra-episode-flow \.upNextContainer \{ display:none !important; \}/);
 assert.ok(!/animation:[^;]*zoom/.test(flowCss), 'Pas d’animation coûteuse de l’image de fond');
-
-// ── Version ──
-assert.match(pkg, /"version": "200\.0\.128"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.128';/);
-assert.equal((server.match(/'200\.0\.128'/g) || []).length, 2);
 
 console.log('v200.0.128 : chaînes réunies et serveurs testés, « Passer », « À suivre » et transition entre épisodes : OK');

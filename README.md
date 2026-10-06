@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.128 — chaînes réunies, serveurs testés, génériques et épisodes comme sur Noctra TV
+# Version actuelle : 200.0.129 — chaînes françaises uniquement, plus de chaînes manquantes
+
+« Toutes les chaînes » et « Chaînes sport » n'affichent que les chaînes françaises ; les catalogues livrés en plusieurs fois (OHA, LiveWatch) sont complétés, les flux sans type gardés, 120 bouquets par source. Détails : [MISE-A-JOUR-V200129.md](MISE-A-JOUR-V200129.md). Validation : `npm run test:v200129`.
+
+# Historique : 200.0.128 — chaînes réunies, serveurs testés, génériques et épisodes comme sur Noctra TV
 
 La TV s'ouvre sur les chaînes de toutes les sources réunies (« Toutes les chaînes », « Chaînes sport »), avec la détection de serveurs de Noctra TV : serveurs testés, le meilleur vérifié lancé, relais automatique. Séries et animés : bouton « Passer l'intro / le générique », carte « À suivre » et transition entre épisodes. Détails : [MISE-A-JOUR-V200128.md](MISE-A-JOUR-V200128.md). Validation : `npm run test:v200128`.
 
