@@ -134,7 +134,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
                 handler.removeCallbacks(hideBanner);
                 banner.animate().cancel();
                 banner.setAlpha(1f);
-                statsView.setText(stream.diagnostics());
+                String server = report == null ? null : report.transcoding();
+                statsView.setText(stream.diagnostics() + (server == null ? "" : "\n" + server));
                 statsView.setVisibility(TextView.VISIBLE);
             } else if (banner.getAlpha() == 1f) {
                 hideBanner.run();
@@ -197,6 +198,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         @Override
         public void run() {
             if (report == null || stream == null) return;
+            report.checkTranscoding();
             if (stream.hasPlayed()) {
                 if (!reportedStart) {
                     reportedStart = true;

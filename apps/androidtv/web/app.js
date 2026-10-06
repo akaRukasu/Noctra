@@ -983,8 +983,15 @@
   function pickSubtitle(item) {
     var subs = streamsOf(item, 'Subtitle');
     if (trackPrefs.subtitles === 'none') return null;
-    if (trackPrefs.subtitles) return subs.filter(function (stream) { return stream.Language === trackPrefs.subtitles; })[0] || null;
-    return subs.filter(function (stream) { return stream.IsForced; })[0] || subs.filter(function (stream) { return stream.IsDefault; })[0] || null;
+    // Sous-titres image (PGS, VobSub) : incrustés par le serveur, donc toute la
+    // vidéo reconvertie (qualité moindre) ; texte préféré, image seulement si
+    // la langue a été choisie et qu'il n'y a rien d'autre.
+    var text = subs.filter(function (stream) { return stream.IsTextSubtitleStream; });
+    if (trackPrefs.subtitles) {
+      var chosen = function (stream) { return stream.Language === trackPrefs.subtitles; };
+      return text.filter(chosen)[0] || subs.filter(chosen)[0] || null;
+    }
+    return text.filter(function (stream) { return stream.IsForced; })[0] || text.filter(function (stream) { return stream.IsDefault; })[0] || null;
   }
   function trackLabel(stream) {
     if (!stream) return 'Aucun';
@@ -1006,7 +1013,10 @@
       SubtitleMethod: subtitle ? (subtitle.IsTextSubtitleStream ? 'Hls' : 'Encode') : '',
       MaxStreamingBitrate: vodQuality() ? vodQuality() * 1000000 : 80000000, TranscodingMaxAudioChannels: 6,
       // Qualité limitée : vidéo convertie par le serveur sous ce débit.
-      VideoBitrate: vodQuality() ? vodQuality() * 1000000 - 400000 : '', SegmentContainer: 'ts', MinSegments: 1,
+      // Sans débit demandé, une conversion part sur un débit bas (image floue).
+      VideoBitrate: (vodQuality() ? vodQuality() * 1000000 : 80000000) - 400000,
+      // Une seule qualité : pas de variantes réduites choisies par le lecteur.
+      EnableAdaptiveBitrateStreaming: 'false', SegmentContainer: 'ts', MinSegments: 1,
       BreakOnNonKeyFrames: 'True', AllowVideoStreamCopy: 'true', AllowAudioStreamCopy: 'true', RequireAvc: 'false',
       'h264-profile': 'high,main,baseline,constrained baseline', 'h264-level': '51', 'hevc-profile': 'main,main10'
     };

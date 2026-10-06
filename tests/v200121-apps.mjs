@@ -621,4 +621,12 @@ assert.match(homeJava, /EXTRA_BITRATE, Math\.max\(0, message\.optLong\("bitrate"
 assert.match(tvApp, /var VOD_QUALITIES = \[0, 20, 12, 8, 4\];/);
 assert.match(tvApp, /MaxStreamingBitrate: vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000/);
 assert.match(tvApp, /'Qualité des films : ' \+ vodQualityLabel\(vodQuality\(\)\)/);
+// Films : vidéo d'origine ou convertie (et pourquoi) dans le diagnostic ; conversions évitables écartées.
+const reportJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.java');
+assert.match(reportJava, /"\/Sessions\?deviceId=" \+ URLEncoder\.encode\(deviceId, "UTF-8"\)/);
+assert.match(reportJava, /"sous-titres incrustés dans l'image"/);
+assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /report\.checkTranscoding\(\);/);
+assert.match(tvApp, /VideoBitrate: \(vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000\) - 400000,/);
+assert.match(tvApp, /EnableAdaptiveBitrateStreaming: 'false'/);
+assert.match(tvApp, /return text\.filter\(chosen\)\[0\] \|\| subs\.filter\(chosen\)\[0\] \|\| null;/);
 console.log('v200.0.121 : applications Android, Android TV, iOS, LG webOS et Samsung Tizen : OK');
