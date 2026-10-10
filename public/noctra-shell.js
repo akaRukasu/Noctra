@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.131';
+  const NOCTRA_BUILD_VERSION = '200.0.132';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -5524,7 +5524,8 @@
   }
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
-  const tvTrustedEmbedHosts = new Set(['livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;
@@ -10261,15 +10262,21 @@
     return LIVEWATCH_OFFICIAL_EMBED_SOURCES.has(tvActiveSourceId());
   }
 
+  // 200.0.132 : LiveWatch a quitté livewatch.top pour livewatch.icu ; un lien
+  // ancien (catalogue gardé par le navigateur) est ouvert sur le domaine actuel.
+  function currentLiveWatchEmbedUrl(value) {
+    return String(value || '').replace(/^https:\/\/(www\.)?livewatch\.top(?=[\/?#]|$)/i, 'https://$1livewatch.icu');
+  }
+
   function officialLiveWatchEmbedUrl(channel) {
     const candidates = [channel?.vipFallbackUrl, channel?.externalUrl, channel?.embedUrl];
-    return String(candidates.find(value => /^https?:\/\//i.test(String(value || '').trim())) || '').trim();
+    return currentLiveWatchEmbedUrl(String(candidates.find(value => /^https?:\/\//i.test(String(value || '').trim())) || '').trim());
   }
 
   function documentedLiveWatchEmbedReference(value) {
     try {
       const url = new URL(String(value || ''), window.location.origin);
-      if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+      if (!/^(?:www\.)?livewatch\.(?:icu|top)$/i.test(url.hostname)) return null;
       const match = url.pathname.match(/^\/embed\/(?:(north|frame)\/)?([^/]+)\/?$/i);
       if (!match) return null;
       return { kind: String(match[1] || 'main').toLowerCase(), id: decodeURIComponent(match[2]) };

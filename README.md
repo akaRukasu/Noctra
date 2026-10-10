@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.131 — serveurs de toutes les sources sous chaque chaîne
+# Version actuelle : 200.0.132 — LiveWatch sur livewatch.icu, Alternative mise à jour
+
+LiveWatch et ses dérivés passent sur `livewatch.icu` (domaine réglable par `LIVEWATCH_ORIGIN`, anciens liens redirigés) ; Alternative accepte les chaînes ajoutées à la page Haloule (L'Equipe TV, TF1). Détails : [MISE-A-JOUR-V200132.md](MISE-A-JOUR-V200132.md). Validation : `npm run test:v200132`.
+
+# Historique : 200.0.131 — serveurs de toutes les sources sous chaque chaîne
 
 Le pays deviné par iptv-org ne sépare plus une même chaîne entre sources (beIN Sport 1 retrouve ses serveurs LiveWatch, OHA…) ; l'apport de chaque source est affiché sous « Toutes les chaînes ». Détails : [MISE-A-JOUR-V200131.md](MISE-A-JOUR-V200131.md). Validation : `npm run test:v200131`.
 

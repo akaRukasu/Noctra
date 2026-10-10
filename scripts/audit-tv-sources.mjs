@@ -1,7 +1,7 @@
 // Run on the Noctra host: npm run audit:tv
 // HTTP reachability and response format only. This does not certify video playback.
 const sources = [
-  ['LiveWatch','https://livewatch.top/'],['FSTV','https://fstv.rest/'],
+  ['LiveWatch','https://livewatch.icu/'],['FSTV','https://fstv.rest/'],
   ['OHA · IP 1','http://185.254.196.78/live'],['OHA · IP 2','http://178.83.5.50/live'],['OHA · Vavoo','http://vavoo.top/live'],['OHA · Kool','https://kool.ws/live'],
   ['WiTV','https://witv.football/'],['Movix','https://movix.men/live-tv'],['Movix · catalogue','https://api.movix.men/api/livetv/manifest'],
   ['Streamed · PK','https://streamed.pk/'],['Streamed · ST','https://streamed.st/'],

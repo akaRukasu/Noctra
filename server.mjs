@@ -5102,7 +5102,8 @@ async function assertPublicTvUrl(urlValue) {
 }
 
 async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
-  let url = await assertPublicTvUrl(urlValue);
+  // 200.0.132 : un lien de l'ancien domaine LiveWatch part vers le domaine actuel.
+  let url = await assertPublicTvUrl(currentLiveWatchUrl(urlValue instanceof URL ? urlValue.toString() : urlValue));
   let requestOptions = { ...options, headers: { ...(options.headers || {}) } };
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
     const response = await fetch(url, { ...requestOptions, redirect: 'manual' });
@@ -5120,8 +5121,7 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       // signé avant même que le client officiel puisse recevoir sa réponse.
       const trustedOhaRedirect = /^(?:www\.)?oha\.(?:to|cx)$/i.test(url.hostname)
         && /^(?:www\.)?oha\.(?:to|cx)$/i.test(nextUrl.hostname);
-      const trustedLiveWatchRedirect = /^(?:www\.)?livewatch\.top$/i.test(url.hostname)
-        && /^(?:www\.)?livewatch\.top$/i.test(nextUrl.hostname);
+      const trustedLiveWatchRedirect = isLiveWatchHost(url.hostname) && isLiveWatchHost(nextUrl.hostname);
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
       const strip = [
         ...(trustedLiveWatchRedirect ? [] : ['authorization', 'apikey']),
@@ -5236,26 +5236,54 @@ function optionalTvRemoteUrl(value) {
   return source ? safeTvRemoteUrl(source).toString() : '';
 }
 
+// 200.0.132 : LiveWatch a quitté livewatch.top pour livewatch.icu. Domaine
+// réglable par LIVEWATCH_ORIGIN (prochain changement sans nouvelle version).
+// L'ancien domaine reste reconnu : liens encore en mémoire ou en cache,
+// réécrits vers le domaine actuel avant toute requête.
+const liveWatchOrigin = withoutSlash(process.env.LIVEWATCH_ORIGIN || 'https://livewatch.icu');
+const liveWatchHostNames = new Set(['livewatch.icu', 'livewatch.top']
+  .concat((() => { try { return [new URL(liveWatchOrigin).hostname.toLowerCase().replace(/^www\./, '')]; } catch { return []; } })())
+  .flatMap(host => [host, `www.${host}`]));
+
+function isLiveWatchHost(value) {
+  return liveWatchHostNames.has(String(value || '').toLowerCase());
+}
+
+// Lien LiveWatch d'un ancien domaine : même chemin sur le domaine actuel.
+function currentLiveWatchUrl(value) {
+  const raw = String(value || '');
+  try {
+    const url = new URL(raw);
+    if (!isLiveWatchHost(url.hostname)) return raw;
+    const current = new URL(liveWatchOrigin);
+    if (url.hostname.toLowerCase() === current.hostname.toLowerCase()) return raw;
+    url.protocol = current.protocol;
+    url.host = current.host;
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
 const liveWatchChannelCatalogUrls = [
-  ['LiveWatch', 'https://livewatch.top/api/v1/public/all'],
-  ['NorthTV', 'https://livewatch.top/api/v1/public/north/channels'],
-  ['FrameTV', 'https://livewatch.top/api/v1/public/frame/channels']
+  ['LiveWatch', `${liveWatchOrigin}/api/v1/public/all`],
+  ['NorthTV', `${liveWatchOrigin}/api/v1/public/north/channels`],
+  ['FrameTV', `${liveWatchOrigin}/api/v1/public/frame/channels`]
 ];
 
 const liveWatchBuiltInSources = [
   { id: 'livewatch-curated', name: 'LiveWatch', section: 'channels', description: 'Catalogue LiveWatch officiel · sources alternatives séparées', url: liveWatchChannelCatalogUrls[0][1], curated: true },
   // Les familles fonctionnelles restent distinctes de LiveWatch principal.
-  { id: 'livewatch-daddy', name: 'Daddy TV', section: 'channels', description: 'Catalogue Daddy TV · accès LiveWatch VIP', url: 'https://livewatch.top/api/v1/public/daddy/channels', family: 'daddy' },
+  { id: 'livewatch-daddy', name: 'Daddy TV', section: 'channels', description: 'Catalogue Daddy TV · accès LiveWatch VIP', url: `${liveWatchOrigin}/api/v1/public/daddy/channels`, family: 'daddy' },
   { id: 'livewatch-north', name: 'NorthTV', section: 'channels', description: 'NorthTV · direct HLS officiel LiveWatch', url: liveWatchChannelCatalogUrls[1][1], family: 'north' },
   { id: 'livewatch-frame', name: 'FrameTV', section: 'channels', description: 'FrameTV · direct HLS résolu par LiveWatch', url: liveWatchChannelCatalogUrls[2][1], family: 'frame' },
-  { id: 'livewatch-sports', name: 'Sports', section: 'sports', description: 'Événements sportifs du jour', url: 'https://livewatch.top/api/v1/public/sports' },
-  { id: 'livewatch-football', name: 'Football Live', section: 'sports', description: 'Football Live · embeds multi-serveurs opaques LiveWatch', url: 'https://livewatch.top/api/v1/public/football' },
-  { id: 'livewatch-bosstv', name: 'BossTV', section: 'sports', description: 'BossTV · embeds multi-serveurs opaques LiveWatch', url: 'https://livewatch.top/api/v1/public/bosstv' },
-  { id: 'livewatch-jacktv', name: 'JackTV', section: 'sports', description: 'Matchs, scores et informations JackTV', url: 'https://livewatch.top/api/v1/public/jacktv/matches' },
-  { id: 'livewatch-daily', name: 'Matchs du jour', section: 'sports', description: 'Programme sportif quotidien', url: 'https://livewatch.top/api/v1/public/sports/daily' }
+  { id: 'livewatch-sports', name: 'Sports', section: 'sports', description: 'Événements sportifs du jour', url: `${liveWatchOrigin}/api/v1/public/sports` },
+  { id: 'livewatch-football', name: 'Football Live', section: 'sports', description: 'Football Live · embeds multi-serveurs opaques LiveWatch', url: `${liveWatchOrigin}/api/v1/public/football` },
+  { id: 'livewatch-bosstv', name: 'BossTV', section: 'sports', description: 'BossTV · embeds multi-serveurs opaques LiveWatch', url: `${liveWatchOrigin}/api/v1/public/bosstv` },
+  { id: 'livewatch-jacktv', name: 'JackTV', section: 'sports', description: 'Matchs, scores et informations JackTV', url: `${liveWatchOrigin}/api/v1/public/jacktv/matches` },
+  { id: 'livewatch-daily', name: 'Matchs du jour', section: 'sports', description: 'Programme sportif quotidien', url: `${liveWatchOrigin}/api/v1/public/sports/daily` }
 ].map(source => ({ ...source, type: 'livewatch', provider: 'LiveWatch', origin: 'builtin', editable: false }));
 
-const liveWatchOrigin = 'https://livewatch.top';
 // V75: the v74 bundle accidentally changed the payload of the public Supabase
 // anon JWT without re-signing it (iss=HS256 instead of iss=supabase). Supabase
 // correctly rejected it as "Invalid API key". Keep the last known-good public
@@ -5329,7 +5357,7 @@ ${html}`;
       while ((match = re.exec(html)) && scripts.size < 12) {
         try {
           const url = new URL(match[1], response.url || pageUrl);
-          if (['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) scripts.add(url.toString());
+          if (isLiveWatchHost(url.hostname.toLowerCase())) scripts.add(url.toString());
         } catch {}
       }
     } catch {}
@@ -5561,7 +5589,7 @@ function liveWatchAllowedBridgeHost(value, publicConfig = null) {
   try {
     const host = new URL(value).hostname.toLowerCase();
     const supabaseHost = new URL(publicConfig?.url || liveWatchSupabaseUrl).hostname.toLowerCase();
-    return ['livewatch.top', 'www.livewatch.top', supabaseHost].includes(host);
+    return isLiveWatchHost(host) || host === supabaseHost;
   } catch { return false; }
 }
 
@@ -5585,7 +5613,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   const proxiedAsset = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (!['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return String(value || '');
+      if (!isLiveWatchHost(target.hostname.toLowerCase())) return String(value || '');
       return `${siteRoot}${target.pathname}${target.search}`;
     } catch { return String(value || ''); }
   };
@@ -5599,7 +5627,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   const proxiedMedia = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
+      if (isLiveWatchHost(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
       return `${tunnel}?media=1&url=${encodeURIComponent(target.toString())}`;
     } catch { return String(value || ''); }
   };
@@ -5650,7 +5678,7 @@ function rewriteLiveWatchBridgeAssetText(textValue, kind, id, contentType = '') 
   const type = String(contentType || '').toLowerCase();
   let output = text;
   if (/javascript|ecmascript|text\/plain/.test(type)) {
-    output = output.replace(/https:\/\/(?:www\.)?livewatch\.top(?=\/|["'`])/gi, siteRoot);
+    output = output.replace(/https:\/\/(?:www\.)?livewatch\.(?:icu|top)(?=\/|["'`])/gi, siteRoot);
     output = output.replace(/(["'`])\/(?!\/)((?:assets|static|_next|build|dist|chunks?|js|css|fonts?|images?|icons?|workers?|manifest|favicon)\/[^"'`\\\r\n]{1,500})\1/gi, (_m, q, path) => `${q}${siteRoot}/${path}${q}`);
   }
   if (/text\/css/.test(type)) {
@@ -5671,7 +5699,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
   const method = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req?.method) ? req.method : 'GET';
   const body = req && !['GET', 'HEAD'].includes(method) ? await readTvProxyBody(req) : undefined;
   const isSupabase = officialTarget && target.origin === new URL(publicConfig.url).origin;
-  const isLiveWatch = officialTarget && ['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase());
+  const isLiveWatch = officialTarget && isLiveWatchHost(target.hostname.toLowerCase());
   const key = liveWatchBridgeKey(kind, id);
   const cookies = liveWatchBridgeCookies.get(key)?.value || '';
   const cors = {
@@ -5793,7 +5821,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
       referer: headers.referer,
       'user-agent': headers['user-agent'],
       ...(externalMedia && playlistCookie ? { cookie: playlistCookie } : {}),
-      ...(['livewatch.top', 'www.livewatch.top'].includes(new URL(finalUrl).hostname.toLowerCase()) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
+      ...(isLiveWatchHost(new URL(finalUrl).hostname) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
     };
     const rewritten = rewriteTvPlaylist(text, finalUrl, inherited, { provider: 'LiveWatch' });
     res.writeHead(response.status, { ...cors, 'content-type': 'application/vnd.apple.mpegurl; charset=utf-8', 'x-accel-buffering': 'no' });
@@ -6228,7 +6256,7 @@ function liveWatchBridgeReference(tokenValue) {
   if (!['main', 'daddy', 'north', 'frame', 'page'].includes(kind) || !id) return null;
   try {
     const url = safeTvRemoteUrl(reference.url);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     return { token, kind, id, url: url.toString(), reference };
   } catch {
     return null;
@@ -6561,7 +6589,22 @@ function liveWatchCatalogName(payload, baseUrl) {
   return payload?.name || payload?.title || 'LiveWatch TV';
 }
 
+// 200.0.132 : liens d'un catalogue LiveWatch ramenés au domaine actuel
+// (l'API peut encore renvoyer des liens livewatch.top).
 function parseLiveWatchCatalog(payload, baseUrl) {
+  const catalog = parseLiveWatchCatalogLinks(payload, currentLiveWatchUrl(baseUrl));
+  const linkFields = ['embedUrl', 'externalUrl', 'vipFallbackUrl', 'streamUrl'];
+  const current = item => {
+    if (!item || typeof item !== 'object') return item;
+    const copy = { ...item };
+    linkFields.forEach(field => { if (typeof copy[field] === 'string' && copy[field]) copy[field] = currentLiveWatchUrl(copy[field]); });
+    if (Array.isArray(copy.liveWatchVariants)) copy.liveWatchVariants = copy.liveWatchVariants.map(current);
+    return copy;
+  };
+  return { ...catalog, channels: Array.isArray(catalog?.channels) ? catalog.channels.map(current) : catalog?.channels };
+}
+
+function parseLiveWatchCatalogLinks(payload, baseUrl) {
   const entries = liveWatchCatalogEntries(payload);
   const channels = entries.map(item => normalizeTvChannel(item, baseUrl, item.group || 'LiveWatch')).filter(Boolean);
   return { channels, groups: [], name: liveWatchCatalogName(payload, baseUrl) };
@@ -6695,7 +6738,7 @@ function collapseLiveWatchLogicalChannels(channelsValue = []) {
 function liveWatchEmbedReference(channel) {
   try {
     const url = new URL(channel?.externalUrl || channel?.embedUrl || '');
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     const match = url.pathname.match(/^\/embed\/(?:(daddy|north|frame)\/)?([^/]+)\/?$/i);
     if (!match) return null;
     return { kind: String(match[1] || 'main').toLowerCase(), id: decodeURIComponent(match[2]) };
@@ -6709,11 +6752,11 @@ function liveWatchOfficialEmbedUrl(channel) {
     // V113 : les catalogues Sports peuvent publier de nouveaux wrappers
     // LiveWatch qui ne suivent pas encore la forme /embed/{daddy,north,frame}.
     // On n'étend jamais le VIP à un hôte tiers : seul un embed explicitement
-    // livré par livewatch.top peut recevoir le bridge de la session Premium.
+    // livré par LiveWatch (livewatch.icu, ex-livewatch.top) peut recevoir le bridge de la session Premium.
     const raw = String(channel?.embedUrl || '').trim();
     if (!raw) return '';
     const url = safeTvRemoteUrl(raw);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return '';
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return '';
     return url.toString();
   } catch {
     return '';
@@ -6727,7 +6770,7 @@ function liveWatchPageReference(tokenValue) {
   if (!reference || reference.expiresAt <= Date.now() || reference.meta?.kind !== 'livewatch-page') return null;
   try {
     const url = safeTvRemoteUrl(reference.url);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     return { ...reference, url: url.toString() };
   } catch {
     return null;
@@ -6823,7 +6866,7 @@ async function decorateLiveWatchVipPlayback(catalog, source = {}) {
         .flatMap((variant, index) => {
           try {
             const url = safeTvRemoteUrl(variant.embedUrl || variant.externalUrl || '').toString();
-            if (!['livewatch.top', 'www.livewatch.top'].includes(new URL(url).hostname.toLowerCase())) return [];
+            if (!isLiveWatchHost(new URL(url).hostname)) return [];
             return [{
               url,
               label: String(variant.label || `Serveur ${index + 1}`).slice(0, 80),
@@ -6965,7 +7008,7 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     }
     if (!rawUrl) throw new HttpError(502, 'LiveWatch n’a renvoyé aucun flux pour cette chaîne.');
     const streamUrl = safeTvRemoteUrl(new URL(rawUrl, response.url || liveWatchOrigin).toString());
-    const liveWatchHost = ['livewatch.top', 'www.livewatch.top'].includes(streamUrl.hostname.toLowerCase());
+    const liveWatchHost = isLiveWatchHost(streamUrl.hostname.toLowerCase());
     const officialProxy = liveWatchHost && /^\/api\/(?:hls\b|proxy\b|stream\b|(?:daddy|north|frame)\/(?:proxy|stream)\b)/i.test(streamUrl.pathname);
     const publicHls = streamUrl.protocol === 'https:' && /\.m3u8?(?:$|[?#/])/i.test(streamUrl.toString());
     if (!officialProxy && !publicHls) throw new HttpError(502, 'LiveWatch a renvoyé une adresse de flux inattendue.');
@@ -7480,7 +7523,7 @@ async function liveWatchChannelVariants(kindValue, idValue, nameValue = '', coun
   let catalogUrl = defaults[kind] || '';
   try {
     const candidate = safeTvRemoteUrl(sourceValue).toString();
-    if (new URL(candidate).hostname.toLowerCase().endsWith('livewatch.top') && /\/api\//i.test(candidate)) catalogUrl = candidate;
+    if (isLiveWatchHost(new URL(candidate).hostname) && /\/api\//i.test(candidate)) catalogUrl = currentLiveWatchUrl(candidate);
   } catch {}
   if (!catalogUrl) return [{ kind, id, label: '' }];
   try {
@@ -7599,7 +7642,7 @@ async function resolveLiveWatchVipPlayback(kindValue, idValue, options = {}) {
     const variantOptions = pageReference.meta.variants.flatMap((variant, index) => {
       try {
         const variantUrl = safeTvRemoteUrl(variant?.url || '').toString();
-        if (!['livewatch.top', 'www.livewatch.top'].includes(new URL(variantUrl).hostname.toLowerCase())) return [];
+        if (!isLiveWatchHost(new URL(variantUrl).hostname)) return [];
         const variantPageToken = issueTvReference(variantUrl, {}, {
           kind: 'livewatch-page',
           sourceFamily: familyLabel,
@@ -7890,6 +7933,8 @@ async function readPersistedLiveWatchCuratedCatalog() {
       const age = Date.now() - Number(payload?.savedAt || 0);
       const value = payload?.value;
       if (age < 0 || age > 24 * 60 * 60_000 || !Array.isArray(value?.channels) || !value.channels.length) return null;
+      // 200.0.132 : catalogue enregistré avec un autre domaine LiveWatch (liens morts).
+      if (payload?.origin !== liveWatchOrigin) return null;
       return value;
     } catch {
       return null;
@@ -7901,7 +7946,7 @@ async function readPersistedLiveWatchCuratedCatalog() {
 async function persistLiveWatchCuratedCatalog(value) {
   if (!Array.isArray(value?.channels) || !value.channels.length) return;
   await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(liveWatchCatalogCachePath, `${JSON.stringify({ savedAt: Date.now(), value })}\n`, { encoding: 'utf8', mode: 0o600 });
+  await writeFile(liveWatchCatalogCachePath, `${JSON.stringify({ savedAt: Date.now(), origin: liveWatchOrigin, value })}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 async function refreshLiveWatchCuratedCatalog(cacheKey) {
@@ -10230,9 +10275,12 @@ function normalizeHalouleDirectSportLabel(labelValue = '') {
     .toLowerCase();
 }
 
+// 200.0.132 : page mise à jour le 10/10/26 (nouvelles adresses pour toutes
+// les chaînes) : ajout de L'Equipe TV et TF1 ; « ESPN FR by DISNEY » avec ou
+// sans « + » dans le lien.
 function halouleDirectSportLabelAllowed(labelValue = '') {
-  const label = normalizeHalouleDirectSportLabel(labelValue);
-  return /^(?:canal\+|canal\+\s+sport|canal\+\s+foot|canal\+\s+sport\s+360|canal\+\s+sport\s+[1-5]\s+afrik|c\+\s+live\s+(?:[1-9]|10)|canal\+\s+live\s+(?:[1-9]|10)|ligue\s*1\+(?:\s+\(v2\)|\s+(?:[1-9]|10)(?:\s+\(v2\))?)?|beinsport\s+(?:fr\s+)?[1-3]|beinsport\s+max\s+(?:[4-9]|10)|max\s+(?:[4-9]|10)|rmc\s+sport\s+[1-2]|eurosport\s+[1-2]|espn\s+fr\s+by\s+disney\+|automoto|sportenfrance|trace\s+(?:urban|caribbean|terranga|latina|toca|gospel|vanilla|africa)|bblack\s+(?:africa|caribbean|classic)|bblack\s+classic|clubbing\s+tv)$/i.test(label);
+  const label = normalizeHalouleDirectSportLabel(labelValue).replace(/[’`]/g, "'");
+  return /^(?:canal\+|canal\+\s+sport|canal\+\s+foot|canal\+\s+sport\s+360|canal\+\s+sport\s+[1-5]\s+afrik|c\+\s+live\s+(?:[1-9]|10)|canal\+\s+live\s+(?:[1-9]|10)|ligue\s*1\+(?:\s+\(v2\)|\s+(?:[1-9]|10)(?:\s+\(v2\))?)?|beinsport\s+(?:fr\s+)?[1-3]|beinsport\s+max\s+(?:[4-9]|10)|max\s+(?:[4-9]|10)|rmc\s+sport\s+[1-2]|eurosport\s+[1-2]|espn\s+fr\s+by\s+disney\+?|automoto|sportenfrance|l'?\s*equipe(?:\s+tv)?|tf1|trace\s+(?:urban|caribbean|terranga|latina|toca|gospel|vanilla|africa)|bblack\s+(?:africa|caribbean|classic)|bblack\s+classic|clubbing\s+tv)$/i.test(label);
 }
 
 function halouleLinkAllowed(urlValue, labelValue = '') {
@@ -11520,9 +11568,9 @@ function mergeTvCatalogChannels(catalogs, providerLabel = 'LiveWatch') {
 }
 
 async function tvCatalogFromJackTvWithFallback() {
-  const primary = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/jacktv/matches', 'JackTV');
+  const primary = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/jacktv/matches`, 'JackTV');
   if (primary.channels?.length) return primary;
-  const football = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/football', 'Football Live').catch(() => ({ channels: [] }));
+  const football = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/football`, 'Football Live').catch(() => ({ channels: [] }));
   const channels = (football.channels || []).map(channel => ({
     ...channel,
     description: [channel.description, 'Secours Football Live · JackTV ne publie actuellement aucun match'].filter(Boolean).join(' · ')
@@ -11539,11 +11587,11 @@ async function tvCatalogFromJackTvWithFallback() {
 }
 
 async function tvCatalogFromDailyWithFallback() {
-  const primary = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/sports/daily', 'Matchs du jour');
+  const primary = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/sports/daily`, 'Matchs du jour');
   if (primary.channels?.length) return primary;
   const [sports, football] = await Promise.all([
-    liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/sports', 'Sports').catch(() => ({ channels: [] })),
-    liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/football', 'Football Live').catch(() => ({ channels: [] }))
+    liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/sports`, 'Sports').catch(() => ({ channels: [] })),
+    liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/football`, 'Football Live').catch(() => ({ channels: [] }))
   ]);
   const channels = mergeTvCatalogChannels([sports, football], 'LiveWatch').map(channel => ({
     ...channel,
@@ -12064,7 +12112,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   const proxiedMedia = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
+      if (isLiveWatchHost(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
       return `${tunnel}?media=1&url=${encodeURIComponent(target.toString())}`;
     } catch { return String(value || ''); }
   };
@@ -12678,12 +12726,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.131', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.132', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.131',
+        version: '200.0.132',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

@@ -45,8 +45,4 @@ assert.match(shell, /coverage\[part\.source\.name\] = \(coverage\[part\.source\.
 assert.match(shell, /`\$\{coverage\.length\} sources réunies : \$\{coverage\.map/);
 assert.match(shell, /source: coverageText \? \{ \.\.\.selected, description: coverageText \} : selected,/);
 
-assert.match(pkg, /"version": "200\.0\.131"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.131';/);
-assert.equal((server.match(/'200\.0\.131'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.130') && html.includes('noctra-shell.js?v=200.131'));
 console.log('v200.0.131 : pays des chaînes fiable (sources réunies) et apport de chaque source : OK');
