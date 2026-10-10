@@ -22,8 +22,4 @@ assert.match(server, /const stream = await liveWatchDiagnosticStream\(ref\)\.cat
 assert.match(server, /sessionSent: Boolean\(reference\.headers\?\.authorization\)/);
 assert.match(server, /path: target\.pathname\.replace\(\/\[A-Za-z0-9_-\]\{24,\}\/g, '…'\)/, 'Jetons masqués dans le chemin');
 
-assert.match(pkg, /"version": "200\.0\.134"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.134';/);
-assert.equal((server.match(/'200\.0\.134'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.133') && html.includes('noctra-shell.js?v=200.134'));
 console.log('v200.0.134 : session VIP jointe aux flux des sous-domaines LiveWatch, diagnostic du flux : OK');

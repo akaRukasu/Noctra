@@ -5489,10 +5489,36 @@ async function refreshLiveWatchVip(session) {
   return refreshed;
 }
 
+// 200.0.135 : serveur de comptes qui a émis la session (champ « iss » du jeton,
+// lu sans vérification : simple comparaison d'hôtes, aucune confiance accordée).
+function liveWatchTokenIssuerHost(token) {
+  try {
+    const part = String(token || '').split('.')[1] || '';
+    const payload = JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return new URL(String(payload?.iss || '')).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+// Session ouverte sur un autre serveur de comptes que celui du site actuel
+// (LiveWatch a changé de domaine et de serveur de comptes) : le nouveau site
+// la refuse (« Chaîne introuvable », flux directs en échec) alors qu'elle paraît
+// encore valide. config : configuration publique du site, ou null si inconnue.
+function liveWatchSessionFromOtherSite(session, config) {
+  const issuer = liveWatchTokenIssuerHost(session?.accessToken);
+  if (!issuer || !config?.url) return false;
+  try { return issuer !== new URL(config.url).hostname.toLowerCase(); } catch { return false; }
+}
+
+const liveWatchOtherSiteMessage = 'Ta session LiveWatch vient de l’ancien site : LiveWatch a changé de serveur de comptes avec livewatch.icu. Reconnecte ton compte LiveWatch VIP dans Noctra (TV en direct › Accès TV).';
+
 async function liveWatchAccessSession(forceRefresh = false) {
   const session = await readLiveWatchSession();
   if (!session) throw new HttpError(409, 'Aucun compte LiveWatch VIP n’est connecté dans Noctra.');
   if (!session.isVip) throw new HttpError(403, 'La session LiveWatch enregistrée n’est pas VIP Premium.');
+  const siteConfig = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  if (liveWatchSessionFromOtherSite(session, siteConfig)) throw new HttpError(401, liveWatchOtherSiteMessage);
   if (!forceRefresh && Number(session.expiresAt || 0) > Math.floor(Date.now() / 1000) + 120) return session;
   if (!liveWatchRefreshPromise) {
     liveWatchRefreshPromise = refreshLiveWatchVip(session).finally(() => { liveWatchRefreshPromise = null; });
@@ -6803,6 +6829,12 @@ function liveWatchOfficialPlayerUrl(kindValue, idValue) {
 async function liveWatchQuickVipStatus() {
   const stored = await readLiveWatchSession();
   if (!stored) return { configured: false, active: false, isVip: false };
+  // Session d'un autre serveur de comptes (ancien site) : pas « connectée ».
+  // Configuration du site lue en cache seulement (le catalogue n'attend rien).
+  if (!liveWatchPublicConfigCache) void discoverLiveWatchPublicConfig(false).catch(() => undefined);
+  if (liveWatchSessionFromOtherSite(stored, liveWatchPublicConfigCache?.value)) {
+    return { configured: true, active: false, isVip: Boolean(stored.isVip), otherSite: true, message: liveWatchOtherSiteMessage };
+  }
   const active = Boolean(stored.isVip && stored.accessToken && stored.refreshToken);
   // Le catalogue TV ne doit jamais attendre un refresh Supabase. Si le jeton
   // approche de l'expiration, on le renouvelle en arrière-plan ; le resolver
@@ -7924,6 +7956,19 @@ async function liveWatchSiteHosts() {
 
 async function liveWatchVipDiagnostics() {
   const startedAt = Date.now();
+  const stored = await readLiveWatchSession();
+  const siteConfig = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  if (stored && liveWatchSessionFromOtherSite(stored, siteConfig)) {
+    return {
+      ok: false,
+      authenticated: false,
+      otherSite: true,
+      sessionIssuer: liveWatchTokenIssuerHost(stored.accessToken),
+      siteAuthHost: (() => { try { return new URL(siteConfig.url).hostname; } catch { return ''; } })(),
+      message: liveWatchOtherSiteMessage,
+      site: await liveWatchSiteHosts().catch(error => ({ errors: [cleanError(error)] }))
+    };
+  }
   const session = await liveWatchAccessSession();
   const profile = await liveWatchProfile(session.accessToken, session.userId).catch(() => null);
   const profileVip = Boolean(profile?.is_vip || profile?.role === 'vip' || profile?.role === 'admin' || session.isVip);
@@ -12816,12 +12861,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.134', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.135', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.134',
+        version: '200.0.135',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

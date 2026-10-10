@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.134 — flux directs LiveWatch (livewatch.icu)
+# Version actuelle : 200.0.135 — session LiveWatch de l'ancien site
+
+Une session LiveWatch VIP délivrée par l'ancien serveur de comptes (livewatch.top) est détectée : Noctra demande de reconnecter le compte LiveWatch au lieu d'afficher « Chaîne introuvable ». Détails : [MISE-A-JOUR-V200135.md](MISE-A-JOUR-V200135.md). Validation : `npm run test:v200135`.
+
+# Historique : 200.0.134 — flux directs LiveWatch (livewatch.icu)
 
 La session VIP est jointe aux flux servis par un sous-domaine LiveWatch et conservée lors des redirections entre hôtes LiveWatch ; le diagnostic décrit le flux direct d'une chaîne test. Détails : [MISE-A-JOUR-V200134.md](MISE-A-JOUR-V200134.md). Validation : `npm run test:v200134`.
 
