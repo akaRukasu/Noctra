@@ -27,8 +27,4 @@ assert.match(server, /async function liveWatchSiteHosts\(\)/);
 assert.match(server, /liveWatchSiteHosts\(\)\.catch\(error => \(\{ errors: \[cleanError\(error\)\] \}\)\)/);
 assert.match(server, /checks,\s*site,/);
 
-assert.match(pkg, /"version": "200\.0\.133"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.133';/);
-assert.equal((server.match(/'200\.0\.133'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.132') && html.includes('noctra-shell.js?v=200.133'));
 console.log('v200.0.133 : sous-domaines LiveWatch relayés, diagnostic des hôtes du site : OK');

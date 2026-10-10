@@ -5121,7 +5121,8 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       // signé avant même que le client officiel puisse recevoir sa réponse.
       const trustedOhaRedirect = /^(?:www\.)?oha\.(?:to|cx)$/i.test(url.hostname)
         && /^(?:www\.)?oha\.(?:to|cx)$/i.test(nextUrl.hostname);
-      const trustedLiveWatchRedirect = isLiveWatchHost(url.hostname) && isLiveWatchHost(nextUrl.hostname);
+      // 200.0.134 : redirection vers un sous-domaine LiveWatch (serveur de flux) : session VIP conservée.
+      const trustedLiveWatchRedirect = isLiveWatchFamilyHost(url.hostname) && isLiveWatchFamilyHost(nextUrl.hostname);
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
       const strip = [
         ...(trustedLiveWatchRedirect ? [] : ['authorization', 'apikey']),
@@ -7017,7 +7018,9 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     }
     if (!rawUrl) throw new HttpError(502, 'LiveWatch n’a renvoyé aucun flux pour cette chaîne.');
     const streamUrl = safeTvRemoteUrl(new URL(rawUrl, response.url || liveWatchOrigin).toString());
-    const liveWatchHost = isLiveWatchHost(streamUrl.hostname.toLowerCase());
+    // 200.0.134 : flux servi par un sous-domaine LiveWatch (ex. hls.livewatch.icu) :
+    // session VIP et cookies jointes au flux et à ses segments, comme sur le site.
+    const liveWatchHost = isLiveWatchFamilyHost(streamUrl.hostname.toLowerCase());
     const officialProxy = liveWatchHost && /^\/api\/(?:hls\b|proxy\b|stream\b|(?:daddy|north|frame)\/(?:proxy|stream)\b)/i.test(streamUrl.pathname);
     const publicHls = streamUrl.protocol === 'https:' && /\.m3u8?(?:$|[?#/])/i.test(streamUrl.toString());
     if (!officialProxy && !publicHls) throw new HttpError(502, 'LiveWatch a renvoyé une adresse de flux inattendue.');
@@ -7839,10 +7842,35 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     const contentType = String(response.headers.get('content-type') || '');
     try { await response.body?.cancel?.(); } catch {}
     if (!response.ok || !/html/i.test(contentType)) throw new HttpError(response.status || 502, `Lecteur LiveWatch officiel inaccessible (${response.status || 0}).`);
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType };
+    // 200.0.134 : flux direct de la même chaîne (hôte et réponse de la playlist).
+    const stream = await liveWatchDiagnosticStream(ref).catch(error => ({ ok: false, message: cleanError(error) }));
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }
+}
+
+async function liveWatchDiagnosticStream(ref) {
+  const token = await liveWatchStreamReference(ref.kind, ref.id, 9_000);
+  const reference = tvReferences.get(String(token || ''));
+  if (!reference) return { ok: false, message: 'Référence de flux absente.' };
+  const target = new URL(reference.url);
+  const response = await fetchTvRemote(reference.url, {
+    headers: liveWatchProbeHeaders(reference, 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*;q=0.6'),
+    signal: AbortSignal.timeout(8_000)
+  });
+  const text = response.ok ? (await response.text()).slice(0, 4096) : '';
+  if (!response.ok) { try { await response.body?.cancel?.(); } catch {} }
+  return {
+    ok: response.ok && /^\s*#EXTM3U/.test(text),
+    host: target.hostname,
+    path: target.pathname.replace(/[A-Za-z0-9_-]{24,}/g, '…'),
+    livewatchHost: isLiveWatchFamilyHost(target.hostname),
+    sessionSent: Boolean(reference.headers?.authorization),
+    status: response.status,
+    finalHost: (() => { try { return new URL(response.url || reference.url).hostname; } catch { return ''; } })(),
+    playlist: /^\s*#EXTM3U/.test(text) ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide')
+  };
 }
 
 // 200.0.132 : serveurs réellement utilisés par le site LiveWatch (page
@@ -12788,12 +12816,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.133', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.134', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.133',
+        version: '200.0.134',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

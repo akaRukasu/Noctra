@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.133 — lecteur LiveWatch : relais des sous-domaines et diagnostic
+# Version actuelle : 200.0.134 — flux directs LiveWatch (livewatch.icu)
+
+La session VIP est jointe aux flux servis par un sous-domaine LiveWatch et conservée lors des redirections entre hôtes LiveWatch ; le diagnostic décrit le flux direct d'une chaîne test. Détails : [MISE-A-JOUR-V200134.md](MISE-A-JOUR-V200134.md). Validation : `npm run test:v200134`.
+
+# Historique : 200.0.133 — lecteur LiveWatch : relais des sous-domaines et diagnostic
 
 Le relais VIP du lecteur LiveWatch accepte les sous-domaines LiveWatch (API, médias) ; le diagnostic LiveWatch liste les hôtes utilisés par le site. Détails : [MISE-A-JOUR-V200133.md](MISE-A-JOUR-V200133.md). Validation : `npm run test:v200133`.
 
