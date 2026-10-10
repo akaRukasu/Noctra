@@ -5249,6 +5249,14 @@ function isLiveWatchHost(value) {
   return liveWatchHostNames.has(String(value || '').toLowerCase());
 }
 
+// Sous-domaines LiveWatch (API, médias, ex. api.livewatch.icu) : relayés par
+// le pont VIP comme le site lui-même. Jamais un autre domaine.
+const liveWatchBaseDomains = [...liveWatchHostNames].filter(host => !host.startsWith('www.'));
+function isLiveWatchFamilyHost(value) {
+  const host = String(value || '').toLowerCase();
+  return isLiveWatchHost(host) || liveWatchBaseDomains.some(base => host.endsWith(`.${base}`));
+}
+
 // Lien LiveWatch d'un ancien domaine : même chemin sur le domaine actuel.
 function currentLiveWatchUrl(value) {
   const raw = String(value || '');
@@ -5589,7 +5597,7 @@ function liveWatchAllowedBridgeHost(value, publicConfig = null) {
   try {
     const host = new URL(value).hostname.toLowerCase();
     const supabaseHost = new URL(publicConfig?.url || liveWatchSupabaseUrl).hostname.toLowerCase();
-    return isLiveWatchHost(host) || host === supabaseHost;
+    return isLiveWatchFamilyHost(host) || host === supabaseHost;
   } catch { return false; }
 }
 
@@ -5651,7 +5659,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   // lui aussi sa vraie route /embed/<id> : sans elle il affiche « Chaîne
   // introuvable » alors que l'identifiant et la session VIP sont valides.
   const remoteRoute = `${page.pathname || '/'}${page.search || ''}${page.hash || ''}`;
-  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body,#root{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const K=${JSON.stringify(storageKey)},V=${JSON.stringify(JSON.stringify(virtualSession))},T=${JSON.stringify(tunnel)},S=${JSON.stringify(siteRoot)},O=${JSON.stringify(page.toString())},LO=${JSON.stringify(page.origin)},R=${JSON.stringify(remoteRoute)},NativeURL=window.URL,NO=new NativeURL(location.href).origin,SU=${JSON.stringify(supabaseOrigin)},F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map([[K,V]]),store={getItem:k=>{const x=String(k);return mem.has(x)?mem.get(x):(/^sb-[a-z0-9_-]+-auth-token$/i.test(x)?V:null)},setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?|stream|live)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function map(v,media){try{const raw=String(v),fixed=/^null\//i.test(raw)?LO+raw.slice(4):raw,u=new URL(fixed,O);if(u.origin===NO&&u.pathname.includes('/api/tv/livewatch/'))return raw;if(media){const m=u.origin===LO?S+u.pathname+u.search:(u.origin===SU?T+'?url='+encodeURIComponent(u.href):T+'?media=1&url='+encodeURIComponent(u.href));try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}if(u.origin===LO)return S+u.pathname+u.search;if(u.origin===SU)return T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/livewatch/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}return String(v)}catch{return v}}window.fetch=async function(input,init){try{if(typeof input==='string'||input instanceof URL)return F(map(input,false),Object.assign({credentials:'omit'},init||{}));if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();return F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));}}}catch{}return F(input,init)};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';try{const src=v.getAttribute('src');if(src){const mapped=map(src,true);if(mapped!==src)v.setAttribute('src',mapped)}v.querySelectorAll?.('source[src]').forEach(s=>{const src=s.getAttribute('src');if(!src)return;const mapped=map(src,true);if(mapped!==src)s.setAttribute('src',mapped)})}catch{}v.addEventListener('loadedmetadata',()=>parent.postMessage({type:'noctra-livewatch-state',state:'ready'},'*'));v.addEventListener('playing',()=>parent.postMessage({type:'noctra-livewatch-state',state:'playing'},'*'));v.addEventListener('error',()=>parent.postMessage({type:'noctra-livewatch-state',state:'error',message:'Le média LiveWatch a signalé une erreur.'},'*'));}let gateReported=false;function inspect(){document.querySelectorAll('video').forEach(bind);if(gateReported)return;const text=(document.body?.innerText||'').replace(/\s+/g,' ');if(/Débloquer (?:la chaîne|le direct)|Pub\s*1|ÉTAPE\s*1\s*\/\s*2/i.test(text)){gateReported=true;parent.postMessage({type:'noctra-livewatch-state',state:'vip-missed',message:'LiveWatch affiche encore son écran publicitaire malgré la session VIP transmise.'},'*')}}new MutationObserver(inspect).observe(document.documentElement,{childList:true,subtree:true,characterData:true});addEventListener('DOMContentLoaded',()=>{parent.postMessage({type:'noctra-livewatch-state',state:'vip-ready'},'*');inspect()});})();</script>`;
+  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body,#root{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const K=${JSON.stringify(storageKey)},V=${JSON.stringify(JSON.stringify(virtualSession))},T=${JSON.stringify(tunnel)},S=${JSON.stringify(siteRoot)},O=${JSON.stringify(page.toString())},LO=${JSON.stringify(page.origin)},LD=${JSON.stringify(liveWatchBaseDomains)},R=${JSON.stringify(remoteRoute)},NativeURL=window.URL,NO=new NativeURL(location.href).origin,SU=${JSON.stringify(supabaseOrigin)},F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map([[K,V]]),store={getItem:k=>{const x=String(k);return mem.has(x)?mem.get(x):(/^sb-[a-z0-9_-]+-auth-token$/i.test(x)?V:null)},setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?|stream|live)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function map(v,media){try{const raw=String(v),fixed=/^null\//i.test(raw)?LO+raw.slice(4):raw,u=new URL(fixed,O);if(u.origin===NO&&u.pathname.includes('/api/tv/livewatch/'))return raw;if(media){const m=u.origin===LO?S+u.pathname+u.search:(u.origin===SU?T+'?url='+encodeURIComponent(u.href):T+'?media=1&url='+encodeURIComponent(u.href));try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}if(u.origin===LO)return S+u.pathname+u.search;if(u.origin===SU)return T+'?url='+encodeURIComponent(u.href);if(LD.some(d=>u.hostname===d||u.hostname===('www.'+d)||u.hostname.endsWith('.'+d)))return T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/livewatch/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}return String(v)}catch{return v}}window.fetch=async function(input,init){try{if(typeof input==='string'||input instanceof URL)return F(map(input,false),Object.assign({credentials:'omit'},init||{}));if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();return F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));}}}catch{}return F(input,init)};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';try{const src=v.getAttribute('src');if(src){const mapped=map(src,true);if(mapped!==src)v.setAttribute('src',mapped)}v.querySelectorAll?.('source[src]').forEach(s=>{const src=s.getAttribute('src');if(!src)return;const mapped=map(src,true);if(mapped!==src)s.setAttribute('src',mapped)})}catch{}v.addEventListener('loadedmetadata',()=>parent.postMessage({type:'noctra-livewatch-state',state:'ready'},'*'));v.addEventListener('playing',()=>parent.postMessage({type:'noctra-livewatch-state',state:'playing'},'*'));v.addEventListener('error',()=>parent.postMessage({type:'noctra-livewatch-state',state:'error',message:'Le média LiveWatch a signalé une erreur.'},'*'));}let gateReported=false;function inspect(){document.querySelectorAll('video').forEach(bind);if(gateReported)return;const text=(document.body?.innerText||'').replace(/\s+/g,' ');if(/Débloquer (?:la chaîne|le direct)|Pub\s*1|ÉTAPE\s*1\s*\/\s*2/i.test(text)){gateReported=true;parent.postMessage({type:'noctra-livewatch-state',state:'vip-missed',message:'LiveWatch affiche encore son écran publicitaire malgré la session VIP transmise.'},'*')}}new MutationObserver(inspect).observe(document.documentElement,{childList:true,subtree:true,characterData:true});addEventListener('DOMContentLoaded',()=>{parent.postMessage({type:'noctra-livewatch-state',state:'vip-ready'},'*');inspect()});})();</script>`;
   if (/<head\b[^>]*>/i.test(html)) html = html.replace(/<head\b[^>]*>/i, match => `${match}${legacySessionMarker}${bridge}`);
   else html = `<!doctype html><html><head>${legacySessionMarker}${bridge}</head><body>${html}</body></html>`;
   return html;
@@ -5699,7 +5707,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
   const method = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req?.method) ? req.method : 'GET';
   const body = req && !['GET', 'HEAD'].includes(method) ? await readTvProxyBody(req) : undefined;
   const isSupabase = officialTarget && target.origin === new URL(publicConfig.url).origin;
-  const isLiveWatch = officialTarget && isLiveWatchHost(target.hostname.toLowerCase());
+  const isLiveWatch = officialTarget && isLiveWatchFamilyHost(target.hostname.toLowerCase());
   const key = liveWatchBridgeKey(kind, id);
   const cookies = liveWatchBridgeCookies.get(key)?.value || '';
   const cors = {
@@ -5748,7 +5756,8 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
       accept: req?.headers?.accept || (html ? 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' : '*/*'),
       'accept-language': req?.headers?.['accept-language'] || 'fr-FR,fr;q=0.9,en;q=0.6',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36',
-      origin: isSupabase || externalMedia ? liveWatchOrigin : target.origin,
+      // API d'un sous-domaine LiveWatch : même origine que le site officiel.
+      origin: isSupabase || externalMedia || !isLiveWatchHost(target.hostname) ? liveWatchOrigin : target.origin,
       referer: liveWatchOfficialPlayerUrl(kind, id),
       ...(officialTarget ? { authorization: `Bearer ${activeSession.accessToken}` } : {}),
       ...(isSupabase ? { apikey: publicConfig.anonKey } : {}),
@@ -5821,7 +5830,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
       referer: headers.referer,
       'user-agent': headers['user-agent'],
       ...(externalMedia && playlistCookie ? { cookie: playlistCookie } : {}),
-      ...(isLiveWatchHost(new URL(finalUrl).hostname) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
+      ...(isLiveWatchFamilyHost(new URL(finalUrl).hostname) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
     };
     const rewritten = rewriteTvPlaylist(text, finalUrl, inherited, { provider: 'LiveWatch' });
     res.writeHead(response.status, { ...cors, 'content-type': 'application/vnd.apple.mpegurl; charset=utf-8', 'x-accel-buffering': 'no' });
@@ -7836,12 +7845,64 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
   }
 }
 
+// 200.0.132 : serveurs réellement utilisés par le site LiveWatch (page
+// d'accueil, lecteur et leurs scripts) : domaine actuel, redirection vers un
+// autre domaine, serveur d'authentification, hôtes d'API. Aucune donnée
+// sensible : seulement des noms d'hôtes.
+async function liveWatchSiteHosts() {
+  const result = { origin: liveWatchOrigin, finalOrigin: '', supabaseHost: '', hosts: [], errors: [] };
+  const hosts = new Map();
+  const note = (host, where) => {
+    const value = String(host || '').toLowerCase();
+    if (!value || /(?:googleapis|gstatic|google|cloudflare|jsdelivr|unpkg|w3\.org|schema\.org|reactjs|github|sentry|fontawesome|cdnjs)\b/.test(value)) return;
+    if (!hosts.has(value)) hosts.set(value, new Set());
+    hosts.get(value).add(where);
+  };
+  const read = async (url, accept) => {
+    const response = await fetchTvRemote(url, { signal: AbortSignal.timeout(8_000), headers: { accept, 'user-agent': 'Mozilla/5.0 Noctra/132' } });
+    const text = response.ok ? (await response.text()).slice(0, 4 * 1024 * 1024) : '';
+    return { response, text };
+  };
+  const scripts = new Set();
+  for (const pageUrl of [`${liveWatchOrigin}/`, `${liveWatchOrigin}/embed/`]) {
+    try {
+      const { response, text } = await read(pageUrl, 'text/html,*/*;q=0.5');
+      if (!result.finalOrigin) result.finalOrigin = new URL(response.url || pageUrl).origin;
+      if (!response.ok) result.errors.push(`${new URL(pageUrl).pathname} : HTTP ${response.status}`);
+      for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+        try { const url = new URL(match[1], response.url || pageUrl); note(url.hostname, 'script'); if (isLiveWatchFamilyHost(url.hostname)) scripts.add(url.toString()); } catch {}
+      }
+      for (const match of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) note(match[1], 'page');
+    } catch (error) {
+      result.errors.push(`${pageUrl} : ${cleanError(error)}`);
+    }
+  }
+  for (const scriptUrl of [...scripts].slice(0, 6)) {
+    try {
+      const { text } = await read(scriptUrl, 'application/javascript,*/*;q=0.5');
+      for (const match of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) note(match[1], 'code');
+    } catch (error) {
+      result.errors.push(`script : ${cleanError(error)}`);
+    }
+  }
+  const config = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  try { result.supabaseHost = new URL(config?.url || liveWatchSupabaseUrl).hostname; } catch {}
+  result.hosts = [...hosts.entries()]
+    .map(([host, where]) => ({ host, where: [...where], livewatch: isLiveWatchFamilyHost(host), supabase: /\.supabase\.co$/i.test(host) }))
+    .sort((a, b) => Number(b.livewatch) - Number(a.livewatch) || Number(b.supabase) - Number(a.supabase) || a.host.localeCompare(b.host))
+    .slice(0, 40);
+  return result;
+}
+
 async function liveWatchVipDiagnostics() {
   const startedAt = Date.now();
   const session = await liveWatchAccessSession();
   const profile = await liveWatchProfile(session.accessToken, session.userId).catch(() => null);
   const profileVip = Boolean(profile?.is_vip || profile?.role === 'vip' || profile?.role === 'admin' || session.isVip);
-  const checks = [await liveWatchVipDiagnosticCheck('LiveWatch', liveWatchChannelCatalogUrls[0][1])];
+  const [checks, site] = await Promise.all([
+    Promise.all([liveWatchVipDiagnosticCheck('LiveWatch', liveWatchChannelCatalogUrls[0][1])]),
+    liveWatchSiteHosts().catch(error => ({ errors: [cleanError(error)] }))
+  ]);
   const reachable = checks.filter(item => item.ok).length;
   return {
     ok: profileVip && reachable === checks.length,
@@ -7849,6 +7910,7 @@ async function liveWatchVipDiagnostics() {
     isVip: profileVip,
     account: maskedLiveWatchEmail(session.email),
     checks,
+    site,
     durationMs: Date.now() - startedAt,
     message: profileVip
       ? (reachable ? 'VIP Premium confirmé · lecteur officiel LiveWatch accessible.' : 'VIP Premium confirmé, mais le lecteur officiel LiveWatch est actuellement inaccessible depuis le serveur.')
@@ -12726,12 +12788,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.132', baseUrl: basePath || '/' });
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.133', baseUrl: basePath || '/' });
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.132',
+        version: '200.0.133',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

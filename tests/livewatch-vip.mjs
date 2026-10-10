@@ -110,9 +110,9 @@ const bridgeStart = server.indexOf('function liveWatchFakeJwt');
 const bridgeEnd = server.indexOf('async function liveWatchBridgeRequest', bridgeStart);
 assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'Le pont de lecteur LiveWatch doit être extractible.');
 const bridgeHelpers = new Function(
-  'publicPath', 'liveWatchSupabaseProjectRef', 'liveWatchSupabaseUrl', 'withoutSlash', 'isLiveWatchHost',
+  'publicPath', 'liveWatchSupabaseProjectRef', 'liveWatchSupabaseUrl', 'withoutSlash', 'isLiveWatchHost', 'liveWatchBaseDomains',
   `${server.slice(bridgeStart, bridgeEnd)}; return { sanitizeLiveWatchPlayerHtml };`
-)(value => `/noctra${value}`, 'atrhxsizjjqjdhjafgei', 'https://atrhxsizjjqjdhjafgei.supabase.co', value => String(value || '').replace(/\/+$/, ''), isLiveWatchHost);
+)(value => `/noctra${value}`, 'atrhxsizjjqjdhjafgei', 'https://atrhxsizjjqjdhjafgei.supabase.co', value => String(value || '').replace(/\/+$/, ''), isLiveWatchHost, ['livewatch.icu', 'livewatch.top']);
 const preparedVip = bridgeHelpers.sanitizeLiveWatchPlayerHtml(
   '<html><head><script src="/assets/app.js"></script></head><body><video></video></body></html>',
   'https://livewatch.top/embed/test-channel',

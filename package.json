@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.132",
+  "version": "200.0.133",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -100,6 +100,7 @@
     "test:v200123": "node tests/v200123-shaka-startup-reserve.mjs && npm run test:v200122",
     "test:v200124": "node tests/v200124-shaka-start-behind-live.mjs && npm run test:v200123",
     "test:v200125": "node tests/v200125-shaka-window-link.mjs && npm run test:v200124",
+    "test:v200133": "node tests/v200133-livewatch-bridge-hosts.mjs && npm run test:v200132",
     "test:v200132": "node tests/v200132-livewatch-domain.mjs && npm run test:v200131",
     "test:v200131": "node tests/v200131-tv-country-coverage.mjs && npm run test:v200130",
     "test:v200130": "node tests/v200130-tv-all-servers.mjs && npm run test:v200129",

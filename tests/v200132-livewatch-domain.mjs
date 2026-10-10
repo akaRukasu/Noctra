@@ -60,8 +60,4 @@ for (const label of ['Canal+ Sport 360', 'C+ Live 10*', 'LIGUE 1+ 5 (v2)', 'Bein
 }
 for (const label of ['Android TV', 'Télécharger', 'VPN']) assert.ok(!halouleAllowed(label), label);
 
-assert.match(pkg, /"version": "200\.0\.132"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.132';/);
-assert.equal((server.match(/'200\.0\.132'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.131') && html.includes('noctra-shell.js?v=200.132'));
 console.log('v200.0.132 : LiveWatch sur livewatch.icu (ancien domaine reconnu et redirigé) : OK');

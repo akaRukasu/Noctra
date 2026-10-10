@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.132 — LiveWatch sur livewatch.icu, Alternative mise à jour
+# Version actuelle : 200.0.133 — lecteur LiveWatch : relais des sous-domaines et diagnostic
+
+Le relais VIP du lecteur LiveWatch accepte les sous-domaines LiveWatch (API, médias) ; le diagnostic LiveWatch liste les hôtes utilisés par le site. Détails : [MISE-A-JOUR-V200133.md](MISE-A-JOUR-V200133.md). Validation : `npm run test:v200133`.
+
+# Historique : 200.0.132 — LiveWatch sur livewatch.icu, Alternative mise à jour
 
 LiveWatch et ses dérivés passent sur `livewatch.icu` (domaine réglable par `LIVEWATCH_ORIGIN`, anciens liens redirigés) ; Alternative accepte les chaînes ajoutées à la page Haloule (L'Equipe TV, TF1). Détails : [MISE-A-JOUR-V200132.md](MISE-A-JOUR-V200132.md). Validation : `npm run test:v200132`.
 
