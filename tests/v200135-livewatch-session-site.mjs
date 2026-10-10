@@ -27,8 +27,4 @@ assert.match(server, /otherSite: true,\s*sessionIssuer: liveWatchTokenIssuerHost
 assert.match(shell, /status\.configured \? 'Reconnecter le compte LiveWatch' : 'Connecter LiveWatch VIP Premium'/, 'Formulaire de reconnexion déjà présent');
 assert.match(shell, /\$\{status\.message \? `<em>\$\{escapeHtml\(status\.message\)\}<\/em>` : ''\}/);
 
-assert.match(pkg, /"version": "200\.0\.135"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.135';/);
-assert.equal((server.match(/'200\.0\.135'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.134') && html.includes('noctra-shell.js?v=200.135'));
 console.log('v200.0.135 : session LiveWatch de l’ancien site détectée, reconnexion demandée : OK');

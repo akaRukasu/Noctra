@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.135 — session LiveWatch de l'ancien site
+# Version actuelle : 200.0.136 — compte LiveWatch VIP dans « Accès TV »
+
+TV en direct › Accès TV permet de connecter, reconnecter ou déconnecter le compte LiveWatch VIP, même quand il paraît connecté ; « Gérer le compte » y mène depuis une source LiveWatch. Détails : [MISE-A-JOUR-V200136.md](MISE-A-JOUR-V200136.md). Validation : `npm run test:v200136`.
+
+# Historique : 200.0.135 — session LiveWatch de l'ancien site
 
 Une session LiveWatch VIP délivrée par l'ancien serveur de comptes (livewatch.top) est détectée : Noctra demande de reconnecter le compte LiveWatch au lieu d'afficher « Chaîne introuvable ». Détails : [MISE-A-JOUR-V200135.md](MISE-A-JOUR-V200135.md). Validation : `npm run test:v200135`.
 

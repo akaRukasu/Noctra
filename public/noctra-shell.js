@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.135';
+  const NOCTRA_BUILD_VERSION = '200.0.136';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -6420,7 +6420,7 @@
       return `<div class="noctra-livewatch-status" data-state="active">
         <i aria-hidden="true"></i>
         <span><strong>${officialEmbedSource ? 'LiveWatch connecté' : 'LiveWatch VIP connecté'}</strong><small>${status.account ? escapeHtml(status.account) : 'Session partagée active'}</small></span>
-        <b>Connecté</b>
+        <b>Connecté</b>${authContext?.isAdmin ? `<button class="noctra-tv-source-mini" type="button" data-tv-provider-keys title="Changer de compte ou se déconnecter">${icons.tools}<span>Gérer le compte</span></button>` : ''}
       </div>`;
     }
     if (!authContext?.isAdmin) {
@@ -6435,12 +6435,30 @@
     </form>`;
   }
 
+  // 200.0.136 : compte LiveWatch VIP géré depuis « Accès TV », qu'il soit
+  // actif, refusé par le site (ancienne session) ou absent.
+  function liveWatchAccountCardMarkup(status = {}) {
+    const account = status.account ? ` (${escapeHtml(status.account)})` : '';
+    const state = status.error ? `Statut indisponible : ${escapeHtml(status.error)}`
+      : status.active ? `Compte connecté${account}. Tu peux le remplacer ou te déconnecter.`
+      : status.configured ? `Session enregistrée mais refusée par LiveWatch${account}. Reconnecte le compte.`
+      : 'Aucun compte LiveWatch connecté.';
+    return `<form data-livewatch-account-form class="noctra-provider-access-card"><h4>LiveWatch VIP</h4><p>${state}</p>${status.message ? `<p>${escapeHtml(status.message)}</p>` : ''}
+      <label class="noctra-field"><span>Email LiveWatch</span><input name="email" type="email" autocomplete="username" required maxlength="254" placeholder="compte@exemple.fr"></label>
+      <label class="noctra-field"><span>Mot de passe LiveWatch</span><input name="password" type="password" autocomplete="current-password" required minlength="6" maxlength="512" placeholder="••••••••"></label>
+      <button class="noctra-button noctra-button--primary" type="submit">${status.configured || status.error ? 'Reconnecter le compte' : 'Connecter le compte'}</button>${status.configured || status.error ? ` <button class="noctra-button" type="button" data-livewatch-account-disconnect>Se déconnecter</button>` : ''}<p data-key-status role="status"></p></form>`;
+  }
+
   async function openTvProviderKeys() {
     destroyTvPlayback();
-    setLoading('Accès TV', 'MOVIX · NORTHLIVE', true);
+    setLoading('Accès TV', 'LIVEWATCH · MOVIX · NORTHLIVE', true);
     try {
-      const status = await api('/api/tv/provider-keys');
+      const [status, liveWatch] = await Promise.all([
+        api('/api/tv/provider-keys'),
+        api('/api/tv/livewatch/session', { timeoutMs: 25_000 }).catch(error => ({ error: error.message || 'erreur inconnue' }))
+      ]);
       setPanelBody(`<div class="noctra-provider-access"><h3>Vos accès, dans Noctra.</h3><p>Activez chaque fournisseur avec sa propre clé. L’accès sera disponible aux membres connectés à Noctra.</p>
+        ${liveWatchAccountCardMarkup(liveWatch)}
         ${[['movix','Movix VIP'],['northlive','Northlive']].map(([provider,label]) => `<form data-tv-provider-key-form="${provider}" class="noctra-provider-access-card"><h4>${label}</h4><p>${status[provider] ? 'Une clé est configurée. Vous pouvez la remplacer.' : 'Aucune clé configurée.'}</p><label class="noctra-field"><span>Clé ${label}</span><input type="password" name="key" autocomplete="off" required maxlength="512" placeholder="Saisir la clé"></label><button class="noctra-button noctra-button--primary" type="submit">Vérifier et activer</button><p data-key-status role="status"></p></form>`).join('')}
         <button class="noctra-button" type="button" data-noctra="tv">Retour à la TV</button></div>`);
     } catch(error) { showError(error); }
@@ -12775,6 +12793,26 @@
         .finally(() => { button.disabled = false; });
       return;
     }
+    const liveWatchForm = event.target.closest('[data-livewatch-account-form]');
+    if (liveWatchForm) {
+      event.preventDefault();
+      const button = liveWatchForm.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      button.disabled = true;
+      const status = liveWatchForm.querySelector('[data-key-status]');
+      status.textContent = 'Connexion à LiveWatch…';
+      const fields = new FormData(liveWatchForm);
+      const payload = { email: String(fields.get('email') || '').trim(), password: String(fields.get('password') || '') };
+      api('/api/tv/livewatch/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), timeoutMs: 25_000 })
+        .then(() => { clearApiCache('/api/tv'); toast('Compte LiveWatch VIP connecté pour Noctra.'); return openTvProviderKeys(); })
+        .catch(error => {
+          const password = liveWatchForm.querySelector('input[name="password"]');
+          if (password) password.value = '';
+          status.textContent = error.message;
+          button.disabled = false;
+        });
+      return;
+    }
     if (event.target.id !== 'noctra-roulette-form') return;
     event.preventDefault(); void spinRoulette(event.target);
   });
@@ -12803,6 +12841,16 @@
     const platform = event.target.closest('[data-platform-id]');
     if (platform) { await openDiscoveries('streaming', platform.dataset.platformId, 'all', 'balanced', ''); return; }
     if (event.target.closest('[data-tv-provider-keys]')) { await openTvProviderKeys(); return; }
+    if (event.target.closest('[data-livewatch-account-disconnect]')) {
+      if (!window.confirm('Déconnecter le compte LiveWatch VIP de Noctra ?')) return;
+      try {
+        await api('/api/tv/livewatch/session', { method: 'DELETE' });
+        clearApiCache('/api/tv');
+        toast('Compte LiveWatch VIP déconnecté.');
+        await openTvProviderKeys();
+      } catch (error) { toast(error.message); }
+      return;
+    }
     const rouletteItem = event.target.closest('[data-roulette-item]');
     if (rouletteItem) {
       const id = rouletteItem.dataset.rouletteItem;
