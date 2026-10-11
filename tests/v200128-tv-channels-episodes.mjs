@@ -88,7 +88,7 @@ assert.match(shell, /async function playTvSourceChannel\(channel, index, playbac
 assert.match(shell, /if \(unified\) throw error;/, 'Échec d’un serveur réuni : serveur suivant');
 assert.match(shell, /const result = prefetched \|\| await api\(channel\.resolverUrl/, 'Résolution du test réutilisée');
 assert.match(shell, /if \(tvUnifiedRun\) noteTvUnifiedStatus\(state\);/);
-assert.match(shell, /run\.played \? 6_000 : TV_UNIFIED_ERROR_GRACE_MS/);
+assert.match(shell, /run\.played \? TV_UNIFIED_PLAYING_GRACE_MS : TV_UNIFIED_ERROR_GRACE_MS/);
 assert.match(shell, /if \(!tvUnifiedActive\(\) && tvState\.catalog\?\.channels\?\.\[Number\(index\)\]\) tvState\.catalog\.channels\[Number\(index\)\] = safeChannel;/, 'La chaîne réunie n’est jamais remplacée');
 assert.match(shell, /return LIVEWATCH_OFFICIAL_EMBED_SOURCES\.has\(tvActiveSourceId\(\)\);/, 'Règles du fournisseur du serveur en cours');
 assert.match(shell, /if \(tvState\.catalog\?\.unified\) return matches;/, 'Ordre des numéros conservé');

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.136 — compte LiveWatch VIP dans « Accès TV »
+# Version actuelle : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
+
+Serveur de comptes LiveWatch détecté même sur un domaine personnalisé et vérifié ; le lecteur relayé signale les requêtes refusées et « Chaîne introuvable » ; « Tester LiveWatch » dans Accès TV ; changement de serveur plus patient sur un chargement long. Détails : [MISE-A-JOUR-V200137.md](MISE-A-JOUR-V200137.md). Validation : `npm run test:v200137`.
+
+# Historique : 200.0.136 — compte LiveWatch VIP dans « Accès TV »
 
 TV en direct › Accès TV permet de connecter, reconnecter ou déconnecter le compte LiveWatch VIP, même quand il paraît connecté ; « Gérer le compte » y mène depuis une source LiveWatch. Détails : [MISE-A-JOUR-V200136.md](MISE-A-JOUR-V200136.md). Validation : `npm run test:v200136`.
 

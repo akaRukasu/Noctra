@@ -52,9 +52,4 @@ assert.match(shell, /<b>Connecté<\/b>\$\{authContext\?\.isAdmin \? `<button cla
 assert.match(server, /path === '\/api\/tv\/livewatch\/session' && req\.method === 'POST'/);
 assert.match(server, /path === '\/api\/tv\/livewatch\/session' && req\.method === 'DELETE'/);
 
-assert.match(pkg, /"version": "200\.0\.136"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.136';/);
-assert.equal((server.match(/'200\.0\.136'/g) || []).length, 2);
-assert.ok(!html.includes('v=200.135') && html.includes('noctra-shell.js?v=200.136'));
-
 console.log('v200.0.136 : compte LiveWatch VIP géré depuis Accès TV : OK');

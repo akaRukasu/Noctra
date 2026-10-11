@@ -97,3 +97,13 @@
   .noctra-tv-unified-servers > div { max-height:none; min-width:0; flex-wrap:nowrap; overflow-x:auto; padding-bottom:.15rem; }
   .noctra-tv-unified-servers button { flex:0 0 auto; }
 }
+
+/* 200.0.137 — diagnostic LiveWatch d'Accès TV. */
+[data-livewatch-diagnostic] {
+  margin:.8rem 0 0;
+  padding-left:1.1rem;
+  color:#c3cadb;
+  font-size:.82rem;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}

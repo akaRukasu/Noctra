@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.136';
+  const NOCTRA_BUILD_VERSION = '200.0.137';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -5577,6 +5577,9 @@
       return;
     }
     const trusted = tvTrustedEmbedHosts.has(host) || channel?.provider === 'LiveWatch' || channel?.provider === 'WiTV' || channel?.provider === 'OHA' || channel?.provider === 'Streamed' || channel?.provider === 'Volkamax';
+    // 200.0.137 : lecteur LiveWatch ouvert sans référent, comme le lien direct
+    // qui fonctionne dans le navigateur (le nouveau site peut filtrer les sites hôtes).
+    if (/(?:^|\.)livewatch\.(?:icu|top)$/.test(host)) frame.referrerPolicy = 'no-referrer';
     if (trusted) frame.removeAttribute('sandbox');
     else frame.setAttribute('sandbox', tvDefaultIframeSandbox);
     frame.setAttribute('allow', 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *');
@@ -6446,7 +6449,29 @@
     return `<form data-livewatch-account-form class="noctra-provider-access-card"><h4>LiveWatch VIP</h4><p>${state}</p>${status.message ? `<p>${escapeHtml(status.message)}</p>` : ''}
       <label class="noctra-field"><span>Email LiveWatch</span><input name="email" type="email" autocomplete="username" required maxlength="254" placeholder="compte@exemple.fr"></label>
       <label class="noctra-field"><span>Mot de passe LiveWatch</span><input name="password" type="password" autocomplete="current-password" required minlength="6" maxlength="512" placeholder="••••••••"></label>
-      <button class="noctra-button noctra-button--primary" type="submit">${status.configured || status.error ? 'Reconnecter le compte' : 'Connecter le compte'}</button>${status.configured || status.error ? ` <button class="noctra-button" type="button" data-livewatch-account-disconnect>Se déconnecter</button>` : ''}<p data-key-status role="status"></p></form>`;
+      <button class="noctra-button noctra-button--primary" type="submit">${status.configured || status.error ? 'Reconnecter le compte' : 'Connecter le compte'}</button>${status.configured || status.error ? ` <button class="noctra-button" type="button" data-livewatch-account-disconnect>Se déconnecter</button>` : ''} <button class="noctra-button" type="button" data-livewatch-account-diagnostic>Tester LiveWatch</button><p data-key-status role="status"></p><ul data-livewatch-diagnostic hidden></ul></form>`;
+  }
+
+  // 200.0.137 : diagnostic LiveWatch lisible (à envoyer en capture d'écran).
+  function liveWatchDiagnosticLines(result = {}) {
+    const lines = [];
+    if (result.message) lines.push(result.message);
+    if (result.account) lines.push(`Compte : ${result.account}${result.isVip ? ' · VIP confirmé' : ''}`);
+    const auth = result.auth || {};
+    if (auth.host) lines.push(`Serveur de comptes : ${auth.host} (${auth.source === 'site' ? `trouvé sur le site${auth.verified ? ', vérifié' : ', non vérifié'}` : auth.source === 'env' ? 'imposé par le .env' : 'secours intégré à Noctra'}, clé ${auth.keyType || '?'})`);
+    if (result.sessionIssuer) lines.push(`Session émise par : ${result.sessionIssuer}`);
+    if (result.siteAuthHost) lines.push(`Comptes du site : ${result.siteAuthHost}`);
+    (Array.isArray(result.checks) ? result.checks : []).forEach(check => {
+      lines.push(`Lecteur de test${check.channel ? ` (${check.channel})` : ''} : ${check.ok ? `OK · HTTP ${check.status || '?'}` : `échec · ${check.message || '?'}`}`);
+      const stream = check.stream;
+      if (stream) lines.push(`Flux direct : ${stream.ok ? 'OK' : 'échec'}${stream.status ? ` · HTTP ${stream.status}` : ''}${stream.finalHost ? ` · ${stream.finalHost}` : ''}${stream.message ? ` · ${stream.message}` : ''}`);
+    });
+    const site = result.site || {};
+    if (site.finalOrigin || site.hosts?.length) lines.push(`Site : ${site.finalOrigin || site.origin || ''}${site.hosts?.length ? ` · hôtes : ${site.hosts.slice(0, 8).join(', ')}` : ''}`);
+    if (site.errors?.length) lines.push(`Erreurs du site : ${site.errors.slice(0, 4).join(' · ')}`);
+    const relayed = tvDiagnostics.filter(item => item.event === 'livewatch-net' || item.event === 'livewatch-not-found').slice(-6);
+    relayed.forEach(item => lines.push(`Lecteur relayé (${item.channel || item.provider || 'LiveWatch'}) : ${item.request || item.refused || '« Chaîne introuvable »'}`));
+    return lines;
   }
 
   async function openTvProviderKeys() {
@@ -7207,6 +7232,9 @@
       let vipReady = false;
       let mobileNativeHandoffStarted = false;
       let publicFallbackStarted = false;
+      // 200.0.137 : requêtes refusées pendant le chargement du lecteur relayé,
+      // affichées avec « Chaîne introuvable » pour savoir ce que le site refuse.
+      const liveWatchNetFailures = [];
       const liveWatchLabel = String(channel?.provider || 'LiveWatch');
       // V115 : pour les familles alternatives, le lecteur officiel LiveWatch
       // reste maître sur iOS. On ne le remplace plus immédiatement par une URL
@@ -7259,6 +7287,16 @@
         } else if (event.data.state === 'playing') {
           mediaPlaying = true;
           setTvPlaybackStatus(`${liveWatchLabel} · VIP Premium · lecture en direct`, 'playing');
+        } else if (event.data.state === 'net') {
+          const failure = `${String(event.data.host || '').slice(0, 80)}${String(event.data.path || '').slice(0, 120)} (${Number(event.data.status) || 'réseau'})`;
+          if (liveWatchNetFailures.length < 12) liveWatchNetFailures.push(failure);
+          recordTvDiagnostic('livewatch-net', { provider: liveWatchLabel, request: failure });
+        } else if (event.data.state === 'not-found') {
+          const refused = liveWatchNetFailures.slice(0, 3).join(' · ');
+          recordTvDiagnostic('livewatch-not-found', { provider: liveWatchLabel, refused: liveWatchNetFailures.join(' | ') });
+          setTvPlaybackStatus(`${liveWatchLabel} · « Chaîne introuvable » dans le lecteur relayé${refused ? ` · refusé : ${refused}` : ''}`, 'error');
+          if (refused) toast(`LiveWatch · requêtes refusées : ${refused}`);
+          if (startPublicFallback('chaîne introuvable dans le lecteur relayé')) return;
         } else if (event.data.state === 'vip-missed') {
           setTvPlaybackStatus(`${liveWatchLabel} · le lecteur n’a pas reconnu le VIP`, 'error');
           toast(event.data.message || 'LiveWatch affiche encore son mode public malgré la session VIP.');
@@ -10376,8 +10414,14 @@
   const TV_UNIFIED_PROBE_LIMIT = 12;
   const TV_UNIFIED_PROBE_WORKERS = 6;
   const TV_UNIFIED_DECIDE_MS = 6_000;
-  const TV_UNIFIED_START_TIMEOUT_MS = 35_000;
-  const TV_UNIFIED_ERROR_GRACE_MS = 2_500;
+  // 200.0.137 : bascule plus patiente. Premier contrôle à 45 s ; tant que la
+  // vidéo continue d'arriver, nouveau délai de 15 s (2 min au plus). Une erreur
+  // passagère laisse 8 s au fournisseur (12 s si la lecture avait démarré).
+  const TV_UNIFIED_START_TIMEOUT_MS = 45_000;
+  const TV_UNIFIED_START_EXTEND_MS = 15_000;
+  const TV_UNIFIED_START_MAX_MS = 120_000;
+  const TV_UNIFIED_ERROR_GRACE_MS = 8_000;
+  const TV_UNIFIED_PLAYING_GRACE_MS = 12_000;
   const TV_UNIFIED_CACHE_MS = 10 * 60_000;
 
   function tvUnifiedDelay(ms) {
@@ -11040,9 +11084,21 @@
     recordTvDiagnostic('unified-server', { server: server.label, kind: server.kind, probe: server.probeState || 'unknown', manual });
     setTvPlaybackStatus(`${server.label} · connexion…`, 'loading');
     if (server.kind !== 'web') {
-      run.watchdog = window.setTimeout(() => {
-        if (tvUnifiedRun === run && run.playSequence === playbackSequence && !run.played) failTvUnifiedServer(run, 'Ce serveur ne démarre pas.');
-      }, TV_UNIFIED_START_TIMEOUT_MS);
+      const startedAt = Date.now();
+      let lastSpan = 0;
+      const checkStart = () => {
+        if (tvUnifiedRun !== run || run.playSequence !== playbackSequence || run.played) return;
+        // Données encore en arrivée : chargement long mais vivant, on patiente.
+        const span = tvBufferedSpan();
+        if (span > lastSpan + .25 && Date.now() - startedAt < TV_UNIFIED_START_MAX_MS) {
+          lastSpan = span;
+          recordTvDiagnostic('unified-start-grace', { server: server.label, buffered: Number(span.toFixed(2)) });
+          run.watchdog = window.setTimeout(checkStart, TV_UNIFIED_START_EXTEND_MS);
+          return;
+        }
+        failTvUnifiedServer(run, 'Ce serveur ne démarre pas.');
+      };
+      run.watchdog = window.setTimeout(checkStart, TV_UNIFIED_START_TIMEOUT_MS);
     }
     const prefetched = server.outcome?.result || null;
     try {
@@ -11125,7 +11181,7 @@
       const status = document.querySelector('[data-tv-player-status]');
       if (status && status.dataset.state !== 'error') return;
       failTvUnifiedServer(run, status?.textContent || '');
-    }, run.played ? 6_000 : TV_UNIFIED_ERROR_GRACE_MS);
+    }, run.played ? TV_UNIFIED_PLAYING_GRACE_MS : TV_UNIFIED_ERROR_GRACE_MS);
   }
 
   async function playTvChannel(index) {
@@ -12841,6 +12897,24 @@
     const platform = event.target.closest('[data-platform-id]');
     if (platform) { await openDiscoveries('streaming', platform.dataset.platformId, 'all', 'balanced', ''); return; }
     if (event.target.closest('[data-tv-provider-keys]')) { await openTvProviderKeys(); return; }
+    const liveWatchDiagnosticButton = event.target.closest('[data-livewatch-account-diagnostic]');
+    if (liveWatchDiagnosticButton) {
+      const form = liveWatchDiagnosticButton.closest('[data-livewatch-account-form]');
+      const list = form?.querySelector('[data-livewatch-diagnostic]');
+      if (!list || liveWatchDiagnosticButton.disabled) return;
+      liveWatchDiagnosticButton.disabled = true;
+      list.hidden = false;
+      list.innerHTML = '<li>Test de LiveWatch depuis le serveur Noctra…</li>';
+      try {
+        const result = await api('/api/tv/livewatch/diagnostics', { timeoutMs: 90_000 });
+        list.innerHTML = liveWatchDiagnosticLines(result).map(line => `<li>${escapeHtml(line)}</li>`).join('') || '<li>Aucun résultat.</li>';
+      } catch (error) {
+        list.innerHTML = [`Diagnostic impossible : ${error.message}`, ...liveWatchDiagnosticLines({})].map(line => `<li>${escapeHtml(line)}</li>`).join('');
+      } finally {
+        liveWatchDiagnosticButton.disabled = false;
+      }
+      return;
+    }
     if (event.target.closest('[data-livewatch-account-disconnect]')) {
       if (!window.confirm('Déconnecter le compte LiveWatch VIP de Noctra ?')) return;
       try {
