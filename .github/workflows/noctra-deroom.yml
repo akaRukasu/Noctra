@@ -1,0 +1,58 @@
+name: Noctra DeRoom (VST3)
+
+# Compile le plugin pour Windows, macOS et Linux, lance le banc d'essai du moteur
+# et publie les VST3 prêts à installer dans les artefacts de l'exécution.
+on:
+  push:
+    paths:
+      - "vst/NoctraDeRoom/**"
+      - ".github/workflows/noctra-deroom.yml"
+  pull_request:
+    paths:
+      - "vst/NoctraDeRoom/**"
+      - ".github/workflows/noctra-deroom.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxcomposite-dev libfreetype-dev libfontconfig1-dev
+
+      - name: Configuration
+        run: cmake -S vst/NoctraDeRoom -B vst/NoctraDeRoom/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilation
+        run: cmake --build vst/NoctraDeRoom/build --config Release --parallel 4
+
+      - name: Banc d'essai du moteur
+        run: ctest --test-dir vst/NoctraDeRoom/build -C Release --output-on-failure
+
+      - name: Artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoctraDeRoom-${{ matrix.name }}
+          path: |
+            vst/NoctraDeRoom/build/NoctraDeRoom_artefacts/Release/VST3
+            vst/NoctraDeRoom/build/NoctraDeRoom_artefacts/Release/Standalone
+            vst/NoctraDeRoom/build/NoctraDeRoom_artefacts/Release/AU
+          if-no-files-found: warn

@@ -4,3 +4,6 @@ node_modules/
 
 runtime/
 logs/
+
+# Noctra DeRoom (plugin VST3)
+vst/NoctraDeRoom/build/
