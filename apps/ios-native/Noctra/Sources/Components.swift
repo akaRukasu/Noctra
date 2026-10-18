@@ -229,7 +229,7 @@ struct ItemContextMenu: ViewModifier {
             try await PlaybackManager.shared.play(item, session: session, audioIndex: nil, subtitleIndex: nil,
                                                   startSeconds: fromStart ? 0 : item.resumeSeconds)
         } catch {
-            SyncPlayManager.shared.post("Lecture impossible : \(error.localizedDescription)")
+            SyncPlayManager.shared.announce("Lecture impossible : \(error.localizedDescription)")
         }
     }
 

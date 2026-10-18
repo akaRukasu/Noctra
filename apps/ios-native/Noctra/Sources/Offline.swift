@@ -499,7 +499,7 @@ final class OfflineStore {
                 save(force: true)
                 return
             }
-            finish(id, path: OfflineFiles.relative(location), size: OfflineFiles.folderSize(location))
+            finish(id, path: OfflineFiles.relative(location), size: OfflineFiles.size(location))
             if let session, let playSession = self.entry(id)?.playSessionId {
                 Task { _ = try? await session.data("DELETE", "/Videos/ActiveEncodings", ["deviceId": "noctra-offline-\(id)", "playSessionId": playSession]) }
             }
@@ -523,7 +523,7 @@ final class OfflineStore {
             $0.error = nil
         }
         save(force: true)
-        SyncPlayManager.shared.post("Téléchargé : \(entry(id)?.playerTitle ?? "titre")")
+        SyncPlayManager.shared.announce("Téléchargé : \(entry(id)?.playerTitle ?? "titre")")
         schedule()
     }
 

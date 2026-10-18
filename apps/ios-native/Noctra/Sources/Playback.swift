@@ -150,7 +150,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     /// envoyé au serveur quand il est joignable (reprise et « vu » partagés).
     func playOffline(_ entry: OfflineEntry, subtitle: Int? = nil, session: Session?) {
         guard let url = OfflineStore.shared.mediaURL(entry) else {
-            SyncPlayManager.shared.post("Fichier introuvable : supprimez puis téléchargez à nouveau ce titre.")
+            SyncPlayManager.shared.announce("Fichier introuvable : supprimez puis téléchargez à nouveau ce titre.")
             return
         }
         var report: Report?
