@@ -3,10 +3,15 @@ import AVKit
 import Observation
 import SwiftUI
 import UIKit
+import WebKit
 
-// Lecteur de la TV en direct : vidéo (lecteur d'Apple, image dans l'image,
-// AirPlay) ou lecteur web d'un site, avec changement de chaîne et de serveur
-// sans quitter le lecteur, et passage au serveur suivant en cas de coupure.
+// Lecteur de la TV en direct. Chaque serveur est lu par le moteur qui lui
+// convient : lecteur d'Apple (HLS : image dans l'image, AirPlay) ou moteur web
+// (hls.js, et mpegts.js pour les flux MPEG-TS continus comme Northlive), avec
+// passage de l'un à l'autre quand un flux est refusé, mémorisé par fournisseur.
+// Lecteurs des sites dans un lecteur web qui signale lecture et erreurs.
+// Chaînes et serveurs changeables sans quitter le lecteur ; serveur suivant
+// (ou nouveau lien du même serveur) en cas de coupure.
 
 @MainActor
 @Observable
@@ -22,16 +27,26 @@ final class LivePlayerModel {
     private(set) var status: String?
     private(set) var loading = false
     private(set) var paused = false
+    /// Serveurs automatiques (VIP compris) encore demandés au serveur Noctra.
+    private(set) var expanding = 0
+    private(set) var probing = 0
+    /// Aucun serveur n'a pu lire : la liste des serveurs s'ouvre.
+    var askServer = false
     let player = AVPlayer()
 
     @ObservationIgnored weak var session: Session?
     @ObservationIgnored var pip: AVPictureInPictureController?
+    @ObservationIgnored weak var webView: WKWebView?
     @ObservationIgnored private var tried: Set<UUID> = []
+    @ObservationIgnored private var engines: [UUID: Set<Bool>] = [:]
+    @ObservationIgnored private var played: Set<UUID> = []
+    @ObservationIgnored private var renewed: Set<UUID> = []
     @ObservationIgnored private var watch: Task<Void, Never>?
     @ObservationIgnored private var stallObserver: NSObjectProtocol?
     @ObservationIgnored private var stalls = 0
     @ObservationIgnored private var readyAt: Date?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var webPlaying = false
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
@@ -39,6 +54,8 @@ final class LivePlayerModel {
     }
 
     var position: Int? { channel.flatMap { current in context.firstIndex { $0.id == current.id } } }
+    /// Flux lu par le moteur web (commandes de l'appli, pas celles d'une page).
+    var engineMode: Bool { web?.isEngine == true }
 
     // MARK: Lancement
 
@@ -47,11 +64,20 @@ final class LivePlayerModel {
         self.channel = channel
         self.context = context.contains(where: { $0.id == channel.id }) ? context : [channel] + context
         self.servers = servers
-        tried = []
+        reset()
         presented = true
         UIApplication.shared.isIdleTimerDisabled = true
         play(first)
-        refreshProbes()
+        expandAndProbe()
+    }
+
+    private func reset() {
+        tried = []
+        engines = [:]
+        played = []
+        renewed = []
+        expanding = 0
+        askServer = false
     }
 
     /// Autre chaîne depuis le lecteur : ses serveurs sont préparés, le meilleur démarre.
@@ -64,7 +90,7 @@ final class LivePlayerModel {
         servers = []
         current = nil
         web = nil
-        tried = []
+        reset()
         loading = true
         status = "Recherche des serveurs de « \(target.name) »…"
         player.pause()
@@ -74,9 +100,9 @@ final class LivePlayerModel {
             let list = await LiveLauncher.shared.prepare(target, session: session)
             guard token == generation else { return }
             servers = list
-            if let best = list.first {
+            if let best = list.first(where: { !$0.manualOnly }) ?? list.first {
                 play(best)
-                refreshProbes()
+                expandAndProbe()
             } else {
                 loading = false
                 status = "Aucun serveur ne propose « \(target.name) » pour le moment."
@@ -90,8 +116,57 @@ final class LivePlayerModel {
         open(context[(index + delta + context.count) % context.count])
     }
 
-    /// Serveur choisi (ou suivant) : flux du lecteur d'Apple, lecteur web, ou serveur à résoudre.
-    func play(_ server: LiveServer) {
+    // MARK: Serveurs
+
+    /// Serveurs automatiques demandés en arrière-plan (le VIP LiveWatch vérifie
+    /// ses flux, jusqu'à une minute) : la liste montre tous les serveurs réels.
+    private func expandAndProbe() {
+        guard let session, let channel else { return }
+        let token = channel.id
+        for server in servers.filter({ $0.kind == .resolve && $0.id != current?.id }).prefix(16) {
+            expanding += 1
+            Task {
+                let found = await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 70 : 45)
+                guard self.channel?.id == token else { return }
+                expanding = max(0, expanding - 1)
+                guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
+                if found.isEmpty {
+                    servers[index].probe = .down
+                } else {
+                    servers.replaceSubrange(index...index, with: LiveHealth.rank(found, channel: token))
+                    probeAll()
+                }
+            }
+        }
+        probeAll()
+    }
+
+    /// Tests des flux directs (6 à la fois), pour la liste et le choix du serveur suivant.
+    func probeAll(force: Bool = false) {
+        guard let session, let channel else { return }
+        let token = channel.id
+        if force {
+            for index in servers.indices where servers[index].kind == .native && servers[index].probe != .testing { servers[index].probe = .untested }
+        }
+        let targets = Array(servers.filter { $0.kind == .native && $0.probe == .untested }.prefix(30))
+        guard !targets.isEmpty else { return }
+        for target in targets { if let index = servers.firstIndex(where: { $0.id == target.id }) { servers[index].probe = .testing } }
+        probing += 1
+        Task {
+            await LiveServerFactory.probeMany(targets, session: session) { [weak self] id, result in
+                guard let self, self.channel?.id == token, let index = self.servers.firstIndex(where: { $0.id == id }) else { return }
+                self.servers[index].apply(result)
+                if [.down, .noVideo].contains(result.state) { LiveHealth.record(self.servers[index], channel: token, ok: false) }
+            }
+            if self.channel?.id == token { probing = max(0, probing - 1) } else { probing = 0 }
+        }
+    }
+
+    // MARK: Lecture
+
+    /// Serveur choisi (ou suivant). `web` impose un moteur ; sinon celui qui a
+    /// marché pour ce fournisseur, et le moteur web pour un flux MPEG-TS.
+    func play(_ server: LiveServer, web forced: Bool? = nil, note: String? = nil) {
         guard let session, let channel else { return }
         finishMeasure()
         generation += 1
@@ -100,120 +175,285 @@ final class LivePlayerModel {
         tried.insert(server.id)
         current = server
         loading = true
-        status = "Connexion à \(server.label)…"
+        webPlaying = false
+        askServer = false
+        status = note ?? "Connexion à \(server.label)…"
         switch server.kind {
         case .resolve:
+            stopVideo()
+            web = nil
+            if note == nil {
+                status = server.vip ? "Préparation de l’accès VIP (vérification des flux, jusqu’à une minute)…" : "Recherche des serveurs de \(server.label)…"
+            }
             watch = Task {
-                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session), channel: channel.id)
+                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 70 : 45), channel: channel.id)
                 guard token == generation else { return }
                 if let index = servers.firstIndex(where: { $0.id == server.id }) { servers.replaceSubrange(index...index, with: found) }
-                if let first = found.first { play(first) } else { fail(server) }
+                probeAll()
+                if let first = found.first(where: { !$0.manualOnly }) {
+                    play(first)
+                } else {
+                    fail(server, message: "\(server.label) n’a proposé aucun serveur : serveur suivant…")
+                }
             }
         case .web:
             stopVideo()
-            if let url = server.pageURL { web = WebPlayerRequest(title: channel.name, mode: .page(url)) }
-            loading = false
-            status = nil
-        case .native where server.mpegts:
-            stopVideo()
-            if let url = server.streamURL { web = WebPlayerRequest(title: channel.name, mode: .mpegts(url)) }
-            loading = false
-            status = nil
-        case .native:
-            guard let url = server.streamURL else { fail(server); return }
-            web = nil
-            var headers = server.headers
-            if session.isNoctraOrigin(url), let auth = session.token { headers["x-noctra-token"] = auth }
-            var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": headers]
-            let cookies = session.noctraCookies(for: url)
-            if !cookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = cookies }
-            let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
-            item.preferredForwardBufferDuration = 0
-            let title = AVMutableMetadataItem()
-            title.identifier = .commonIdentifierTitle
-            title.value = channel.name as NSString
-            title.extendedLanguageTag = "und"
-            item.externalMetadata = [title]
-            player.replaceCurrentItem(with: item)
-            paused = false
-            player.play()
-            stalls = 0
-            stallObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.stalls += 1 }
-            }
-            watch = Task { [weak self] in
-                let started = Date()
-                var ready = false
-                var waitingSince: Date?
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(500))
-                    guard let self, token == self.generation else { return }
-                    if item.status == .failed { self.fail(server); return }
-                    if !ready {
-                        if item.status == .readyToPlay && (self.player.timeControlStatus == .playing || self.paused) {
-                            ready = true
-                            self.readyAt = Date()
-                            self.loading = false
-                            self.status = nil
-                            LiveHealth.record(server, channel: channel.id, ok: true)
-                        } else if Date().timeIntervalSince(started) > 14 {
-                            self.fail(server)
-                            return
-                        }
-                    } else if !self.paused && self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
-                        // Coupure : 15 s sans image, serveur suivant.
-                        let since = waitingSince ?? Date()
-                        waitingSince = since
-                        self.loading = true
-                        if Date().timeIntervalSince(since) > 15 {
-                            self.stalls += 3
-                            self.fail(server, message: "Coupure prolongée : serveur suivant…")
-                            return
-                        }
-                    } else {
-                        waitingSince = nil
-                        self.loading = false
+            if let prepare = server.relayPrepare, server.pageURL == nil {
+                status = "Préparation du relais officiel…"
+                watch = Task {
+                    let json = try? await session.noctraJSON(prepare, timeout: 20) as? [String: Any]
+                    guard token == generation else { return }
+                    guard let raw = json?["embedUrl"] as? String, let url = session.noctraURL(raw) else {
+                        fail(server, message: "Relais officiel indisponible : serveur suivant…")
+                        return
                     }
+                    var prepared = server
+                    prepared.pageURL = url
+                    if let index = servers.firstIndex(where: { $0.id == server.id }) { servers[index].pageURL = url }
+                    current = prepared
+                    openPage(prepared, token: token)
+                }
+                return
+            }
+            openPage(server, token: token)
+        case .native:
+            let useWeb = server.mpegts || (forced ?? (server.webEngine || LiveHealth.prefersWeb(server)))
+            if useWeb { playEngine(server, token: token) } else { playApple(server, token: token) }
+        }
+    }
+
+    /// Page d'un site (lecteur externe) : lecture et erreurs signalées par la page.
+    private func openPage(_ server: LiveServer, token: Int) {
+        guard let url = server.pageURL, let channel else { fail(server); return }
+        web = WebPlayerRequest(title: channel.name, mode: .page(url))
+        loading = false
+        status = "Lecteur du site : touchez Lecture dans la page si la vidéo ne démarre pas."
+        watch = Task {
+            try? await Task.sleep(for: .seconds(7))
+            guard token == generation, !webPlaying else { return }
+            status = nil
+        }
+    }
+
+    /// Moteur web : hls.js, ou mpegts.js pour un flux MPEG-TS continu.
+    private func playEngine(_ server: LiveServer, token: Int) {
+        guard let session, let channel, let url = server.streamURL else { fail(server); return }
+        stopVideo()
+        engines[server.id, default: []].insert(true)
+        web = nil
+        watch = Task {
+            var target = server
+            if !target.mpegts && target.format == .unknown {
+                target.format = await LiveServerFactory.sniff(server, session: session)
+                guard token == generation else { return }
+                if target.format == .ts { target.mpegts = true }
+                if let index = servers.firstIndex(where: { $0.id == server.id }) {
+                    servers[index].format = target.format
+                    servers[index].mpegts = target.mpegts
+                }
+                current = target
+            }
+            web = WebPlayerRequest(title: channel.name, mode: target.mpegts ? .mpegts(url) : .hls(url))
+            paused = false
+            try? await Task.sleep(for: .seconds(target.mpegts ? 25 : 30))
+            guard token == generation, !webPlaying else { return }
+            engineFailed(target, web: true, reason: "le moteur web n’a pas démarré la vidéo")
+        }
+    }
+
+    /// Lecteur d'Apple (HLS) : image dans l'image, AirPlay.
+    private func playApple(_ server: LiveServer, token: Int) {
+        guard let session, let channel, let url = server.streamURL else { fail(server); return }
+        engines[server.id, default: []].insert(false)
+        web = nil
+        var headers = server.headers
+        if session.isNoctraOrigin(url), let auth = session.token { headers["x-noctra-token"] = auth }
+        var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": headers]
+        let cookies = session.noctraCookies(for: url)
+        if !cookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = cookies }
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+        item.preferredForwardBufferDuration = 0
+        let title = AVMutableMetadataItem()
+        title.identifier = .commonIdentifierTitle
+        title.value = channel.name as NSString
+        title.extendedLanguageTag = "und"
+        item.externalMetadata = [title]
+        player.replaceCurrentItem(with: item)
+        paused = false
+        player.play()
+        stalls = 0
+        stallObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stalls += 1 }
+        }
+        watch = Task { [weak self] in
+            let started = Date()
+            var ready = false
+            var waitingSince: Date?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, token == self.generation else { return }
+                if item.status == .failed {
+                    self.engineFailed(server, web: false, reason: Self.reason(item))
+                    return
+                }
+                if !ready {
+                    let elapsed = Date().timeIntervalSince(started)
+                    if item.status == .readyToPlay && (self.player.timeControlStatus == .playing || self.paused) {
+                        ready = true
+                        self.succeeded(server, web: false)
+                    } else if elapsed > (item.status == .readyToPlay ? 25 : 12) {
+                        // Prêt mais sans image (mise en mémoire trop lente) ou rien du tout.
+                        self.engineFailed(server, web: false, reason: item.status == .readyToPlay ? "mise en mémoire trop lente" : Self.reason(item))
+                        return
+                    }
+                } else if !self.paused && self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+                    // Coupure : 15 s sans image, nouveau lien du même serveur ou serveur suivant.
+                    let since = waitingSince ?? Date()
+                    waitingSince = since
+                    self.loading = true
+                    if Date().timeIntervalSince(since) > 15 {
+                        self.stalls += 3
+                        self.fail(server, message: "Coupure prolongée : serveur suivant…")
+                        return
+                    }
+                } else {
+                    waitingSince = nil
+                    self.loading = false
                 }
             }
         }
     }
 
-    private func fail(_ server: LiveServer, message: String = "Ce serveur ne répond pas : serveur suivant…") {
+    /// Cause lisible d'un refus du lecteur d'Apple (journal d'erreurs du flux).
+    private static func reason(_ item: AVPlayerItem) -> String {
+        if let event = item.errorLog()?.events.last {
+            if event.errorStatusCode == 401 || event.errorStatusCode == 403 { return "accès refusé (\(event.errorStatusCode))" }
+            if event.errorStatusCode == 404 || event.errorStatusCode == 410 { return "lien expiré (\(event.errorStatusCode))" }
+            if let comment = event.errorComment, !comment.isEmpty { return comment }
+        }
+        if let error = item.error as NSError? { return error.localizedFailureReason ?? error.localizedDescription }
+        return "aucune image reçue"
+    }
+
+    private func succeeded(_ server: LiveServer, web: Bool) {
         guard let channel else { return }
-        LiveHealth.record(server, channel: channel.id, ok: false)
-        let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
-        let candidate = servers.first { !tried.contains($0.id) && !failing.contains($0.probe) && !$0.manualOnly }
-            ?? servers.first { !tried.contains($0.id) }
-        guard let candidate else {
-            stopVideo()
-            loading = false
-            status = "Aucun serveur de « \(channel.name) » ne répond. Essayez un autre serveur ou une autre chaîne."
+        readyAt = Date()
+        loading = false
+        status = nil
+        played.insert(server.id)
+        LiveHealth.record(server, channel: channel.id, ok: true)
+        if server.kind == .native && !server.mpegts { LiveHealth.noteEngine(server, web: web, ok: true) }
+    }
+
+    /// Moteur refusé : l'autre moteur pour le même flux (sauf MPEG-TS, que seul
+    /// le moteur web lit), puis le serveur suivant.
+    private func engineFailed(_ server: LiveServer, web: Bool, reason: String) {
+        if !server.mpegts { LiveHealth.noteEngine(server, web: web, ok: false) }
+        let other = !web
+        let tested = engines[server.id] ?? []
+        if !tested.contains(other) && !(other == false && server.mpegts) && !played.contains(server.id) {
+            play(server, web: other, note: web
+                 ? "Moteur web en échec (\(reason)) : essai avec le lecteur d’Apple…"
+                 : "Lecteur d’Apple refusé (\(reason)) : essai avec le moteur web…")
             return
         }
-        play(candidate)
-        status = message
+        fail(server, message: "\(server.label) : \(reason). Serveur suivant…")
     }
 
-    /// Tests des flux en arrière-plan, pour la liste des serveurs du lecteur.
-    private func refreshProbes() {
-        guard let session else { return }
-        let token = channel?.id
-        let targets = servers.filter { $0.kind == .native && $0.probe == .untested }.prefix(10)
-        for target in targets {
-            Task {
-                let (state, ms, margin) = await LiveServerFactory.probe(target, session: session)
-                guard channel?.id == token, let index = servers.firstIndex(where: { $0.id == target.id }) else { return }
-                servers[index].probe = state
-                servers[index].probeMs = ms
-                servers[index].margin = margin
+    private func fail(_ server: LiveServer, message: String = "Ce serveur ne répond pas : serveur suivant…") {
+        guard let channel, let session else { return }
+        // Coupure d'un serveur qui lisait : nouveau lien (jeton neuf) du même serveur, une fois.
+        if played.contains(server.id), let renew = server.renewURL, !renewed.contains(server.id) {
+            renewed.insert(server.id)
+            generation += 1
+            let token = generation
+            stopVideo()
+            web = nil
+            loading = true
+            status = "Reconnexion au serveur…"
+            watch = Task {
+                let parent = LiveServer(label: server.label, provider: server.provider, kind: .resolve, resolveURL: renew, vip: server.vip)
+                let fresh = await LiveServerFactory.resolve(parent, session: session, timeout: server.vip ? 70 : 45)
+                guard token == generation else { return }
+                guard var replacement = fresh.first(where: { $0.kind == .native }) ?? fresh.first else {
+                    fail(server, message: message)
+                    return
+                }
+                replacement.label = server.label
+                replacement.renewURL = renew
+                if let index = servers.firstIndex(where: { $0.id == server.id }) { servers[index] = replacement }
+                renewed.insert(replacement.id)
+                let engine: Bool? = server.mpegts ? true : (engines[server.id]?.count == 1 ? engines[server.id]?.first : nil)
+                play(replacement, web: engine)
             }
+            return
+        }
+        LiveHealth.record(server, channel: channel.id, ok: false)
+        let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
+        let open = servers.filter { !tried.contains($0.id) && !$0.manualOnly }
+        let candidate = open.first { $0.probe == .up } ?? open.first { !failing.contains($0.probe) } ?? open.first
+        guard let candidate else {
+            stopVideo()
+            web = nil
+            loading = false
+            status = expanding > 0
+                ? "Les serveurs essayés ne répondent pas. D’autres serveurs arrivent : choisissez-en un dans la liste."
+                : "Aucun serveur de « \(channel.name) » ne répond. Essayez un serveur de secours ou une autre chaîne."
+            askServer = true
+            return
+        }
+        play(candidate, note: message)
+    }
+
+    // MARK: Événements du lecteur web
+
+    /// Messages des pages (moteur web, ponts Noctra des sites) : lecture, flux trouvé, erreur.
+    func webEvent(_ request: UUID, state: String, message: String, url: String) {
+        guard let web, web.id == request, let server = current, let session else { return }
+        switch state {
+        case "playing", "ready":
+            guard !webPlaying else { return }
+            webPlaying = true
+            succeeded(server, web: true)
+        case "media":
+            // Flux repéré par le pont du serveur : proposé comme serveur direct.
+            guard let stream = session.noctraURL(url), !servers.contains(where: { $0.streamURL == stream }) else { return }
+            var direct = LiveServer(label: server.label + " · direct", provider: server.provider, kind: .native, streamURL: stream, vip: server.vip)
+            direct.renewURL = server.renewURL
+            let index = (servers.firstIndex { $0.id == server.id } ?? servers.count - 1) + 1
+            servers.insert(direct, at: min(index, servers.count))
+            probeAll()
+        case "error", "stalled", "vip-missed":
+            let text = message.isEmpty ? (state == "vip-missed" ? "le VIP n’a pas été accepté par le site" : "le lecteur a signalé une erreur") : message
+            if web.isEngine && !webPlaying {
+                engineFailed(server, web: true, reason: text)
+            } else if state != "stalled" || web.isEngine {
+                fail(server, message: "\(text) Serveur suivant…")
+            }
+        default:
+            break
         }
     }
 
+    // MARK: Commandes
+
     func togglePause() {
-        if paused { player.play() } else { player.pause() }
+        if engineMode {
+            webView?.evaluateJavaScript("(function(){var v=document.querySelector('video');if(!v)return;if(v.paused)v.play();else v.pause();})()")
+        } else if paused {
+            player.play()
+        } else {
+            player.pause()
+        }
         paused.toggle()
+    }
+
+    func startPictureInPicture() {
+        if engineMode {
+            webView?.evaluateJavaScript("(function(){var v=document.querySelector('video');if(v&&v.webkitSetPresentationMode)v.webkitSetPresentationMode('picture-in-picture');})()")
+        } else {
+            pip?.startPictureInPicture()
+        }
     }
 
     private func stopVideo() {
@@ -238,8 +478,10 @@ final class LivePlayerModel {
         stopVideo()
         pip?.stopPictureInPicture()
         web = nil
+        webView = nil
         current = nil
         status = nil
+        askServer = false
         presented = false
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -256,19 +498,27 @@ struct LivePlayerView: View {
     @State private var drag: CGFloat = 0
     @State private var zaps = 0
     private var model: LivePlayerModel { .shared }
+    /// Page d'un site : elle reçoit les touchers, les commandes de l'appli se replient.
+    private var pageMode: Bool { model.web != nil && !model.engineMode }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let web = model.web {
-                LiveWebView(request: web, session: session)
-                    .id(web.id)
-                    .ignoresSafeArea()
-            } else {
-                PlayerLayerView(player: model.player)
-                    .ignoresSafeArea()
-                    .offset(y: drag / 3)
+            Group {
+                if let web = model.web {
+                    LiveWebView(request: web, session: session)
+                        .id(web.id)
+                        .allowsHitTesting(!web.isEngine)
+                } else {
+                    PlayerLayerView(player: model.player)
+                }
+            }
+            .ignoresSafeArea()
+            .offset(y: drag / 3)
+            if !pageMode {
+                Color.clear
                     .contentShape(Rectangle())
+                    .ignoresSafeArea()
                     .onTapGesture { toggleControls() }
                     .gesture(DragGesture(minimumDistance: 30).onChanged { drag = $0.translation.height }.onEnded { value in
                         // Glisser vers le haut : chaîne suivante ; vers le bas : précédente.
@@ -281,14 +531,28 @@ struct LivePlayerView: View {
                     if model.loading { ProgressView().controlSize(.large).tint(.white) }
                     if let status = model.status {
                         Text(status).font(.subheadline.weight(.semibold)).multilineTextAlignment(.center)
-                            .padding(.horizontal, 16).padding(.vertical, 10)
-                            .glassEffect(.regular.tint(.black.opacity(0.4)), in: Capsule())
+                            .padding(.horizontal, 18).padding(.vertical, 12)
+                            .glassEffect(.regular.tint(.black.opacity(0.4)), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                     }
                 }
                 .padding(.horizontal, 30)
                 .allowsHitTesting(false)
             }
-            if controls || model.web != nil { overlay.transition(.opacity) }
+            if controls {
+                overlay.transition(.opacity)
+            } else if pageMode {
+                // Commandes repliées au-dessus d'une page : un bouton pour les rouvrir.
+                VStack {
+                    HStack {
+                        circleButton("chevron.down.circle") { controls = true; scheduleHide() }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .transition(.opacity)
+            }
         }
         .foregroundStyle(.white)
         .statusBarHidden()
@@ -303,17 +567,20 @@ struct LivePlayerView: View {
             .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showServers) {
-            LivePlayerServers { server in
+            LivePlayerServers { server, engine in
                 showServers = false
-                model.play(server)
+                model.play(server, web: engine)
             }
             .presentationDetents([.medium, .large])
+        }
+        .onChange(of: model.askServer) { _, ask in
+            if ask { controls = true; showServers = true }
         }
         .onAppear { scheduleHide() }
     }
 
     private var overlay: some View {
-        VStack {
+        VStack(spacing: 12) {
             HStack(spacing: 10) {
                 circleButton("xmark") { model.close() }
                 VStack(alignment: .leading, spacing: 2) {
@@ -321,35 +588,47 @@ struct LivePlayerView: View {
                         if let number = model.channel?.number, number > 0, LiveStore.shared.country == "fr" {
                             Text("\(number)").font(.caption.weight(.heavy).monospacedDigit()).foregroundStyle(Theme.teal)
                         }
-                        Text(model.channel?.name ?? "").font(.headline).lineLimit(1)
+                        Text(model.channel?.name ?? "").font(.headline).lineLimit(1).minimumScaleFactor(0.75)
                         Text("EN DIRECT").font(.system(size: 9, weight: .heavy)).padding(.horizontal, 5).padding(.vertical, 2)
                             .background(.red, in: Capsule())
+                            .fixedSize()
                     }
                     if let server = model.current {
-                        Text((server.vip ? "VIP · " : "") + server.label).font(.caption).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                        Text((server.vip ? "VIP · " : "") + server.label + (model.engineMode ? " · moteur web" : ""))
+                            .font(.caption).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .glassEffect(.regular.tint(.black.opacity(0.35)), in: Capsule())
-                Spacer(minLength: 4)
+                .glassEffect(.regular.tint(.black.opacity(0.35)), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 if model.web == nil {
                     AirPlayButton().frame(width: 44, height: 44).glassEffect(.regular, in: Circle())
-                    if AVPictureInPictureController.isPictureInPictureSupported() {
-                        circleButton("pip.enter") { model.pip?.startPictureInPicture() }
-                    }
+                }
+                if !pageMode && AVPictureInPictureController.isPictureInPictureSupported() {
+                    circleButton("pip.enter") { model.startPictureInPicture() }
+                }
+                if pageMode {
+                    circleButton("chevron.up.circle") { controls = false }
                 }
             }
             Spacer()
-            HStack(spacing: 12) {
-                pill("chevron.up", "Préc.") { zap(-1) }
-                if model.web == nil {
-                    circleButton(model.paused ? "play.fill" : "pause.fill", size: 58) { model.togglePause(); scheduleHide() }
+            if !pageMode {
+                HStack(spacing: 22) {
+                    circleButton("backward.end.fill", size: 50) { zap(-1) }
+                    circleButton(model.paused ? "play.fill" : "pause.fill", size: 66) { model.togglePause(); scheduleHide() }
+                    circleButton("forward.end.fill", size: 50) { zap(1) }
                 }
-                pill("chevron.down", "Suiv.") { zap(1) }
-                Spacer(minLength: 4)
+            }
+            HStack(spacing: 10) {
+                if pageMode {
+                    circleButton("backward.end.fill") { zap(-1) }
+                }
                 pill("list.bullet", "Chaînes") { showChannels = true }
-                pill("server.rack", "Serveurs · \(model.servers.count)") { showServers = true }
+                pill("server.rack", "Serveurs · \(model.servers.count)", busy: model.expanding > 0 || model.probing > 0) { showServers = true }
+                if pageMode {
+                    circleButton("forward.end.fill") { zap(1) }
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -357,20 +636,29 @@ struct LivePlayerView: View {
     }
 
     private func circleButton(_ icon: String, size: CGFloat = 44, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon).font(size > 50 ? .title2 : .headline).frame(width: size, height: size)
+        Button {
+            action()
+            scheduleHide()
+        } label: {
+            Image(systemName: icon).font(size > 60 ? .title.weight(.semibold) : size > 46 ? .title3.weight(.semibold) : .headline).frame(width: size, height: size)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: Circle())
     }
 
-    private func pill(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
+    private func pill(_ icon: String, _ title: String, busy: Bool = false, action: @escaping () -> Void) -> some View {
         Button {
             action()
             scheduleHide()
         } label: {
-            Label(title, systemImage: icon).font(.subheadline.weight(.semibold)).lineLimit(1)
-                .padding(.horizontal, 14).padding(.vertical, 10)
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                Text(title).lineLimit(1).minimumScaleFactor(0.8)
+                if busy { ProgressView().controlSize(.mini).tint(.white) }
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: Capsule())
@@ -389,8 +677,8 @@ struct LivePlayerView: View {
     private func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task {
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled, model.web == nil, !showChannels, !showServers else { return }
+            try? await Task.sleep(for: .seconds(pageMode ? 4 : 5))
+            guard !Task.isCancelled, !showChannels, !showServers, !model.askServer else { return }
             controls = false
         }
     }
@@ -446,6 +734,7 @@ struct LiveChannelSheet: View {
                             .font(.caption.weight(.heavy).monospacedDigit()).foregroundStyle(Theme.teal).frame(width: 28)
                         Text(channel.name).font(.subheadline.weight(channel.id == model.channel?.id ? .bold : .regular))
                         Spacer()
+                        if channel.entries.count > 1 { Text("\(channel.entries.count)").font(.caption2).foregroundStyle(Theme.muted) }
                         if channel.vip { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(Color(hex: 0xFCD34D)) }
                         if channel.id == model.channel?.id { Image(systemName: "play.fill").foregroundStyle(Theme.teal) }
                     }
@@ -459,51 +748,125 @@ struct LiveChannelSheet: View {
     }
 }
 
-/// Serveurs de la chaîne en cours, classés, avec leur état.
+/// Serveurs de la chaîne en cours, par source, avec leur état ; appui long :
+/// choisir le moteur (lecteur d'Apple ou moteur web).
 struct LivePlayerServers: View {
-    let choose: (LiveServer) -> Void
+    let choose: (LiveServer, Bool?) -> Void
     private var model: LivePlayerModel { .shared }
+
+    private var groups: [(name: String, servers: [LiveServer])] {
+        var order: [String] = []
+        var map: [String: [LiveServer]] = [:]
+        for server in model.servers {
+            let name = server.label.components(separatedBy: " · ").first ?? server.provider
+            if map[name] == nil { order.append(name) }
+            map[name, default: []].append(server)
+        }
+        return order.map { (name: $0, servers: map[$0] ?? []) }
+    }
 
     var body: some View {
         NavigationStack {
-            List(model.servers) { server in
-                Button {
-                    choose(server)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: server.id == model.current?.id ? "play.circle.fill" : server.kind == .web ? "safari" : "dot.radiowaves.left.and.right")
-                            .foregroundStyle(server.id == model.current?.id ? Theme.teal : Theme.muted)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text((server.vip ? "VIP · " : "") + server.label).font(.subheadline.weight(.semibold)).lineLimit(2)
-                            Text(LiveHealth.text(server, channel: model.channel?.id ?? "")).font(.caption).foregroundStyle(Theme.muted)
+            List {
+                Section {
+                    HStack(spacing: 10) {
+                        if model.expanding > 0 || model.probing > 0 { ProgressView() }
+                        Text(summary).font(.footnote).foregroundStyle(Theme.muted)
+                    }
+                    Button {
+                        model.probeAll(force: true)
+                    } label: {
+                        Label("Tester à nouveau les flux", systemImage: "waveform.path.ecg")
+                    }
+                    .disabled(model.probing > 0)
+                }
+                ForEach(groups, id: \.name) { group in
+                    Section(group.name) {
+                        ForEach(group.servers) { server in
+                            Button {
+                                choose(server, nil)
+                            } label: {
+                                row(server)
+                            }
+                            .foregroundStyle(.white)
+                            .contextMenu {
+                                if server.kind == .native {
+                                    if !server.mpegts {
+                                        Button { choose(server, false) } label: { Label("Lecteur d’Apple", systemImage: "play.rectangle") }
+                                    }
+                                    Button { choose(server, true) } label: { Label("Moteur web", systemImage: "globe") }
+                                }
+                            }
                         }
-                        Spacer()
-                        Text(probeText(server)).font(.caption2.weight(.bold)).foregroundStyle(probeColor(server))
                     }
                 }
-                .foregroundStyle(.white)
             }
             .navigationTitle(model.channel?.name ?? "Serveurs")
             .navigationBarTitleDisplayMode(.inline)
+            .animation(Theme.spring, value: model.servers.map(\.probe))
         }
+    }
+
+    private var summary: String {
+        let online = model.servers.filter { $0.probe == .up || $0.probe == .slow }.count
+        var parts = ["\(model.servers.count) serveur\(model.servers.count > 1 ? "s" : "")"]
+        if online > 0 { parts.append("\(online) en ligne au test") }
+        if model.expanding > 0 { parts.append("\(model.expanding) source\(model.expanding > 1 ? "s" : "") encore interrogée\(model.expanding > 1 ? "s" : "") (VIP compris)") }
+        else if model.probing > 0 { parts.append("tests en cours") }
+        return parts.joined(separator: " · ") + ". Appui long : choisir le lecteur."
+    }
+
+    private func row(_ server: LiveServer) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: server.id == model.current?.id ? "play.circle.fill" : server.kind == .web ? "safari" : server.kind == .resolve ? "wand.and.stars" : "dot.radiowaves.left.and.right")
+                .foregroundStyle(server.id == model.current?.id ? Theme.teal : Theme.muted)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(server.label.components(separatedBy: " · ").dropFirst().joined(separator: " · ").isEmpty ? server.label : server.label.components(separatedBy: " · ").dropFirst().joined(separator: " · "))
+                        .font(.subheadline.weight(.semibold)).lineLimit(2)
+                    if server.vip {
+                        Text("VIP").font(.caption2.weight(.heavy)).padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(LinearGradient(colors: [Color(hex: 0xFCD34D), Color(hex: 0xF59E0B)], startPoint: .leading, endPoint: .trailing), in: Capsule())
+                            .foregroundStyle(.black)
+                    }
+                }
+                Text(detail(server)).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
+            }
+            Spacer(minLength: 6)
+            Text(probeText(server)).font(.caption2.weight(.bold)).foregroundStyle(probeColor(server)).multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func detail(_ server: LiveServer) -> String {
+        var parts: [String] = []
+        switch server.kind {
+        case .native: parts.append(server.mpegts ? "MPEG-TS · moteur web" : LiveHealth.prefersWeb(server) ? "HLS · moteur web" : "HLS")
+        case .resolve: parts.append(server.vip ? "Accès VIP à préparer" : "Serveurs à demander")
+        case .web: parts.append(server.manualOnly ? "Lecteur du site · secours manuel" : "Lecteur du site")
+        }
+        if server.probeMs > 0 && (server.probe == .up || server.probe == .slow) { parts.append("\(Int(server.probeMs)) ms") }
+        parts.append(LiveHealth.text(server, channel: model.channel?.id ?? ""))
+        return parts.joined(separator: " · ")
     }
 
     private func probeText(_ server: LiveServer) -> String {
         switch server.probe {
         case .up: return "En ligne"
         case .slow: return "Lent"
+        case .late: return "Lent à\nrépondre"
         case .down: return "Hors ligne"
         case .noVideo: return "Pas de vidéo"
         case .stale: return "Figé"
         case .testing: return "Test…"
-        case .untested: return server.kind == .web ? "Lecteur web" : server.kind == .resolve ? "Automatique" : ""
+        case .untested: return server.kind == .web ? "Site" : server.kind == .resolve ? "À préparer" : ""
         }
     }
 
     private func probeColor(_ server: LiveServer) -> Color {
         switch server.probe {
         case .up: return Theme.teal
-        case .slow, .stale: return .orange
+        case .slow, .stale, .late: return .orange
         case .down, .noVideo: return .red
         default: return Theme.muted
         }

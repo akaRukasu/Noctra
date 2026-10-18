@@ -57,7 +57,7 @@ const live = await src('LiveTVViews');
 const names = await src('LiveNames');
 assert.match(names, /static func key\(_ name: String, country: String\) -> String/, 'chaînes réunies par nom et par pays');
 assert.match(live, /for _ in 0\.\.<6 \{/, 'catalogues chargés 6 à la fois');
-assert.match(live, /<script src="vendor\/mpegts\.js"><\/script>/, 'flux MPEG-TS lus par mpegts.js');
+assert.match(live, /let library = transport \? "mpegts\.js" : "hls\.min\.js"/, 'flux MPEG-TS lus par mpegts.js, HLS par hls.js');
 const syncplay = await src('SyncPlay');
 for (const route of ['/SyncPlay/List', '/SyncPlay/New', '/SyncPlay/Join', '/SyncPlay/Ready', '/SyncPlay/SetNewQueue', '/GetUtcTime', '/Sessions/Capabilities/Full']) {
   assert.ok(syncplay.includes(route), `SyncPlay : ${route}`);
@@ -149,6 +149,21 @@ for (const route of ['/api/servarr/center', '/api/servarr/lookup', '/api/servarr
 assert.match(adminServer, /ArrHubView\(kind: \.radarr\)/);
 assert.match(adminServer, /ArrHubView\(kind: \.sonarr\)/);
 assert.match(await src('DiscoverViews'), /TrackerSearchView\(mediaType: item\.mediaType/, 'recherche interactive depuis les demandes');
+// 2.8 : moteur web comme Northlive, test des flux continus, VIP, bouquets, logo, SyncPlay, cast partout.
+assert.match(servers, /URLSession\.shared\.bytes\(for: request\)/, 'flux continus testés sur leurs premiers octets');
+assert.match(servers, /static func sniff\(/);
+assert.match(servers, /if result\.format == \.ts \{ mpegts = true \}/, 'flux MPEG-TS reconnu confié au moteur web');
+assert.match(servers, /static func prefersWeb\(/, 'moteur mémorisé par fournisseur');
+assert.match(servers, /"\/api\/tv\/livewatch\/prepare\/north\/"/, 'relais officiel NorthTV');
+assert.match(livePlayer, /private func engineFailed\(/, 'repli lecteur d’Apple / moteur web');
+assert.match(livePlayer, /timeout: server\.vip \? 70 : 45/, 'VIP LiveWatch : délai de vérification suffisant');
+assert.match(livePlayer, /func webEvent\(/);
+assert.match(live, /configuration\.userContentController\.add\(context\.coordinator, name: "noctra"\)/, 'pages du lecteur reliées à l’appli');
+assert.match(live, /sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"/, 'pont VIP dans un cadre comme sur PC');
+assert.match(live, /struct BouquetCard/);
+assert.match(await src('ItemDetailView'), /\.frame\(height: 96\)/, 'logo du titre à sa taille');
+assert.match(syncplay, /private var openGroups: some View/);
+assert.match(components, /CastButton\(\)/, 'bouton de diffusion sur chaque onglet');
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

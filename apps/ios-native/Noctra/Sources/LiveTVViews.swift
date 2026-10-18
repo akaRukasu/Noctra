@@ -331,10 +331,16 @@ final class LiveStore {
 
 /// Lecteur web de secours (flux MPEG-TS, lecteurs des sites) en plein écran.
 struct WebPlayerRequest: Identifiable {
-    enum Mode { case mpegts(URL), page(URL) }
+    /// Flux lus par le moteur web (mpegts.js, hls.js) ou page d'un site.
+    enum Mode { case mpegts(URL), hls(URL), page(URL) }
     let id = UUID()
     let title: String
     let mode: Mode
+
+    var isEngine: Bool {
+        if case .page = mode { return false }
+        return true
+    }
 }
 
 /// Lancement d'une chaîne : serveurs de toutes les sources classés, testés,
@@ -406,28 +412,12 @@ final class LiveLauncher {
     }
 
     private func probe(_ pick: LivePick, session: Session) async {
-        let targets = pick.servers.enumerated().filter { $0.element.kind == .native }.prefix(10).map { ($0.offset, $0.element) }
-        for (index, _) in targets { pick.servers[index].probe = .testing }
-        await withTaskGroup(of: (UUID, LiveServer.Probe, Double, Double).self) { group in
-            var queue = targets.makeIterator()
-            func next() {
-                guard let (_, server) = queue.next() else { return }
-                group.addTask {
-                    let (state, ms, margin) = await LiveServerFactory.probe(server, session: session)
-                    return (server.id, state, ms, margin)
-                }
-            }
-            for _ in 0..<6 { next() }
-            for await (id, state, ms, margin) in group {
-                if let index = pick.servers.firstIndex(where: { $0.id == id }) {
-                    pick.servers[index].probe = state
-                    pick.servers[index].probeMs = ms
-                    pick.servers[index].margin = margin
-                    let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
-                    if failing.contains(state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
-                }
-                next()
-            }
+        let targets = pick.servers.filter { $0.kind == .native }.prefix(16)
+        for target in targets { if let index = pick.servers.firstIndex(where: { $0.id == target.id }) { pick.servers[index].probe = .testing } }
+        await LiveServerFactory.probeMany(Array(targets), session: session) { id, result in
+            guard let index = pick.servers.firstIndex(where: { $0.id == id }) else { return }
+            pick.servers[index].apply(result)
+            if [.down, .noVideo].contains(result.state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
         }
     }
 
@@ -816,29 +806,24 @@ struct LiveChannelsView: View {
         return term.isEmpty ? channels : channels.filter { $0.name.localizedCaseInsensitiveContains(term) }
     }
 
+    private var shownBouquets: [TVSourceRoute] {
+        let term = query.trimmingCharacters(in: .whitespaces)
+        return term.isEmpty ? bouquets : bouquets.filter { $0.name.localizedCaseInsensitiveContains(term) }
+    }
+
     var body: some View {
         ScrollView {
             if !bouquets.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle("Bouquets").padding(.horizontal, 20)
-                    ScrollView(.horizontal) {
-                        GlassEffectContainer(spacing: 8) {
-                            HStack(spacing: 8) {
-                                ForEach(bouquets, id: \.self) { bouquet in
-                                    NavigationLink(value: bouquet) {
-                                        Text(bouquet.name)
-                                            .font(.subheadline.weight(.semibold))
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 9)
-                                    }
-                                    .buttonStyle(PressableStyle())
-                                    .glassEffect(.regular.interactive(), in: Capsule())
-                                }
-                            }
-                            .padding(.horizontal, 20)
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionTitle("Bouquets", detail: "\(shownBouquets.count)").padding(.horizontal, 20)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                        ForEach(shownBouquets, id: \.self) { bouquet in
+                            NavigationLink(value: bouquet) { BouquetCard(name: bouquet.name) }
+                                .buttonStyle(PressableStyle())
+                                .foregroundStyle(.white)
                         }
                     }
-                    .scrollIndicators(.hidden)
+                    .padding(.horizontal, 20)
                 }
                 .padding(.vertical, 8)
             }
@@ -851,7 +836,7 @@ struct LiveChannelsView: View {
         }
         .background(AuroraBackground(palette: .tv))
         .navigationTitle(route.name)
-        .searchable(text: $query, prompt: "Chaîne")
+        .searchable(text: $query, prompt: bouquets.isEmpty ? "Chaîne" : "Bouquet ou chaîne")
         .task { if channels.isEmpty && bouquets.isEmpty { await load() } }
     }
 
@@ -880,23 +865,87 @@ struct LiveChannelsView: View {
         }
         withAnimation(Theme.spring) {
             channels = parsed
-            bouquets = Array(groups.prefix(60))
+            bouquets = Array(groups.prefix(200))
         }
     }
 }
 
-// MARK: Lecteur web de secours
+/// Carte d'un bouquet : emoji du fournisseur (ou icône du thème), nom, teinte propre.
+struct BouquetCard: View {
+    let name: String
 
-/// Lecteur web d'un site (lecteur externe) ou flux MPEG-TS (mpegts.js du serveur Noctra).
-/// Fenêtres publicitaires bloquées, redirections de la page vers un autre site
-/// bloquées une fois le lecteur chargé, plein écran de la vidéo autorisé.
+    private var parts: (symbol: String?, title: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first, first.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation || $0.properties.generalCategory == .otherSymbol }) else {
+            return (nil, trimmed)
+        }
+        return (String(first), String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
+    }
+
+    private var icon: String {
+        let text = name.lowercased()
+        let table: [(String, String)] = [("sport", "sportscourt.fill"), ("foot", "soccerball"), ("ciné", "film.fill"), ("cine", "film.fill"), ("film", "film.fill"),
+                                         ("série", "play.rectangle.on.rectangle.fill"), ("serie", "play.rectangle.on.rectangle.fill"), ("enfant", "teddybear.fill"),
+                                         ("kids", "teddybear.fill"), ("jeunesse", "teddybear.fill"), ("info", "newspaper.fill"), ("news", "newspaper.fill"),
+                                         ("musique", "music.note"), ("music", "music.note"), ("docu", "globe.europe.africa.fill"), ("adult", "eye.slash.fill"),
+                                         ("radio", "radio.fill"), ("france", "flag.fill"), ("4k", "4k.tv.fill"), ("uhd", "4k.tv.fill")]
+        return table.first { text.contains($0.0) }?.1 ?? "square.stack.3d.up.fill"
+    }
+
+    private var tint: Color {
+        let palette = [Theme.teal, Theme.lilac, Theme.cyan, Color(hex: 0xFDBA74), Color(hex: 0xF9A8D4), Color(hex: 0xFCD34D)]
+        let sum = name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        return palette[sum % palette.count]
+    }
+
+    var body: some View {
+        let parts = self.parts
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack {
+                Circle().fill(tint.opacity(0.18))
+                if let symbol = parts.symbol {
+                    Text(symbol).font(.system(size: 24))
+                } else {
+                    Image(systemName: icon).font(.title3.weight(.semibold)).foregroundStyle(tint)
+                }
+            }
+            .frame(width: 46, height: 46)
+            Spacer(minLength: 0)
+            Text(parts.title.isEmpty ? name : parts.title)
+                .font(.headline)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            HStack(spacing: 4) {
+                Text("Voir les chaînes")
+                Image(systemName: "chevron.right")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+        }
+        .frame(maxWidth: .infinity, minHeight: 138, alignment: .topLeading)
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(LinearGradient(colors: [tint.opacity(0.22), Color(hex: 0x0E1326).opacity(0.9)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(tint.opacity(0.35), lineWidth: 1))
+    }
+}
+
+// MARK: Lecteur web
+
+/// Lecteur web : page d'un site (lecteur externe) ou moteur web de l'appli
+/// (hls.js et mpegts.js servis par Noctra, comme pour Northlive). Lecture,
+/// flux repéré et erreurs remontent au lecteur TV (serveur suivant, mémoire du
+/// moteur). Fenêtres publicitaires et redirections vers un autre site bloquées.
 struct LiveWebView: UIViewRepresentable {
     let request: WebPlayerRequest
     let session: Session
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var allowedHosts: Set<String> = []
         var loaded = false
+        var requestID = UUID()
 
         private func host(_ url: URL?) -> String { (url?.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "") }
 
@@ -919,10 +968,29 @@ struct LiveWebView: UIViewRepresentable {
             loaded = true
         }
 
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            // Seul l'échec du premier chargement compte (une redirection bloquée n'en est pas un).
+            let failure = error as NSError
+            guard !loaded, failure.code != NSURLErrorCancelled, !(failure.domain == "WebKitErrorDomain" && failure.code == 102) else { return }
+            report(state: "error", message: "page du lecteur injoignable (\(failure.localizedDescription)).", url: "")
+        }
+
         /// window.open et liens « nouvelle fenêtre » : publicités, jamais ouvertes.
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             nil
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+            report(state: body["state"] as? String ?? "", message: body["message"] as? String ?? "", url: body["url"] as? String ?? "")
+        }
+
+        private func report(state: String, message: String, url: String) {
+            let id = requestID
+            MainActor.assumeIsolated {
+                LivePlayerModel.shared.webEvent(id, state: state, message: message, url: url)
+            }
         }
     }
 
@@ -936,6 +1004,10 @@ struct LiveWebView: UIViewRepresentable {
         configuration.allowsAirPlayForMediaPlayback = true
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        // Messages des lecteurs (tous les cadres) : vidéo lancée, états des ponts Noctra.
+        configuration.userContentController.addUserScript(WKUserScript(source: Self.bridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        configuration.userContentController.add(context.coordinator, name: "noctra")
+        context.coordinator.requestID = request.id
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
@@ -944,20 +1016,34 @@ struct LiveWebView: UIViewRepresentable {
         view.scrollView.backgroundColor = .black
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
+        LivePlayerModel.shared.webView = view
         let store = configuration.websiteDataStore.httpCookieStore
         let base = URL(string: session.noctraBase + "/")
         if let noctraHost = base?.host?.lowercased() { context.coordinator.allowedHosts.insert(noctraHost.replacingOccurrences(of: "www.", with: "")) }
         let cookies = base.flatMap { HTTPCookieStorage.shared.cookies(for: $0) } ?? []
         let request = self.request
+        let token = session.token ?? ""
+        let target: URL
+        switch request.mode {
+        case .page(let url), .mpegts(let url), .hls(let url): target = url
+        }
+        let local = session.isNoctraOrigin(target)
         Task { @MainActor in
             for cookie in cookies { await store.setCookie(cookie) }
             switch request.mode {
             case .page(let url):
                 if let host = url.host?.lowercased() { context.coordinator.allowedHosts.insert(host.replacingOccurrences(of: "www.", with: "")) }
-                // Sans référent, comme les lecteurs officiels l'attendent.
-                view.load(URLRequest(url: url))
+                if local, Self.framedBridge(url) {
+                    // Pont VIP LiveWatch / OHA du serveur : dans un cadre isolé, exactement comme sur PC.
+                    view.loadHTMLString(Self.framePage(url), baseURL: base)
+                } else {
+                    // Sans référent, comme les lecteurs officiels l'attendent.
+                    view.load(URLRequest(url: url))
+                }
             case .mpegts(let url):
-                view.loadHTMLString(Self.mpegtsPage(url), baseURL: base)
+                view.loadHTMLString(Self.enginePage(url, transport: true, token: local ? token : ""), baseURL: base)
+            case .hls(let url):
+                view.loadHTMLString(Self.enginePage(url, transport: false, token: local ? token : ""), baseURL: base)
             }
         }
         return view
@@ -966,24 +1052,94 @@ struct LiveWebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "noctra")
         uiView.loadHTMLString("", baseURL: nil)
     }
 
-    /// Page minimale : mpegts.js (servi par Noctra) lit le flux MPEG-TS dans une vidéo.
-    private static func mpegtsPage(_ url: URL) -> String {
-        let address = url.absoluteString.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+    /// Relais vers l'appli : vidéo lancée (y compris dans les cadres des sites)
+    /// et messages « noctra-…-state » des ponts du serveur (lecture, flux, VIP).
+    private static let bridgeScript = """
+    (function(){if(window.__noctraBridge)return;window.__noctraBridge=1;
+    function send(o){try{window.webkit.messageHandlers.noctra.postMessage(o)}catch(e){}}
+    addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;var t=String(d.type||'');
+    if(!/^noctra-[a-z0-9]+-state$/.test(t))return;send({state:String(d.state||''),message:String(d.message||''),url:String(d.url||'')})},true);
+    document.addEventListener('playing',function(e){var t=e.target;if(t&&t.tagName==='VIDEO')send({state:'playing'})},true);
+    })();
+    """
+
+    /// Pages du serveur Noctra conçues pour un cadre isolé (sans même origine).
+    private static func framedBridge(_ url: URL) -> Bool {
+        let path = url.path
+        return path.contains("/api/tv/livewatch/vip/") || path.contains("/api/tv/livewatch/embed/") || path.contains("/api/tv/oha/embed/")
+    }
+
+    private static func escaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "<", with: "&lt;")
+    }
+
+    private static func literal(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'").replacingOccurrences(of: "\n", with: "")
+    }
+
+    /// Cadre du lecteur, réglé comme sur PC : scripts, formulaires et plein écran
+    /// permis, sans même origine ; les fenêtres surgissantes restent bloquées.
+    private static func framePage(_ url: URL) -> String {
+        """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#000}</style></head>
+        <body><iframe src="\(escaped(url.absoluteString))" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
+        referrerpolicy="strict-origin-when-cross-origin" allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen></iframe></body></html>
+        """
+    }
+
+    private static let tsScript = """
+        if(!window.mpegts||!mpegts.isSupported()){send('error','flux MPEG-TS non pris en charge ici');return}
+        var p=mpegts.createPlayer({type:'mpegts',isLive:true,url:U},{enableWorker:false,lazyLoad:false,liveBufferLatencyChasing:false,enableStashBuffer:true,headers:K&&same(U)?{'x-noctra-token':K}:undefined});
+        p.attachMediaElement(v);p.load();start();
+        p.on(mpegts.Events.ERROR,function(a,b){send('error','flux MPEG-TS interrompu ('+a+(b?' · '+b:'')+')')});
+    """
+
+    private static let hlsScript = """
+        if(window.Hls&&Hls.isSupported()){
+        var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:3,maxBufferLength:30,backBufferLength:30,
+        manifestLoadingTimeOut:20000,manifestLoadingMaxRetry:3,levelLoadingTimeOut:20000,levelLoadingMaxRetry:4,fragLoadingTimeOut:30000,fragLoadingMaxRetry:4,
+        xhrSetup:function(x,u){if(K&&same(u))x.setRequestHeader('x-noctra-token',K)}});
+        var net=0,media=0;
+        h.on(Hls.Events.ERROR,function(e,d){if(!d||!d.fatal)return;
+        if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net++<2){h.startLoad();return}
+        if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&media++<2){h.recoverMediaError();return}
+        send('error','moteur web : '+d.details+(d.response&&d.response.code?' ('+d.response.code+')':''))});
+        h.on(Hls.Events.MANIFEST_PARSED,start);
+        h.loadSource(U);h.attachMedia(v);
+        }else{v.src=U;start();v.addEventListener('error',function(){send('error','vidéo illisible')})}
+    """
+
+    /// Moteur web : mpegts.js (flux MPEG-TS continu) ou hls.js (liste HLS),
+    /// servis par Noctra ; jeton Noctra joint aux requêtes vers Noctra seulement.
+    /// Lecture, coupure prolongée et erreurs signalées à l'appli.
+    private static func enginePage(_ url: URL, transport: Bool, token: String) -> String {
+        let address = literal(url.absoluteString)
+        let key = literal(token)
+        let library = transport ? "mpegts.js" : "hls.min.js"
+        let script = transport ? tsScript : hlsScript
         return """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-        <style>html,body{margin:0;height:100%;background:#000;color:#ccc;font:15px -apple-system}video{width:100%;height:100%;background:#000}#m{position:absolute;bottom:24px;width:100%;text-align:center}</style></head>
-        <body><video id="v" playsinline autoplay controls></video><div id="m"></div>
-        <script src="vendor/mpegts.js"></script>
+        <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{position:fixed;inset:0;width:100%;height:100%;background:#000;object-fit:contain}</style></head>
+        <body><video id="v" playsinline webkit-playsinline autoplay></video>
+        <script src="vendor/\(library)"></script>
         <script>
-        var v=document.getElementById('v'),m=document.getElementById('m');
-        try{v.disableRemotePlayback=true;}catch(e){}
-        if(!window.mpegts||!mpegts.isSupported()){m.textContent='Flux non lisible sur cet appareil.';}
-        else{var p=mpegts.createPlayer({type:'mpegts',isLive:true,url:'\(address)'},{enableWorker:false,lazyLoad:false,liveBufferLatencyChasing:false,enableStashBuffer:true});
-        p.attachMediaElement(v);p.load();var t=p.play();if(t&&t.catch)t.catch(function(){});
-        p.on(mpegts.Events.ERROR,function(a,b){m.textContent='Flux interrompu ('+a+').';});}
+        (function(){
+        var v=document.getElementById('v'),U='\(address)',K='\(key)',playing=false,waitSince=0;
+        function send(s,m){try{window.webkit.messageHandlers.noctra.postMessage({state:s,message:m||''})}catch(e){}}
+        function same(u){try{return new URL(u,location.href).origin===location.origin}catch(e){return false}}
+        function start(){var p=v.play();if(p&&p.catch)p.catch(function(){v.muted=true;var q=v.play();if(q&&q.catch)q.catch(function(){})})}
+        try{v.disableRemotePlayback=true}catch(e){}
+        v.addEventListener('playing',function(){playing=true;waitSince=0;send('playing')});
+        v.addEventListener('waiting',function(){waitSince=Date.now()});
+        v.addEventListener('timeupdate',function(){if(!v.paused)waitSince=0});
+        setInterval(function(){if(playing&&waitSince&&Date.now()-waitSince>15000){waitSince=0;send('stalled','coupure prolongée.')}},2000);
+        \(script)
+        })();
         </script></body></html>
         """
     }

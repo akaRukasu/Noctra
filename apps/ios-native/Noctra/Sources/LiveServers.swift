@@ -10,7 +10,9 @@ import SwiftUI
 /// Un serveur possible pour une chaîne.
 struct LiveServer: Identifiable {
     enum Kind { case native, resolve, web }
-    enum Probe: Equatable { case untested, testing, up, slow, down, noVideo, stale }
+    enum Probe: Equatable { case untested, testing, up, slow, late, down, noVideo, stale }
+    /// Contenu réel du flux, lu par le test : liste HLS, flux MPEG-TS continu, fichier vidéo.
+    enum Format { case unknown, hls, ts, file }
 
     let id = UUID()
     var label: String
@@ -25,9 +27,25 @@ struct LiveServer: Identifiable {
     var compatPage = false
     var manualOnly = false
     var fallback = false
+    /// Lu par le moteur web (hls.js ou mpegts.js, comme Northlive) plutôt que par le lecteur d'Apple.
+    var webEngine = false
+    /// Résolveur d'origine : nouveau lien du même serveur après une coupure.
+    var renewURL: String?
+    /// Relais officiel à préparer par le serveur Noctra avant l'ouverture (NorthTV).
+    var relayPrepare: String?
+    var format: Format = .unknown
     var probe: Probe = .untested
     var probeMs: Double = 0
     var margin: Double = 0
+
+    /// Résultat d'un test : état, et flux MPEG-TS continu confié au moteur web (comme Northlive).
+    mutating func apply(_ result: LiveServerFactory.ProbeResult) {
+        probe = result.state
+        probeMs = result.ms
+        margin = result.margin
+        if result.format != .unknown { format = result.format }
+        if result.format == .ts { mpegts = true }
+    }
 
     var host: String {
         let url = streamURL ?? pageURL ?? resolveURL.flatMap { URL(string: $0) }
@@ -103,6 +121,25 @@ enum LiveHealth {
         store = all
     }
 
+    // Moteur de lecture qui marche pour chaque famille de serveurs (fournisseur +
+    // hôte) : au-dessus de zéro, le moteur web passe avant le lecteur d'Apple.
+    private static let engineKey = "noctra.tv.engine.v1"
+
+    private static func engineID(_ server: LiveServer) -> String { "\(server.provider)|\(server.host)" }
+
+    static func prefersWeb(_ server: LiveServer) -> Bool {
+        let all = UserDefaults.standard.dictionary(forKey: engineKey) as? [String: Double] ?? [:]
+        return (all[engineID(server)] ?? 0) > 0
+    }
+
+    static func noteEngine(_ server: LiveServer, web: Bool, ok: Bool) {
+        var all = UserDefaults.standard.dictionary(forKey: engineKey) as? [String: Double] ?? [:]
+        let id = engineID(server)
+        all[id] = max(-3, min(3, (all[id] ?? 0) + (web == ok ? 1 : -1)))
+        if all.count > 300 { all = Dictionary(uniqueKeysWithValues: all.prefix(300).map { ($0.key, $0.value) }) }
+        UserDefaults.standard.set(all, forKey: engineKey)
+    }
+
     static func remembered(_ channel: String) -> String? {
         UserDefaults.standard.string(forKey: "noctra.tv.server.\(channel)")
     }
@@ -164,6 +201,7 @@ enum LiveHealth {
             switch server.probe {
             case .up: base -= 6
             case .slow: base -= 3
+            case .late: base += 1
             case .down, .noVideo, .stale: base += 8
             default: break
             }
@@ -202,7 +240,7 @@ enum LiveServerFactory {
         var perSource: [String: Int] = [:]
         for entry in channel.entries { perSource[entry.source, default: 0] += 1 }
         var seen: [String: Int] = [:]
-        for entry in channel.entries.prefix(24) {
+        for entry in channel.entries.prefix(80) {
             var prefix = entry.source
             if (perSource[entry.source] ?? 0) > 1 {
                 seen[entry.source, default: 0] += 1
@@ -220,35 +258,54 @@ enum LiveServerFactory {
     private static func options(_ raw: [String: Any], sourceId: String, prefix: String, provider: String, session: Session) -> [LiveServer] {
         let vip = raw["vipPlayback"] as? Bool == true
         let transport = (raw["transport"] as? String)?.lowercased() ?? ""
+        let tsTransport = ["ts", "mpegts", "mpeg-ts"].contains(transport) || (raw["streamKind"] as? String)?.lowercased() == "mpeg-ts"
         let headers = (raw["headers"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
         let resolver = (raw["resolverUrl"] as? String) ?? (raw["resolveUrl"] as? String)
-        let embed = [raw["vipFallbackUrl"], raw["externalUrl"], raw["embedUrl"]].compactMap { $0 as? String }.first { $0.lowercased().hasPrefix("http") }
-        // Lecteur officiel LiveWatch (hors VIP) : sa page, sans référent.
+        let pages = [raw["vipFallbackUrl"], raw["externalUrl"], raw["embedUrl"]].compactMap { $0 as? String }.filter { !$0.isEmpty }
+        let embed = pages.first { $0.lowercased().hasPrefix("http") }
+        // Lecteur officiel LiveWatch (hors VIP) : sa page, sans référent ; NorthTV
+        // passe d'abord par le relais préparé par le serveur quand le VIP est actif.
         if liveWatchOfficial.contains(sourceId), !(raw["playbackType"] as? String == "resolver" && resolver != nil), let embed, let url = URL(string: embed) {
-            return [LiveServer(label: prefix + " · lecteur officiel", provider: provider, kind: .web, pageURL: url)]
+            var list: [LiveServer] = []
+            if sourceId == "livewatch-north", raw["liveWatchSameOriginBridge"] as? Bool == true,
+               let range = url.path.range(of: "^/embed/north/([^/]+)/?$", options: .regularExpression), url.host?.lowercased().hasSuffix("livewatch.top") == true {
+                let id = url.path[range].replacingOccurrences(of: "/embed/north/", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                var relay = LiveServer(label: prefix + " · relais officiel", provider: provider, kind: .web, vip: vip)
+                relay.relayPrepare = "/api/tv/livewatch/prepare/north/" + (id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)
+                relay.compatPage = true
+                list.append(relay)
+            }
+            list.append(LiveServer(label: prefix + " · lecteur officiel", provider: provider, kind: .web, pageURL: url))
+            return list
         }
+        var list: [LiveServer] = []
         if raw["playbackType"] as? String == "stream", let stream = raw["streamUrl"] as? String, let url = session.noctraURL(stream) {
-            let mpegts = ["ts", "mpegts", "mpeg-ts"].contains(transport) || (url.path.lowercased().hasSuffix(".ts") && !url.path.lowercased().contains("m3u8"))
-            return [LiveServer(label: prefix + " · flux direct", provider: provider, kind: .native, streamURL: url, headers: headers, mpegts: mpegts, vip: vip)]
+            let mpegts = tsTransport || (url.path.lowercased().hasSuffix(".ts") && !url.path.lowercased().contains("m3u8"))
+            list.append(LiveServer(label: prefix + " · flux direct", provider: provider, kind: .native, streamURL: url, headers: headers, mpegts: mpegts, vip: vip))
+        } else if let resolver {
+            list.append(LiveServer(label: prefix + (vip ? " · VIP" : " · automatique"), provider: provider, kind: .resolve, resolveURL: resolver, vip: vip))
+        } else if let stream = raw["streamUrl"] as? String, let url = session.noctraURL(stream) {
+            list.append(LiveServer(label: prefix + " · flux direct", provider: provider, kind: .native, streamURL: url, headers: headers, mpegts: tsTransport, vip: vip))
         }
-        if let resolver {
-            return [LiveServer(label: prefix + (vip ? " · VIP" : " · automatique"), provider: provider, kind: .resolve, resolveURL: resolver, vip: vip)]
+        // Page du site en plus du flux : proposée en secours (lecteur externe).
+        let used = Set(list.compactMap { $0.streamURL?.absoluteString })
+        if let page = list.isEmpty ? (pages.first ?? raw["url"] as? String) : pages.first(where: { $0.lowercased().hasPrefix("http") || $0.hasPrefix("/") }),
+           let url = session.noctraURL(page), !used.contains(url.absoluteString) {
+            var server = LiveServer(label: prefix + (list.isEmpty ? " · lecteur web" : " · lecteur du site"), provider: provider, kind: .web, pageURL: url)
+            // Page publique du site (souvent avec publicités) : proposée, jamais lancée d'office.
+            server.fallback = !list.isEmpty
+            server.manualOnly = !list.isEmpty
+            list.append(server)
         }
-        if let stream = raw["streamUrl"] as? String, let url = session.noctraURL(stream) {
-            return [LiveServer(label: prefix + " · flux direct", provider: provider, kind: .native, streamURL: url, headers: headers, mpegts: ["ts", "mpegts", "mpeg-ts"].contains(transport), vip: vip)]
-        }
-        if let page = (raw["embedUrl"] as? String) ?? (raw["externalUrl"] as? String) ?? (raw["url"] as? String), let url = session.noctraURL(page) {
-            return [LiveServer(label: prefix + " · lecteur web", provider: provider, kind: .web, pageURL: url)]
-        }
-        return []
+        return list
     }
 
     /// Serveurs proposés par un résolveur du serveur Noctra (VIP, serveurs automatiques).
-    static func resolve(_ server: LiveServer, session: Session, timeout: TimeInterval = 30) async -> [LiveServer] {
+    static func resolve(_ server: LiveServer, session: Session, timeout: TimeInterval = 45) async -> [LiveServer] {
         guard let path = server.resolveURL, let json = try? await session.noctraJSON(path, timeout: timeout) as? [String: Any] else { return [] }
         let vipActive = json["vipActive"] as? Bool == true
         let list = (json["options"] as? [[String: Any]]) ?? ((json["streamUrl"] != nil || json["url"] != nil) ? [json] : [])
-        return list.prefix(16).enumerated().compactMap { index, option -> LiveServer? in
+        return list.prefix(24).enumerated().compactMap { index, option -> LiveServer? in
             let base = server.label.replacingOccurrences(of: " · automatique", with: "").replacingOccurrences(of: " · VIP", with: "")
             let name = (option["label"] as? String).map { base + " · " + $0 } ?? base + " · serveur \(index + 1)"
             let vip = server.vip || vipActive && (option["vip"] as? Bool ?? true)
@@ -258,6 +315,7 @@ enum LiveServerFactory {
             if let stream = option["streamUrl"] as? String, let url = session.noctraURL(stream) {
                 let mpegts = ["ts", "mpegts", "mpeg-ts"].contains(transport) || (option["streamKind"] as? String)?.lowercased() == "mpeg-ts"
                 item = LiveServer(label: name, provider: server.provider, kind: .native, streamURL: url, headers: headers, mpegts: mpegts, vip: vip)
+                item.renewURL = server.resolveURL
             } else if let next = option["resolveUrl"] as? String, option["url"] == nil {
                 item = LiveServer(label: name, provider: server.provider, kind: .resolve, resolveURL: next, vip: vip)
             } else if let page = option["url"] as? String, let url = session.noctraURL(page) {
@@ -274,66 +332,199 @@ enum LiveServerFactory {
 
     // MARK: Test d'un flux
 
+    struct ProbeResult {
+        var state: LiveServer.Probe
+        var ms: Double = 0
+        var margin: Double = 0
+        var format: LiveServer.Format = .unknown
+    }
+
+    private enum Fetch {
+        case done(Data, HTTPURLResponse)
+        case failed
+        case timedOut
+    }
+
+    /// Début d'une réponse (au plus `limit` octets) : un flux continu (MPEG-TS)
+    /// ne se termine jamais, on n'en lit que le début.
+    nonisolated private static func fetchHead(_ request: URLRequest, limit: Int, seconds: Double) async -> Fetch {
+        await withTaskGroup(of: Fetch?.self) { group in
+            group.addTask {
+                do {
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else { return .failed }
+                    var data = Data()
+                    data.reserveCapacity(min(limit, 65_536))
+                    for try await byte in bytes {
+                        data.append(byte)
+                        if data.count >= limit { break }
+                    }
+                    return .done(data, http)
+                } catch {
+                    return Task.isCancelled ? nil : .failed
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(seconds))
+                return Task.isCancelled ? nil : .timedOut
+            }
+            var outcome: Fetch = .timedOut
+            for await value in group {
+                if let value { outcome = value; break }
+            }
+            group.cancelAll()
+            return outcome
+        }
+    }
+
+    /// Fichier entier (segment HLS), borné dans le temps.
+    nonisolated private static func fetchAll(_ request: URLRequest, seconds: Double) async -> Fetch {
+        await withTaskGroup(of: Fetch?.self) { group in
+            group.addTask {
+                guard let (data, response) = try? await URLSession.shared.data(for: request), let http = response as? HTTPURLResponse else {
+                    return Task.isCancelled ? nil : .failed
+                }
+                return .done(data, http)
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(seconds))
+                return Task.isCancelled ? nil : .timedOut
+            }
+            var outcome: Fetch = .timedOut
+            for await value in group {
+                if let value { outcome = value; break }
+            }
+            group.cancelAll()
+            return outcome
+        }
+    }
+
+    /// Requête d'un test : en-têtes du serveur, jeton Noctra vers le serveur Noctra seulement.
+    private static func testRequest(_ target: URL, server: LiveServer, session: Session) -> URLRequest {
+        var request = URLRequest(url: target)
+        request.timeoutInterval = 12
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        for (key, value) in server.headers { request.setValue(value, forHTTPHeaderField: key) }
+        if session.isNoctraOrigin(target), let token = session.token { request.setValue(token, forHTTPHeaderField: "x-noctra-token") }
+        return request
+    }
+
+    /// Nature du flux (début de la réponse seulement), pour choisir le lecteur.
+    static func sniff(_ server: LiveServer, session: Session) async -> LiveServer.Format {
+        guard let url = server.streamURL else { return .unknown }
+        guard case .done(let data, let response) = await fetchHead(testRequest(url, server: server, session: session), limit: 4_096, seconds: 6),
+              response.statusCode < 400 else { return .unknown }
+        return format(of: data)
+    }
+
+    nonisolated private static func format(of data: Data) -> LiveServer.Format {
+        if let text = String(data: data.prefix(2_048), encoding: .utf8), text.contains("#EXTM3U") { return .hls }
+        let bytes = [UInt8](data.prefix(4_096))
+        if transportStream(bytes) { return .ts }
+        if bytes.count >= 8, ["ftyp", "moov", "moof", "styp", "free", "mdat"].contains(String(bytes: bytes[4..<8], encoding: .ascii) ?? "") { return .file }
+        return .unknown
+    }
+
+    /// Paquets MPEG-TS (0x47 tous les 188 octets), même précédés d'une fausse
+    /// image (en-tête PNG ajouté par certains fournisseurs).
+    nonisolated private static func transportStream(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 189 else { return bytes.first == 0x47 }
+        for start in 0..<min(bytes.count - 188, 2_048) where bytes[start] == 0x47 && bytes[start + 188] == 0x47 {
+            if start + 376 >= bytes.count || bytes[start + 376] == 0x47 { return true }
+        }
+        return false
+    }
+
     /// Liste HLS lue, puis dernier segment téléchargé : en ligne (et marge de
-    /// débit sur cette connexion), sans vidéo, direct figé ou hors ligne.
-    static func probe(_ server: LiveServer, session: Session) async -> (LiveServer.Probe, Double, Double) {
-        guard let url = server.streamURL else { return (.untested, 0, 0) }
+    /// débit sur cette connexion), lent à répondre, sans vidéo, direct figé ou
+    /// hors ligne. Un flux MPEG-TS continu est reconnu à ses premiers paquets.
+    static func probe(_ server: LiveServer, session: Session) async -> ProbeResult {
+        guard let url = server.streamURL else { return ProbeResult(state: .untested) }
         let began = Date()
-        func request(_ target: URL, range: Bool = false) -> URLRequest {
-            var request = URLRequest(url: target)
-            request.timeoutInterval = 6
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            for (key, value) in server.headers { request.setValue(value, forHTTPHeaderField: key) }
-            if session.isNoctraOrigin(target), let token = session.token { request.setValue(token, forHTTPHeaderField: "x-noctra-token") }
-            if range { request.setValue("bytes=0-65535", forHTTPHeaderField: "Range") }
-            return request
-        }
         func elapsed() -> Double { Date().timeIntervalSince(began) * 1000 }
-        if server.mpegts {
-            guard let (data, response) = try? await URLSession.shared.data(for: request(url, range: true)),
-                  ((response as? HTTPURLResponse)?.statusCode ?? 0) < 400 else { return (.down, elapsed(), 0) }
-            return (looksLikeMedia(data) ? .up : .noVideo, elapsed(), 0)
+        let first = await fetchHead(testRequest(url, server: server, session: session), limit: 524_288, seconds: 12)
+        let data: Data
+        let response: HTTPURLResponse
+        switch first {
+        case .timedOut: return ProbeResult(state: .late, ms: elapsed())
+        case .failed: return ProbeResult(state: .down, ms: elapsed())
+        case .done(let body, let answer):
+            guard answer.statusCode < 400 else { return ProbeResult(state: .down, ms: elapsed()) }
+            data = body
+            response = answer
         }
-        guard let (data, response) = try? await URLSession.shared.data(for: request(url)),
-              ((response as? HTTPURLResponse)?.statusCode ?? 0) < 400 else { return (.down, elapsed(), 0) }
-        if looksLikeMedia(data) { return (.up, elapsed(), 0) }
-        guard var text = String(data: data, encoding: .utf8), text.contains("#EXTM3U") else { return (.noVideo, elapsed(), 0) }
-        var playlistURL = (response.url ?? url)
+        let kind = format(of: data)
+        switch kind {
+        case .ts: return ProbeResult(state: .up, ms: elapsed(), format: .ts)
+        case .file: return ProbeResult(state: .up, ms: elapsed(), format: .file)
+        case .unknown: return ProbeResult(state: .noVideo, ms: elapsed())
+        case .hls: break
+        }
+        guard var text = String(data: data, encoding: .utf8) else { return ProbeResult(state: .noVideo, ms: elapsed()) }
+        var playlistURL = response.url ?? url
         // Liste principale : première variante.
         if text.contains("#EXT-X-STREAM-INF") {
             let lines = text.components(separatedBy: .newlines)
             guard let index = lines.firstIndex(where: { $0.hasPrefix("#EXT-X-STREAM-INF") }),
                   let uri = lines[(index + 1)...].first(where: { !$0.isEmpty && !$0.hasPrefix("#") }),
-                  let variant = URL(string: uri.trimmingCharacters(in: .whitespaces), relativeTo: playlistURL)?.absoluteURL,
-                  let (body, answer) = try? await URLSession.shared.data(for: request(variant)),
-                  ((answer as? HTTPURLResponse)?.statusCode ?? 0) < 400,
-                  let variantText = String(data: body, encoding: .utf8) else { return (.down, elapsed(), 0) }
-            text = variantText
-            playlistURL = answer.url ?? variant
+                  let variant = URL(string: uri.trimmingCharacters(in: .whitespaces), relativeTo: playlistURL)?.absoluteURL else {
+                return ProbeResult(state: .noVideo, ms: elapsed(), format: .hls)
+            }
+            switch await fetchHead(testRequest(variant, server: server, session: session), limit: 524_288, seconds: 12) {
+            case .timedOut: return ProbeResult(state: .late, ms: elapsed(), format: .hls)
+            case .failed: return ProbeResult(state: .down, ms: elapsed(), format: .hls)
+            case .done(let body, let answer):
+                guard answer.statusCode < 400, let variantText = String(data: body, encoding: .utf8), variantText.contains("#EXTM3U") else {
+                    return ProbeResult(state: .down, ms: elapsed(), format: .hls)
+                }
+                text = variantText
+                playlistURL = answer.url ?? variant
+            }
         }
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
         guard let last = lines.lastIndex(where: { !$0.isEmpty && !$0.hasPrefix("#") }),
-              let segment = URL(string: lines[last], relativeTo: playlistURL)?.absoluteURL else { return (.stale, elapsed(), 0) }
+              let segment = URL(string: lines[last], relativeTo: playlistURL)?.absoluteURL else {
+            return ProbeResult(state: .stale, ms: elapsed(), format: .hls)
+        }
         let duration = lines[..<last].last(where: { $0.hasPrefix("#EXTINF:") })
             .flatMap { Double($0.dropFirst(8).split(separator: ",").first ?? "") } ?? 0
         let sent = Date()
-        guard let (media, answer) = try? await URLSession.shared.data(for: request(segment)),
-              ((answer as? HTTPURLResponse)?.statusCode ?? 0) < 400 else { return (.down, elapsed(), 0) }
-        guard looksLikeMedia(media) else { return (.noVideo, elapsed(), 0) }
-        let took = max(1, Date().timeIntervalSince(sent) * 1000)
-        let margin = duration > 0 ? duration * 1000 / took : 0
-        return (margin > 0 && margin < 1.2 ? .slow : .up, elapsed(), margin)
+        switch await fetchAll(testRequest(segment, server: server, session: session), seconds: 15) {
+        case .timedOut: return ProbeResult(state: .late, ms: elapsed(), format: .hls)
+        case .failed: return ProbeResult(state: .down, ms: elapsed(), format: .hls)
+        case .done(let media, let answer):
+            guard answer.statusCode < 400 else { return ProbeResult(state: .down, ms: elapsed(), format: .hls) }
+            guard looksLikeMedia(media) else { return ProbeResult(state: .noVideo, ms: elapsed(), format: .hls) }
+            let took = max(1, Date().timeIntervalSince(sent) * 1000)
+            let margin = duration > 0 ? duration * 1000 / took : 0
+            return ProbeResult(state: margin > 0 && margin < 1.2 ? .slow : .up, ms: elapsed(), margin: margin, format: .hls)
+        }
+    }
+
+    /// Tests de plusieurs serveurs, 6 à la fois ; chaque résultat est remis dès qu'il arrive.
+    static func probeMany(_ servers: [LiveServer], session: Session, apply: @escaping @MainActor (UUID, ProbeResult) -> Void) async {
+        await withTaskGroup(of: (UUID, ProbeResult).self) { group in
+            var queue = servers.makeIterator()
+            func next() {
+                guard let server = queue.next() else { return }
+                group.addTask { @MainActor in (server.id, await LiveServerFactory.probe(server, session: session)) }
+            }
+            for _ in 0..<6 { next() }
+            for await (id, result) in group {
+                apply(id, result)
+                next()
+            }
+        }
     }
 
     /// Début d'un fichier vidéo : MPEG-TS (0x47), MP4 fragmenté, ID3 (AAC).
     private static func looksLikeMedia(_ data: Data) -> Bool {
-        let bytes = [UInt8](data.prefix(400))
+        let bytes = [UInt8](data.prefix(4_096))
         guard bytes.count >= 8 else { return false }
-        if bytes[0] == 0x47 && (bytes.count < 189 || bytes[188] == 0x47) { return true }
+        if transportStream(bytes) { return true }
         let box = String(bytes: bytes[4..<8], encoding: .ascii) ?? ""
         if ["ftyp", "moof", "styp", "sidx", "mdat", "free"].contains(box) { return true }
-        if bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33 { return true }
-        return bytes.firstIndex(of: 0x47).map { $0 + 188 < bytes.count && bytes[$0 + 188] == 0x47 } ?? false
+        return bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33
     }
 }
 
@@ -451,8 +642,9 @@ struct LiveServerSheet: View {
         switch server.probe {
         case .untested: return (server.kind == .web ? "Lecteur web" : server.kind == .resolve ? "Automatique" : "", Theme.muted)
         case .testing: return ("Test…", Theme.muted)
-        case .up: return (server.probeMs > 3500 ? "En ligne · lent" : server.margin >= 2 || server.margin == 0 ? "En ligne" : "En ligne · juste", Theme.teal)
+        case .up: return (server.format == .ts ? "En ligne · MPEG-TS" : server.probeMs > 3500 ? "En ligne · lent" : server.margin >= 2 || server.margin == 0 ? "En ligne" : "En ligne · juste", Theme.teal)
         case .slow: return ("Trop lent ici", .orange)
+        case .late: return ("Lent à répondre", .orange)
         case .down: return ("Hors ligne", .red)
         case .noVideo: return ("Pas de vidéo", .red)
         case .stale: return ("Direct figé", .orange)

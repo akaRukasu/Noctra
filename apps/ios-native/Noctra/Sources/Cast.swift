@@ -31,6 +31,8 @@ struct CastSheet: View {
     let startSeconds: Double
     var audioIndex: Int?
     var subtitleIndex: Int?
+    /// Bouton cast de la barre du haut : rappelle le titre qui sera envoyé.
+    var showItem = false
     @State private var targets: [CastTarget] = []
     @State private var castingTo: String?
     private var browser: ChromecastBrowser { .shared }
@@ -41,6 +43,24 @@ struct CastSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if showItem {
+                    Section {
+                        HStack(spacing: 12) {
+                            RemoteImage(url: session.thumb(item, width: 400) ?? session.poster(item))
+                                .frame(width: 84, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title).font(.headline).lineLimit(1)
+                                Text(startSeconds > 30 ? "Reprise à \(ItemDetailView.clock(startSeconds))" + (item.type == "Episode" ? " · " + (item.episodeLabel ?? "") : "") : "Depuis le début")
+                                    .font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                            }
+                        }
+                    } header: {
+                        Text("À envoyer")
+                    } footer: {
+                        Text("Autre titre : ouvrez sa fiche, puis touchez le bouton de diffusion.")
+                    }
+                }
                 Section {
                     if browser.devices.isEmpty {
                         HStack(spacing: 12) {
@@ -171,6 +191,88 @@ struct CastSheet: View {
             dismiss()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+
+/// Bouton de diffusion de la barre du haut (tous les onglets) : télécommande du
+/// Chromecast en cours, ou envoi du titre à reprendre vers un autre écran.
+struct CastButton: View {
+    @State private var showing = false
+    private var cast: ChromecastController { .shared }
+
+    var body: some View {
+        Button {
+            showing = true
+        } label: {
+            Image(systemName: cast.isActive ? "tv.badge.wifi.fill" : "tv.badge.wifi")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(cast.isActive ? Theme.accent : .white)
+                .symbolEffect(.pulse, isActive: cast.isActive && cast.isPlaying)
+                .frame(width: 30, height: 30)
+        }
+        .accessibilityLabel("Diffuser sur un autre écran")
+        .sheet(isPresented: $showing) {
+            CastHubSheet().presentationDetents([.medium, .large])
+        }
+    }
+}
+
+struct CastHubSheet: View {
+    @Environment(Session.self) private var session
+    @State private var resume: BaseItem?
+    @State private var loading = true
+    private var cast: ChromecastController { .shared }
+    private var browser: ChromecastBrowser { .shared }
+
+    var body: some View {
+        Group {
+            if cast.isActive {
+                ChromecastRemote()
+            } else if let resume {
+                CastSheet(item: resume, startSeconds: resume.resumeSeconds, showItem: true)
+            } else {
+                NavigationStack {
+                    List {
+                        Section {
+                            if loading {
+                                HStack(spacing: 10) { ProgressView(); Text("Recherche du titre en cours…").foregroundStyle(Theme.muted) }
+                            } else {
+                                Label("Ouvrez un film ou un épisode, puis touchez son bouton de diffusion pour le lire sur un autre écran.", systemImage: "hand.tap")
+                                    .foregroundStyle(.white.opacity(0.85))
+                            }
+                        }
+                        Section {
+                            HStack {
+                                Label("AirPlay", systemImage: "airplayvideo")
+                                Spacer()
+                                AirPlayButton().frame(width: 36, height: 36)
+                            }
+                        } footer: {
+                            Text("Apple TV et téléviseurs AirPlay.")
+                        }
+                        Section("Chromecast et Google TV du Wi-Fi") {
+                            if browser.devices.isEmpty {
+                                Text(browser.blocked ? "Autorisez « Réseau local » pour Noctra dans Réglages › Confidentialité." : "Recherche…").foregroundStyle(Theme.muted)
+                            }
+                            ForEach(browser.devices) { device in
+                                Label(device.name, systemImage: "tv").foregroundStyle(.white)
+                            }
+                        }
+                    }
+                    .navigationTitle("Diffuser")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+                .onAppear { browser.start() }
+            }
+        }
+        .task {
+            defer { loading = false }
+            guard !cast.isActive, resume == nil else { return }
+            let list = try? await session.get(ItemsResponse.self, paths: ["/UserItems/Resume", "/Users/{userId}/Items/Resume"],
+                                              ["userId": session.userId, "limit": "1", "mediaTypes": "Video", "fields": Fields.card, "enableImageTypes": "Primary,Backdrop,Thumb"])
+            resume = list?.items.first
         }
     }
 }

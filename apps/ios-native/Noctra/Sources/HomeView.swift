@@ -283,7 +283,8 @@ struct HeroCarousel: View {
                     .padding(.top, -20)
                 if let logo = session.logo(item) {
                     RemoteImage(url: logo, contentMode: .fit, alignment: .leading)
-                        .frame(maxWidth: 220, maxHeight: 46, alignment: .leading)
+                        .frame(height: 50)
+                        .frame(maxWidth: 230, alignment: .leading)
                 } else {
                     Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
                         .font(.display(25, .bold, relativeTo: .title2))

@@ -117,7 +117,8 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let logo = session.logo(shown) {
                     RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
-                        .frame(maxWidth: 260, maxHeight: 84, alignment: .leading)
+                        .frame(height: 96)
+                        .frame(maxWidth: 300, alignment: .leading)
                 } else {
                     Text(shown.type == "Episode" ? (shown.seriesName ?? shown.title) : shown.title)
                         .font(.display(32, .bold, relativeTo: .largeTitle))

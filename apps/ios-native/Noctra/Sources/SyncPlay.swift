@@ -360,7 +360,8 @@ final class SyncPlayManager {
     func announce(_ message: String) { notice = message }
 }
 
-/// Feuille SyncPlay : groupes ouverts, créer, rejoindre, quitter.
+/// Feuille SyncPlay : regarder ensemble. Groupe actuel (participants, état),
+/// groupes ouverts à rejoindre, création d'un groupe.
 struct SyncPlaySheet: View {
     @Environment(Session.self) private var session
     @Environment(\.dismiss) private var dismiss
@@ -369,68 +370,196 @@ struct SyncPlaySheet: View {
     @State private var loading = true
     @State private var name = ""
     @State private var error: String?
+    @State private var working: String?
+    @State private var joined = 0
 
     var body: some View {
         NavigationStack {
-            List {
-                if let group = sync.group {
-                    Section("Groupe actuel") {
-                        LabeledContent("Nom", value: group.name)
-                        LabeledContent("Participants", value: group.participants.joined(separator: ", "))
-                        if let status = sync.status { LabeledContent("État", value: status) }
-                        Button("Quitter le groupe", role: .destructive) {
-                            Task { await sync.leave(); dismiss() }
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    hero
+                    if let group = sync.group {
+                        current(group)
+                    } else {
+                        openGroups
+                        creation
                     }
-                    Section {
-                        Text("Lancez un film ou un épisode : il démarre en même temps pour tout le groupe. Pause et avance sont partagées.")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.muted)
-                    }
-                } else {
-                    Section("Groupes ouverts") {
-                        if loading {
-                            ProgressView()
-                        } else if groups.isEmpty {
-                            Text("Aucun groupe pour le moment.").foregroundStyle(Theme.muted)
-                        }
-                        ForEach(groups) { group in
-                            Button {
-                                Task {
-                                    do { try await sync.join(group.id); dismiss() } catch { self.error = error.localizedDescription }
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(group.name).font(.headline)
-                                    Text(group.participants.joined(separator: ", ")).font(.caption).foregroundStyle(Theme.muted)
-                                }
-                            }
-                        }
-                    }
-                    Section("Nouveau groupe") {
-                        TextField("Nom du groupe", text: $name)
-                        Button("Créer et rejoindre") {
-                            Task {
-                                do {
-                                    try await sync.create(name: name.isEmpty ? "Soirée de \(session.userName ?? "Noctra")" : name)
-                                    dismiss()
-                                } catch { self.error = error.localizedDescription }
-                            }
-                        }
+                    if let error {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.orange)
                     }
                 }
-                if let error {
-                    Section { Text(error).foregroundStyle(.orange) }
-                }
+                .padding(20)
             }
+            .background(AuroraBackground(palette: .roulette))
             .navigationTitle("SyncPlay")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("OK") { dismiss() } } }
-            .task {
-                groups = await sync.groups()
-                loading = false
-            }
-            .refreshable { groups = await sync.groups() }
+            .task { await reload() }
+            .refreshable { await reload() }
+            .sensoryFeedback(.success, trigger: joined)
         }
+    }
+
+    private func reload() async {
+        groups = await sync.groups()
+        loading = false
+    }
+
+    private var hero: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ZStack {
+                Circle().fill(Theme.gradient).opacity(0.9)
+                Image(systemName: sync.group == nil ? "person.2.wave.2.fill" : "play.tv.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.black.opacity(0.8))
+                    .symbolEffect(.pulse, isActive: sync.group != nil)
+            }
+            .frame(width: 58, height: 58)
+            .shadow(color: Theme.lilac.opacity(0.6), radius: 16)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(sync.group == nil ? "Regarder ensemble" : "Vous êtes dans un groupe")
+                    .font(.display(24, .bold, relativeTo: .title2))
+                Text("Le film ou l’épisode lancé démarre au même instant pour tout le groupe ; pause, lecture et avance sont partagées.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+        }
+    }
+
+    private func current(_ group: SyncPlayManager.Group) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text(group.name).font(.title3.weight(.bold)).lineLimit(2)
+                Spacer()
+                if let status = sync.status {
+                    Text(status)
+                        .font(.caption.weight(.bold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .glassEffect(.regular.tint(Theme.teal.opacity(0.45)), in: Capsule())
+                }
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("\(group.participants.count) participant\(group.participants.count > 1 ? "s" : "")")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Theme.muted)
+                ForEach(group.participants, id: \.self) { person in
+                    HStack(spacing: 12) {
+                        avatar(person, size: 34)
+                        Text(person).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        if person == session.userName { Text("Vous").font(.caption2.weight(.bold)).foregroundStyle(Theme.teal) }
+                    }
+                }
+            }
+            Button(role: .destructive) {
+                Task { await sync.leave(); dismiss() }
+            } label: {
+                Label("Quitter le groupe", systemImage: "rectangle.portrait.and.arrow.right")
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .auroraSecondary()
+        }
+        .padding(18)
+        .auroraPanel(cornerRadius: 26, palette: .roulette)
+    }
+
+    private var openGroups: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionTitle("Groupes ouverts", detail: loading ? nil : "\(groups.count)")
+                Spacer()
+                Button { Task { loading = true; await reload() } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+            }
+            if loading {
+                HStack { ProgressView(); Text("Recherche des groupes…").foregroundStyle(Theme.muted) }
+            } else if groups.isEmpty {
+                HStack(spacing: 12) {
+                    Image(systemName: "sofa.fill").font(.title3).foregroundStyle(Theme.lilac)
+                    Text("Aucun groupe ouvert. Créez le vôtre ci-dessous : les autres le verront ici.")
+                        .font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .auroraPanel(cornerRadius: 22, palette: .roulette)
+            }
+            ForEach(groups) { group in
+                HStack(spacing: 14) {
+                    HStack(spacing: -10) {
+                        ForEach(group.participants.prefix(3), id: \.self) { avatar($0, size: 36) }
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.name).font(.headline).lineLimit(1)
+                        Text(group.participants.isEmpty ? "Personne pour le moment" : group.participants.joined(separator: ", "))
+                            .font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    Button {
+                        working = group.id
+                        Task {
+                            defer { working = nil }
+                            do { try await sync.join(group.id); joined += 1; dismiss() } catch { self.error = error.localizedDescription }
+                        }
+                    } label: {
+                        if working == group.id { ProgressView().tint(.black) } else { Text("Rejoindre").font(.subheadline.weight(.bold)) }
+                    }
+                    .auroraPrimary()
+                    .disabled(working != nil)
+                }
+                .padding(14)
+                .auroraPanel(cornerRadius: 22, palette: .roulette)
+            }
+        }
+    }
+
+    private var creation: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("Nouveau groupe")
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles").foregroundStyle(Theme.accent)
+                TextField("Soirée de \(session.userName ?? "Noctra")", text: $name)
+                    .submitLabel(.go)
+                    .onSubmit { create() }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .glassEffect(.regular.interactive(), in: Capsule())
+            Button(action: create) {
+                HStack {
+                    if working == "new" { ProgressView().tint(.black) } else { Image(systemName: "plus.circle.fill") }
+                    Text("Créer et rejoindre")
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+            .auroraPrimary()
+            .disabled(working != nil)
+        }
+    }
+
+    private func create() {
+        working = "new"
+        Task {
+            defer { working = nil }
+            do {
+                try await sync.create(name: name.isEmpty ? "Soirée de \(session.userName ?? "Noctra")" : name)
+                joined += 1
+                dismiss()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func avatar(_ person: String, size: CGFloat) -> some View {
+        let palette = [Theme.teal, Theme.lilac, Theme.cyan, Color(hex: 0xF9A8D4), Color(hex: 0xFDBA74)]
+        let color = palette[person.unicodeScalars.reduce(0) { ($0 &+ Int($1.value)) & 0xFFFF } % palette.count]
+        return Text(String(person.prefix(1)).uppercased())
+            .font(.system(size: size * 0.42, weight: .bold))
+            .foregroundStyle(.black.opacity(0.8))
+            .frame(width: size, height: size)
+            .background(color, in: Circle())
+            .overlay(Circle().stroke(Theme.background, lineWidth: 2))
     }
 }

@@ -149,7 +149,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.7.0\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.8.0\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }

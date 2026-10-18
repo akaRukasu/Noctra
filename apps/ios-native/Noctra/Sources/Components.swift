@@ -324,6 +324,13 @@ struct AccountButton: View {
     @State private var showing = false
 
     var body: some View {
+        HStack(spacing: 14) {
+            CastButton()
+            account
+        }
+    }
+
+    private var account: some View {
         Button {
             showing = true
         } label: {
