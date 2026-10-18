@@ -379,7 +379,7 @@ fun LiveChannelSheet(onDismiss: () -> Unit, choose: (LiveChannel) -> Unit) {
 }
 
 /** Serveurs de la chaîne en cours, par source, avec leur état ; appui long : choisir le moteur (ExoPlayer ou moteur web). */
-@OptIn(ExperimentalFoundationApi::class)
+@kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LivePlayerServers(onDismiss: () -> Unit, choose: (LiveServer, Boolean?) -> Unit) {
     val model = LivePlayerModel

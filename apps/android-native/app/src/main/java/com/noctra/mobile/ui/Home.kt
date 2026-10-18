@@ -273,9 +273,10 @@ fun HeroCarousel(items: List<BaseItem>, resume: Boolean) {
     val open = rememberOpenItem()
     var starting by remember { mutableStateOf<String?>(null) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val cardWidth = minOf(maxWidth - 32.dp, 760.dp)
+        val fullWidth = maxWidth
+        val cardWidth = minOf(fullWidth - 32.dp, 760.dp)
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            HorizontalPager(state = pager, contentPadding = PaddingValues(horizontal = (maxWidth - cardWidth) / 2), pageSpacing = 12.dp, modifier = Modifier.fillMaxWidth()) { index ->
+            HorizontalPager(state = pager, contentPadding = PaddingValues(horizontal = (fullWidth - cardWidth) / 2), pageSpacing = 12.dp, modifier = Modifier.fillMaxWidth()) { index ->
                 val item = items[index]
                 val artwork = if (item.type == "Episode") Session.thumb(item, 1280) else Session.backdrop(item, 1280)
                 val source = remember { MutableInteractionSource() }

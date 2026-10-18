@@ -591,7 +591,8 @@ private fun RouletteView() {
             }
             model.pool.isNotEmpty() -> {
                 BoxWithConstraints(Modifier.fillMaxWidth().height(180.dp).clipToBounds()) {
-                    val start = with(density) { (maxWidth / 2 - 60.dp).toPx() }
+                    val half = maxWidth / 2
+                    val start = with(density) { (half - 60.dp).toPx() }
                     Row(Modifier.wrapContentWidth(Alignment.Start, unbounded = true).offset { IntOffset((start + offset.value).roundToInt(), 0) }, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         for (index in 0 until landing + 4) {
                             val pick = if (index == landing) (model.winner ?: model.pool[0]) else model.pool[(index * 7 + 3) % model.pool.size]
