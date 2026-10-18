@@ -217,10 +217,12 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
     nonisolated func playerViewController(_ playerViewController: AVPlayerViewController,
                                           willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator) {
-        coordinator.animate(alongsideTransition: nil) { context in
-            guard !context.isCancelled else { return }
-            MainActor.assumeIsolated {
-                if !self.pictureInPicture { self.close(notify: true) }
+        MainActor.assumeIsolated {
+            coordinator.animate(alongsideTransition: nil) { context in
+                guard !context.isCancelled else { return }
+                MainActor.assumeIsolated {
+                    if !self.pictureInPicture { self.close(notify: true) }
+                }
             }
         }
     }

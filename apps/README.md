@@ -6,13 +6,24 @@ Noctra existe en applications pour :
 |---|---|---|
 | Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
-| iPhone et iPad | `Noctra-ios-unsigned.ipa` | Sideloadly ou AltStore |
+| iPhone et iPad (iOS 26) | `Noctra-ios26-unsigned.ipa` (appli native SwiftUI, Liquid Glass) | Sideloadly ou AltStore |
+| iPhone et iPad (iOS 15 à 18) | `Noctra-ios-unsigned.ipa` (interface web) | Sideloadly ou AltStore |
 | Téléviseurs LG (webOS) | `com.noctra.media_1.1.49_all.ipk` (**Noctra TV**) | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
 
 ## Android TV : Noctra TV (appli native)
 
 Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli Jellyfin officielle pour Android TV adaptée pour Noctra : marque Noctra et serveur `akarukasu.merlion.usbx.me/jellyfin` intégré. On arrive directement sur la page d’authentification, puis sur l’accueil Noctra : médiathèques, fiches, TV en direct (avec le multiview jusqu’à 12 chaînes), SyncPlay, Découvrir, Demandes, Roulette et recherche. L’interface est native et fluide ; films et épisodes sont lus avec le lecteur Jellyfin (langue audio et sous-titres au choix), puis on revient sur Noctra. Les détails, la construction et la licence sont dans [androidtv/README.md](androidtv/README.md).
+
+## iPhone et iPad : Noctra pour iOS 26 (appli native)
+
+`Noctra-ios26-unsigned.ipa` est une appli **entièrement native** (SwiftUI, iOS 26 minimum), construite sur les comportements du système plutôt que sur une page web : barre d’onglets **Liquid Glass** qui se rétracte au défilement, onglet de recherche d’iOS 26 en bas de l’écran, transitions **zoom** de l’affiche vers la fiche (et retour en glissant), ressorts et retours haptiques du système, fond des fiches qui s’étire quand on tire vers le bas, carrousel à pages magnétiques avec parallaxe, cartes et boutons Liquid Glass.
+
+- **Contenu** : connexion Jellyfin du serveur Noctra (adresse `akarukasu.merlion.usbx.me` proposée), accueil (nouveautés, Reprendre, À suivre, ajouts récents par médiathèque), médiathèques (tri, chargement progressif), fiches (lecture ou reprise, depuis le début, langue audio et sous-titres, saisons et épisodes, distribution, favori, vu), recherche, TV en direct (sources, bouquets, chaînes ; les serveurs d’une chaîne sont essayés l’un après l’autre, 15 s chacun).
+- **Lecteur** : celui d’iOS (image dans l’image, AirPlay, commandes du système). Jellyfin choisit selon les formats de l’iPhone : fichier lu tel quel (MP4/MOV en H.264 ou HEVC), sinon flux HLS en fMP4 qui recopie la vidéo et le son quand c’est possible. Reprise et « vu » envoyés à Jellyfin.
+- **Construction** : GitHub Actions (`.github/workflows/noctra-ios-native.yml`, Mac avec Xcode 26), à chaque modification de `apps/ios-native`. L’IPA se télécharge dans *Actions › Noctra iOS 26 › Artifacts* (`noctra-ios26`). Sur un Mac : `cd apps/ios-native && xcodegen generate && open Noctra.xcodeproj`.
+- **Installation** : comme ci-dessous (Sideloadly ou AltStore). Même identifiant d’appli que l’ancienne version (`com.noctra.app`) : elle la remplace.
+- Lecteurs web des chaînes (pages de sites) : ouverts dans Safari ; Découvrir, Demandes et Roulette restent dans la PWA pour l’instant.
 
 ## LG webOS et Samsung Tizen : Noctra TV
 
