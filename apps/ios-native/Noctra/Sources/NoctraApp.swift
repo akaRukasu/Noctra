@@ -87,6 +87,11 @@ struct MainTabView: View {
         .fullScreenCover(item: Binding(get: { launcher.webPlayer }, set: { launcher.webPlayer = $0 })) { request in
             WebLivePlayerView(request: request)
         }
+        // Choix du serveur d'une chaîne (meilleur serveur lancé tout seul).
+        .sheet(item: Binding(get: { launcher.pick }, set: { launcher.pick = $0 })) { pick in
+            LiveServerSheet(pick: pick)
+                .presentationDetents([.medium, .large])
+        }
         .alert("Chaîne indisponible", isPresented: Binding(get: { launcher.problem != nil }, set: { if !$0 { launcher.problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

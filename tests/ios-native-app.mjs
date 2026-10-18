@@ -54,7 +54,8 @@ const playback2 = await src('Playback');
 assert.match(playback2, /options\[AVURLAssetHTTPCookiesKey\] = cookies/);
 assert.match(playback2, /SyncPlayManager\.shared\.setQueue\(item\.id, startSeconds: startSeconds\)/);
 const live = await src('LiveTVViews');
-assert.match(live, /static func key\(_ name: String\) -> String/, 'chaînes réunies par nom');
+const names = await src('LiveNames');
+assert.match(names, /static func key\(_ name: String, country: String\) -> String/, 'chaînes réunies par nom et par pays');
 assert.match(live, /for _ in 0\.\.<6 \{/, 'catalogues chargés 6 à la fois');
 assert.match(live, /<script src="vendor\/mpegts\.js"><\/script>/, 'flux MPEG-TS lus par mpegts.js');
 const syncplay = await src('SyncPlay');
@@ -96,10 +97,10 @@ assert.match(chromecast, /urn:x-cast:com\.google\.cast\.media/);
 assert.match(plistNative, /<string>_googlecast\._tcp<\/string>/, 'Bonjour autorisé pour le Cast');
 assert.match(await src('Cast'), /ChromecastController\.shared\.cast\(/);
 const admin = await src('AdminViews');
-for (const route of ['"/System/Info"', '"/Sessions"', '"/ScheduledTasks"', '"/System/ActivityLog/Entries"', '"/Users/New"', '/Policy"', '"/api/downloads/add"', 'jellyfin_credentials']) {
+for (const route of ['"/System/Info"', '"/Sessions"', '"/ScheduledTasks"', '"/System/ActivityLog/Entries"', '"/Users/New"', '/Policy"', '"/api/downloads/add"']) {
   assert.ok(admin.includes(route), `administration : ${route}`);
 }
-assert.match(components, /NavigationLink \{ AdminDashboardView\(\) \}/);
+assert.match(components, /NavigationLink \{ AdminHomeView\(\) \}/);
 // 2.5 : performances et hors ligne.
 const pipeline = await src('ImagePipeline');
 assert.match(pipeline, /kCGImageSourceShouldCacheImmediately/, 'images décodées hors du fil principal');
@@ -115,6 +116,21 @@ assert.match(offline, /didFinishDownloadingTo location: URL\) \{[\s\S]*moveItem\
 assert.match(offline, /"noctra-offline-\\\(id\)"/, 'appareil distinct : une lecture en cours n’est pas coupée');
 assert.match(await src('NoctraApp'), /@UIApplicationDelegateAdaptor\(NoctraAppDelegate\.self\)/);
 assert.match(playbackSrc, /func playOffline\(/);
+// 2.6 : images, TV (pays, VIP, meilleur serveur), sous-titres, tableau de bord natif.
+assert.match(components, /if let hit = ImagePipeline\.shared\.cached\(url\) \{\s*\n\s*if loaded\?\.url != url \{ loaded = \(url, hit\) \}/, 'image affichée même chargée hors écran');
+assert.match(names, /static let tntNumbers/);
+assert.match(names, /"fr": "France"/);
+const servers = await src('LiveServers');
+for (const piece of ['static func rank(', 'static func probe(', 'if server.vip { base -= 2.5 }', 'noctra.tv.health.v1']) assert.ok(servers.includes(piece), `serveurs TV : ${piece}`);
+assert.match(live, /"\/api\/tv\/livewatch\/session"/, 'accès VIP lus sur le serveur');
+assert.match(live, /var country: String = UserDefaults\.standard\.string\(forKey: "noctra\.tv\.country"\) \?\? "fr"/, 'France par défaut');
+assert.match(subtitlesSrc, /guard let host = controller\.view/, 'sous-titres posés au-dessus du lecteur');
+assert.match(subtitlesSrc, /timeoutInterval = attempt == 0 \? 240 : 120/);
+const adminServer = await src('AdminServerViews');
+for (const route of ['"/System/Configuration/encoding"', '"/Library/VirtualFolders"', '"/Devices"', '"/Auth/Keys"', '"/Plugins"', '"/Packages"', '"/System/Logs"', '"/Environment/Drives"']) {
+  assert.ok(adminServer.includes(route), `tableau de bord natif : ${route}`);
+}
+assert.doesNotMatch(admin, /WKWebView/, 'plus de tableau de bord web');
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

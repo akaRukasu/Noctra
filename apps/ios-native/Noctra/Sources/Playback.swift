@@ -89,6 +89,8 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
             subtitles = session.url("/Videos/\(item.id)/\(source.id)/Subtitles/\(chosen)/0/Stream.vtt", ["api_key": session.token])
         }
         lastSubtitleURL = subtitles
+        let sourceId = source.id
+        let chosenSubtitle = chosen
 
         let report = Report(session: session, itemId: item.id, mediaSourceId: source.id, playSessionId: playSession, playMethod: method)
         let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
@@ -99,7 +101,8 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
             let overlay = SubtitleOverlay()
             overlay.attach(to: controller, player: player)
             subtitleOverlay = overlay
-            Task { await overlay.load(subtitles, headers: session.authHeaders) }
+            let alternate = session.url("/Videos/\(item.id)/\(sourceId)/Subtitles/\(chosenSubtitle)/Stream.vtt", ["api_key": session.token])
+            Task { await overlay.load(subtitles, headers: session.authHeaders, alternates: alternate.map { [$0] } ?? []) }
         }
     }
 
@@ -138,10 +141,32 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     /// Serveurs d'une chaîne essayés l'un après l'autre : le suivant prend le
     /// relais si le flux ne démarre pas en 12 s ou tombe en erreur. Tous en
     /// échec : `exhausted` (lecteur web de secours, message).
-    func playLive(title: String, streams: [(URL, [String: String])], exhausted: (() -> Void)? = nil) {
+    func playLive(title: String, streams: [(URL, [String: String])], exhausted: (() -> Void)? = nil,
+                  onResult: ((Int, Bool) -> Void)? = nil, onSmooth: ((Int, Int, Double) -> Void)? = nil) {
         guard !streams.isEmpty else { exhausted?(); return }
+        liveResult = onResult
+        liveSmooth = onSmooth
         present(urls: streams, title: title, startSeconds: 0, report: nil, sync: false, live: true)
         onExhausted = exhausted
+        // present() a remis les rappels à zéro (fermeture du lecteur précédent).
+        liveResult = onResult
+        liveSmooth = onSmooth
+    }
+
+    /// Fiabilité des serveurs TV : démarrage, échec, coupures pendant la lecture.
+    private var liveResult: ((Int, Bool) -> Void)?
+    private var liveSmooth: ((Int, Int, Double) -> Void)?
+    private var liveIndex = 0
+    private var liveStalls = 0
+    private var liveReadyAt: Date?
+    private var stallObserver: NSObjectProtocol?
+
+    private func finishLiveMeasure() {
+        if let readyAt = liveReadyAt { liveSmooth?(liveIndex, liveStalls, Date().timeIntervalSince(readyAt)) }
+        liveReadyAt = nil
+        liveStalls = 0
+        if let stallObserver { NotificationCenter.default.removeObserver(stallObserver) }
+        stallObserver = nil
     }
 
     // MARK: Hors ligne
@@ -227,6 +252,13 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         titleItem.extendedLanguageTag = "und"
         item.externalMetadata = [titleItem]
         player.replaceCurrentItem(with: item)
+        if isLive {
+            finishLiveMeasure()
+            liveIndex = index
+            stallObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.liveStalls += 1 }
+            }
+        }
         if startSeconds > 5 {
             commandUntil = Date().addingTimeInterval(2)
             player.seek(to: CMTime(seconds: startSeconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -235,7 +267,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
         // Surveillance : serveur suivant (direct), prêt (SyncPlay), fermeture si le lecteur a disparu.
         watchTask?.cancel()
-        let isLive = self.isLive
+        let liveMode = isLive
         watchTask = Task { [weak self] in
             let started = Date()
             var ready = false
@@ -246,11 +278,17 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
                 let status = item.status
                 if status == .readyToPlay && !ready {
                     ready = true
+                    if liveMode {
+                        self.liveReadyAt = Date()
+                        self.liveResult?(index, true)
+                    }
                     if self.syncMode { SyncPlayManager.shared.ready(position: self.positionSeconds, playing: false) }
                 }
-                if isLive {
+                if liveMode {
                     let failed = status == .failed || (!ready && Date().timeIntervalSince(started) > 12)
                     if failed {
+                        self.liveResult?(index, false)
+                        self.liveReadyAt = nil
                         if index + 1 < urls.count {
                             self.load(urls, index: index + 1, title: title, startSeconds: startSeconds)
                         } else {
@@ -288,6 +326,9 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         rateObservation = nil
         subtitleOverlay?.detach()
         subtitleOverlay = nil
+        if isLive { finishLiveMeasure() }
+        liveResult = nil
+        liveSmooth = nil
         let position = positionSeconds
         if let offlineId {
             let length = player?.currentItem?.duration.seconds ?? 0

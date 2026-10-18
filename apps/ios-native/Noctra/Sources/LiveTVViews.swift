@@ -5,42 +5,138 @@ import WebKit
 
 // MARK: Modèle
 
-/// Chaîne, éventuellement proposée par plusieurs sources (réunies par leur nom).
+/// Chaîne, éventuellement proposée par plusieurs sources (réunies par leur nom et leur pays).
 struct LiveChannel: Identifiable, Hashable, @unchecked Sendable {
+    typealias Entry = (source: String, sourceId: String, raw: [String: Any])
+
     let id: String
     let name: String
     let logo: String?
+    /// Catégorie claire (Généralistes, Info, Sport…).
     let group: String?
-    /// Fiche brute de chaque source : (nom de la source, données du catalogue).
-    let entries: [(source: String, raw: [String: Any])]
+    /// Pays (« fr », « uk »… ; vide : non indiqué).
+    let country: String
+    /// Numéro (TNT pour les chaînes françaises).
+    var number: Int = 0
+    /// Fiche brute de chaque source.
+    let entries: [Entry]
+
+    var vip: Bool { entries.contains { $0.raw["vipPlayback"] as? Bool == true } }
 
     static func == (lhs: LiveChannel, rhs: LiveChannel) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
-
-    /// Clé de regroupement : « TF1 HD », « tf1 » et « TF1 (FHD) » donnent « tf1 ».
-    static func key(_ name: String) -> String {
-        var text = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "fr_FR")).lowercased()
-        text = text.replacingOccurrences(of: "\\[[^\\]]*\\]|\\([^)]*\\)", with: " ", options: .regularExpression)
-        text = text.replacingOccurrences(of: "\\b(uhd|fhd|hd|sd|4k|hevc|h265|backup|vip|fr|france|live)\\b", with: " ", options: .regularExpression)
-        text = text.replacingOccurrences(of: "[^a-z0-9+]", with: "", options: .regularExpression)
-        return text.isEmpty ? name.lowercased() : text
-    }
 }
 
-/// Catalogue d'une source, préparé hors du fil principal (clés de regroupement calculées).
+/// Catalogue d'une source, préparé hors du fil principal (noms, pays et clés calculés).
 struct Catalog: @unchecked Sendable {
     struct Entry {
         let key: String
         let name: String
         let logo: String?
         let group: String?
+        let country: String
         let raw: [String: Any]
     }
     let source: String
+    let sourceId: String
     let entries: [Entry]
+    let vip: [String: Any]?
+
+    /// Chaînes lisibles d'une source (les matchs du jour sont des évènements, pas des chaînes).
+    static func prepare(_ list: [[String: Any]], sports: Bool) -> [Entry] {
+        list.compactMap { raw in
+            guard let name = raw["name"] as? String, !name.isEmpty, raw["isEvent"] as? Bool != true else { return nil }
+            let playable = (raw["streamUrl"] as? String).map { !$0.isEmpty } == true || raw["resolverUrl"] != nil
+                || raw["embedUrl"] != nil || raw["externalUrl"] != nil || raw["vipFallbackUrl"] != nil
+            guard playable else { return nil }
+            let match = (raw["homeName"] != nil && raw["awayName"] != nil) || name.range(of: "\\s(?:vs\\.?|v\\.?|contre)\\s", options: [.regularExpression, .caseInsensitive]) != nil
+            if match { return nil }
+            if sports && (raw["eventId"] != nil || raw["startTime"] != nil || name.range(of: "\\s[x×]\\s|\\b\\d{1,2}[:h]\\d{2}\\b", options: .regularExpression) != nil) { return nil }
+            let country = ChannelNaming.country(raw)
+            return Entry(key: ChannelNaming.key(name, country: country), name: name, logo: raw["logo"] as? String,
+                         group: raw["group"] as? String, country: country, raw: raw)
+        }
+    }
+
+    struct Merged: @unchecked Sendable {
+        var channels: [LiveChannel]
+        var countries: [String: Int]
+        var categories: [String: [String]]
+    }
+
+    /// Chaînes de toutes les sources réunies, nom le plus soigné, catégorie, numéros TNT.
+    static func merge(_ catalogs: [Catalog]) -> Merged {
+        final class Builder {
+            var names: [String] = []
+            var logo: String?
+            var country: String
+            var groups: [String: Int] = [:]
+            var entries: [LiveChannel.Entry] = []
+            init(country: String) { self.country = country }
+        }
+        var byKey: [String: Builder] = [:]
+        var order: [String] = []
+        for catalog in catalogs {
+            for entry in catalog.entries {
+                let builder: Builder
+                if let existing = byKey[entry.key] { builder = existing } else {
+                    builder = Builder(country: entry.country)
+                    byKey[entry.key] = builder
+                    order.append(entry.key)
+                }
+                if builder.country.isEmpty { builder.country = entry.country }
+                if builder.logo == nil { builder.logo = entry.logo }
+                if let group = entry.group, !group.isEmpty { builder.groups[group, default: 0] += 1 }
+                builder.names.append(entry.name)
+                builder.entries.append((catalog.source, catalog.sourceId, entry.raw))
+            }
+        }
+        var channels: [LiveChannel] = order.compactMap { key in
+            guard let builder = byKey[key] else { return nil }
+            let digits = key.filter(\.isNumber)
+            var name: String
+            if !builder.country.isEmpty && builder.country != "fr" {
+                name = ChannelNaming.cleanName(builder.names[0])
+                if builder.country.count == 2, name.range(of: "\\s[A-Z]{2,3}$", options: .regularExpression) == nil { name += " " + builder.country.uppercased() }
+            } else {
+                name = ChannelNaming.displayName(builder.names, keyDigits: digits)
+            }
+            let groups = builder.groups.sorted { $0.value > $1.value }.map(\.key)
+            return LiveChannel(id: key, name: name, logo: builder.logo, group: ChannelNaming.category(name: name, groups: groups),
+                               country: builder.country, entries: builder.entries)
+        }
+        let sortKeys = Dictionary(uniqueKeysWithValues: channels.map { ($0.id, ChannelNaming.normalize($0.name)) })
+        channels.sort { (sortKeys[$0.id] ?? "") < (sortKeys[$1.id] ?? "") }
+        // Numéros : TNT pour les chaînes françaises (1 TF1, 2 France 2…), puis 30, 31…
+        var used = Set<Int>()
+        var next = 30
+        for index in channels.indices where channels[index].country == "fr" || channels[index].country.isEmpty {
+            let key = channels[index].id
+            if let number = ChannelNaming.tntNumbers[key], !used.contains(number) {
+                channels[index].number = number
+                used.insert(number)
+            }
+        }
+        for index in channels.indices where (channels[index].country == "fr" || channels[index].country.isEmpty) && channels[index].number == 0 {
+            channels[index].number = next
+            next += 1
+        }
+        var countries: [String: Int] = [:]
+        var categories: [String: Set<String>] = [:]
+        for channel in channels {
+            let code = channel.country.isEmpty ? "?" : channel.country
+            countries[code, default: 0] += 1
+            if let group = channel.group {
+                categories[code, default: []].insert(group)
+                categories["", default: []].insert(group)
+            }
+        }
+        let ordered = categories.mapValues { set in ChannelNaming.categoryOrder.filter { set.contains($0) } }
+        return Merged(channels: channels, countries: countries, categories: ordered)
+    }
 }
 
-/// Catalogues TV du serveur Noctra, favoris et chaînes récentes (gardés sur l'iPhone).
+/// Catalogues TV du serveur Noctra, favoris, chaînes récentes, pays choisi, accès VIP.
 @MainActor
 @Observable
 final class LiveStore {
@@ -53,9 +149,26 @@ final class LiveStore {
     private(set) var failed = false
     private(set) var favorites: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "noctra.tv.favorites") ?? [])
     private(set) var recents: [String] = UserDefaults.standard.stringArray(forKey: "noctra.tv.recents") ?? []
-    /// Catégories les plus fournies, calculées une fois par chargement.
-    private(set) var categories: [String] = []
+    /// Chaînes par pays (« ? » : pays non indiqué) et catégories présentes par pays.
+    private(set) var countries: [String: Int] = [:]
+    private(set) var categoriesByCountry: [String: [String]] = [:]
+    /// Accès VIP du serveur Noctra : LiveWatch Premium, clés Movix et Northlive.
+    private(set) var liveWatchVip = false
+    private(set) var liveWatchConfigured = false
+    private(set) var providerKeys: [String: Bool] = [:]
+    /// Pays affiché : France par défaut, les autres au choix.
+    var country: String = UserDefaults.standard.string(forKey: "noctra.tv.country") ?? "fr" {
+        didSet { UserDefaults.standard.set(country, forKey: "noctra.tv.country") }
+    }
+    @ObservationIgnored private var sections: [String: String] = [:]
     @ObservationIgnored private var loadedAt = Date.distantPast
+
+    var categories: [String] { categoriesByCountry[country == "" ? "" : country] ?? [] }
+
+    /// Pays proposés : France, tous, puis les autres par nombre de chaînes.
+    var countryChoices: [String] {
+        ["fr", ""] + countries.filter { $0.key != "fr" && $0.key != "?" }.sorted { $0.value > $1.value }.map(\.key) + (countries["?"] != nil ? ["?"] : [])
+    }
 
     func loadSources(_ session: Session) async {
         guard let json = try? await session.noctraJSON("/api/tv/sources") as? [String: Any],
@@ -63,59 +176,77 @@ final class LiveStore {
         failed = false
         sources = list.compactMap { entry in
             guard let id = entry["id"] as? String, (entry["enabled"] as? Bool) != false else { return nil }
+            sections[id] = entry["section"] as? String
             return TVSourceRoute(id: id, name: (entry["name"] as? String) ?? id, ref: nil)
         }
     }
 
-    /// Toutes les chaînes : catalogues chargés 6 à la fois, réunis par nom.
+    /// Accès VIP actifs sur le serveur (comme sur la version web).
+    func loadAccess(_ session: Session) async {
+        if let status = try? await session.noctraJSON("/api/tv/livewatch/session", timeout: 15) as? [String: Any] {
+            liveWatchConfigured = status["configured"] as? Bool == true
+            liveWatchVip = status["active"] as? Bool == true && status["isVip"] as? Bool != false
+        }
+        if session.isAdmin, let keys = try? await session.noctraJSON("/api/tv/provider-keys", timeout: 15) as? [String: Any] {
+            providerKeys = keys.compactMapValues { $0 as? Bool }
+        }
+    }
+
+    /// Toutes les chaînes : catalogues chargés 6 à la fois (bouquets compris), réunis par nom et par pays.
     func loadAll(_ session: Session, force: Bool = false) async {
         guard !loading, force || channels.isEmpty || Date().timeIntervalSince(loadedAt) > 1800 else { return }
         loading = true
         defer { loading = false }
         if sources.isEmpty { await session.establishNoctraSession(); await loadSources(session) }
+        Task { await loadAccess(session) }
         loadedSources = 0
-        var merged: [String: (name: String, logo: String?, group: String?, entries: [(source: String, raw: [String: Any])])] = [:]
-        var order: [String] = []
-        var pending = sources.makeIterator()
-        let fetch: @Sendable (TVSourceRoute) async -> Catalog = { source in
-            let path = "/api/tv/catalog?source=" + (source.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? source.id)
+        var catalogs: [Catalog] = []
+        var pending: [(TVSourceRoute, String?)] = sources.map { ($0, nil) }
+        let sections = self.sections
+        let fetch: @Sendable (TVSourceRoute, String?) async -> (Catalog, [String]) = { source, ref in
+            let path = ref.map { "/api/tv/catalog?ref=" + ($0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0) }
+                ?? "/api/tv/catalog?source=" + (source.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? source.id)
             let json = try? await session.noctraJSON(path, timeout: 45) as? [String: Any]
             let list = (json?["channels"] as? [[String: Any]]) ?? []
-            // Tâche enfant : expressions régulières des noms hors du fil principal.
-            let entries: [Catalog.Entry] = list.compactMap { entry in
-                guard let name = entry["name"] as? String, !name.isEmpty, (entry["isEvent"] as? Bool) != true else { return nil }
-                return Catalog.Entry(key: LiveChannel.key(name), name: name, logo: entry["logo"] as? String, group: entry["group"] as? String, raw: entry)
-            }
-            return Catalog(source: source.name, entries: entries)
+            // Tâche enfant : noms, pays et clés calculés hors du fil principal.
+            let entries = Catalog.prepare(list, sports: sections[source.id] == "sports")
+            let groups = ref == nil ? ((json?["groups"] as? [[String: Any]]) ?? []).compactMap { $0["ref"] as? String }.prefix(60).map { $0 } : []
+            return (Catalog(source: source.name, sourceId: source.id, entries: entries, vip: json?["liveWatchVip"] as? [String: Any]), groups)
         }
-        await withTaskGroup(of: Catalog.self) { group in
-            for _ in 0..<6 {
-                guard let source = pending.next() else { break }
-                group.addTask { await fetch(source) }
+        await withTaskGroup(of: (TVSourceRoute, Catalog, [String]).self) { group in
+            func launch() {
+                guard !pending.isEmpty else { return }
+                let (source, ref) = pending.removeFirst()
+                group.addTask { let (catalog, refs) = await fetch(source, ref); return (source, catalog, refs) }
             }
-            for await catalog in group {
-                let sourceName = catalog.source
-                for entry in catalog.entries {
-                    if merged[entry.key] == nil {
-                        merged[entry.key] = (entry.name, entry.logo, entry.group, [])
-                        order.append(entry.key)
-                    }
-                    if merged[entry.key]?.logo == nil, let logo = entry.logo { merged[entry.key]?.logo = logo }
-                    merged[entry.key]?.entries.append((sourceName, entry.raw))
-                }
+            for _ in 0..<6 { launch() }
+            var merges = 0
+            for await (source, catalog, refs) in group {
+                catalogs.append(catalog)
+                if let vip = catalog.vip, vip["active"] as? Bool == true { liveWatchVip = true }
+                // Source en bouquets : les chaînes de chaque bouquet.
+                for ref in refs { pending.append((source, ref)) }
                 loadedSources += 1
-                if let source = pending.next() { group.addTask { await fetch(source) } }
+                launch()
+                // Liste affichée au fil du chargement (réunion hors du fil principal).
+                merges += 1
+                if merges % 4 == 0 || channels.isEmpty {
+                    let snapshot = catalogs
+                    let merged = await Task.detached(priority: .userInitiated) { Catalog.merge(snapshot) }.value
+                    apply(merged)
+                }
             }
         }
-        let list: [LiveChannel] = order.compactMap { key in
-            guard let value = merged[key] else { return nil }
-            return LiveChannel(id: key, name: value.name, logo: value.logo, group: value.group, entries: value.entries)
-        }
-        var counts: [String: Int] = [:]
-        for channel in list { if let group = channel.group, !group.isEmpty { counts[group, default: 0] += 1 } }
-        categories = counts.sorted { $0.value > $1.value }.prefix(14).map(\.key)
-        channels = list
+        let snapshot = catalogs
+        let merged = await Task.detached(priority: .userInitiated) { Catalog.merge(snapshot) }.value
+        apply(merged)
         loadedAt = Date()
+    }
+
+    private func apply(_ merged: Catalog.Merged) {
+        channels = merged.channels
+        countries = merged.countries
+        categoriesByCountry = merged.categories
     }
 
     func toggleFavorite(_ channel: LiveChannel) {
@@ -141,18 +272,20 @@ struct WebPlayerRequest: Identifiable {
     let mode: Mode
 }
 
+/// Lancement d'une chaîne : serveurs de toutes les sources classés, testés,
+/// meilleur serveur lancé tout seul ; les suivants prennent le relais en cas d'échec.
 @MainActor
 @Observable
 final class LiveLauncher {
     static let shared = LiveLauncher()
     var webPlayer: WebPlayerRequest?
     var problem: String?
+    var pick: LivePick?
     private(set) var opening: String?
 
-    private struct Option {
-        let url: URL
-        let headers: [String: String]
-        let mpegts: Bool
+    /// Fenêtre des serveurs à chaque lancement (sinon : meilleur serveur directement).
+    var showPicker: Bool = UserDefaults.standard.object(forKey: "noctra.tv.picker") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showPicker, forKey: "noctra.tv.picker") }
     }
 
     func open(_ channel: LiveChannel, session: Session) async {
@@ -160,62 +293,136 @@ final class LiveLauncher {
         opening = channel.id
         defer { opening = nil }
         LiveStore.shared.noteRecent(channel)
-        await session.establishNoctraSession()
         PlaybackManager.shared.liveSession = session
+        let pick = LivePick(channel: channel)
+        if showPicker { self.pick = pick }
 
-        var native: [Option] = []
-        var pages: [URL] = []
-        for entry in channel.entries.prefix(8) {
-            let found = await streams(for: entry.raw, session: session, depth: 0)
-            native.append(contentsOf: found)
-            for key in ["embedUrl", "externalUrl", "vipFallbackUrl", "url"] {
-                if let raw = entry.raw[key] as? String, let url = session.noctraURL(raw), !pages.contains(url) { pages.append(url) }
+        // Serveurs de toutes les sources ; les serveurs automatiques (VIP compris)
+        // sont demandés tout de suite, 4 s au plus chacun.
+        let initial = LiveServerFactory.servers(for: channel, session: session)
+        var expanded: [LiveServer] = []
+        await withTaskGroup(of: (Int, [LiveServer]).self) { group in
+            for (index, server) in initial.enumerated() {
+                group.addTask {
+                    guard server.kind == .resolve else { return (index, [server]) }
+                    let found = await LiveServerFactory.resolve(server, session: session, timeout: 4)
+                    return (index, found.isEmpty ? [server] : found)
+                }
             }
+            var parts: [Int: [LiveServer]] = [:]
+            for await (index, list) in group { parts[index] = list }
+            expanded = initial.indices.flatMap { parts[$0] ?? [] }
         }
-        // Flux HLS d'abord (lecteur d'Apple), MPEG-TS bruts ensuite (lecteur web).
-        let hls = native.filter { !$0.mpegts }
-        let ts = native.filter { $0.mpegts }
-        let fallback: () -> Void = { [weak self] in
-            guard let self else { return }
-            if let first = ts.first {
-                self.webPlayer = WebPlayerRequest(title: channel.name, mode: .mpegts(first.url))
-            } else if let page = pages.first {
-                self.webPlayer = WebPlayerRequest(title: channel.name, mode: .page(page))
-            } else {
-                self.problem = "Aucun serveur de « \(channel.name) » ne répond pour le moment."
+        pick.servers = LiveHealth.rank(expanded, channel: channel.id)
+        pick.preparing = false
+        guard !pick.servers.isEmpty else {
+            if self.pick === pick { self.pick = nil }
+            problem = "Aucun serveur ne propose « \(channel.name) » pour le moment."
+            return
+        }
+
+        // Tests des flux directs (6 à la fois) pendant le compte à rebours.
+        let probing = Task { await probe(pick, session: session) }
+        if showPicker {
+            while pick.countdown > 0 && pick.auto && !pick.launching && self.pick === pick {
+                try? await Task.sleep(for: .seconds(1))
+                pick.countdown -= 1
             }
-        }
-        if !hls.isEmpty {
-            PlaybackManager.shared.playLive(title: channel.name, streams: hls.map { option in
-                var headers = option.headers
-                if session.isNoctraOrigin(option.url), let token = session.token { headers["x-noctra-token"] = token }
-                return (option.url, headers)
-            }, exhausted: fallback)
+            guard pick.auto, !pick.launching, self.pick === pick else { return }
         } else {
-            fallback()
+            _ = await withTaskGroup(of: Void.self) { group in
+                group.addTask { await probing.value }
+                group.addTask { try? await Task.sleep(for: .seconds(4)) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
+        pick.servers = LiveHealth.rank(pick.servers, channel: channel.id)
+        if let best = pick.best { await launch(pick, server: best, session: session) }
+    }
+
+    private func probe(_ pick: LivePick, session: Session) async {
+        let targets = pick.servers.enumerated().filter { $0.element.kind == .native }.prefix(10).map { ($0.offset, $0.element) }
+        for (index, _) in targets { pick.servers[index].probe = .testing }
+        await withTaskGroup(of: (UUID, LiveServer.Probe, Double, Double).self) { group in
+            var queue = targets.makeIterator()
+            func next() {
+                guard let (_, server) = queue.next() else { return }
+                group.addTask {
+                    let (state, ms, margin) = await LiveServerFactory.probe(server, session: session)
+                    return (server.id, state, ms, margin)
+                }
+            }
+            for _ in 0..<6 { next() }
+            for await (id, state, ms, margin) in group {
+                if let index = pick.servers.firstIndex(where: { $0.id == id }) {
+                    pick.servers[index].probe = state
+                    pick.servers[index].probeMs = ms
+                    pick.servers[index].margin = margin
+                    if [.down, .noVideo, .stale].contains(state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
+                }
+                next()
+            }
         }
     }
 
-    /// Flux d'une chaîne : direct, ou serveurs proposés par le résolveur de Noctra.
-    private func streams(for entry: [String: Any], session: Session, depth: Int) async -> [Option] {
-        var found: [Option] = []
-        if let stream = entry["streamUrl"] as? String, !stream.isEmpty, let url = session.noctraURL(stream) {
-            let headers = (entry["headers"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
-            let transport = (entry["transport"] as? String)?.lowercased() ?? ""
-            let mpegts = transport == "mpegts" || (url.path.lowercased().hasSuffix(".ts") && !url.path.lowercased().contains("m3u8"))
-            found.append(Option(url: url, headers: headers, mpegts: mpegts))
-        }
-        guard depth < 2 else { return found }
-        let resolver = (entry["resolverUrl"] as? String) ?? (entry["resolveUrl"] as? String)
-        if found.isEmpty, let resolver {
-            if let result = try? await session.noctraJSON(resolver, timeout: 30) as? [String: Any] {
-                let options = (result["options"] as? [[String: Any]]) ?? ((result["streamUrl"] != nil || result["resolveUrl"] != nil) ? [result] : [])
-                for option in options.prefix(12) {
-                    found.append(contentsOf: await streams(for: option, session: session, depth: depth + 1))
-                }
+    /// Serveur choisi (ou meilleur) : lancé, les autres en relais.
+    func launch(_ pick: LivePick, server: LiveServer, session: Session) async {
+        guard !pick.launching else { return }
+        pick.launching = true
+        pick.auto = false
+        var chosen = server
+        var rest = LiveHealth.rank(pick.servers.filter { $0.id != server.id }, channel: pick.channel.id)
+        if chosen.kind == .resolve {
+            let found = LiveHealth.rank(await LiveServerFactory.resolve(chosen, session: session), channel: pick.channel.id)
+            guard let first = found.first else {
+                LiveHealth.record(chosen, channel: pick.channel.id, ok: false)
+                pick.servers.removeAll { $0.id == chosen.id }
+                pick.launching = false
+                if pick.servers.isEmpty { self.pick = nil; problem = "Aucun serveur de « \(pick.channel.name) » ne répond pour le moment." }
+                else { SyncPlayManager.shared.announce("Ce serveur ne répond pas : choisissez-en un autre.") }
+                return
             }
+            chosen = first
+            rest = Array(found.dropFirst()) + rest
         }
-        return found
+        if self.pick === pick { self.pick = nil }
+        start(chosen, fallbacks: rest, channel: pick.channel, session: session)
+    }
+
+    private func start(_ server: LiveServer, fallbacks: [LiveServer], channel: LiveChannel, session: Session) {
+        switch server.kind {
+        case .web:
+            if let url = server.pageURL { webPlayer = WebPlayerRequest(title: channel.name, mode: .page(url)) }
+        case .resolve:
+            Task {
+                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session), channel: channel.id)
+                if let first = found.first { start(first, fallbacks: Array(found.dropFirst()) + fallbacks, channel: channel, session: session) }
+                else if let next = fallbacks.first { start(next, fallbacks: Array(fallbacks.dropFirst()), channel: channel, session: session) }
+                else { problem = "Aucun serveur de « \(channel.name) » ne répond pour le moment." }
+            }
+        case .native where server.mpegts:
+            if let url = server.streamURL { webPlayer = WebPlayerRequest(title: channel.name, mode: .mpegts(url)) }
+        case .native:
+            // Flux directs lus par le lecteur d'Apple, l'un après l'autre ; puis les autres serveurs.
+            let natives = [server] + fallbacks.filter { $0.kind == .native && !$0.mpegts && ![.down, .noVideo].contains($0.probe) }
+            let others = fallbacks.filter { !($0.kind == .native && !$0.mpegts) }
+            let channelId = channel.id
+            PlaybackManager.shared.playLive(title: channel.name, streams: natives.compactMap { option in
+                guard let url = option.streamURL else { return nil }
+                var headers = option.headers
+                if session.isNoctraOrigin(url), let token = session.token { headers["x-noctra-token"] = token }
+                return (url, headers)
+            }, exhausted: { [weak self] in
+                guard let self else { return }
+                if let next = others.first { self.start(next, fallbacks: Array(others.dropFirst()), channel: channel, session: session) }
+                else { self.problem = "Aucun serveur de « \(channel.name) » ne répond pour le moment." }
+            }, onResult: { index, ok in
+                if natives.indices.contains(index) { LiveHealth.record(natives[index], channel: channelId, ok: ok) }
+            }, onSmooth: { index, stalls, seconds in
+                if natives.indices.contains(index) { LiveHealth.recordSmooth(natives[index], channel: channelId, stalls: stalls, seconds: seconds) }
+            })
+        }
     }
 }
 
@@ -233,14 +440,18 @@ struct LiveTVHome: View {
 
     private var shown: [LiveChannel] {
         var list: [LiveChannel]
+        let term = query.trimmingCharacters(in: .whitespaces)
         switch tab {
-        case .all: list = store.channels
+        case .all:
+            // Pays choisi (France par défaut) ; la recherche couvre tous les pays.
+            let code = store.country
+            list = code.isEmpty || !term.isEmpty ? store.channels : store.channels.filter { ($0.country.isEmpty ? "?" : $0.country) == code }
+            if code == "fr" && term.isEmpty { list.sort { $0.number < $1.number } }
         case .favorites: list = store.channels.filter { store.favorites.contains($0.id) }
         case .recents: list = store.recents.compactMap { key in store.channels.first { $0.id == key } }
         case .sources: list = []
         }
         if let category { list = list.filter { $0.group == category } }
-        let term = query.trimmingCharacters(in: .whitespaces)
         if !term.isEmpty { list = list.filter { $0.name.localizedCaseInsensitiveContains(term) } }
         return list
     }
@@ -260,6 +471,8 @@ struct LiveTVHome: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 20)
+
+                    accessBar
 
                     if tab == .sources {
                         sourcesGrid
@@ -288,10 +501,49 @@ struct LiveTVHome: View {
         .background(AuroraBackground(palette: .tv))
         .navigationTitle("TV en direct")
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Chaîne")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { AccountButton() } }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { countryMenu }
+            ToolbarItem(placement: .topBarTrailing) { AccountButton() }
+        }
         .refreshable { await store.loadAll(session, force: true) }
         .task { await store.loadAll(session) }
         .sensoryFeedback(.selection, trigger: tab)
+        .sensoryFeedback(.selection, trigger: store.country)
+    }
+
+    /// Pays affichés : France d'abord, les autres au choix.
+    private var countryMenu: some View {
+        Menu {
+            Picker("Pays", selection: Binding(get: { store.country }, set: { value in withAnimation(Theme.spring) { store.country = value; category = nil } })) {
+                ForEach(store.countryChoices, id: \.self) { code in
+                    Text("\(ChannelNaming.countryLabel(code)) · \(code.isEmpty ? store.channels.count : store.countries[code] ?? 0)").tag(code)
+                }
+            }
+        } label: {
+            Label(ChannelNaming.countryLabel(store.country), systemImage: "globe.europe.africa.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+
+    /// Accès VIP actifs sur le serveur Noctra (LiveWatch Premium, Movix, Northlive).
+    @ViewBuilder
+    private var accessBar: some View {
+        let access = [store.liveWatchVip ? "LiveWatch VIP Premium" : nil, store.providerKeys["movix"] == true ? "Movix" : nil,
+                      store.providerKeys["northlive"] == true ? "Northlive" : nil].compactMap { $0 }
+        if !access.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "crown.fill").foregroundStyle(Color(hex: 0xFCD34D))
+                Text("Accès VIP : " + access.joined(separator: " · ") + " · serveurs proposés en premier")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .glassEffect(.regular.tint(Color(hex: 0xF59E0B).opacity(0.25)), in: Capsule())
+            .padding(.horizontal, 20)
+        }
     }
 
     private var categoryChips: some View {
@@ -384,6 +636,17 @@ struct ChannelGrid: View {
                             if store.favorites.contains(channel.id) {
                                 Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow).padding(8)
                             }
+                        }
+                        .overlay(alignment: .topLeading) {
+                            HStack(spacing: 4) {
+                                if channel.number > 0 && store.country == "fr" {
+                                    Text("\(channel.number)").font(.caption2.weight(.heavy).monospacedDigit()).foregroundStyle(Theme.teal)
+                                }
+                                if channel.vip {
+                                    Image(systemName: "crown.fill").font(.system(size: 9)).foregroundStyle(Color(hex: 0xFCD34D))
+                                }
+                            }
+                            .padding(8)
                         }
                         // Fond plein plutôt que du verre : des milliers de cases défilent sans
                         // flou en temps réel derrière chacune.
@@ -483,7 +746,9 @@ struct LiveChannelsView: View {
             var id = route.id + "|" + name
             if seen.contains(id) { id += "#\(index)" }
             seen.insert(id)
-            return LiveChannel(id: id, name: name, logo: entry["logo"] as? String, group: entry["group"] as? String, entries: [(route.name, entry)])
+            let sourceId = route.id.components(separatedBy: "|").first ?? route.id
+            return LiveChannel(id: id, name: name, logo: entry["logo"] as? String, group: entry["group"] as? String,
+                               country: ChannelNaming.country(entry), entries: [(route.name, sourceId, entry)])
         }
         let groups = ((json["groups"] as? [[String: Any]]) ?? []).compactMap { group -> TVSourceRoute? in
             guard let ref = group["ref"] as? String else { return nil }

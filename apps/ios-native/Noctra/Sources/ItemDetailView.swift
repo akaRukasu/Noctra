@@ -92,25 +92,35 @@ struct ItemDetailView: View {
 
     // MARK: En-tête étirable (comme les fiches de l'app TV d'Apple)
 
+    /// Image de fond : l'image de l'épisode (16:9) ou le fond du film / de la série.
+    private var headerImage: URL? {
+        shown.type == "Episode" ? session.thumb(shown, width: 1600) : session.backdrop(shown, width: 1600)
+    }
+
     private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: session.backdrop(shown, width: 1600))
-                .frame(height: 460)
+        VStack(alignment: .leading, spacing: 0) {
+            // Image en 3:2 sur toute la largeur (peu rognée), qui s'étire quand on tire vers le bas.
+            Color.clear
+                .aspectRatio(3 / 2, contentMode: .fit)
+                .overlay { RemoteImage(url: headerImage) }
                 .clipped()
                 .visualEffect { content, proxy in
                     let pull = max(0, proxy.frame(in: .scrollView).minY)
                     return content
-                        .scaleEffect(1 + pull / 460, anchor: .bottom)
+                        .scaleEffect(1 + pull / 300, anchor: .bottom)
                         .offset(y: -pull / 2)
                 }
-            LinearGradient(colors: [.clear, Theme.background.opacity(0.4), Theme.background], startPoint: .center, endPoint: .bottom)
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, Theme.background.opacity(0.6), Theme.background], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 120)
+                }
             VStack(alignment: .leading, spacing: 8) {
                 if let logo = session.logo(shown) {
                     RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
-                        .frame(maxWidth: 260, maxHeight: 90, alignment: .leading)
+                        .frame(maxWidth: 260, maxHeight: 84, alignment: .leading)
                 } else {
                     Text(shown.type == "Episode" ? (shown.seriesName ?? shown.title) : shown.title)
-                        .font(.display(34, .bold, relativeTo: .largeTitle))
+                        .font(.display(32, .bold, relativeTo: .largeTitle))
                         .kerning(-1)
                         .foregroundStyle(Theme.posterTitleGradient)
                         .lineLimit(3)
@@ -135,8 +145,18 @@ struct ItemDetailView: View {
                 }
             }
             .padding(.horizontal, 20)
+            .padding(.top, -44)
         }
-        .frame(height: 460)
+        .background(alignment: .top) {
+            // Halo de l'image derrière le titre et les boutons.
+            RemoteImage(url: headerImage)
+                .frame(height: 520)
+                .blur(radius: 50)
+                .opacity(0.35)
+                .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
+                .drawingGroup()
+                .allowsHitTesting(false)
+        }
     }
 
     // MARK: Lecture et pistes

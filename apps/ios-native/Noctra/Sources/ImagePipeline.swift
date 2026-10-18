@@ -35,14 +35,22 @@ final class ImagePipeline: @unchecked Sendable {
         let task: Task<UIImage?, Never> = lock.withLock {
             if let existing = running[url] { return existing }
             let created = Task.detached(priority: .userInitiated) { [session] () -> UIImage? in
-                let data: Data?
-                if url.isFileURL {
-                    data = try? Data(contentsOf: url, options: .mappedIfSafe)
-                } else {
-                    data = try? await session.data(from: url).0
+                // Deux essais : un serveur d'images occupé ne laisse plus de case vide.
+                for attempt in 0..<2 {
+                    if attempt > 0 { try? await Task.sleep(for: .milliseconds(700)) }
+                    let data: Data?
+                    if url.isFileURL {
+                        data = try? Data(contentsOf: url, options: .mappedIfSafe)
+                    } else if let (body, response) = try? await session.data(from: url),
+                              (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true {
+                        data = body
+                    } else {
+                        data = nil
+                    }
+                    if let data, let image = ImagePipeline.decode(data, maxPixels: maxPixels) ?? UIImage(data: data) { return image }
+                    if url.isFileURL { return nil }
                 }
-                guard let data else { return nil }
-                return ImagePipeline.decode(data, maxPixels: maxPixels)
+                return nil
             }
             running[url] = created
             return created

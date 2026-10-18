@@ -30,8 +30,14 @@ struct RemoteImage: View {
             }
             .clipped()
             .task(id: url) {
-                guard let url, ImagePipeline.shared.cached(url) == nil else { return }
-                guard let image = await ImagePipeline.shared.image(for: url), !Task.isCancelled else { return }
+                guard let url else { return }
+                // Image arrivée pendant que la carte était hors de l'écran : l'état
+                // est toujours mis à jour, pour que la vue se redessine avec elle.
+                if let hit = ImagePipeline.shared.cached(url) {
+                    if loaded?.url != url { loaded = (url, hit) }
+                    return
+                }
+                guard let image = await ImagePipeline.shared.image(for: url) else { return }
                 withAnimation(.easeOut(duration: 0.22)) { loaded = (url, image) }
             }
     }
@@ -83,11 +89,11 @@ struct PosterCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .auroraCard()
                     .zoomSource(id: item.id, in: zoom)
-                Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
+                Text(item.type == "Episode" || item.type == "Season" ? (item.seriesName ?? item.title) : item.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color(hex: 0xF3F0FF))
                     .lineLimit(1)
-                Text(item.type == "Episode" ? (item.episodeLabel ?? "") : (item.productionYear.map { String($0) } ?? " "))
+                Text(item.type == "Episode" ? (item.episodeLabel ?? "") : item.type == "Season" ? item.title : (item.productionYear.map { String($0) } ?? " "))
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
@@ -365,6 +371,13 @@ struct AccountSheet: View {
                     }
                 }
                 Section {
+                    Toggle("Choisir le serveur à chaque chaîne", isOn: Binding(get: { LiveLauncher.shared.showPicker }, set: { LiveLauncher.shared.showPicker = $0 }))
+                } header: {
+                    Text("TV en direct")
+                } footer: {
+                    Text("Les serveurs sont classés par fiabilité et testés ; le meilleur se lance tout seul après quelques secondes. Désactivé : il se lance directement.")
+                }
+                Section {
                     NavigationLink { OfflineLibraryView() } label: {
                         LabeledContent {
                             Text(AdminFormat.bytes(Double(OfflineStore.shared.usedBytes)))
@@ -383,7 +396,7 @@ struct AccountSheet: View {
                 }
                 if session.isAdmin {
                     Section {
-                        NavigationLink { AdminDashboardView() } label: {
+                        NavigationLink { AdminHomeView() } label: {
                             Label("Tableau de bord", systemImage: "gauge.with.dots.needle.67percent")
                         }
                         NavigationLink { UsersAdminView() } label: {
@@ -398,9 +411,6 @@ struct AccountSheet: View {
                             Task { await refreshLibraries() }
                         } label: {
                             Label("Actualiser les médiathèques", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        NavigationLink { FullDashboardView() } label: {
-                            Label("Tableau de bord complet", systemImage: "slider.horizontal.3")
                         }
                     } header: {
                         Text("Administration")

@@ -63,11 +63,13 @@ enum SubtitleSize: Int, CaseIterable, Identifiable {
     static var current: SubtitleSize { SubtitleSize(rawValue: UserDefaults.standard.integer(forKey: "noctra.subtitles.size")) ?? .medium }
 }
 
-/// Sous-titres affichés par l'appli au-dessus de la vidéo, sous les commandes
-/// du lecteur d'Apple : fonctionnent en lecture directe comme en flux HLS.
+/// Sous-titres affichés par l'appli au-dessus de la vidéo (lecture directe
+/// comme flux HLS). Le texte est posé sur la vue du lecteur d'Apple, au-dessus
+/// de tout, sans capter les gestes : il reste visible en plein écran.
 @MainActor
 final class SubtitleOverlay {
     private let label = UILabel()
+    private let status = UILabel()
     private var cues: [SubtitleCue] = []
     private var observer: Any?
     private weak var player: AVPlayer?
@@ -75,45 +77,77 @@ final class SubtitleOverlay {
 
     func attach(to controller: AVPlayerViewController, player: AVPlayer) {
         controller.loadViewIfNeeded()
-        guard let overlay = controller.contentOverlayView else { return }
+        guard let host = controller.view else { return }
         self.player = player
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.layer.shadowColor = UIColor.black.cgColor
-        label.layer.shadowOpacity = 1
-        label.layer.shadowRadius = 3
-        label.layer.shadowOffset = CGSize(width: 0, height: 1)
-        overlay.addSubview(label)
+        for view in [label, status] {
+            view.numberOfLines = 0
+            view.textAlignment = .center
+            view.isUserInteractionEnabled = false
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.layer.shadowColor = UIColor.black.cgColor
+            view.layer.shadowOpacity = 1
+            view.layer.shadowRadius = 3
+            view.layer.shadowOffset = CGSize(width: 0, height: 1)
+            host.addSubview(view)
+        }
+        status.font = .systemFont(ofSize: 13, weight: .semibold)
+        status.textColor = UIColor.white.withAlphaComponent(0.75)
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.safeAreaLayoutGuide.leadingAnchor, constant: 24),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -24),
-            label.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -28)
+            label.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: host.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: host.safeAreaLayoutGuide.trailingAnchor, constant: -28),
+            label.bottomAnchor.constraint(equalTo: host.safeAreaLayoutGuide.bottomAnchor, constant: -64),
+            status.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            status.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 58)
         ])
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] time in
             MainActor.assumeIsolated { self?.update(time.seconds) }
         }
     }
 
-    func load(_ url: URL, headers: [String: String]) async {
+    /// Fichier WebVTT : sur l'iPhone, ou préparé par le serveur (la première
+    /// fois, il extrait la piste du fichier vidéo : cela peut prendre une minute).
+    func load(_ url: URL, headers: [String: String], alternates: [URL] = []) async {
         if url.isFileURL {
             if let data = try? Data(contentsOf: url) { cues = WebVTT.parse(String(decoding: data, as: UTF8.self)) }
+            if cues.isEmpty { flash("Sous-titres illisibles") }
             return
         }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0) else { return }
-        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        cues = WebVTT.parse(text)
+        status.text = "Sous-titres en préparation…"
+        for candidate in [url] + alternates {
+            for attempt in 0..<2 {
+                var request = URLRequest(url: candidate)
+                request.timeoutInterval = attempt == 0 ? 240 : 120
+                for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+                guard let (data, response) = try? await URLSession.shared.data(for: request) else { continue }
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if code == 404 { break }
+                guard (200..<300).contains(code) else { continue }
+                let parsed = WebVTT.parse(String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self))
+                if !parsed.isEmpty {
+                    cues = parsed
+                    status.text = nil
+                    if let player { update(player.currentTime().seconds) }
+                    return
+                }
+            }
+        }
+        flash("Sous-titres indisponibles pour ce titre")
+    }
+
+    private func flash(_ text: String) {
+        status.text = text
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            self?.status.text = nil
+        }
     }
 
     func detach() {
         if let observer, let player { player.removeTimeObserver(observer) }
         observer = nil
         label.removeFromSuperview()
+        status.removeFromSuperview()
     }
 
     private func update(_ time: Double) {

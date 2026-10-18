@@ -33,7 +33,7 @@ struct HomeView: View {
                 } else if loading {
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
                         .fill(Theme.surface)
-                        .frame(height: 430)
+                        .frame(height: 390)
                         .overlay { ProgressView() }
                         .padding(.horizontal, 16)
                 } else if let failure {
@@ -48,12 +48,13 @@ struct HomeView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                ItemRow(title: "À suivre", items: nextUp, wide: true)
-                if !libraries.isEmpty { libraryBlock }
                 if !heroIsResume { ItemRow(title: "Reprendre", items: resume, wide: true) }
                 ForEach(latest, id: \.library.id) { entry in
                     ItemRow(title: "Derniers ajouts · \(entry.library.title)", items: entry.items)
                 }
+                // « À suivre » et les médiathèques ferment l'accueil.
+                ItemRow(title: "À suivre", items: nextUp, wide: true)
+                if !libraries.isEmpty { libraryBlock }
             }
             .padding(.bottom, 30)
         }
@@ -205,13 +206,20 @@ struct HomeView: View {
     }
 }
 
-/// Carrousel plein écran : pages magnétiques, parallaxe de l'image, bouton Liquid Glass.
+/// Carrousel : pages magnétiques. Chaque carte montre l'image entière en 16:9
+/// (rien n'est rogné), les informations dessous sur un fond tiré de la même
+/// image, et une légère profondeur de l'image pendant le glissement.
 struct HeroCarousel: View {
     @Environment(Session.self) private var session
     let items: [BaseItem]
     var resume = false
     @State private var current: String?
     @State private var starting: String?
+    @State private var width: CGFloat = 390
+
+    private var cardWidth: CGFloat { min(width - 32, 760) }
+    private var imageHeight: CGFloat { cardWidth * 9 / 16 }
+    private var cardHeight: CGFloat { imageHeight + 188 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -233,7 +241,7 @@ struct HeroCarousel: View {
             // Le halo des cartes déborde du carrousel sans être coupé net.
             .scrollClipDisabled()
             .scrollPosition(id: $current)
-            .frame(height: 470)
+            .frame(height: cardHeight + 36)
 
             HStack(spacing: 7) {
                 ForEach(items) { item in
@@ -245,40 +253,51 @@ struct HeroCarousel: View {
             .animation(Theme.spring, value: current)
             .frame(maxWidth: .infinity)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .sensoryFeedback(.selection, trigger: current)
     }
 
+    private func artwork(_ item: BaseItem) -> URL? {
+        item.type == "Episode" ? session.thumb(item, width: 1280) : session.backdrop(item, width: 1280)
+    }
+
     private func page(_ item: BaseItem) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: session.backdrop(item, width: 1400))
-                .scrollTransition(axis: .horizontal) { content, phase in
-                    content.offset(x: phase.value * -90)
+        VStack(alignment: .leading, spacing: 0) {
+            // Image entière ; elle glisse un peu moins vite que la carte.
+            Color.clear
+                .frame(height: imageHeight)
+                .overlay {
+                    RemoteImage(url: artwork(item))
+                        .padding(.horizontal, -18)
+                        .scrollTransition(axis: .horizontal) { content, phase in
+                            content.offset(x: phase.value * -18)
+                        }
                 }
-                .frame(height: 430)
                 .clipped()
-            LinearGradient(colors: [.clear, .black.opacity(0.15), .black.opacity(0.88)], startPoint: .top, endPoint: .bottom)
-            VStack(alignment: .leading, spacing: 10) {
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, Color(hex: 0x0C0F1F).opacity(0.9)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 56)
+                }
+            VStack(alignment: .leading, spacing: 8) {
                 Eyebrow(text: resume ? "CONTINUER À REGARDER" : "À L’AFFICHE")
+                    .padding(.top, -20)
                 if let logo = session.logo(item) {
-                    RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
-                        .frame(maxWidth: 230, maxHeight: 80, alignment: .leading)
+                    RemoteImage(url: logo, contentMode: .fit, alignment: .leading)
+                        .frame(maxWidth: 220, maxHeight: 46, alignment: .leading)
                 } else {
                     Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
-                        .font(.display(30, .bold, relativeTo: .title))
-                        .kerning(-0.9)
+                        .font(.display(25, .bold, relativeTo: .title2))
+                        .kerning(-0.7)
                         .foregroundStyle(Theme.posterTitleGradient)
-                        .lineLimit(2)
-                        .shadow(color: .black.opacity(0.35), radius: 15, y: 6)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
                 Text(resume ? [item.episodeLabel, item.type == "Episode" ? item.name : nil, remaining(item)].compactMap { $0 }.joined(separator: " · ")
                      : [item.productionYear.map { String($0) }, item.genres?.prefix(2).joined(separator: " · ")].compactMap { $0 }.joined(separator: " · "))
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(2)
-                if resume, let progress = item.progress {
-                    ProgressLine(value: progress).frame(maxWidth: 220)
-                }
-                HStack(spacing: 10) {
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
+                HStack(spacing: 14) {
                     Button {
                         Task { await play(item) }
                     } label: {
@@ -289,18 +308,34 @@ struct HeroCarousel: View {
                     }
                     .auroraPrimary()
                     .disabled(item.isSeries && !resume)
+                    if resume, let progress = item.progress {
+                        ProgressLine(value: progress)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            .padding(22)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(.white)
-        .frame(height: 430)
-        .background(Color(hex: 0x0C0F1F))
+        .frame(width: cardWidth, height: cardHeight)
+        .background {
+            // Fond des informations : la même image, floutée et assombrie.
+            ZStack {
+                Color(hex: 0x0C0F1F)
+                RemoteImage(url: artwork(item))
+                    .scaleEffect(x: 1, y: -1)
+                    .blur(radius: 28)
+                    .opacity(0.55)
+                LinearGradient(colors: [Color(hex: 0x0C0F1F).opacity(0.35), Color(hex: 0x0C0F1F).opacity(0.85)], startPoint: .top, endPoint: .bottom)
+            }
+            .drawingGroup()
+        }
         // Lueur tournante seulement sur la page visible du carrousel.
         .auroraRing(cornerRadius: 30, orbit: item.id == (current ?? items.first?.id))
-        .padding(.horizontal, 16)
         .padding(.vertical, 18)
+        .frame(maxWidth: .infinity)
     }
 
     private func remaining(_ item: BaseItem) -> String? {
