@@ -167,13 +167,26 @@ enum LiveHealth {
             case .down, .noVideo, .stale: base += 8
             default: break
             }
-            let usable = health.verdict != "Échec récent" && health.verdict != "Coupures fréquentes" && ![.down, .noVideo, .stale].contains(server.probe)
+            let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
+            let trusted = health.verdict != "Échec récent" && health.verdict != "Coupures fréquentes"
+            let usable = trusted && !failing.contains(server.probe)
             if let remembered, server.label == remembered, usable { base -= 10 }
             return base
         }
-        return servers.enumerated().map { (value($0.element, $0.offset), $0.offset, $0.element) }
-            .sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
-            .map(\.2)
+        struct Scored {
+            let score: Double
+            let index: Int
+            let server: LiveServer
+        }
+        var scored: [Scored] = []
+        for (index, server) in servers.enumerated() {
+            scored.append(Scored(score: value(server, index), index: index, server: server))
+        }
+        scored.sort { left, right in
+            if left.score != right.score { return left.score < right.score }
+            return left.index < right.index
+        }
+        return scored.map { $0.server }
     }
 }
 
