@@ -5,17 +5,36 @@ import UIKit
 /// Lecteur vidéo natif d'iOS (AVPlayerViewController) : image dans l'image,
 /// AirPlay, commandes du système. Films : décision de Jellyfin selon les
 /// formats lus par l'iPhone (lecture directe, sinon flux HLS adapté).
+/// En groupe SyncPlay, la lecture suit les ordres du groupe.
 @MainActor
 final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     static let shared = PlaybackManager()
 
-    private var player: AVPlayer?
+    private(set) var player: AVPlayer?
     private weak var controller: AVPlayerViewController?
     private var progressObserver: Any?
+    private var syncObserver: Any?
+    private var rateObservation: NSKeyValueObservation?
     private var watchTask: Task<Void, Never>?
     private var report: Report?
     private var pictureInPicture = false
     private var closed = true
+    private var onExhausted: (() -> Void)?
+
+    /// Lecture pilotée par un groupe SyncPlay.
+    private(set) var syncMode = false
+    private var syncItemId: String?
+    /// Ordres du groupe en cours d'application : ce ne sont pas des gestes de l'utilisateur.
+    private var commandUntil = Date.distantPast
+    private var lastSampleTime: Double = 0
+    private var lastSampleDate = Date()
+
+    var isPlaying: Bool { !closed }
+    var currentItemId: String? { closed ? nil : report?.itemId }
+    var positionSeconds: Double {
+        let value = player?.currentTime().seconds ?? 0
+        return value.isFinite ? value : 0
+    }
 
     /// Suivi de lecture envoyé à Jellyfin (reprise, « vu »).
     struct Report {
@@ -28,7 +47,12 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
     // MARK: Films et épisodes
 
-    func play(_ item: BaseItem, session: Session, audioIndex: Int?, subtitleIndex: Int?, startSeconds: Double) async throws {
+    func play(_ item: BaseItem, session: Session, audioIndex: Int?, subtitleIndex: Int?, startSeconds: Double, sync: Bool = false) async throws {
+        // En groupe SyncPlay : le titre est proposé au groupe, qui lance la lecture pour tous.
+        if !sync, SyncPlayManager.shared.group != nil {
+            try await SyncPlayManager.shared.setQueue(item.id, startSeconds: startSeconds)
+            return
+        }
         var query: [String: String?] = [
             "userId": session.userId, "isPlayback": "true", "autoOpenLiveStream": "true",
             "maxStreamingBitrate": "120000000"
@@ -58,7 +82,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
         let report = Report(session: session, itemId: item.id, mediaSourceId: source.id, playSessionId: playSession, playMethod: method)
         let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
-        present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report)
+        present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync)
     }
 
     /// Profil de l'iPhone : formats lus directement par AVPlayer, sinon HLS en fMP4
@@ -93,21 +117,26 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     // MARK: TV en direct
 
     /// Serveurs d'une chaîne essayés l'un après l'autre : le suivant prend le
-    /// relais si le flux ne démarre pas en 15 s ou tombe en erreur.
-    func playLive(title: String, streams: [(URL, [String: String])]) {
-        guard !streams.isEmpty else { return }
-        present(urls: streams, title: title, startSeconds: 0, report: nil)
+    /// relais si le flux ne démarre pas en 12 s ou tombe en erreur. Tous en
+    /// échec : `exhausted` (lecteur web de secours, message).
+    func playLive(title: String, streams: [(URL, [String: String])], exhausted: (() -> Void)? = nil) {
+        guard !streams.isEmpty else { exhausted?(); return }
+        present(urls: streams, title: title, startSeconds: 0, report: nil, sync: false)
+        onExhausted = exhausted
     }
 
     // MARK: Présentation
 
-    private func present(urls: [(URL, [String: String])], title: String, startSeconds: Double, report: Report?) {
+    private func present(urls: [(URL, [String: String])], title: String, startSeconds: Double, report: Report?, sync: Bool) {
         close(notify: false)
         let player = AVPlayer()
         player.allowsExternalPlayback = true
         player.automaticallyWaitsToMinimizeStalling = true
         self.player = player
         self.report = report
+        syncMode = sync
+        syncItemId = report?.itemId
+        onExhausted = nil
         closed = false
 
         let controller = AVPlayerViewController()
@@ -120,11 +149,11 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
         load(urls, index: 0, title: title, startSeconds: startSeconds)
         Self.topViewController()?.present(controller, animated: true) {
-            player.play()
+            if !sync { player.play() }
         }
 
         if let report {
-            Task { await self.send("/Sessions/Playing", report, position: startSeconds, paused: false) }
+            Task { await self.send("/Sessions/Playing", report, position: startSeconds, paused: sync) }
             progressObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 10, preferredTimescale: 1), queue: .main) { [weak self] time in
                 MainActor.assumeIsolated {
                     guard let self, let report = self.report, let player = self.player else { return }
@@ -132,12 +161,17 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
                 }
             }
         }
+        if sync { observeSyncGestures(player) }
     }
 
     private func load(_ urls: [(URL, [String: String])], index: Int, title: String, startSeconds: Double) {
         guard index < urls.count, let player else { return }
         let (url, headers) = urls[index]
-        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": headers]
+        // Chaînes relayées par Noctra : cookie de session pour chaque segment.
+        let cookies = report?.session.noctraCookies(for: url) ?? liveSession?.noctraCookies(for: url) ?? []
+        if !cookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = cookies }
+        let asset = AVURLAsset(url: url, options: options)
         let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = report == nil ? 0 : 30
         let titleItem = AVMutableMetadataItem()
@@ -147,12 +181,14 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         item.externalMetadata = [titleItem]
         player.replaceCurrentItem(with: item)
         if startSeconds > 5 {
+            commandUntil = Date().addingTimeInterval(2)
             player.seek(to: CMTime(seconds: startSeconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         }
-        player.play()
+        if syncMode { player.pause() } else { player.play() }
 
-        // Surveillance : passage au serveur suivant (direct), fermeture si la fiche a disparu.
+        // Surveillance : serveur suivant (direct), prêt (SyncPlay), fermeture si le lecteur a disparu.
         watchTask?.cancel()
+        let isLive = report == nil
         watchTask = Task { [weak self] in
             let started = Date()
             var ready = false
@@ -161,11 +197,22 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, !self.closed else { return }
                 let status = item.status
-                if status == .readyToPlay { ready = true }
-                let failed = status == .failed || (!ready && Date().timeIntervalSince(started) > 15 && urls.count > index + 1)
-                if failed && index + 1 < urls.count {
-                    self.load(urls, index: index + 1, title: title, startSeconds: startSeconds)
-                    return
+                if status == .readyToPlay && !ready {
+                    ready = true
+                    if self.syncMode { SyncPlayManager.shared.ready(position: self.positionSeconds, playing: false) }
+                }
+                if isLive {
+                    let failed = status == .failed || (!ready && Date().timeIntervalSince(started) > 12)
+                    if failed {
+                        if index + 1 < urls.count {
+                            self.load(urls, index: index + 1, title: title, startSeconds: startSeconds)
+                        } else {
+                            let fallback = self.onExhausted
+                            self.close(notify: false)
+                            fallback?()
+                        }
+                        return
+                    }
                 }
                 // Lecteur fermé sans passer par le délégué (sécurité).
                 if self.controller?.viewIfLoaded?.window == nil && !self.pictureInPicture {
@@ -178,18 +225,24 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         }
     }
 
+    /// Session utilisée par la TV en direct (cookies Noctra).
+    weak var liveSession: Session?
+
     private func close(notify: Bool) {
         guard !closed else { return }
         closed = true
         watchTask?.cancel()
         watchTask = nil
         if let progressObserver, let player { player.removeTimeObserver(progressObserver) }
+        if let syncObserver, let player { player.removeTimeObserver(syncObserver) }
         progressObserver = nil
-        let position = player?.currentTime().seconds ?? 0
+        syncObserver = nil
+        rateObservation = nil
+        let position = positionSeconds
         player?.pause()
         if let report {
             Task {
-                await self.send("/Sessions/Playing/Stopped", report, position: position.isFinite ? position : 0, paused: false)
+                await self.send("/Sessions/Playing/Stopped", report, position: position, paused: false)
                 if report.playMethod != "DirectPlay" {
                     _ = try? await report.session.data("DELETE", "/Videos/ActiveEncodings", ["deviceId": report.session.deviceId, "playSessionId": report.playSessionId])
                 }
@@ -198,11 +251,15 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         }
         report = nil
         player = nil
+        syncMode = false
         if let controller, controller.presentingViewController != nil, !notify {
-            controller.dismiss(animated: false)
+            controller.dismiss(animated: true)
         }
         controller = nil
     }
+
+    /// Fermeture demandée (groupe SyncPlay, autre appareil).
+    func stop() { close(notify: false) }
 
     private func send(_ path: String, _ report: Report, position: Double, paused: Bool) async {
         let ticks = Int64(max(0, position.isFinite ? position : 0) * 10_000_000)
@@ -213,12 +270,71 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         _ = try? await report.session.data("POST", path, json: body)
     }
 
+    // MARK: Commandes (SyncPlay, autre appareil)
+
+    func commandPlay(at position: Double?) {
+        guard let player else { return }
+        commandUntil = Date().addingTimeInterval(1.5)
+        if let position { player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
+        player.play()
+    }
+
+    func commandPause(at position: Double?) {
+        guard let player else { return }
+        commandUntil = Date().addingTimeInterval(1.5)
+        player.pause()
+        if let position { player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
+    }
+
+    func commandSeek(to position: Double, completion: (() -> Void)? = nil) {
+        guard let player else { return }
+        commandUntil = Date().addingTimeInterval(2.5)
+        player.pause()
+        player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+            Task { @MainActor in completion?() }
+        }
+    }
+
+    func commandToggle() {
+        guard let player else { return }
+        if player.rate == 0 { commandPlay(at: nil) } else { commandPause(at: nil) }
+    }
+
+    /// Gestes de l'utilisateur dans le lecteur (pause, lecture, avance) : transmis au groupe.
+    private func observeSyncGestures(_ player: AVPlayer) {
+        rateObservation = player.observe(\.rate, options: [.new, .old]) { [weak self] _, change in
+            let old = change.oldValue ?? 0
+            let new = change.newValue ?? 0
+            Task { @MainActor in
+                guard let self, self.syncMode, Date() > self.commandUntil else { return }
+                if old == 0 && new > 0 { SyncPlayManager.shared.requestUnpause() }
+                if old > 0 && new == 0 { SyncPlayManager.shared.requestPause() }
+            }
+        }
+        lastSampleTime = 0
+        lastSampleDate = Date()
+        syncObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self, self.syncMode, let player = self.player else { return }
+                let now = Date()
+                let expected = self.lastSampleTime + (player.rate > 0 ? now.timeIntervalSince(self.lastSampleDate) : 0)
+                let current = time.seconds
+                if current.isFinite, self.lastSampleTime > 0, abs(current - expected) > 3, now > self.commandUntil {
+                    SyncPlayManager.shared.requestSeek(to: current)
+                    self.commandUntil = now.addingTimeInterval(2)
+                }
+                self.lastSampleTime = current.isFinite ? current : 0
+                self.lastSampleDate = now
+            }
+        }
+    }
+
     // MARK: AVPlayerViewControllerDelegate
 
     nonisolated func playerViewController(_ playerViewController: AVPlayerViewController,
                                           willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator) {
         MainActor.assumeIsolated {
-            coordinator.animate(alongsideTransition: nil) { context in
+            _ = coordinator.animate(alongsideTransition: nil) { context in
                 guard !context.isCancelled else { return }
                 MainActor.assumeIsolated {
                     if !self.pictureInPicture { self.close(notify: true) }

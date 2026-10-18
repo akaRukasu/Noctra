@@ -149,7 +149,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.0.0\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.1.0\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }
@@ -278,6 +278,52 @@ final class Session {
         guard let base = URL(string: noctraBase) else { return false }
         return url.host == base.host && url.scheme == base.scheme && url.port == base.port
     }
+
+    /// Requête Noctra avec corps JSON (demandes Jellyseerr…).
+    func noctraSend(_ method: String, _ path: String, json: Any?) async throws -> Any? {
+        guard let url = noctraURL(path) else { throw NoctraError.badAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 45
+        if let token { request.setValue(token, forHTTPHeaderField: "x-noctra-token") }
+        if let json {
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: json)
+        }
+        let result: (Data, URLResponse)
+        do { result = try await URLSession.shared.data(for: request) } catch { throw NoctraError.unreachable }
+        let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+        let body = try? JSONSerialization.jsonObject(with: result.0)
+        guard (200..<300).contains(status) else {
+            if let message = (body as? [String: Any])?["error"] as? String { throw NoctraMessage(message: message) }
+            throw NoctraError.http(status)
+        }
+        return body
+    }
+
+    /// Cookie de session Noctra (posé par /api/session) : les segments des
+    /// chaînes relayées par le serveur, demandés par le lecteur vidéo et les
+    /// lecteurs web, passent avec lui (pas d'en-tête personnalisé possible).
+    func establishNoctraSession() async {
+        guard hasNoctra || !noctraBase.isEmpty, token != nil else { return }
+        if let json = try? await noctraJSON("/api/session", timeout: 15) as? [String: Any] {
+            hasNoctra = true
+            UserDefaults.standard.set(true, forKey: "noctra.hasNoctra")
+            isAdmin = (json["isAdmin"] as? Bool) ?? false
+        }
+    }
+
+    private(set) var isAdmin = false
+
+    func noctraCookies(for url: URL) -> [HTTPCookie] {
+        guard isNoctraOrigin(url), let base = URL(string: noctraBase + "/") else { return [] }
+        return HTTPCookieStorage.shared.cookies(for: base) ?? []
+    }
+}
+
+struct NoctraMessage: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 // MARK: Trousseau

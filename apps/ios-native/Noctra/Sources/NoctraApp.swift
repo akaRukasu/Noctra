@@ -38,6 +38,12 @@ struct RootView: View {
             }
         }
         .animation(.spring(response: 0.55, dampingFraction: 0.86), value: session.isSignedIn)
+        .task(id: session.isSignedIn) {
+            guard session.isSignedIn else { SyncPlayManager.shared.stopAll(); return }
+            // Cookie de session Noctra (TV, images) et canal temps réel (SyncPlay, « Lire sur… »).
+            await session.establishNoctraSession()
+            SyncPlayManager.shared.start(session)
+        }
     }
 }
 
@@ -46,7 +52,9 @@ struct MainTabView: View {
     @Environment(Session.self) private var session
     @State private var selection: AppTab = .home
 
-    enum AppTab: Hashable { case home, libraries, live, search }
+    enum AppTab: Hashable { case home, libraries, live, discover, search }
+    private var launcher: LiveLauncher { .shared }
+    private var sync: SyncPlayManager { .shared }
 
     var body: some View {
         TabView(selection: $selection) {
@@ -57,7 +65,10 @@ struct MainTabView: View {
                 NoctraStack { LibrariesView() }
             }
             Tab("TV", systemImage: "dot.radiowaves.left.and.right", value: AppTab.live) {
-                NoctraStack { LiveSourcesView() }
+                NoctraStack { LiveTVHome() }
+            }
+            Tab("Découvrir", systemImage: "sparkles", value: AppTab.discover) {
+                NoctraStack { DiscoverHub() }
             }
             Tab("Recherche", systemImage: "magnifyingglass", value: AppTab.search, role: .search) {
                 NoctraStack { SearchView() }
@@ -65,6 +76,32 @@ struct MainTabView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .sensoryFeedback(.selection, trigger: selection)
+        // Chaîne lue par le lecteur web de secours (MPEG-TS, lecteur d'un site).
+        .fullScreenCover(item: Binding(get: { launcher.webPlayer }, set: { launcher.webPlayer = $0 })) { request in
+            WebLivePlayerView(request: request)
+        }
+        .alert("Chaîne indisponible", isPresented: Binding(get: { launcher.problem != nil }, set: { if !$0 { launcher.problem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(launcher.problem ?? "")
+        }
+        // Messages SyncPlay et des autres appareils, en haut de l'écran.
+        .overlay(alignment: .top) {
+            if let notice = sync.notice {
+                Text(notice)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .glassEffect(.regular, in: Capsule())
+                    .padding(.top, 6)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(3.5))
+                        withAnimation(Theme.spring) { sync.clearNotice() }
+                    }
+            }
+        }
+        .animation(Theme.spring, value: sync.notice)
     }
 }
 
@@ -85,6 +122,11 @@ struct NoctraStack<Content: View>: View {
                 }
                 .navigationDestination(for: TVSourceRoute.self) { route in
                     LiveChannelsView(route: route)
+                }
+                .navigationDestination(for: ItemRoute.self) { route in
+                    if let item = route.item {
+                        ItemDetailView(item: item)
+                    }
                 }
         }
         .environment(\.zoomNamespace, zoom)

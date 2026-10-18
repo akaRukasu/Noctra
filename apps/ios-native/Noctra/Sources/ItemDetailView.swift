@@ -18,6 +18,8 @@ struct ItemDetailView: View {
     @State private var playError: String?
     @State private var playTaps = 0
     @State private var showFullOverview = false
+    @State private var showCast = false
+    private var sync: SyncPlayManager { .shared }
 
     private var shown: BaseItem { detail ?? item }
 
@@ -63,6 +65,12 @@ struct ItemDetailView: View {
                     Image(systemName: played ? "checkmark.circle.fill" : "checkmark.circle")
                         .contentTransition(.symbolEffect(.replace))
                 }
+            }
+        }
+        .sheet(isPresented: $showCast) {
+            if let target = playTarget {
+                CastSheet(item: target, startSeconds: target.resumeSeconds)
+                    .presentationDetents([.medium, .large])
             }
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: playTaps)
@@ -167,7 +175,24 @@ struct ItemDetailView: View {
                         .buttonStyle(.glass)
                         .controlSize(.large)
                     }
+                    if target != nil {
+                        // Cast : AirPlay ou un autre appareil (Noctra TV, navigateur…).
+                        Button {
+                            showCast = true
+                        } label: {
+                            Image(systemName: "airplayvideo")
+                                .font(.headline)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.glass)
+                        .controlSize(.large)
+                    }
                 }
+            }
+            if let group = sync.group {
+                Label("SyncPlay · « \(group.name) » : la lecture démarre pour tout le groupe.", systemImage: "person.2.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.accent)
             }
             if !shown.isFolder {
                 trackMenus
