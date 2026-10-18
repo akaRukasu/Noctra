@@ -21,12 +21,14 @@ struct LoginView: View {
                 VStack(spacing: 28) {
                     Spacer(minLength: 60)
                     VStack(spacing: 10) {
-                        Image(systemName: "sparkles.tv.fill")
-                            .font(.system(size: 54, weight: .semibold))
-                            .foregroundStyle(LinearGradient(colors: [Theme.accent, Theme.violet], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .symbolEffect(.bounce, value: appeared)
+                        NoctraMark(size: 84)
+                            .scaleEffect(appeared ? 1 : 0.7)
                         Text("Noctra")
-                            .font(.system(size: 44, weight: .heavy, design: .rounded))
+                            .font(.display(46, .bold, relativeTo: .largeTitle))
+                            .kerning(-1.4)
+                            .foregroundStyle(LinearGradient(stops: [.init(color: .white, location: 0), .init(color: Color(hex: 0xF5F0FF), location: 0.4),
+                                                                    .init(color: Theme.lilac, location: 0.75), .init(color: Theme.cyan, location: 1)],
+                                                            startPoint: .leading, endPoint: .trailing))
                         Text("Films, séries et TV en direct")
                             .foregroundStyle(Theme.muted)
                     }
@@ -61,13 +63,16 @@ struct LoginView: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
                             }
-                            .buttonStyle(.glassProminent)
+                            .buttonStyle(.aurora)
                             .controlSize(.large)
                             .disabled(working || username.isEmpty)
                         }
                     }
                     .padding(20)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    .glassEffect(.regular.tint(Color(hex: 0x0C0E1C).opacity(0.5)), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .stroke(LinearGradient(colors: [Color(hex: 0xDDD6FE).opacity(0.6), .white.opacity(0.05), Theme.cyan.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+                    .shadow(color: Theme.deepViolet.opacity(0.55), radius: 40, y: 24)
                     .modifier(Shake(amount: CGFloat(failures)))
                     .padding(.horizontal, 20)
                     .frame(maxWidth: 520)
@@ -114,7 +119,10 @@ struct LoginView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .glassEffect(.regular.interactive(), in: Capsule())
+        .glassEffect(.regular.tint(Color(hex: 0x0C0E1C).opacity(0.6)).interactive(), in: Capsule())
+        .overlay(Capsule().stroke(Color(hex: 0xDDD6FE).opacity(self.field == field ? 0.65 : 0.20), lineWidth: 1))
+        .shadow(color: Theme.violet.opacity(self.field == field ? 0.55 : 0), radius: 14, y: 8)
+        .animation(Theme.spring, value: self.field)
     }
 
     private func signIn() async {

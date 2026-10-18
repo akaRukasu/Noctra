@@ -274,7 +274,7 @@ struct LiveTVHome: View {
                 .padding(.top, 6)
             }
         }
-        .background(AuroraBackground())
+        .background(AuroraBackground(palette: .tv))
         .navigationTitle("TV en direct")
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Chaîne")
         .toolbar { ToolbarItem(placement: .topBarTrailing) { AccountButton() } }
@@ -309,7 +309,8 @@ struct LiveTVHome: View {
                 .padding(.vertical, 9)
         }
         .buttonStyle(PressableStyle())
-        .glassEffect(selected ? .regular.tint(Theme.accent.opacity(0.6)).interactive() : .regular.interactive(), in: Capsule())
+        .glassEffect(selected ? .regular.tint(Theme.teal.opacity(0.5)).interactive() : .regular.interactive(), in: Capsule())
+        .overlay(Capsule().stroke(selected ? Theme.teal.opacity(0.55) : Color(hex: 0x99F6E4).opacity(0.12), lineWidth: 1))
     }
 
     private var sourcesGrid: some View {
@@ -361,7 +362,7 @@ struct ChannelGrid: View {
                                 } else {
                                     Text(String(channel.name.prefix(2)).uppercased())
                                         .font(.title2.weight(.heavy))
-                                        .foregroundStyle(Theme.accent)
+                                        .foregroundStyle(Theme.teal)
                                 }
                                 if launcher.opening == channel.id {
                                     ProgressView().padding(10).glassEffect(.regular, in: Circle())
@@ -373,7 +374,9 @@ struct ChannelGrid: View {
                                 Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow).padding(8)
                             }
                         }
-                        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .glassEffect(.regular.tint(Color(hex: 0x0A0E1C).opacity(0.5)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(LinearGradient(colors: [Theme.teal.opacity(0.35), .white.opacity(0.04), Theme.lilac.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
                         Text(channel.name)
                             .font(.caption.weight(.semibold))
                             .lineLimit(2)
@@ -418,7 +421,7 @@ struct LiveChannelsView: View {
         ScrollView {
             if !bouquets.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Bouquets").font(.title3.weight(.bold)).padding(.horizontal, 20)
+                    SectionTitle("Bouquets").padding(.horizontal, 20)
                     ScrollView(.horizontal) {
                         GlassEffectContainer(spacing: 8) {
                             HStack(spacing: 8) {
@@ -447,7 +450,7 @@ struct LiveChannelsView: View {
                 MessageView(icon: "tv.slash", text: "Aucune chaîne dans cette source.") { Task { await load() } }
             }
         }
-        .background(AuroraBackground())
+        .background(AuroraBackground(palette: .tv))
         .navigationTitle(route.name)
         .searchable(text: $query, prompt: "Chaîne")
         .task { if channels.isEmpty && bouquets.isEmpty { await load() } }

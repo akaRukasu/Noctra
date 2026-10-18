@@ -106,7 +106,9 @@ struct ItemDetailView: View {
                         .frame(maxWidth: 260, maxHeight: 90, alignment: .leading)
                 } else {
                     Text(shown.type == "Episode" ? (shown.seriesName ?? shown.title) : shown.title)
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .font(.display(34, .bold, relativeTo: .largeTitle))
+                        .kerning(-1)
+                        .foregroundStyle(Theme.posterTitleGradient)
                         .lineLimit(3)
                 }
                 if shown.type == "Episode" {
@@ -159,7 +161,7 @@ struct ItemDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.aurora)
                     .controlSize(.large)
                     .disabled(target == nil || starting)
 
@@ -172,8 +174,7 @@ struct ItemDetailView: View {
                                 .font(.headline)
                                 .padding(.vertical, 6)
                         }
-                        .buttonStyle(.glass)
-                        .controlSize(.large)
+                        .buttonStyle(.auroraGlass)
                     }
                     if target != nil {
                         // Cast : AirPlay ou un autre appareil (Noctra TV, navigateur…).
@@ -184,8 +185,7 @@ struct ItemDetailView: View {
                                 .font(.headline)
                                 .padding(.vertical, 6)
                         }
-                        .buttonStyle(.glass)
-                        .controlSize(.large)
+                        .buttonStyle(.auroraGlass)
                     }
                 }
             }
@@ -296,8 +296,7 @@ struct ItemDetailView: View {
 
     private func castRow(_ people: [Person]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Distribution")
-                .font(.title3.weight(.bold))
+            SectionTitle("Distribution")
                 .padding(.horizontal, 20)
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 14) {

@@ -17,7 +17,17 @@ assert.match(app, /role: \.search/, 'onglet de recherche d’iOS 26');
 assert.match(app, /\.navigationTransition\(\.zoom\(sourceID: item\.id, in: zoom\)\)/, 'transition zoom vers la fiche');
 
 const theme = await src('Theme');
-assert.match(theme, /MeshGradient\(/);
+// Identité visuelle du site (« Aurora 2 », public/noctra-aurora.css) : mêmes jetons, police Sora, logo.
+const aurora = await read('public/noctra-aurora.css');
+for (const [token, hex] of [['--na-bg', '05060d'], ['--na-lilac', 'c4b5fd'], ['--na-pink', 'f0abfc'], ['--na-cyan', '7dd3fc'], ['--na-teal', '5eead4'], ['--na-violet', 'a78bfa']]) {
+  assert.ok(aurora.includes(`${token}:#${hex}`), `site : ${token}`);
+  assert.ok(theme.toLowerCase().includes(`hex: 0x${hex}`), `appli iOS : ${token} (#${hex})`);
+}
+assert.match(theme, /struct NoctraMark: View/);
+assert.match(theme, /"NoctraSora-Bold"/);
+const plistNative = await read('apps/ios-native/Noctra/Info.plist');
+for (const weight of ['Regular', 'SemiBold', 'Bold', 'ExtraBold']) assert.ok(plistNative.includes(`<string>NoctraSora-${weight}.ttf</string>`), `police Sora ${weight}`);
+assert.match(await src('HomeView'), /Text\("VOTRE SALLE DE CINÉMA"\)/);
 assert.match(theme, /matchedTransitionSource\(id: id, in: namespace\)/);
 
 assert.match(await src('LoginView'), /GlassEffectContainer\(spacing: 14\)/);

@@ -24,8 +24,9 @@ struct ProgressLine: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.25))
-                Capsule().fill(Theme.accent).frame(width: max(4, proxy.size.width * value))
+                Capsule().fill(.white.opacity(0.22))
+                Capsule().fill(Theme.gradient).frame(width: max(4, proxy.size.width * value))
+                    .shadow(color: Theme.lilac.opacity(0.8), radius: 5)
             }
         }
         .frame(height: 4)
@@ -54,14 +55,17 @@ struct PosterCard: View {
                             Image(systemName: "checkmark")
                                 .font(.caption2.bold())
                                 .padding(6)
-                                .glassEffect(.regular.tint(Theme.accent.opacity(0.6)), in: Circle())
+                                .background(LinearGradient(colors: [Theme.deepViolet, Theme.fuchsia], startPoint: .topLeading, endPoint: .bottomTrailing), in: Circle())
+                                .shadow(color: Theme.deepViolet.opacity(0.7), radius: 6, y: 3)
                                 .padding(6)
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .auroraCard()
                     .zoomSource(id: item.id, in: zoom)
                 Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color(hex: 0xF3F0FF))
                     .lineLimit(1)
                 Text(item.type == "Episode" ? (item.episodeLabel ?? "") : (item.productionYear.map { String($0) } ?? " "))
                     .font(.caption)
@@ -93,9 +97,11 @@ struct WideCard: View {
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .auroraCard()
                     .zoomSource(id: item.id, in: zoom)
                 Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color(hex: 0xF3F0FF))
                     .lineLimit(1)
                 Text(item.type == "Episode" ? [item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.subtitleLine)
                     .font(.caption)
@@ -118,8 +124,7 @@ struct ItemRow: View {
     var body: some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text(title)
-                    .font(.title3.weight(.bold))
+                SectionTitle(title)
                     .padding(.horizontal, 20)
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
@@ -167,7 +172,7 @@ struct MessageView: View {
                 .foregroundStyle(Theme.muted)
             if let retry {
                 Button("Réessayer", action: retry)
-                    .buttonStyle(.glass)
+                    .buttonStyle(.auroraGlass)
             }
         }
         .padding(32)
@@ -187,8 +192,9 @@ struct AccountButton: View {
             Text(String((session.userName ?? "?").prefix(1)).uppercased())
                 .font(.headline)
                 .frame(width: 30, height: 30)
-                .background(LinearGradient(colors: [Theme.accent, Theme.violet], startPoint: .topLeading, endPoint: .bottomTrailing), in: Circle())
-                .foregroundStyle(.black)
+                .background(Theme.gradient, in: Circle())
+                .foregroundStyle(Theme.onAccent)
+                .shadow(color: Theme.violet.opacity(0.7), radius: 8)
         }
         .sheet(isPresented: $showing) {
             AccountSheet()

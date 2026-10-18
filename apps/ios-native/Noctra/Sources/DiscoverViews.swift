@@ -78,7 +78,7 @@ struct DiscoverHub: View {
             .transition(.opacity)
         }
         .animation(Theme.spring, value: section)
-        .background(AuroraBackground())
+        .background(AuroraBackground(palette: section == .requests ? .requests : section == .roulette ? .roulette : .main))
         .navigationTitle(section.rawValue)
         .toolbarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { AccountButton() } }
@@ -161,7 +161,7 @@ struct SeerrSheet: View {
                                 NavigationLink(value: ItemRoute(id: jellyfin)) {
                                     Label("Regarder", systemImage: "play.fill").frame(maxWidth: .infinity).padding(.vertical, 6)
                                 }
-                                .buttonStyle(.glassProminent)
+                                .buttonStyle(.aurora)
                             }
                             if (item.status ?? 0) < 5 {
                                 Button {
@@ -173,7 +173,7 @@ struct SeerrSheet: View {
                                     }
                                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                                 }
-                                .buttonStyle(.glass)
+                                .buttonStyle(.auroraGlass)
                                 .disabled(sending || requested || (item.status ?? 0) >= 2)
                             }
                         }
@@ -323,7 +323,7 @@ struct RequestsView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("Mes demandes").font(.title3.weight(.bold))
+                        SectionTitle("Mes demandes")
                         Spacer()
                         if let quota { Text(quota).font(.caption).foregroundStyle(Theme.muted) }
                     }
@@ -426,7 +426,7 @@ struct RouletteView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.aurora)
                 .controlSize(.large)
                 .disabled(rolling)
                 .padding(.horizontal, 20)
@@ -492,8 +492,8 @@ struct RouletteView: View {
                 RemoteImage(url: session.image(id, width: 500))
                     .frame(width: 200, height: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .shadow(color: Theme.accent.opacity(0.45), radius: 30)
-                Text(winner["title"] as? String ?? "").font(.title.weight(.heavy)).multilineTextAlignment(.center)
+                    .auroraRing(cornerRadius: 24, orbit: false)
+                Text(winner["title"] as? String ?? "").font(.display(28, .bold)).kerning(-0.8).foregroundStyle(Theme.posterTitleGradient).multilineTextAlignment(.center)
                 Text([(winner["year"] as? Int).map { String($0) }, (winner["rating"] as? Double).map { String(format: "★ %.1f", $0) }].compactMap { $0 }.joined(separator: " · "))
                     .foregroundStyle(Theme.muted)
                 if let overview = winner["overview"] as? String, !overview.isEmpty {
@@ -502,7 +502,7 @@ struct RouletteView: View {
                 NavigationLink(value: ItemRoute(id: id)) {
                     Label("Voir la fiche", systemImage: "play.fill").padding(.horizontal, 10).padding(.vertical, 6)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.aurora)
             }
             .padding(.horizontal, 24)
             .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -527,9 +527,9 @@ struct RouletteView: View {
             VStack(spacing: 12) {
                 Image(systemName: "dice")
                     .font(.system(size: 64, weight: .semibold))
-                    .foregroundStyle(LinearGradient(colors: [Theme.accent, Theme.violet], startPoint: .top, endPoint: .bottom))
+                    .foregroundStyle(Theme.gradient)
                     .symbolEffect(.wiggle, options: .repeat(.periodic(delay: 2)))
-                Text("Prêt pour le tirage ?").font(.title2.weight(.bold))
+                Text("Prêt pour le tirage ?").font(.display(24, .bold)).foregroundStyle(Theme.titleGradient)
                 Text(message ?? "Réglez vos envies puis lancez la roulette.").foregroundStyle(Theme.muted).multilineTextAlignment(.center)
             }
             .padding(.vertical, 40)

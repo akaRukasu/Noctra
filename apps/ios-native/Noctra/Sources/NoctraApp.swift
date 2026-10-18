@@ -12,6 +12,8 @@ struct NoctraApp: App {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         // Affiches et fonds gardés en cache : défilement fluide, peu de données.
         URLCache.shared = URLCache(memoryCapacity: 96 << 20, diskCapacity: 768 << 20)
+        // Titres des barres de navigation en Sora, comme les titres du site.
+        NoctraFont.applyToNavigationBars()
     }
 
     var body: some Scene {
@@ -92,7 +94,9 @@ struct MainTabView: View {
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 12)
-                    .glassEffect(.regular, in: Capsule())
+                    .glassEffect(.regular.tint(Color(hex: 0x0E0E20).opacity(0.6)), in: Capsule())
+                    .overlay(Capsule().stroke(Theme.gradient, lineWidth: 1))
+                    .shadow(color: Theme.deepViolet.opacity(0.8), radius: 20, y: 10)
                     .padding(.top, 6)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .task(id: notice) {

@@ -108,7 +108,7 @@ struct LibraryGridView: View {
             .padding(.top, 8)
             if loading { LoadingView() }
         }
-        .background(Theme.background)
+        .background(AuroraBackground())
         .navigationTitle(library.name)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -168,7 +168,7 @@ struct SearchView: View {
             }
             .padding(.horizontal, 16)
         }
-        .background(Theme.background)
+        .background(AuroraBackground())
         .navigationTitle("Recherche")
         .searchable(text: $query, prompt: "Rechercher dans Noctra")
         .task(id: query) {

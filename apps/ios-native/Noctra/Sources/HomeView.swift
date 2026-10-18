@@ -72,18 +72,19 @@ struct HomeView: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // Même en-tête que l'accueil du site : œil en dégradé, titre Sora en dégradé.
             Text("VOTRE SALLE DE CINÉMA")
-                .font(.caption.weight(.heavy))
-                .tracking(2)
-                .foregroundStyle(Theme.accent)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text("À l’affiche chez vous")
-                Text(".").foregroundStyle(Theme.accent)
-            }
-            .font(.system(size: 32, weight: .heavy, design: .rounded))
+                .font(.caption.weight(.bold))
+                .tracking(2.6)
+                .foregroundStyle(Theme.gradient)
+            (Text("À l’affiche chez vous").foregroundStyle(Theme.titleGradient) + Text(".").foregroundStyle(Theme.gradient))
+                .font(.display(34, .bold, relativeTo: .largeTitle))
+                .kerning(-1.4)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
             Text("Votre collection. À votre rythme.")
                 .font(.subheadline)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(Color(hex: 0xB8B5D6))
         }
         .padding(.horizontal, 20)
         .padding(.top, 6)
@@ -91,8 +92,7 @@ struct HomeView: View {
 
     private var libraryBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Médiathèques")
-                .font(.title3.weight(.bold))
+            SectionTitle("Médiathèques")
                 .padding(.horizontal, 20)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(libraries.prefix(4)) { library in
@@ -113,6 +113,7 @@ struct HomeView: View {
                         }
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .auroraCard(cornerRadius: 22)
                     }
                     .buttonStyle(PressableStyle(scale: 0.96))
                 }
@@ -205,11 +206,6 @@ struct HeroCarousel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if resume {
-                Text("Continuer à regarder")
-                    .font(.title3.weight(.bold))
-                    .padding(.horizontal, 20)
-            }
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 0) {
                     ForEach(items) { item in
@@ -226,7 +222,7 @@ struct HeroCarousel: View {
             .scrollTargetBehavior(.paging)
             .scrollIndicators(.hidden)
             .scrollPosition(id: $current)
-            .frame(height: 430)
+            .frame(height: 470)
 
             HStack(spacing: 7) {
                 ForEach(items) { item in
@@ -251,13 +247,17 @@ struct HeroCarousel: View {
                 .clipped()
             LinearGradient(colors: [.clear, .black.opacity(0.15), .black.opacity(0.88)], startPoint: .top, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 10) {
+                Eyebrow(text: resume ? "CONTINUER À REGARDER" : "À L’AFFICHE")
                 if let logo = session.logo(item) {
                     RemoteImage(url: logo, contentMode: .fit)
                         .frame(maxWidth: 230, maxHeight: 80, alignment: .leading)
                 } else {
                     Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
-                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                        .font(.display(30, .bold, relativeTo: .title))
+                        .kerning(-0.9)
+                        .foregroundStyle(Theme.posterTitleGradient)
                         .lineLimit(2)
+                        .shadow(color: .black.opacity(0.35), radius: 15, y: 6)
                 }
                 Text(resume ? [item.episodeLabel, item.type == "Episode" ? item.name : nil, remaining(item)].compactMap { $0 }.joined(separator: " · ")
                      : [item.productionYear.map { String($0) }, item.genres?.prefix(2).joined(separator: " · ")].compactMap { $0 }.joined(separator: " · "))
@@ -275,12 +275,8 @@ struct HeroCarousel: View {
                             if starting == item.id { ProgressView() } else { Image(systemName: item.isSeries ? "info.circle.fill" : "play.fill") }
                             Text(resume ? "Reprendre" : item.isSeries ? "Voir" : "Lecture")
                         }
-                        .font(.headline)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 11)
                     }
-                    .buttonStyle(PressableStyle())
-                    .glassEffect(.regular.tint(Theme.accent.opacity(0.55)).interactive(), in: Capsule())
+                    .buttonStyle(.aurora)
                     .disabled(item.isSeries && !resume)
                 }
             }
@@ -288,8 +284,11 @@ struct HeroCarousel: View {
             .padding(.bottom, 8)
         }
         .foregroundStyle(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .frame(height: 430)
+        .background(Color(hex: 0x0C0F1F))
+        .auroraRing(cornerRadius: 30)
         .padding(.horizontal, 16)
+        .padding(.vertical, 18)
     }
 
     private func remaining(_ item: BaseItem) -> String? {
