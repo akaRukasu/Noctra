@@ -6,7 +6,7 @@ import WebKit
 // MARK: Modèle
 
 /// Chaîne, éventuellement proposée par plusieurs sources (réunies par leur nom).
-struct LiveChannel: Identifiable, Hashable {
+struct LiveChannel: Identifiable, Hashable, @unchecked Sendable {
     let id: String
     let name: String
     let logo: String?
@@ -27,10 +27,17 @@ struct LiveChannel: Identifiable, Hashable {
     }
 }
 
-/// Catalogue d'une source (données JSON telles quelles, lues sur le fil principal).
+/// Catalogue d'une source, préparé hors du fil principal (clés de regroupement calculées).
 struct Catalog: @unchecked Sendable {
+    struct Entry {
+        let key: String
+        let name: String
+        let logo: String?
+        let group: String?
+        let raw: [String: Any]
+    }
     let source: String
-    let channels: [[String: Any]]
+    let entries: [Entry]
 }
 
 /// Catalogues TV du serveur Noctra, favoris et chaînes récentes (gardés sur l'iPhone).
@@ -46,6 +53,8 @@ final class LiveStore {
     private(set) var failed = false
     private(set) var favorites: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "noctra.tv.favorites") ?? [])
     private(set) var recents: [String] = UserDefaults.standard.stringArray(forKey: "noctra.tv.recents") ?? []
+    /// Catégories les plus fournies, calculées une fois par chargement.
+    private(set) var categories: [String] = []
     @ObservationIgnored private var loadedAt = Date.distantPast
 
     func loadSources(_ session: Session) async {
@@ -71,7 +80,13 @@ final class LiveStore {
         let fetch: @Sendable (TVSourceRoute) async -> Catalog = { source in
             let path = "/api/tv/catalog?source=" + (source.id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? source.id)
             let json = try? await session.noctraJSON(path, timeout: 45) as? [String: Any]
-            return Catalog(source: source.name, channels: (json?["channels"] as? [[String: Any]]) ?? [])
+            let list = (json?["channels"] as? [[String: Any]]) ?? []
+            // Tâche enfant : expressions régulières des noms hors du fil principal.
+            let entries: [Catalog.Entry] = list.compactMap { entry in
+                guard let name = entry["name"] as? String, !name.isEmpty, (entry["isEvent"] as? Bool) != true else { return nil }
+                return Catalog.Entry(key: LiveChannel.key(name), name: name, logo: entry["logo"] as? String, group: entry["group"] as? String, raw: entry)
+            }
+            return Catalog(source: source.name, entries: entries)
         }
         await withTaskGroup(of: Catalog.self) { group in
             for _ in 0..<6 {
@@ -80,26 +95,26 @@ final class LiveStore {
             }
             for await catalog in group {
                 let sourceName = catalog.source
-                let list = catalog.channels
-                for entry in list {
-                    guard let name = entry["name"] as? String, !name.isEmpty else { continue }
-                    if (entry["isEvent"] as? Bool) == true { continue }
-                    let key = LiveChannel.key(name)
-                    if merged[key] == nil {
-                        merged[key] = (name, entry["logo"] as? String, entry["group"] as? String, [])
-                        order.append(key)
+                for entry in catalog.entries {
+                    if merged[entry.key] == nil {
+                        merged[entry.key] = (entry.name, entry.logo, entry.group, [])
+                        order.append(entry.key)
                     }
-                    if merged[key]?.logo == nil, let logo = entry["logo"] as? String { merged[key]?.logo = logo }
-                    merged[key]?.entries.append((sourceName, entry))
+                    if merged[entry.key]?.logo == nil, let logo = entry.logo { merged[entry.key]?.logo = logo }
+                    merged[entry.key]?.entries.append((sourceName, entry.raw))
                 }
                 loadedSources += 1
                 if let source = pending.next() { group.addTask { await fetch(source) } }
             }
         }
-        channels = order.compactMap { key in
+        let list: [LiveChannel] = order.compactMap { key in
             guard let value = merged[key] else { return nil }
             return LiveChannel(id: key, name: value.name, logo: value.logo, group: value.group, entries: value.entries)
         }
+        var counts: [String: Int] = [:]
+        for channel in list { if let group = channel.group, !group.isEmpty { counts[group, default: 0] += 1 } }
+        categories = counts.sorted { $0.value > $1.value }.prefix(14).map(\.key)
+        channels = list
         loadedAt = Date()
     }
 
@@ -230,11 +245,7 @@ struct LiveTVHome: View {
         return list
     }
 
-    private var categories: [String] {
-        var counts: [String: Int] = [:]
-        for channel in store.channels { if let group = channel.group, !group.isEmpty { counts[group, default: 0] += 1 } }
-        return counts.sorted { $0.value > $1.value }.prefix(14).map(\.key)
-    }
+    private var categories: [String] { store.categories }
 
     var body: some View {
         ScrollView {
@@ -374,7 +385,9 @@ struct ChannelGrid: View {
                                 Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow).padding(8)
                             }
                         }
-                        .glassEffect(.regular.tint(Color(hex: 0x0A0E1C).opacity(0.5)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        // Fond plein plutôt que du verre : des milliers de cases défilent sans
+                        // flou en temps réel derrière chacune.
+                        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(hex: 0x0E1326).opacity(0.82)))
                         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
                             .stroke(LinearGradient(colors: [Theme.teal.opacity(0.35), .white.opacity(0.04), Theme.lilac.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
                         Text(channel.name)

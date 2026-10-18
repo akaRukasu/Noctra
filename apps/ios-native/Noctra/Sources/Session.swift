@@ -149,7 +149,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.4.0\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.5.0\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }
@@ -188,7 +188,21 @@ final class Session {
     }
 
     func get<T: Decodable>(_ type: T.Type, _ path: String, _ query: [String: String?] = [:]) async throws -> T {
-        try JSONDecoder.jellyfin.decode(T.self, from: try await data("GET", path, query))
+        try await Self.decode(T.self, try await data("GET", path, query))
+    }
+
+    // MARK: Décodage hors du fil principal (défilement fluide pendant les chargements)
+
+    nonisolated static func decode<T: Decodable>(_ type: T.Type, _ data: Data) async throws -> T {
+        try await Task.detached(priority: .userInitiated) {
+            UncheckedBox(value: try JSONDecoder.jellyfin.decode(T.self, from: data))
+        }.value.value
+    }
+
+    nonisolated static func parseJSON(_ data: Data) async throws -> Any {
+        try await Task.detached(priority: .userInitiated) {
+            UncheckedBox(value: try JSONSerialization.jsonObject(with: data))
+        }.value.value
     }
 
     /// Requête vers une route récente de Jellyfin, puis l'ancienne si le serveur ne la connaît pas.
@@ -278,7 +292,7 @@ final class Session {
         }
         let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw NoctraError.http(status) }
-        return try JSONSerialization.jsonObject(with: result.0)
+        return try await Self.parseJSON(result.0)
     }
 
     /// Le jeton ne part que vers le serveur Noctra lui-même.
@@ -333,6 +347,11 @@ final class Session {
         guard isNoctraOrigin(url), let base = URL(string: noctraBase + "/") else { return [] }
         return HTTPCookieStorage.shared.cookies(for: base) ?? []
     }
+}
+
+/// Résultat transmis d'une tâche de fond au fil principal.
+struct UncheckedBox<T>: @unchecked Sendable {
+    let value: T
 }
 
 struct NoctraMessage: LocalizedError {

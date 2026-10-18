@@ -100,6 +100,21 @@ for (const route of ['"/System/Info"', '"/Sessions"', '"/ScheduledTasks"', '"/Sy
   assert.ok(admin.includes(route), `administration : ${route}`);
 }
 assert.match(components, /NavigationLink \{ AdminDashboardView\(\) \}/);
+// 2.5 : performances et hors ligne.
+const pipeline = await src('ImagePipeline');
+assert.match(pipeline, /kCGImageSourceShouldCacheImmediately/, 'images décodées hors du fil principal');
+assert.match(components, /ImagePipeline\.shared\.cached\(url\)/);
+assert.doesNotMatch(components, /AsyncImage/);
+assert.match(theme, /\.drawingGroup\(\)/, 'fond Aurora aplati');
+assert.match(theme, /isLowPowerModeEnabled/);
+assert.match(sessionSrc, /Task\.detached\(priority: \.userInitiated\)/, 'JSON décodé en tâche de fond');
+const offline = await src('Offline');
+assert.match(offline, /URLSessionConfiguration\.background\(withIdentifier: Self\.fileIdentifier\)/);
+assert.match(offline, /makeAssetDownloadTask\(downloadConfiguration: configuration\)/, 'HLS enregistré par iOS');
+assert.match(offline, /didFinishDownloadingTo location: URL\) \{[\s\S]*moveItem\(at: location, to: destination\)/, 'fichier déplacé avant la fin du délégué');
+assert.match(offline, /"noctra-offline-\\\(id\)"/, 'appareil distinct : une lecture en cours n’est pas coupée');
+assert.match(await src('NoctraApp'), /@UIApplicationDelegateAdaptor\(NoctraAppDelegate\.self\)/);
+assert.match(playbackSrc, /func playOffline\(/);
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

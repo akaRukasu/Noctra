@@ -9,6 +9,9 @@ struct LibrariesView: View {
 
     var body: some View {
         ScrollView {
+            offlineTile
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
                 ForEach(libraries) { library in
                     NavigationLink(value: LibraryRoute(id: library.id, name: library.title, collectionType: library.collectionType)) {
@@ -43,6 +46,35 @@ struct LibrariesView: View {
         .toolbar { ToolbarItem(placement: .topBarTrailing) { AccountButton() } }
         .refreshable { await load() }
         .task { if libraries.isEmpty { await load() } }
+    }
+
+    /// « Sur cet iPhone » : titres téléchargés, lisibles sans connexion.
+    private var offlineTile: some View {
+        let store = OfflineStore.shared
+        let count = store.downloaded.count
+        let running = store.active.filter { $0.state == .downloading || $0.state == .queued }.count
+        return NavigationLink(value: OfflineRoute()) {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Theme.gradient)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sur cet iPhone").font(.headline)
+                    Text(count == 0 && running == 0 ? "Films et épisodes à regarder hors ligne"
+                         : [count > 0 ? "\(count) titre\(count > 1 ? "s" : "") · \(AdminFormat.bytes(Double(store.usedBytes)))" : nil,
+                            running > 0 ? "\(running) en cours" : nil].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .auroraPanel(cornerRadius: 22)
+        }
+        .buttonStyle(PressableStyle(scale: 0.98))
+        .foregroundStyle(.white)
     }
 
     private func icon(_ type: String?) -> String {
@@ -135,6 +167,7 @@ struct LibraryGridView: View {
         defer { loading = false }
         let types: String? = library.collectionType == "movies" ? "Movie" : library.collectionType == "tvshows" ? "Series" : nil
         let (sortBy, order) = sort.query
+        let first = items.isEmpty
         let page = try? await session.get(ItemsResponse.self, paths: ["/Items", "/Users/{userId}/Items"], [
             "userId": session.userId, "parentId": library.id, "recursive": types == nil ? nil : "true",
             "includeItemTypes": types, "sortBy": sortBy, "sortOrder": order, "fields": Fields.card,
@@ -142,7 +175,8 @@ struct LibraryGridView: View {
         ])
         guard let page else { total = items.count; return }
         let fresh = page.items ?? []
-        withAnimation(Theme.spring) { items.append(contentsOf: fresh) }
+        // Pages suivantes ajoutées sans animation : le défilement ne saute pas.
+        if first { withAnimation(Theme.spring) { items = fresh } } else { items.append(contentsOf: fresh) }
         total = fresh.isEmpty ? items.count : (page.totalRecordCount ?? Int.max)
     }
 }

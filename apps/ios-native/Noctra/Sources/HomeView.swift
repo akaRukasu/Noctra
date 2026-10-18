@@ -38,6 +38,15 @@ struct HomeView: View {
                         .padding(.horizontal, 16)
                 } else if let failure {
                     MessageView(icon: "wifi.exclamationmark", text: failure) { Task { await load() } }
+                    if !OfflineStore.shared.downloaded.isEmpty {
+                        NavigationLink(value: OfflineRoute()) {
+                            Label("Regarder mes téléchargements", systemImage: "arrow.down.circle.fill")
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        .auroraPrimary()
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 ItemRow(title: "À suivre", items: nextUp, wide: true)
                 if !libraries.isEmpty { libraryBlock }
@@ -288,7 +297,8 @@ struct HeroCarousel: View {
         .foregroundStyle(.white)
         .frame(height: 430)
         .background(Color(hex: 0x0C0F1F))
-        .auroraRing(cornerRadius: 30)
+        // Lueur tournante seulement sur la page visible du carrousel.
+        .auroraRing(cornerRadius: 30, orbit: item.id == (current ?? items.first?.id))
         .padding(.horizontal, 16)
         .padding(.vertical, 18)
     }

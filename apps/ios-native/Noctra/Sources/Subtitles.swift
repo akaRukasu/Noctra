@@ -97,6 +97,10 @@ final class SubtitleOverlay {
     }
 
     func load(_ url: URL, headers: [String: String]) async {
+        if url.isFileURL {
+            if let data = try? Data(contentsOf: url) { cues = WebVTT.parse(String(decoding: data, as: UTF8.self)) }
+            return
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }

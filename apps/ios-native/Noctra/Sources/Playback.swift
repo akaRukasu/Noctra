@@ -94,7 +94,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
         lastMediaURL = url
         lastMediaIsDirect = method == "DirectPlay"
-        present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync)
+        present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync, live: false)
         if let subtitles, let controller, let player {
             let overlay = SubtitleOverlay()
             overlay.attach(to: controller, player: player)
@@ -140,14 +140,42 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     /// échec : `exhausted` (lecteur web de secours, message).
     func playLive(title: String, streams: [(URL, [String: String])], exhausted: (() -> Void)? = nil) {
         guard !streams.isEmpty else { exhausted?(); return }
-        present(urls: streams, title: title, startSeconds: 0, report: nil, sync: false)
+        present(urls: streams, title: title, startSeconds: 0, report: nil, sync: false, live: true)
         onExhausted = exhausted
     }
 
+    // MARK: Hors ligne
+
+    /// Titre téléchargé : fichier local, reprise gardée sur l'iPhone, suivi
+    /// envoyé au serveur quand il est joignable (reprise et « vu » partagés).
+    func playOffline(_ entry: OfflineEntry, subtitle: Int? = nil, session: Session?) {
+        guard let url = OfflineStore.shared.mediaURL(entry) else {
+            SyncPlayManager.shared.post("Fichier introuvable : supprimez puis téléchargez à nouveau ce titre.")
+            return
+        }
+        var report: Report?
+        if let session, session.isSignedIn, let source = entry.mediaSourceId {
+            report = Report(session: session, itemId: entry.id, mediaSourceId: source, playSessionId: UUID().uuidString, playMethod: "DirectPlay")
+        }
+        let start = entry.position > 5 ? entry.position : 0
+        present(urls: [(url, [:])], title: entry.playerTitle, startSeconds: start, report: report, sync: false, live: false)
+        offlineId = entry.id
+        let choice = subtitle ?? entry.subtitleChoice ?? -1
+        if choice >= 0, let file = OfflineStore.shared.subtitleURL(entry, index: choice), let controller, let player {
+            let overlay = SubtitleOverlay()
+            overlay.attach(to: controller, player: player)
+            subtitleOverlay = overlay
+            Task { await overlay.load(file, headers: [:]) }
+        }
+    }
+
+    private var offlineId: String?
+
     // MARK: Présentation
 
-    private func present(urls: [(URL, [String: String])], title: String, startSeconds: Double, report: Report?, sync: Bool) {
+    private func present(urls: [(URL, [String: String])], title: String, startSeconds: Double, report: Report?, sync: Bool, live: Bool) {
         close(notify: false)
+        isLive = live
         let player = AVPlayer()
         player.allowsExternalPlayback = true
         player.automaticallyWaitsToMinimizeStalling = true
@@ -192,7 +220,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         if !cookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = cookies }
         let asset = AVURLAsset(url: url, options: options)
         let item = AVPlayerItem(asset: asset)
-        item.preferredForwardBufferDuration = report == nil ? 0 : 30
+        item.preferredForwardBufferDuration = isLive ? 0 : (url.isFileURL ? 0 : 30)
         let titleItem = AVMutableMetadataItem()
         titleItem.identifier = .commonIdentifierTitle
         titleItem.value = title as NSString
@@ -207,7 +235,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
         // Surveillance : serveur suivant (direct), prêt (SyncPlay), fermeture si le lecteur a disparu.
         watchTask?.cancel()
-        let isLive = report == nil
+        let isLive = self.isLive
         watchTask = Task { [weak self] in
             let started = Date()
             var ready = false
@@ -246,6 +274,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
 
     /// Session utilisée par la TV en direct (cookies Noctra).
     weak var liveSession: Session?
+    private var isLive = false
 
     private func close(notify: Bool) {
         guard !closed else { return }
@@ -260,6 +289,11 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         subtitleOverlay?.detach()
         subtitleOverlay = nil
         let position = positionSeconds
+        if let offlineId {
+            let length = player?.currentItem?.duration.seconds ?? 0
+            OfflineStore.shared.recordPosition(offlineId, position: position, duration: length)
+            self.offlineId = nil
+        }
         player?.pause()
         if let report {
             Task {

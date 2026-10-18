@@ -5,6 +5,7 @@ import SwiftUI
 /// Bibliothèque Jellyfin du serveur Noctra, TV en direct, lecteur vidéo d'Apple.
 @main
 struct NoctraApp: App {
+    @UIApplicationDelegateAdaptor(NoctraAppDelegate.self) private var appDelegate
     @State private var session = Session()
 
     init() {
@@ -14,6 +15,8 @@ struct NoctraApp: App {
         URLCache.shared = URLCache(memoryCapacity: 96 << 20, diskCapacity: 768 << 20)
         // Titres des barres de navigation en Sora, comme les titres du site.
         NoctraFont.applyToNavigationBars()
+        // Téléchargements hors ligne : index et transferts d'arrière-plan repris.
+        OfflineStore.shared.restore()
     }
 
     var body: some Scene {
@@ -42,6 +45,8 @@ struct RootView: View {
         .animation(.spring(response: 0.55, dampingFraction: 0.86), value: session.isSignedIn)
         .task(id: session.isSignedIn) {
             guard session.isSignedIn else { SyncPlayManager.shared.stopAll(); return }
+            OfflineStore.shared.session = session
+            OfflineStore.shared.schedule()
             // Cookie de session Noctra (TV, images) et canal temps réel (SyncPlay, « Lire sur… »).
             await session.establishNoctraSession()
             SyncPlayManager.shared.start(session)
@@ -138,6 +143,9 @@ struct NoctraStack<Content: View>: View {
                 }
                 .navigationDestination(for: TVSourceRoute.self) { route in
                     LiveChannelsView(route: route)
+                }
+                .navigationDestination(for: OfflineRoute.self) { _ in
+                    OfflineLibraryView()
                 }
                 .navigationDestination(for: ItemRoute.self) { route in
                     if let item = route.item {

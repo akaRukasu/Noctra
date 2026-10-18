@@ -355,6 +355,9 @@ final class SyncPlayManager {
     }
 
     func clearNotice() { notice = nil }
+
+    /// Bandeau d'information commun de l'appli (erreurs de lecture, téléchargements…).
+    func post(_ message: String) { notice = message }
 }
 
 /// Feuille SyncPlay : groupes ouverts, créer, rejoindre, quitter.

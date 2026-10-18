@@ -1,26 +1,39 @@
 import SwiftUI
 
-/// Image distante (cache d'URLSession), apparition en fondu.
+/// Image distante ou locale (téléchargements), apparition en fondu.
 /// Elle occupe exactement la place proposée : une image large en mode
 /// « remplir » est rognée au lieu d'élargir la page (fiche, tuiles, carrousel).
+/// Images décodées hors du fil principal et gardées en mémoire (ImagePipeline).
 struct RemoteImage: View {
     let url: URL?
     var contentMode: ContentMode = .fill
     var alignment: Alignment = .center
+    @State private var loaded: (url: URL, image: UIImage)?
+
+    private var image: UIImage? {
+        guard let url else { return nil }
+        if let loaded, loaded.url == url { return loaded.image }
+        return ImagePipeline.shared.cached(url)
+    }
 
     var body: some View {
         Color.clear
             .overlay(alignment: alignment) {
-                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.25))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: contentMode)
-                    default:
-                        if contentMode == .fill { Rectangle().fill(Theme.surface) } else { Color.clear }
-                    }
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: contentMode)
+                        .transition(.opacity)
+                } else if contentMode == .fill {
+                    Rectangle().fill(Theme.surface)
                 }
             }
             .clipped()
+            .task(id: url) {
+                guard let url, ImagePipeline.shared.cached(url) == nil else { return }
+                guard let image = await ImagePipeline.shared.image(for: url), !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.22)) { loaded = (url, image) }
+            }
     }
 }
 
@@ -132,7 +145,6 @@ struct ItemContextMenu: ViewModifier {
     let aspect: CGFloat
     @State private var favorite: Bool?
     @State private var played: Bool?
-    @State private var playError: String?
 
     private var isFavorite: Bool { favorite ?? item.userData?.isFavorite ?? false }
     private var isPlayed: Bool { played ?? item.userData?.played ?? false }
@@ -152,6 +164,28 @@ struct ItemContextMenu: ViewModifier {
                             Task { await play(fromStart: true) }
                         } label: {
                             Label("Lire depuis le début", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                }
+                if playable {
+                    if let offline = OfflineStore.shared.entry(item.id) {
+                        if offline.state == .done {
+                            Button {
+                                PlaybackManager.shared.playOffline(offline, session: session)
+                            } label: {
+                                Label("Lire hors ligne", systemImage: "arrow.down.circle.fill")
+                            }
+                        }
+                        Button(role: .destructive) {
+                            OfflineStore.shared.delete(item.id)
+                        } label: {
+                            Label(offline.state == .done ? "Supprimer le téléchargement" : "Annuler le téléchargement", systemImage: "trash")
+                        }
+                    } else {
+                        Button {
+                            OfflineStore.shared.download(item, session: session)
+                        } label: {
+                            Label("Télécharger", systemImage: "arrow.down.circle")
                         }
                     }
                 }
@@ -188,11 +222,6 @@ struct ItemContextMenu: ViewModifier {
             }
             .sensoryFeedback(.success, trigger: favorite)
             .sensoryFeedback(.success, trigger: played)
-            .alert("Lecture impossible", isPresented: Binding(get: { playError != nil }, set: { if !$0 { playError = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(playError ?? "")
-            }
     }
 
     private func play(fromStart: Bool) async {
@@ -200,7 +229,7 @@ struct ItemContextMenu: ViewModifier {
             try await PlaybackManager.shared.play(item, session: session, audioIndex: nil, subtitleIndex: nil,
                                                   startSeconds: fromStart ? 0 : item.resumeSeconds)
         } catch {
-            playError = error.localizedDescription
+            SyncPlayManager.shared.post("Lecture impossible : \(error.localizedDescription)")
         }
     }
 
@@ -334,6 +363,23 @@ struct AccountSheet: View {
                     Picker("Taille des sous-titres", selection: $subtitleSize) {
                         ForEach(SubtitleSize.allCases) { Text($0.label).tag($0.rawValue) }
                     }
+                }
+                Section {
+                    NavigationLink { OfflineLibraryView() } label: {
+                        LabeledContent {
+                            Text(AdminFormat.bytes(Double(OfflineStore.shared.usedBytes)))
+                        } label: {
+                            Label("Sur cet iPhone", systemImage: "arrow.down.circle.fill")
+                        }
+                    }
+                    Picker("Qualité par défaut", selection: Binding(get: { OfflineStore.shared.defaultQuality }, set: { OfflineStore.shared.defaultQuality = $0 })) {
+                        ForEach(OfflineQuality.allCases) { Text($0.label).tag($0) }
+                    }
+                    Toggle("Wi-Fi uniquement", isOn: Binding(get: { OfflineStore.shared.wifiOnly }, set: { OfflineStore.shared.wifiOnly = $0 }))
+                } header: {
+                    Text("Téléchargements hors ligne")
+                } footer: {
+                    Text("Les téléchargements continuent appli fermée. Avec « Wi-Fi uniquement », ils attendent un réseau Wi-Fi.")
                 }
                 if session.isAdmin {
                     Section {

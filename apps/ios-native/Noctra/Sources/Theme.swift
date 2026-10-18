@@ -124,8 +124,12 @@ struct AuroraBackground: View {
                                          startPoint: .top, endPoint: .bottom))
                     .opacity(0.55)
             }
+            // Sept nappes plein écran réunies en une seule image : rien à
+            // recomposer à chaque image pendant le défilement.
+            .drawingGroup()
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private func blobs(unit: CGFloat, time: Double) -> some View {
@@ -289,9 +293,15 @@ struct PressableStyle: ButtonStyle {
 
 extension View {
     /// Image d'une carte du site : liseré lilas très fin, ombre profonde.
+    /// L'ombre est celle d'une forme pleine placée derrière l'image (tracé
+    /// connu d'avance) : pas de rendu hors écran de l'image à chaque défilement.
     func auroraCard(cornerRadius: CGFloat = 18) -> some View {
         overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(Color(hex: 0xDDD6FE).opacity(0.10), lineWidth: 1))
-            .shadow(color: .black.opacity(0.9), radius: 15, y: 14)
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.black)
+                    .shadow(color: .black.opacity(0.9), radius: 15, y: 14)
+            }
     }
 
     /// Anneau dégradé et halo ambiant de la carte « à l'affiche », avec la lueur qui tourne (9 s).
@@ -307,11 +317,16 @@ extension View {
     }
 }
 
+/// Anneau de la carte « à l'affiche ». Les halos sont dessinés une fois sur
+/// une forme fixe ; seule la lueur fine de l'anneau tourne, et seulement
+/// quand c'est demandé (page visible du carrousel), jamais en mode économie
+/// d'énergie ni avec « Réduire les animations ».
 struct AuroraRing: ViewModifier {
     let cornerRadius: CGFloat
     let orbit: Bool
-    @State private var angle: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var spinning: Bool { orbit && !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled }
 
     func body(content: Content) -> some View {
         content
@@ -320,20 +335,32 @@ struct AuroraRing: ViewModifier {
             .background {
                 ZStack {
                     RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous).fill(Theme.ringGradient)
-                    if orbit && !reduceMotion {
-                        RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
-                            .fill(AngularGradient(stops: [.init(color: .clear, location: 0), .init(color: .clear, location: 0.55),
-                                                          .init(color: Theme.lilac, location: 0.74), .init(color: Theme.pink, location: 0.85),
-                                                          .init(color: Theme.cyan, location: 0.95), .init(color: .clear, location: 1)],
-                                                  center: .center, angle: .degrees(angle)))
+                    if spinning {
+                        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                            let angle = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 9) / 9 * 360
+                            RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
+                                .fill(AngularGradient(stops: [.init(color: .clear, location: 0), .init(color: .clear, location: 0.55),
+                                                              .init(color: Theme.lilac, location: 0.74), .init(color: Theme.pink, location: 0.85),
+                                                              .init(color: Theme.cyan, location: 0.95), .init(color: .clear, location: 1)],
+                                                      center: .center, angle: .degrees(angle)))
+                        }
                     }
                 }
             }
-            .shadow(color: Color(red: 124 / 255, green: 58 / 255, blue: 237 / 255).opacity(0.55), radius: 40, y: 30)
-            .shadow(color: Color(red: 14 / 255, green: 165 / 255, blue: 233 / 255).opacity(0.35), radius: 26, y: 16)
-            .onAppear {
-                guard orbit, !reduceMotion else { return }
-                withAnimation(.linear(duration: 9).repeatForever(autoreverses: false)) { angle = 360 }
+            .background {
+                // Halos violet et ciel : formes fixes, ombre calculée une fois.
+                ZStack {
+                    RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
+                        .fill(Color(hex: 0x0C0F1F))
+                        .shadow(color: Color(red: 124 / 255, green: 58 / 255, blue: 237 / 255).opacity(0.55), radius: 40, y: 30)
+                    RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
+                        .fill(Color(hex: 0x0C0F1F))
+                        .shadow(color: Color(red: 14 / 255, green: 165 / 255, blue: 233 / 255).opacity(0.35), radius: 26, y: 16)
+                }
+                .padding(60)
+                .drawingGroup()
+                .padding(-60)
+                .allowsHitTesting(false)
             }
     }
 }

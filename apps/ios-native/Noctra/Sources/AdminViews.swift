@@ -8,7 +8,7 @@ import WebKit
 extension Session {
     /// Réponse JSON brute d'une route Jellyfin (écrans d'administration).
     func jellyfinJSON(_ path: String, _ query: [String: String?] = [:]) async throws -> Any {
-        try JSONSerialization.jsonObject(with: try await data("GET", path, query))
+        try await Self.parseJSON(try await data("GET", path, query))
     }
 }
 

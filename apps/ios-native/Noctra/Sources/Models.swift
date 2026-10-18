@@ -118,6 +118,7 @@ struct MediaSource: Decodable, Identifiable {
     let name: String?
     let container: String?
     let bitrate: Int?
+    let size: Int64?
     let eTag: String?
     let supportsDirectPlay: Bool?
     let supportsDirectStream: Bool?

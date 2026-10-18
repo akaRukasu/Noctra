@@ -19,9 +19,11 @@ struct ItemDetailView: View {
     @State private var playTaps = 0
     @State private var showFullOverview = false
     @State private var showCast = false
+    @State private var choosingSeasonQuality = false
     private var sync: SyncPlayManager { .shared }
 
     private var shown: BaseItem { detail ?? item }
+    private var seasonDownloaded: Bool { !episodes.isEmpty && episodes.allSatisfy { OfflineStore.shared.entry($0.id) != nil } }
 
     var body: some View {
         ScrollView {
@@ -178,6 +180,10 @@ struct ItemDetailView: View {
                         }
                         .auroraSecondary()
                     }
+                    if !shown.isFolder {
+                        // Téléchargement pour regarder hors ligne.
+                        OfflineButton(item: shown, audioIndex: audioIndex)
+                    }
                     if target != nil {
                         // Cast : Chromecast, AirPlay ou un autre appareil (Noctra TV, navigateur…).
                         Button {
@@ -283,6 +289,27 @@ struct ItemDetailView: View {
                 }
                 .scrollIndicators(.hidden)
                 .sensoryFeedback(.selection, trigger: season)
+            }
+            if !episodes.isEmpty {
+                HStack {
+                    Spacer()
+                    Button {
+                        choosingSeasonQuality = true
+                    } label: {
+                        Label(seasonDownloaded ? "Saison sur l’iPhone" : "Télécharger la saison", systemImage: seasonDownloaded ? "checkmark.circle.fill" : "arrow.down.circle")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .auroraSecondary()
+                    .disabled(seasonDownloaded)
+                }
+                .padding(.horizontal, 20)
+                .confirmationDialog("Télécharger \(episodes.count) épisode\(episodes.count > 1 ? "s" : "")", isPresented: $choosingSeasonQuality, titleVisibility: .visible) {
+                    ForEach(OfflineQuality.allCases) { quality in
+                        Button(quality.label) { OfflineStore.shared.download(episodes: episodes, session: session, quality: quality) }
+                    }
+                } message: {
+                    Text("Les épisodes se téléchargent l’un après l’autre, même appli fermée.")
+                }
             }
             LazyVStack(spacing: 14) {
                 ForEach(episodes) { episode in
@@ -432,6 +459,11 @@ struct EpisodeRow: View {
                             .lineLimit(2)
                         if episode.userData?.played == true {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).font(.caption)
+                        }
+                        if let offline = OfflineStore.shared.entry(episode.id) {
+                            Image(systemName: offline.state == .done ? "arrow.down.circle.fill" : "arrow.down.circle.dotted")
+                                .foregroundStyle(offline.state == .done ? Theme.teal : Theme.muted)
+                                .font(.caption)
                         }
                     }
                     if let runtime = episode.runtime {
