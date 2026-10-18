@@ -43,8 +43,8 @@ enum Theme {
                                                      .init(color: cyan.opacity(0.10), location: 0.6), .init(color: cyan.opacity(0.55), location: 1)],
                                              startPoint: .topLeading, endPoint: .bottomTrailing)
 
-    /// Ressort des interactions (proche de celui du système).
-    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.82)
+    /// Animations : courbes du système (« snappy » d'iOS), pas de ressort maison.
+    static let spring = Animation.snappy(duration: 0.4)
 }
 
 extension Color {
@@ -258,70 +258,32 @@ struct Eyebrow: View {
 
 // MARK: Boutons et cartes
 
-/// Bouton principal du site : dégradé lilas → rose → ciel, texte sombre, halo violet ;
-/// enfoncement à ressort et dégradé qui glisse à l'appui, comme au survol sur le web.
-struct AuroraPrimaryStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
+extension View {
+    /// Bouton principal : verre « prominent » natif d'iOS 26 (reflet sous le
+    /// doigt, déformation, fusion avec les boutons voisins), teinté du lilas
+    /// du site avec son texte sombre et son halo violet.
+    func auroraPrimary() -> some View {
+        buttonStyle(.glassProminent)
+            .tint(Theme.lilac)
             .foregroundStyle(Theme.onAccent)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 13)
-            .background {
-                GeometryReader { proxy in
-                    LinearGradient(colors: [Theme.lilac, Theme.pink, Theme.cyan, Theme.lilac, Theme.pink], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: proxy.size.width * 2.5)
-                        .offset(x: configuration.isPressed ? -proxy.size.width * 1.5 : 0)
-                }
-                .clipShape(Capsule())
-            }
-            .overlay(Capsule().stroke(.white.opacity(0.35), lineWidth: 1))
-            .overlay(alignment: .top) {
-                Capsule().fill(.white.opacity(0.5)).frame(height: 1).padding(.horizontal, 14).padding(.top, 1)
-            }
-            .shadow(color: Theme.violet.opacity(configuration.isPressed ? 0.95 : 0.8), radius: configuration.isPressed ? 18 : 14, y: 8)
-            .shadow(color: Theme.cyan.opacity(0.45), radius: 10, y: 3)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .opacity(enabled ? 1 : 0.5)
-            .animation(.spring(response: 0.3, dampingFraction: 0.62), value: configuration.isPressed)
+            .shadow(color: Theme.violet.opacity(0.55), radius: 16, y: 8)
+            .shadow(color: Theme.cyan.opacity(0.25), radius: 10, y: 3)
+    }
+
+    /// Bouton secondaire : verre natif d'iOS 26.
+    func auroraSecondary() -> some View {
+        buttonStyle(.glass)
     }
 }
 
-/// Bouton secondaire : verre d'iOS teinté de nuit, liseré lilas.
-struct AuroraGlassStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color(hex: 0xF1EEFF))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 11)
-            .glassEffect(.regular.tint(Color(hex: 0x14162A).opacity(0.45)).interactive(), in: Capsule())
-            .overlay(Capsule().stroke(Color(hex: 0xDDD6FE).opacity(configuration.isPressed ? 0.5 : 0.22), lineWidth: 1))
-            .shadow(color: Theme.violet.opacity(configuration.isPressed ? 0.8 : 0), radius: 14, y: 6)
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(.spring(response: 0.28, dampingFraction: 0.62), value: configuration.isPressed)
-    }
-}
-
-extension ButtonStyle where Self == AuroraPrimaryStyle {
-    static var aurora: AuroraPrimaryStyle { AuroraPrimaryStyle() }
-}
-
-extension ButtonStyle where Self == AuroraGlassStyle {
-    static var auroraGlass: AuroraGlassStyle { AuroraGlassStyle() }
-}
-
-/// Appui « physique » : léger enfoncement à ressort, comme les cartes d'iOS.
+/// Appui des cartes : léger enfoncement au ressort du système (comme l'App Store).
 struct PressableStyle: ButtonStyle {
-    var scale: CGFloat = 0.95
+    var scale: CGFloat = 0.96
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
-            .brightness(configuration.isPressed ? -0.04 : 0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.62), value: configuration.isPressed)
+            .animation(configuration.isPressed ? .snappy(duration: 0.18) : .bouncy(duration: 0.38, extraBounce: 0.08), value: configuration.isPressed)
     }
 }
 

@@ -76,6 +76,7 @@ struct PosterCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
+        .modifier(ItemContextMenu(item: item, preview: session.poster(item), aspect: 2 / 3))
     }
 }
 
@@ -112,6 +113,101 @@ struct WideCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
+        .modifier(ItemContextMenu(item: item, preview: session.thumb(item), aspect: 16 / 9))
+    }
+}
+
+/// Appui long sur une affiche : aperçu agrandi et actions rapides, comme dans les applis d'Apple.
+struct ItemContextMenu: ViewModifier {
+    @Environment(Session.self) private var session
+    let item: BaseItem
+    let preview: URL?
+    let aspect: CGFloat
+    @State private var favorite: Bool?
+    @State private var played: Bool?
+    @State private var playError: String?
+
+    private var isFavorite: Bool { favorite ?? item.userData?.isFavorite ?? false }
+    private var isPlayed: Bool { played ?? item.userData?.played ?? false }
+    private var playable: Bool { ["Movie", "Episode", "Video", "MusicVideo"].contains(item.type ?? "") }
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                if playable {
+                    Button {
+                        Task { await play(fromStart: false) }
+                    } label: {
+                        Label(item.progress != nil ? "Reprendre" : "Lecture", systemImage: "play.fill")
+                    }
+                    if item.progress != nil {
+                        Button {
+                            Task { await play(fromStart: true) }
+                        } label: {
+                            Label("Lire depuis le début", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                }
+                Button {
+                    Task { await toggle(favorites: true) }
+                } label: {
+                    Label(isFavorite ? "Retirer des favoris" : "Ajouter aux favoris", systemImage: isFavorite ? "heart.slash" : "heart")
+                }
+                Button {
+                    Task { await toggle(favorites: false) }
+                } label: {
+                    Label(isPlayed ? "Marquer comme non vu" : "Marquer comme vu", systemImage: isPlayed ? "eye.slash" : "checkmark.circle")
+                }
+            } preview: {
+                VStack(alignment: .leading, spacing: 8) {
+                    RemoteImage(url: preview)
+                        .aspectRatio(aspect, contentMode: .fit)
+                        .frame(width: aspect < 1 ? 260 : 340)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
+                            .font(.display(19, .semibold, relativeTo: .headline))
+                            .foregroundStyle(Theme.ink)
+                        if !item.subtitleLine.isEmpty {
+                            Text(item.subtitleLine)
+                                .font(.caption)
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+                }
+                .frame(width: aspect < 1 ? 260 : 340)
+                .background(Theme.background)
+            }
+            .sensoryFeedback(.success, trigger: favorite)
+            .sensoryFeedback(.success, trigger: played)
+            .alert("Lecture impossible", isPresented: Binding(get: { playError != nil }, set: { if !$0 { playError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(playError ?? "")
+            }
+    }
+
+    private func play(fromStart: Bool) async {
+        do {
+            try await PlaybackManager.shared.play(item, session: session, audioIndex: nil, subtitleIndex: nil,
+                                                  startSeconds: fromStart ? 0 : item.resumeSeconds)
+        } catch {
+            playError = error.localizedDescription
+        }
+    }
+
+    private func toggle(favorites: Bool) async {
+        let target = favorites ? !isFavorite : !isPlayed
+        let paths = favorites
+            ? ["/UserFavoriteItems/\(item.id)", "/Users/{userId}/FavoriteItems/\(item.id)"]
+            : ["/UserPlayedItems/\(item.id)", "/Users/{userId}/PlayedItems/\(item.id)"]
+        if favorites { favorite = target } else { played = target }
+        do {
+            _ = try await session.send(target ? "POST" : "DELETE", paths: paths, ["userId": session.userId])
+        } catch {
+            if favorites { favorite = !target } else { played = !target }
+        }
     }
 }
 
@@ -172,7 +268,7 @@ struct MessageView: View {
                 .foregroundStyle(Theme.muted)
             if let retry {
                 Button("Réessayer", action: retry)
-                    .buttonStyle(.auroraGlass)
+                    .auroraSecondary()
             }
         }
         .padding(32)

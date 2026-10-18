@@ -161,7 +161,7 @@ struct ItemDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                     }
-                    .buttonStyle(.aurora)
+                    .auroraPrimary()
                     .controlSize(.large)
                     .disabled(target == nil || starting)
 
@@ -174,7 +174,7 @@ struct ItemDetailView: View {
                                 .font(.headline)
                                 .padding(.vertical, 6)
                         }
-                        .buttonStyle(.auroraGlass)
+                        .auroraSecondary()
                     }
                     if target != nil {
                         // Cast : AirPlay ou un autre appareil (Noctra TV, navigateur…).
@@ -185,7 +185,7 @@ struct ItemDetailView: View {
                                 .font(.headline)
                                 .padding(.vertical, 6)
                         }
-                        .buttonStyle(.auroraGlass)
+                        .auroraSecondary()
                     }
                 }
             }

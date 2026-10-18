@@ -161,7 +161,7 @@ struct SeerrSheet: View {
                                 NavigationLink(value: ItemRoute(id: jellyfin)) {
                                     Label("Regarder", systemImage: "play.fill").frame(maxWidth: .infinity).padding(.vertical, 6)
                                 }
-                                .buttonStyle(.aurora)
+                                .auroraPrimary()
                             }
                             if (item.status ?? 0) < 5 {
                                 Button {
@@ -173,7 +173,7 @@ struct SeerrSheet: View {
                                     }
                                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                                 }
-                                .buttonStyle(.auroraGlass)
+                                .auroraSecondary()
                                 .disabled(sending || requested || (item.status ?? 0) >= 2)
                             }
                         }
@@ -426,7 +426,7 @@ struct RouletteView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
-                .buttonStyle(.aurora)
+                .auroraPrimary()
                 .controlSize(.large)
                 .disabled(rolling)
                 .padding(.horizontal, 20)
@@ -502,7 +502,7 @@ struct RouletteView: View {
                 NavigationLink(value: ItemRoute(id: id)) {
                     Label("Voir la fiche", systemImage: "play.fill").padding(.horizontal, 10).padding(.vertical, 6)
                 }
-                .buttonStyle(.aurora)
+                .auroraPrimary()
             }
             .padding(.horizontal, 24)
             .transition(.scale(scale: 0.6).combined(with: .opacity))

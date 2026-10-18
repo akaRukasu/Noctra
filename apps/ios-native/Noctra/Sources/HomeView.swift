@@ -276,7 +276,7 @@ struct HeroCarousel: View {
                             Text(resume ? "Reprendre" : item.isSeries ? "Voir" : "Lecture")
                         }
                     }
-                    .buttonStyle(.aurora)
+                    .auroraPrimary()
                     .disabled(item.isSeries && !resume)
                 }
             }

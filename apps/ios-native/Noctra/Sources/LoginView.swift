@@ -63,7 +63,7 @@ struct LoginView: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 6)
                             }
-                            .buttonStyle(.aurora)
+                            .auroraPrimary()
                             .controlSize(.large)
                             .disabled(working || username.isEmpty)
                         }

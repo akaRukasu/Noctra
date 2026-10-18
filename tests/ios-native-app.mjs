@@ -73,4 +73,10 @@ const home = await src('HomeView');
 assert.match(home, /"\/api\/home\/resume"/);
 assert.match(home, /Text\("À l’affiche chez vous"\)/);
 assert.match(await src('Session'), /func establishNoctraSession\(\) async/);
+// Physique d'iOS : boutons Liquid Glass natifs teintés aux couleurs du site, appui long avec aperçu.
+assert.match(theme, /buttonStyle\(\.glassProminent\)\s*\n\s*\.tint\(Theme\.lilac\)/);
+assert.doesNotMatch(theme, /struct AuroraPrimaryStyle/);
+const components = await src('Components');
+assert.match(components, /\.contextMenu \{[\s\S]*\} preview: \{/);
+assert.equal((components.match(/\.modifier\(ItemContextMenu\(/g) || []).length, 2, 'appui long sur affiches et vignettes');
 console.log('Appli iOS 26 native : OK');
