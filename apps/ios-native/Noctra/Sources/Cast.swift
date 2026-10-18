@@ -272,7 +272,7 @@ struct CastHubSheet: View {
             guard !cast.isActive, resume == nil else { return }
             let list = try? await session.get(ItemsResponse.self, paths: ["/UserItems/Resume", "/Users/{userId}/Items/Resume"],
                                               ["userId": session.userId, "limit": "1", "mediaTypes": "Video", "fields": Fields.card, "enableImageTypes": "Primary,Backdrop,Thumb"])
-            resume = list?.items.first
+            resume = list?.items?.first
         }
     }
 }
