@@ -4,7 +4,8 @@ Noctra existe en applications pour :
 
 | Appareil | Fichier | Installation |
 |---|---|---|
-| Téléphone et tablette Android | `Noctra-android.apk` | fichier APK |
+| Téléphone, tablette, pliable, Chromebook et téléviseur Android | `Noctra-android-native.apk` (appli native Kotlin/Compose, comme l’appli iOS 26) | fichier APK |
+| Téléphone et tablette Android | `Noctra-android.apk` (interface web) | fichier APK |
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad (iOS 26) | `Noctra-ios26-unsigned.ipa` (appli native SwiftUI, Liquid Glass) | Sideloadly ou AltStore |
 | iPhone et iPad (iOS 15 à 18) | `Noctra-ios-unsigned.ipa` (interface web) | Sideloadly ou AltStore |
@@ -30,6 +31,18 @@ Sur Android TV, utilisez **Noctra TV** (`Noctra-androidtv.apk`). C’est l’app
 - **Administration** (comptes administrateurs, menu du compte), entièrement native : vue d’ensemble (lectures en cours, appareils, tâches, activité, redémarrage), paramètres généraux, lecture et transcodage, réseau, personnalisation, médiathèques (création, dossiers, analyse, options, suppression), utilisateurs, appareils, clés d’API, extensions (activer, désinstaller, catalogue, dépôts), tâches planifiées, activité, journaux ; côté Noctra : téléchargements qBittorrent, TV en direct (compte LiveWatch VIP, clés Movix et Northlive, sources), **Radarr et Sonarr** (vue d’ensemble, bibliothèque, manquants, calendrier, file d’attente, historique, ajout avec profil et dossier, surveillance, recherches, actualisation) avec **recherche interactive** des versions (film, épisode, saison, série entière ; tri par score, taille ou sources ; envoi au client).
 - **Construction** : GitHub Actions (`.github/workflows/noctra-ios-native.yml`, Mac avec Xcode 26), à chaque modification de `apps/ios-native`. L’IPA se télécharge dans *Actions › Noctra iOS 26 › Artifacts* (`noctra-ios26`). Sur un Mac : `cd apps/ios-native && xcodegen generate && open Noctra.xcodeproj`.
 - **Installation** : comme ci-dessous (Sideloadly ou AltStore). Même identifiant d’appli que l’ancienne version (`com.noctra.app`) : elle la remplace.
+
+## Android : Noctra natif (Kotlin, Jetpack Compose)
+
+`Noctra-android-native.apk` reproduit l’appli iOS 26 en natif Android : mêmes écrans, mêmes règles et même identité visuelle (fond Aurora, police Sora, dégradés lilas → rose → ciel). Un seul APK universel pour **Android 6 et plus** et tous les appareils : téléphones (barre d’onglets en bas), tablettes, pliables dépliés et Chromebooks (rail latéral), **Android TV / Google TV / Fire TV** (rail latéral, icône et bannière dans la rangée des applications, sélection à la télécommande avec anneau lumineux, touches Chaîne + / −). Aucune bibliothèque native : toutes les architectures sont prises en charge.
+
+- **Contenu** : connexion, accueil (« À l’affiche chez vous », carrousel, reprises, derniers ajouts, À suivre, médiathèques), médiathèques avec tri et chargement progressif, fiches (reprise, pistes audio et sous-titres, saisons, distribution, favori, vu), recherche.
+- **Lecteur** : ExoPlayer (Media3) avec profil des décodeurs de l’appareil (lecture directe quand c’est possible, sinon flux adapté par le serveur), sous-titres texte affichés par l’appli (taille réglable), image dans l’image, plein écran ; reprise et « vu » envoyés au serveur.
+- **TV en direct** : mêmes règles que sur iOS (France d’abord, catégories, favoris par appui long, récentes, Sport, sources et bouquets en cartes, accès VIP). Serveurs classés par fiabilité et testés (nature du flux, direct figé, débit, pages des lecteurs, confiance apprise par fournisseur, tests gardés 4 min, nouveau test toutes les 3 min), meilleur serveur lancé tout seul. Chaque flux est lu par ExoPlayer (HLS et **MPEG-TS continu comme Northlive**) ou par le moteur web (hls.js, mpegts.js), avec passage automatique de l’un à l’autre ; VIP LiveWatch (jusqu’à une minute, pont officiel dans un cadre isolé comme sur PC), relais NorthTV, nouveau lien après une coupure. Lecteur TV : chaînes et serveurs sans quitter le lecteur, glissement vertical ou touches de la télécommande pour zapper, image dans l’image, fenêtres publicitaires bloquées.
+- **Découvrir, Demandes, Roulette**, **SyncPlay** (groupes, ordres à l’heure du serveur), **Cast** : Chromecast et Google TV du Wi-Fi (protocole Cast natif, télécommande, capsule au-dessus des onglets), diffusion d’écran d’Android, et « Lire sur » vers Noctra TV ou un autre appareil du compte. L’appareil reçoit aussi « Lire sur » et les commandes à distance.
+- **Hors ligne** : téléchargements par le gestionnaire de téléchargements d’Android (qualité au choix, Wi-Fi uniquement au choix, saisons entières), lecture sans connexion, sous-titres téléchargés.
+- **Administration** (comptes administrateurs) : la même que sur iOS, en natif (tableau de bord, réglages du serveur, médiathèques, utilisateurs, appareils, clés, extensions, tâches, activité, journaux, téléchargements qBittorrent, TV et VIP, **Radarr / Sonarr** avec recherche interactive, recherche des trackers depuis Découvrir et Demandes).
+- **Construction** : GitHub Actions (`.github/workflows/noctra-android-native.yml`) à chaque modification de `apps/android-native` ; l’APK se télécharge dans *Actions › Noctra Android › Artifacts* (`noctra-android-native`). Il est signé avec la clé `NOCTRA_KEYSTORE_*` des secrets si elle existe, sinon avec une clé créée une fois par GitHub Actions et gardée dans son cache : les versions suivantes s’installent par-dessus. Identifiant `com.noctra.mobile` : il s’installe à côté de l’ancienne appli web (`com.noctra.app`) sans la remplacer.
 
 ## LG webOS et Samsung Tizen : Noctra TV
 

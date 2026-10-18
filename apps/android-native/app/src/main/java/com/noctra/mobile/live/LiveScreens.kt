@@ -236,7 +236,7 @@ private fun CountryMenu(changed: () -> Unit) {
                 val count = if (code.isEmpty()) store.channels.size else store.countries[code] ?: 0
                 DropdownMenuItem(
                     text = { Text((if (code == store.country) "✓ " else "") + "${ChannelNaming.countryLabel(code)} · $count", color = Theme.ink) },
-                    onClick = { open = false; store.setCountry(code); changed() }
+                    onClick = { open = false; store.chooseCountry(code); changed() }
                 )
             }
         }

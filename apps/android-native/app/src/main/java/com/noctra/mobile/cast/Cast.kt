@@ -314,7 +314,7 @@ private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
                 Box(Modifier.size(40.dp).clip(CircleShape).focusRing(CircleShape).clickable { cast.toggleMute() }, contentAlignment = Alignment.Center) {
                     Icon(if (cast.muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Son", tint = Color.White)
                 }
-                Slider(value = cast.volume.toFloat(), onValueChange = { cast.setVolume(it.toDouble()) }, valueRange = 0f..1f, modifier = Modifier.weight(1f),
+                Slider(value = cast.volume.toFloat(), onValueChange = { cast.changeVolume(it.toDouble()) }, valueRange = 0f..1f, modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(thumbColor = Theme.lilac, activeTrackColor = Theme.lilac))
             }
             cast.problem?.let { problem ->

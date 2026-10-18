@@ -190,7 +190,7 @@ object LiveStore {
         private set
     private var loadedAt = 0L
 
-    fun setCountry(value: String) { country = value; Prefs.set("noctra.tv.country", value) }
+    fun chooseCountry(value: String) { country = value; Prefs.set("noctra.tv.country", value) }
 
     val categories: List<String> get() = categoriesByCountry[country] ?: emptyList()
 

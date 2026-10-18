@@ -427,7 +427,7 @@ object ChromecastController {
 
     fun skip(delta: Double) = seek(currentPosition() + delta)
 
-    fun setVolume(level: Double) {
+    fun changeVolume(level: Double) {
         volume = level.coerceIn(0.0, 1.0)
         send(mapOf("type" to "SET_VOLUME", "volume" to mapOf("level" to volume)), receiverNS, "receiver-0")
     }
