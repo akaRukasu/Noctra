@@ -131,6 +131,24 @@ for (const route of ['"/System/Configuration/encoding"', '"/Library/VirtualFolde
   assert.ok(adminServer.includes(route), `tableau de bord natif : ${route}`);
 }
 assert.doesNotMatch(admin, /WKWebView/, 'plus de tableau de bord web');
+// 2.7 : lecteur TV (chaînes et serveurs), sport, sources externes, Radarr/Sonarr, recherche interactive.
+const server = await read('server.mjs');
+const livePlayer = await src('LivePlayer');
+assert.match(livePlayer, /func zap\(_ delta: Int\)/, 'changer de chaîne depuis le lecteur');
+assert.match(livePlayer, /func play\(/, 'changer de serveur depuis le lecteur');
+assert.match(live, /LivePlayerModel\.shared\.start\(/);
+assert.match(live, /sport = "Sport"/);
+assert.match(live, /struct EventList/);
+assert.match(live, /\("sports", "Sport"/, 'sources sport regroupées');
+assert.match(live, /createWebViewWith configuration/, 'fenêtres surgissantes des lecteurs externes');
+const arr = await src('ArrViews');
+for (const route of ['/api/servarr/center', '/api/servarr/lookup', '/api/servarr/add', '/api/servarr/monitor', '/api/servarr/command', '/api/servarr/releases', '/api/servarr/episodes', '/api/servarr/grab', '/api/discovery/grab']) {
+  assert.ok(arr.includes(route), `Radarr/Sonarr : ${route}`);
+  assert.ok(server.includes(`'${route}'`), `route serveur : ${route}`);
+}
+assert.match(adminServer, /ArrHubView\(kind: \.radarr\)/);
+assert.match(adminServer, /ArrHubView\(kind: \.sonarr\)/);
+assert.match(await src('DiscoverViews'), /TrackerSearchView\(mediaType: item\.mediaType/, 'recherche interactive depuis les demandes');
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

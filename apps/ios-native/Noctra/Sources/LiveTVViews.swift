@@ -23,6 +23,28 @@ struct LiveChannel: Identifiable, Hashable, @unchecked Sendable {
 
     var vip: Bool { entries.contains { $0.raw["vipPlayback"] as? Bool == true } }
 
+    // Évènement sportif (sources Sport) : équipes, compétition, horaire, score.
+    var raw: [String: Any] { entries.first?.raw ?? [:] }
+    var home: String? { (raw["homeName"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+    var away: String? { (raw["awayName"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+    var league: String? { [raw["leagueName"], raw["category"], raw["group"]].compactMap { $0 as? String }.first { !$0.isEmpty } }
+    var score: String? { (raw["score"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+    var isLive: Bool { entries.contains { $0.raw["isLive"] as? Bool == true } }
+    var start: Date? { LiveChannel.date(raw["startTime"]) }
+    var secondaryLogo: String? { (raw["secondaryLogo"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+
+    static func date(_ value: Any?) -> Date? {
+        if let number = value as? Double { return Date(timeIntervalSince1970: number > 10_000_000_000 ? number / 1000 : number) }
+        if let number = value as? Int { return date(Double(number)) }
+        guard let text = value as? String, !text.isEmpty else { return nil }
+        if let number = Double(text) { return date(number) }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let found = iso.date(from: text) { return found }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: text)
+    }
+
     static func == (lhs: LiveChannel, rhs: LiveChannel) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
@@ -40,21 +62,55 @@ struct Catalog: @unchecked Sendable {
     let source: String
     let sourceId: String
     let entries: [Entry]
+    var events: [Entry] = []
     let vip: [String: Any]?
 
-    /// Chaînes lisibles d'une source (les matchs du jour sont des évènements, pas des chaînes).
-    static func prepare(_ list: [[String: Any]], sports: Bool) -> [Entry] {
-        list.compactMap { raw in
-            guard let name = raw["name"] as? String, !name.isEmpty, raw["isEvent"] as? Bool != true else { return nil }
+    /// Chaînes lisibles d'une source, et à part les évènements (matchs du jour).
+    static func prepare(_ list: [[String: Any]], sports: Bool) -> (channels: [Entry], events: [Entry]) {
+        var channels: [Entry] = []
+        var events: [Entry] = []
+        for raw in list {
+            guard let name = raw["name"] as? String, !name.isEmpty else { continue }
             let playable = (raw["streamUrl"] as? String).map { !$0.isEmpty } == true || raw["resolverUrl"] != nil
                 || raw["embedUrl"] != nil || raw["externalUrl"] != nil || raw["vipFallbackUrl"] != nil
-            guard playable else { return nil }
-            let match = (raw["homeName"] != nil && raw["awayName"] != nil) || name.range(of: "\\s(?:vs\\.?|v\\.?|contre)\\s", options: [.regularExpression, .caseInsensitive]) != nil
-            if match { return nil }
-            if sports && (raw["eventId"] != nil || raw["startTime"] != nil || name.range(of: "\\s[x×]\\s|\\b\\d{1,2}[:h]\\d{2}\\b", options: .regularExpression) != nil) { return nil }
+            guard playable else { continue }
+            let home = (raw["homeName"] as? String) ?? "", away = (raw["awayName"] as? String) ?? ""
+            let match = (!home.isEmpty && !away.isEmpty) || name.range(of: "\\s(?:vs\\.?|v\\.?|contre)\\s", options: [.regularExpression, .caseInsensitive]) != nil
+            let dated = sports && ((raw["eventId"] as? String).map { !$0.isEmpty } == true || raw["startTime"] != nil
+                || name.range(of: "\\s[x×]\\s|\\b\\d{1,2}[:h]\\d{2}\\b", options: .regularExpression) != nil)
+            if raw["isEvent"] as? Bool == true || match || dated {
+                // Même match proposé par plusieurs sources : une seule ligne, tous les serveurs.
+                let key = "event:" + (!home.isEmpty && !away.isEmpty ? ChannelNaming.normalize(home) + "|" + ChannelNaming.normalize(away) : ChannelNaming.normalize(name))
+                events.append(Entry(key: key, name: name, logo: raw["logo"] as? String, group: raw["group"] as? String, country: "", raw: raw))
+                continue
+            }
             let country = ChannelNaming.country(raw)
-            return Entry(key: ChannelNaming.key(name, country: country), name: name, logo: raw["logo"] as? String,
-                         group: raw["group"] as? String, country: country, raw: raw)
+            channels.append(Entry(key: ChannelNaming.key(name, country: country), name: name, logo: raw["logo"] as? String,
+                                  group: raw["group"] as? String, country: country, raw: raw))
+        }
+        return (channels, events)
+    }
+
+    /// Évènements de toutes les sources Sport réunis, en direct d'abord puis par horaire.
+    static func mergeEvents(_ catalogs: [Catalog]) -> [LiveChannel] {
+        var byKey: [String: (name: String, logo: String?, entries: [LiveChannel.Entry])] = [:]
+        var order: [String] = []
+        for catalog in catalogs {
+            for entry in catalog.events {
+                if byKey[entry.key] == nil { byKey[entry.key] = (entry.name, entry.logo, []); order.append(entry.key) }
+                byKey[entry.key]?.entries.append((catalog.source, catalog.sourceId, entry.raw))
+            }
+        }
+        let limit = Date().addingTimeInterval(-5 * 3600)
+        let list: [LiveChannel] = order.compactMap { key in
+            guard let value = byKey[key] else { return nil }
+            let channel = LiveChannel(id: key, name: value.name, logo: value.logo, group: nil, country: "", entries: value.entries)
+            if let start = channel.start, start < limit, !channel.isLive { return nil }
+            return channel
+        }
+        return list.sorted { left, right in
+            if left.isLive != right.isLive { return left.isLive }
+            return (left.start ?? .distantFuture) < (right.start ?? .distantFuture)
         }
     }
 
@@ -151,6 +207,10 @@ final class LiveStore {
     private(set) var recents: [String] = UserDefaults.standard.stringArray(forKey: "noctra.tv.recents") ?? []
     /// Chaînes par pays (« ? » : pays non indiqué) et catégories présentes par pays.
     private(set) var countries: [String: Int] = [:]
+    /// Matchs et évènements du jour (sources Sport), tous serveurs réunis.
+    private(set) var events: [LiveChannel] = []
+    /// Rubrique et description de chaque source (chaînes, sports, alternatives, personnelles).
+    private(set) var sourceInfo: [String: (section: String, description: String)] = [:]
     private(set) var categoriesByCountry: [String: [String]] = [:]
     /// Accès VIP du serveur Noctra : LiveWatch Premium, clés Movix et Northlive.
     private(set) var liveWatchVip = false
@@ -177,6 +237,7 @@ final class LiveStore {
         sources = list.compactMap { entry in
             guard let id = entry["id"] as? String, (entry["enabled"] as? Bool) != false else { return nil }
             sections[id] = entry["section"] as? String
+            sourceInfo[id] = ((entry["section"] as? String) ?? "channels", (entry["description"] as? String) ?? "")
             return TVSourceRoute(id: id, name: (entry["name"] as? String) ?? id, ref: nil)
         }
     }
@@ -209,9 +270,11 @@ final class LiveStore {
             let json = try? await session.noctraJSON(path, timeout: 45) as? [String: Any]
             let list = (json?["channels"] as? [[String: Any]]) ?? []
             // Tâche enfant : noms, pays et clés calculés hors du fil principal.
-            let entries = Catalog.prepare(list, sports: sections[source.id] == "sports")
+            let prepared = Catalog.prepare(list, sports: sections[source.id] == "sports")
             let groups = ref == nil ? ((json?["groups"] as? [[String: Any]]) ?? []).compactMap { $0["ref"] as? String }.prefix(60).map { $0 } : []
-            return (Catalog(source: source.name, sourceId: source.id, entries: entries, vip: json?["liveWatchVip"] as? [String: Any]), groups)
+            var catalog = Catalog(source: source.name, sourceId: source.id, entries: prepared.channels, vip: json?["liveWatchVip"] as? [String: Any])
+            catalog.events = prepared.events
+            return (catalog, groups)
         }
         await withTaskGroup(of: (TVSourceRoute, Catalog, [String]).self) { group in
             func launch() {
@@ -239,7 +302,9 @@ final class LiveStore {
         }
         let snapshot = catalogs
         let merged = await Task.detached(priority: .userInitiated) { Catalog.merge(snapshot) }.value
+        let matches = await Task.detached(priority: .userInitiated) { UncheckedBox(value: Catalog.mergeEvents(snapshot)) }.value.value
         apply(merged)
+        events = matches
         loadedAt = Date()
     }
 
@@ -273,32 +338,24 @@ struct WebPlayerRequest: Identifiable {
 }
 
 /// Lancement d'une chaîne : serveurs de toutes les sources classés, testés,
-/// meilleur serveur lancé tout seul ; les suivants prennent le relais en cas d'échec.
+/// meilleur serveur lancé tout seul dans le lecteur TV (chaînes et serveurs
+/// changeables depuis le lecteur), les suivants en relais.
 @MainActor
 @Observable
 final class LiveLauncher {
     static let shared = LiveLauncher()
-    var webPlayer: WebPlayerRequest?
     var problem: String?
     var pick: LivePick?
     private(set) var opening: String?
+    @ObservationIgnored private var context: [LiveChannel] = []
 
     /// Fenêtre des serveurs à chaque lancement (sinon : meilleur serveur directement).
     var showPicker: Bool = UserDefaults.standard.object(forKey: "noctra.tv.picker") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showPicker, forKey: "noctra.tv.picker") }
     }
 
-    func open(_ channel: LiveChannel, session: Session) async {
-        guard opening == nil else { return }
-        opening = channel.id
-        defer { opening = nil }
-        LiveStore.shared.noteRecent(channel)
-        PlaybackManager.shared.liveSession = session
-        let pick = LivePick(channel: channel)
-        if showPicker { self.pick = pick }
-
-        // Serveurs de toutes les sources ; les serveurs automatiques (VIP compris)
-        // sont demandés tout de suite, 4 s au plus chacun.
+    /// Serveurs de toutes les sources ; les automatiques (VIP compris) demandés tout de suite, 4 s au plus.
+    func prepare(_ channel: LiveChannel, session: Session) async -> [LiveServer] {
         let initial = LiveServerFactory.servers(for: channel, session: session)
         var expanded: [LiveServer] = []
         await withTaskGroup(of: (Int, [LiveServer]).self) { group in
@@ -313,30 +370,37 @@ final class LiveLauncher {
             for await (index, list) in group { parts[index] = list }
             expanded = initial.indices.flatMap { parts[$0] ?? [] }
         }
-        pick.servers = LiveHealth.rank(expanded, channel: channel.id)
+        return LiveHealth.rank(expanded, channel: channel.id)
+    }
+
+    func open(_ channel: LiveChannel, context: [LiveChannel] = [], session: Session) async {
+        guard opening == nil else { return }
+        opening = channel.id
+        defer { opening = nil }
+        self.context = context
+        LiveStore.shared.noteRecent(channel)
+        PlaybackManager.shared.liveSession = session
+        let pick = LivePick(channel: channel)
+        if showPicker { self.pick = pick }
+        pick.servers = await prepare(channel, session: session)
         pick.preparing = false
         guard !pick.servers.isEmpty else {
             if self.pick === pick { self.pick = nil }
             problem = "Aucun serveur ne propose « \(channel.name) » pour le moment."
             return
         }
-
+        guard showPicker else {
+            if let best = pick.servers.first { await launch(pick, server: best, session: session) }
+            return
+        }
         // Tests des flux directs (6 à la fois) pendant le compte à rebours.
         let probing = Task { await probe(pick, session: session) }
-        if showPicker {
-            while pick.countdown > 0 && pick.auto && !pick.launching && self.pick === pick {
-                try? await Task.sleep(for: .seconds(1))
-                pick.countdown -= 1
-            }
-            guard pick.auto, !pick.launching, self.pick === pick else { return }
-        } else {
-            _ = await withTaskGroup(of: Void.self) { group in
-                group.addTask { await probing.value }
-                group.addTask { try? await Task.sleep(for: .seconds(4)) }
-                await group.next()
-                group.cancelAll()
-            }
+        while pick.countdown > 0 && pick.auto && !pick.launching && self.pick === pick {
+            try? await Task.sleep(for: .seconds(1))
+            pick.countdown -= 1
         }
+        _ = probing
+        guard pick.auto, !pick.launching, self.pick === pick else { return }
         pick.servers = LiveHealth.rank(pick.servers, channel: channel.id)
         if let best = pick.best { await launch(pick, server: best, session: session) }
     }
@@ -359,70 +423,23 @@ final class LiveLauncher {
                     pick.servers[index].probe = state
                     pick.servers[index].probeMs = ms
                     pick.servers[index].margin = margin
-                    if [.down, .noVideo, .stale].contains(state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
+                    let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
+                    if failing.contains(state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
                 }
                 next()
             }
         }
     }
 
-    /// Serveur choisi (ou meilleur) : lancé, les autres en relais.
+    /// Serveur choisi (ou meilleur) : lancé dans le lecteur TV, les autres en relais.
     func launch(_ pick: LivePick, server: LiveServer, session: Session) async {
         guard !pick.launching else { return }
         pick.launching = true
         pick.auto = false
-        var chosen = server
-        var rest = LiveHealth.rank(pick.servers.filter { $0.id != server.id }, channel: pick.channel.id)
-        if chosen.kind == .resolve {
-            let found = LiveHealth.rank(await LiveServerFactory.resolve(chosen, session: session), channel: pick.channel.id)
-            guard let first = found.first else {
-                LiveHealth.record(chosen, channel: pick.channel.id, ok: false)
-                pick.servers.removeAll { $0.id == chosen.id }
-                pick.launching = false
-                if pick.servers.isEmpty { self.pick = nil; problem = "Aucun serveur de « \(pick.channel.name) » ne répond pour le moment." }
-                else { SyncPlayManager.shared.announce("Ce serveur ne répond pas : choisissez-en un autre.") }
-                return
-            }
-            chosen = first
-            rest = Array(found.dropFirst()) + rest
-        }
+        let ranked = LiveHealth.rank(pick.servers, channel: pick.channel.id)
+        let ordered = [server] + ranked.filter { $0.id != server.id }
         if self.pick === pick { self.pick = nil }
-        start(chosen, fallbacks: rest, channel: pick.channel, session: session)
-    }
-
-    private func start(_ server: LiveServer, fallbacks: [LiveServer], channel: LiveChannel, session: Session) {
-        switch server.kind {
-        case .web:
-            if let url = server.pageURL { webPlayer = WebPlayerRequest(title: channel.name, mode: .page(url)) }
-        case .resolve:
-            Task {
-                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session), channel: channel.id)
-                if let first = found.first { start(first, fallbacks: Array(found.dropFirst()) + fallbacks, channel: channel, session: session) }
-                else if let next = fallbacks.first { start(next, fallbacks: Array(fallbacks.dropFirst()), channel: channel, session: session) }
-                else { problem = "Aucun serveur de « \(channel.name) » ne répond pour le moment." }
-            }
-        case .native where server.mpegts:
-            if let url = server.streamURL { webPlayer = WebPlayerRequest(title: channel.name, mode: .mpegts(url)) }
-        case .native:
-            // Flux directs lus par le lecteur d'Apple, l'un après l'autre ; puis les autres serveurs.
-            let natives = [server] + fallbacks.filter { $0.kind == .native && !$0.mpegts && ![.down, .noVideo].contains($0.probe) }
-            let others = fallbacks.filter { !($0.kind == .native && !$0.mpegts) }
-            let channelId = channel.id
-            PlaybackManager.shared.playLive(title: channel.name, streams: natives.compactMap { option in
-                guard let url = option.streamURL else { return nil }
-                var headers = option.headers
-                if session.isNoctraOrigin(url), let token = session.token { headers["x-noctra-token"] = token }
-                return (url, headers)
-            }, exhausted: { [weak self] in
-                guard let self else { return }
-                if let next = others.first { self.start(next, fallbacks: Array(others.dropFirst()), channel: channel, session: session) }
-                else { self.problem = "Aucun serveur de « \(channel.name) » ne répond pour le moment." }
-            }, onResult: { index, ok in
-                if natives.indices.contains(index) { LiveHealth.record(natives[index], channel: channelId, ok: ok) }
-            }, onSmooth: { index, stalls, seconds in
-                if natives.indices.contains(index) { LiveHealth.recordSmooth(natives[index], channel: channelId, stalls: stalls, seconds: seconds) }
-            })
-        }
+        LivePlayerModel.shared.start(channel: pick.channel, servers: ordered, first: server, context: context, session: session)
     }
 }
 
@@ -436,7 +453,7 @@ struct LiveTVHome: View {
     @State private var query = ""
     @State private var category: String?
 
-    enum LiveTab: String, CaseIterable { case all = "Toutes", favorites = "Favoris", recents = "Récentes", sources = "Sources" }
+    enum LiveTab: String, CaseIterable { case all = "Chaînes", sport = "Sport", favorites = "Favoris", recents = "Récentes", sources = "Sources" }
 
     private var shown: [LiveChannel] {
         var list: [LiveChannel]
@@ -447,7 +464,8 @@ struct LiveTVHome: View {
             let code = store.country
             list = code.isEmpty || !term.isEmpty ? store.channels : store.channels.filter { ($0.country.isEmpty ? "?" : $0.country) == code }
             if code == "fr" && term.isEmpty { list.sort { $0.number < $1.number } }
-        case .favorites: list = store.channels.filter { store.favorites.contains($0.id) }
+        case .sport: list = store.events
+        case .favorites: list = (store.channels + store.events).filter { store.favorites.contains($0.id) }
         case .recents: list = store.recents.compactMap { key in store.channels.first { $0.id == key } }
         case .sources: list = []
         }
@@ -476,6 +494,20 @@ struct LiveTVHome: View {
 
                     if tab == .sources {
                         sourcesGrid
+                    } else if tab == .sport {
+                        if store.loading && store.events.isEmpty {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Chargement des matchs de toutes les sources Sport…").font(.footnote).foregroundStyle(Theme.muted)
+                            }
+                            .padding(.horizontal, 20)
+                        }
+                        EventList(events: shown)
+                        if !store.loading && shown.isEmpty {
+                            MessageView(icon: "sportscourt", text: "Aucun match pour le moment. Les sources Sport sont aussi dans l’onglet Sources.") {
+                                Task { await store.loadAll(session, force: true) }
+                            }
+                        }
                     } else {
                         if tab == .all && !categories.isEmpty { categoryChips }
                         if store.loading {
@@ -576,29 +608,120 @@ struct LiveTVHome: View {
         .overlay(Capsule().stroke(selected ? Theme.teal.opacity(0.55) : Color(hex: 0x99F6E4).opacity(0.12), lineWidth: 1))
     }
 
+    /// Toutes les sources, par rubrique : chaînes, sport, alternatives, personnelles.
     private var sourcesGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 14)], spacing: 14) {
-            ForEach(store.sources, id: \.self) { source in
-                NavigationLink(value: source) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(Theme.accent)
-                        Text(source.name)
-                            .font(.headline)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-                    .padding(16)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        let sections: [(String, String, String)] = [("channels", "Chaînes", "tv"), ("sports", "Sport", "sportscourt.fill"),
+                                                    ("alternatives", "Alternatives", "arrow.triangle.branch"), ("personal", "Mes sources", "person.crop.circle")]
+        let known = Set(sections.map(\.0))
+        return VStack(alignment: .leading, spacing: 18) {
+            ForEach(sections, id: \.0) { section in
+                let list = store.sources.filter { source in
+                    let value = store.sourceInfo[source.id]?.section ?? "channels"
+                    return value == section.0 || (section.0 == "personal" && !known.contains(value))
                 }
-                .buttonStyle(PressableStyle())
+                if !list.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle(section.1, detail: "\(list.count)").padding(.horizontal, 20)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 14)], spacing: 14) {
+                            ForEach(list, id: \.self) { source in
+                                NavigationLink(value: source) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Image(systemName: section.2)
+                                            .font(.title3.weight(.semibold))
+                                            .foregroundStyle(Theme.accent)
+                                        Text(source.name)
+                                            .font(.headline)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(2)
+                                        if let description = store.sourceInfo[source.id]?.description, !description.isEmpty {
+                                            Text(description).font(.caption2).foregroundStyle(Theme.muted).lineLimit(2).multilineTextAlignment(.leading)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
+                                    .padding(16)
+                                    .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color(hex: 0x0E1326).opacity(0.82)))
+                                    .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.teal.opacity(0.25), lineWidth: 1))
+                                }
+                                .buttonStyle(PressableStyle())
+                                .foregroundStyle(.white)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Matchs du jour : en direct d'abord, puis par horaire ; tous les serveurs des sources Sport.
+struct EventList: View {
+    @Environment(Session.self) private var session
+    let events: [LiveChannel]
+    private var launcher: LiveLauncher { .shared }
+
+    var body: some View {
+        LazyVStack(spacing: 10) {
+            ForEach(events) { event in
+                Button {
+                    Task { await launcher.open(event, context: events, session: session) }
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(spacing: 3) {
+                            if event.isLive {
+                                Text("DIRECT").font(.system(size: 10, weight: .heavy)).padding(.horizontal, 6).padding(.vertical, 3).background(.red, in: Capsule())
+                            } else if let start = event.start {
+                                Text(start.formatted(date: .omitted, time: .shortened)).font(.subheadline.weight(.bold).monospacedDigit())
+                                if !Calendar.current.isDateInToday(start) {
+                                    Text(start.formatted(.dateTime.day().month(.abbreviated))).font(.caption2).foregroundStyle(Theme.muted)
+                                }
+                            } else {
+                                Image(systemName: "sportscourt").foregroundStyle(Theme.muted)
+                            }
+                        }
+                        .frame(width: 58)
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let league = event.league { Text(league).font(.caption2.weight(.semibold)).foregroundStyle(Theme.teal).lineLimit(1) }
+                            if let home = event.home, let away = event.away {
+                                team(home, logo: event.logo)
+                                team(away, logo: event.secondaryLogo)
+                            } else {
+                                Text(event.name).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            if let score = event.score { Text(score).font(.headline.monospacedDigit()) }
+                            Text("\(event.entries.count) serveur\(event.entries.count > 1 ? "s" : "")").font(.caption2).foregroundStyle(Theme.muted)
+                            if launcher.opening == event.id { ProgressView() }
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(hex: 0x0E1326).opacity(0.82)))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(event.isLive ? Color.red.opacity(0.45) : Theme.teal.opacity(0.2), lineWidth: 1))
+                }
+                .buttonStyle(PressableStyle(scale: 0.98))
                 .foregroundStyle(.white)
+                .contextMenu {
+                    Button {
+                        LiveStore.shared.toggleFavorite(event)
+                    } label: {
+                        Label(LiveStore.shared.favorites.contains(event.id) ? "Retirer des favoris" : "Ajouter aux favoris", systemImage: "star")
+                    }
+                }
             }
         }
         .padding(.horizontal, 20)
+    }
+
+    private func team(_ name: String, logo: String?) -> some View {
+        HStack(spacing: 8) {
+            if let logo, let url = session.noctraURL(logo) {
+                RemoteImage(url: url, contentMode: .fit).frame(width: 20, height: 20)
+            }
+            Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+        }
     }
 }
 
@@ -615,7 +738,7 @@ struct ChannelGrid: View {
             ForEach(channels) { channel in
                 Button {
                     taps += 1
-                    Task { await launcher.open(channel, session: session) }
+                    Task { await launcher.open(channel, context: channels, session: session) }
                 } label: {
                     VStack(spacing: 8) {
                         ZStack(alignment: .topTrailing) {
@@ -764,61 +887,74 @@ struct LiveChannelsView: View {
 
 // MARK: Lecteur web de secours
 
-/// Flux MPEG-TS (mpegts.js du serveur Noctra) ou lecteur d'un site, en plein écran.
-struct WebLivePlayerView: View {
-    @Environment(Session.self) private var session
-    @Environment(\.dismiss) private var dismiss
-    let request: WebPlayerRequest
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            Color.black.ignoresSafeArea()
-            LiveWebView(request: request, session: session)
-                .ignoresSafeArea()
-            HStack(spacing: 10) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                        .frame(width: 44, height: 44)
-                }
-                .glassEffect(.regular.interactive(), in: Circle())
-                Text(request.title)
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .glassEffect(.regular, in: Capsule())
-            }
-            .padding(.leading, 16)
-            .padding(.top, 8)
-        }
-        .statusBarHidden()
-    }
-}
-
+/// Lecteur web d'un site (lecteur externe) ou flux MPEG-TS (mpegts.js du serveur Noctra).
+/// Fenêtres publicitaires bloquées, redirections de la page vers un autre site
+/// bloquées une fois le lecteur chargé, plein écran de la vidéo autorisé.
 struct LiveWebView: UIViewRepresentable {
     let request: WebPlayerRequest
     let session: Session
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        var allowedHosts: Set<String> = []
+        var loaded = false
+
+        private func host(_ url: URL?) -> String { (url?.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "") }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+            let target = navigationAction.request.url
+            // Cadres du lecteur : libres. Page principale : même site, ou redirection pendant le premier chargement.
+            if navigationAction.targetFrame?.isMainFrame == false { return .allow }
+            if navigationAction.targetFrame == nil { return .cancel }
+            let scheme = target?.scheme?.lowercased() ?? ""
+            if !["http", "https", "about", "blob", "data"].contains(scheme) { return .cancel }
+            let destination = host(target)
+            if destination.isEmpty || allowedHosts.contains(destination) || (!loaded && navigationAction.navigationType == .other) {
+                if !destination.isEmpty { allowedHosts.insert(destination) }
+                return .allow
+            }
+            return .cancel
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            loaded = true
+        }
+
+        /// window.open et liens « nouvelle fenêtre » : publicités, jamais ouvertes.
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            nil
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.allowsPictureInPictureMediaPlayback = true
+        configuration.allowsAirPlayForMediaPlayback = true
+        configuration.preferences.isElementFullscreenEnabled = true
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         view.isOpaque = false
         view.backgroundColor = .black
         view.scrollView.backgroundColor = .black
+        view.scrollView.contentInsetAdjustmentBehavior = .never
         view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
         let store = configuration.websiteDataStore.httpCookieStore
         let base = URL(string: session.noctraBase + "/")
+        if let noctraHost = base?.host?.lowercased() { context.coordinator.allowedHosts.insert(noctraHost.replacingOccurrences(of: "www.", with: "")) }
         let cookies = base.flatMap { HTTPCookieStorage.shared.cookies(for: $0) } ?? []
         let request = self.request
         Task { @MainActor in
             for cookie in cookies { await store.setCookie(cookie) }
             switch request.mode {
             case .page(let url):
+                if let host = url.host?.lowercased() { context.coordinator.allowedHosts.insert(host.replacingOccurrences(of: "www.", with: "")) }
+                // Sans référent, comme les lecteurs officiels l'attendent.
                 view.load(URLRequest(url: url))
             case .mpegts(let url):
                 view.loadHTMLString(Self.mpegtsPage(url), baseURL: base)
@@ -829,7 +965,7 @@ struct LiveWebView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
-    static func dismantleUIView(_ uiView: WKWebView, coordinator: ()) {
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.loadHTMLString("", baseURL: nil)
     }
 

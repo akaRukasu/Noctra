@@ -84,8 +84,9 @@ struct MainTabView: View {
         .tabBarMinimizeBehavior(.onScrollDown)
         .sensoryFeedback(.selection, trigger: selection)
         // Chaîne lue par le lecteur web de secours (MPEG-TS, lecteur d'un site).
-        .fullScreenCover(item: Binding(get: { launcher.webPlayer }, set: { launcher.webPlayer = $0 })) { request in
-            WebLivePlayerView(request: request)
+        // Lecteur de la TV en direct (chaînes et serveurs changeables sans le quitter).
+        .fullScreenCover(isPresented: Binding(get: { LivePlayerModel.shared.presented }, set: { if !$0 { LivePlayerModel.shared.close() } })) {
+            LivePlayerView()
         }
         // Choix du serveur d'une chaîne (meilleur serveur lancé tout seul).
         .sheet(item: Binding(get: { launcher.pick }, set: { launcher.pick = $0 })) { pick in

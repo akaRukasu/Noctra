@@ -27,6 +27,8 @@ struct AdminHomeView: View {
                 if session.hasNoctra {
                     link("Téléchargements", "arrow.down.circle.fill", Color(hex: 0xFDBA74)) { DownloadsView() }
                     link("TV en direct et accès VIP", "dot.radiowaves.left.and.right", Theme.teal) { LiveAdminView() }
+                    link("Radarr · films", "film.stack.fill", Color(hex: 0xFDBA74)) { ArrHubView(kind: .radarr) }
+                    link("Sonarr · séries", "tv.and.mediabox.fill", Theme.cyan) { ArrHubView(kind: .sonarr) }
                 }
             }
             Section("Comptes et appareils") {

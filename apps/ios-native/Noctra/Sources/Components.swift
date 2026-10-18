@@ -406,6 +406,12 @@ struct AccountSheet: View {
                             NavigationLink { DownloadsView() } label: {
                                 Label("Téléchargements", systemImage: "arrow.down.circle.fill")
                             }
+                            NavigationLink { ArrHubView(kind: .radarr) } label: {
+                                Label("Radarr · films", systemImage: "film.stack.fill")
+                            }
+                            NavigationLink { ArrHubView(kind: .sonarr) } label: {
+                                Label("Sonarr · séries", systemImage: "tv.and.mediabox.fill")
+                            }
                         }
                         Button {
                             Task { await refreshLibraries() }
