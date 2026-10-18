@@ -9,8 +9,9 @@ on:
   push:
     paths:
       - 'apps/**'
-      # Appli iOS 26 native : son propre workflow (noctra-ios-native.yml).
+      # Applis natives iOS 26 et Android : leurs propres workflows.
       - '!apps/ios-native/**'
+      - '!apps/android-native/**'
       - 'public/noctra-app-bridge.js'
       - '.github/workflows/noctra-apps.yml'
     tags:
@@ -19,6 +20,7 @@ on:
     paths:
       - 'apps/**'
       - '!apps/ios-native/**'
+      - '!apps/android-native/**'
       - 'public/noctra-app-bridge.js'
       - '.github/workflows/noctra-apps.yml'
   workflow_dispatch:
