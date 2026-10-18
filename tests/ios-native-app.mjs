@@ -161,9 +161,11 @@ assert.match(livePlayer, /func webEvent\(/);
 assert.match(live, /configuration\.userContentController\.add\(context\.coordinator, name: "noctra"\)/, 'pages du lecteur reliées à l’appli');
 assert.match(live, /sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"/, 'pont VIP dans un cadre comme sur PC');
 assert.match(live, /struct BouquetCard/);
-assert.match(await src('ItemDetailView'), /\.frame\(height: 96\)/, 'logo du titre à sa taille');
+assert.match(await src('ItemDetailView'), /\.frame\(height: 72\)/, 'logo du titre à sa taille');
 assert.match(syncplay, /private var openGroups: some View/);
 assert.match(components, /CastButton\(\)/, 'bouton de diffusion sur chaque onglet');
+assert.match(await src('ItemDetailView'), /\.aspectRatio\(16 \/ 9, contentMode: \.fit\)/, 'bannière des fiches en 16:9');
+assert.match(livePlayer, /\.accessibilityLabel\("Quitter le lecteur"\)/);
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

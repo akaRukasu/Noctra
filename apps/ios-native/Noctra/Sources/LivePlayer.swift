@@ -543,7 +543,8 @@ struct LivePlayerView: View {
             } else if pageMode {
                 // Commandes repliées au-dessus d'une page : un bouton pour les rouvrir.
                 VStack {
-                    HStack {
+                    HStack(spacing: 10) {
+                        circleButton("xmark") { hideTask?.cancel(); model.close() }
                         circleButton("chevron.down.circle") { controls = true; scheduleHide() }
                         Spacer()
                     }
@@ -582,7 +583,17 @@ struct LivePlayerView: View {
     private var overlay: some View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
-                circleButton("xmark") { model.close() }
+                Button {
+                    hideTask?.cancel()
+                    model.close()
+                } label: {
+                    Image(systemName: "xmark").font(.headline.weight(.bold))
+                        .frame(width: 48, height: 48)
+                        .contentShape(Circle())
+                        .glassEffect(.regular.interactive(), in: Circle())
+                }
+                .buttonStyle(PressableStyle(scale: 0.9))
+                .accessibilityLabel("Quitter le lecteur")
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         if let number = model.channel?.number, number > 0, LiveStore.shared.country == "fr" {
@@ -640,10 +651,13 @@ struct LivePlayerView: View {
             action()
             scheduleHide()
         } label: {
-            Image(systemName: icon).font(size > 60 ? .title.weight(.semibold) : size > 46 ? .title3.weight(.semibold) : .headline).frame(width: size, height: size)
+            // Zone de toucher : tout le cercle (pas seulement le symbole), verre sur le bouton lui-même.
+            Image(systemName: icon).font(size > 60 ? .title.weight(.semibold) : size > 46 ? .title3.weight(.semibold) : .headline)
+                .frame(width: size, height: size)
+                .contentShape(Circle())
+                .glassEffect(.regular.interactive(), in: Circle())
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
+        .buttonStyle(PressableStyle(scale: 0.9))
     }
 
     private func pill(_ icon: String, _ title: String, busy: Bool = false, action: @escaping () -> Void) -> some View {
@@ -659,9 +673,10 @@ struct LivePlayerView: View {
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
+            .contentShape(Capsule())
+            .glassEffect(.regular.interactive(), in: Capsule())
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Capsule())
+        .buttonStyle(PressableStyle(scale: 0.96))
     }
 
     private func zap(_ delta: Int) {

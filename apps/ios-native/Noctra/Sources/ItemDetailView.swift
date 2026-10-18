@@ -99,9 +99,9 @@ struct ItemDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image en 3:2 sur toute la largeur (peu rognée), qui s'étire quand on tire vers le bas.
+            // Image en 16:9 sur toute la largeur, qui s'étire quand on tire vers le bas.
             Color.clear
-                .aspectRatio(3 / 2, contentMode: .fit)
+                .aspectRatio(16 / 9, contentMode: .fit)
                 .overlay { RemoteImage(url: headerImage) }
                 .clipped()
                 .visualEffect { content, proxy in
@@ -117,8 +117,8 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let logo = session.logo(shown) {
                     RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
-                        .frame(height: 96)
-                        .frame(maxWidth: 300, alignment: .leading)
+                        .frame(height: 72)
+                        .frame(maxWidth: 260, alignment: .leading)
                 } else {
                     Text(shown.type == "Episode" ? (shown.seriesName ?? shown.title) : shown.title)
                         .font(.display(32, .bold, relativeTo: .largeTitle))
