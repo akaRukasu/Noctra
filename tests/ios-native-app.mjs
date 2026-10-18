@@ -166,6 +166,14 @@ assert.match(syncplay, /private var openGroups: some View/);
 assert.match(components, /CastButton\(\)/, 'bouton de diffusion sur chaque onglet');
 assert.match(await src('ItemDetailView'), /\.aspectRatio\(16 \/ 9, contentMode: \.fit\)/, 'bannière des fiches en 16:9');
 assert.match(livePlayer, /\.accessibilityLabel\("Quitter le lecteur"\)/);
+// 2.9 : détection des serveurs (direct qui avance, chiffrement, débit MPEG-TS, pages, confiance, cache, nouveau test).
+assert.match(servers, /direct figé \(aucun nouveau segment\)/, 'direct figé repéré en relisant la liste');
+assert.match(servers, /flux chiffré \(FairPlay\)/);
+assert.match(servers, /private static func probeTransport\(/, 'débit des flux MPEG-TS mesuré');
+assert.match(servers, /private static func probePage\(/, 'pages des lecteurs testées');
+assert.match(servers, /static func probeTrust\(/, 'confiance apprise dans les tests');
+assert.match(servers, /static func withCachedProbes\(/, 'derniers tests réutilisés');
+assert.match(livePlayer, /private func retest\(\)/, 'nouveau test pendant la lecture');
 console.log('Appli iOS 26 native : OK');
 
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).

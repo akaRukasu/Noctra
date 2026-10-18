@@ -37,12 +37,26 @@ struct LiveServer: Identifiable {
     var probe: Probe = .untested
     var probeMs: Double = 0
     var margin: Double = 0
+    /// Raison lisible du dernier test (« direct figé », « page introuvable (404) »…).
+    var probeNote: String?
+    var probedAt: Date?
+
+    /// Serveurs testables : flux directs, et pages de lecteurs (hors secours manuels et relais à préparer).
+    var testable: Bool {
+        switch kind {
+        case .native: return streamURL != nil
+        case .web: return pageURL != nil && !manualOnly && relayPrepare == nil
+        case .resolve: return false
+        }
+    }
 
     /// Résultat d'un test : état, et flux MPEG-TS continu confié au moteur web (comme Northlive).
     mutating func apply(_ result: LiveServerFactory.ProbeResult) {
         probe = result.state
         probeMs = result.ms
         margin = result.margin
+        probeNote = result.note
+        probedAt = Date()
         if result.format != .unknown { format = result.format }
         if result.format == .ts { mpegts = true }
     }
@@ -140,6 +154,49 @@ enum LiveHealth {
         UserDefaults.standard.set(all, forKey: engineKey)
     }
 
+    // Confiance dans les tests, par fournisseur et type de serveur : un serveur
+    // annoncé « en ligne » qui ne lit pas la fait baisser, une lecture réussie
+    // après un test réussi la fait remonter.
+    private static let trustKey = "noctra.tv.probetrust.v1"
+
+    private static func trustID(_ server: LiveServer) -> String { "\(server.provider)|\(server.kindName)" }
+
+    static func probeTrust(_ server: LiveServer) -> Double {
+        let misses = (UserDefaults.standard.dictionary(forKey: trustKey) as? [String: Double] ?? [:])[trustID(server)] ?? 0
+        return 1 / (1 + misses * 0.5)
+    }
+
+    static func noteProbe(_ server: LiveServer, accurate: Bool) {
+        guard server.probe == .up || server.probe == .slow else { return }
+        var all = UserDefaults.standard.dictionary(forKey: trustKey) as? [String: Double] ?? [:]
+        let id = trustID(server)
+        all[id] = max(0, min(6, (all[id] ?? 0) + (accurate ? -1 : 1)))
+        UserDefaults.standard.set(all, forKey: trustKey)
+    }
+
+    // Derniers tests de chaque serveur (4 min) : une chaîne rouverte ou zappée
+    // est classée tout de suite avec ces résultats, sans attendre de nouveaux tests.
+    private static var probes: [String: (result: LiveServerFactory.ProbeResult, at: Date)] = [:]
+
+    static func cache(_ result: LiveServerFactory.ProbeResult, for server: LiveServer, channel: String) {
+        guard result.state != .untested && result.state != .testing else { return }
+        probes["\(channel)|\(server.label)"] = (result, Date())
+        if probes.count > 400 {
+            for key in probes.sorted(by: { $0.value.at < $1.value.at }).prefix(100).map(\.key) { probes[key] = nil }
+        }
+    }
+
+    /// Serveurs avec leur dernier test encore frais.
+    static func withCachedProbes(_ servers: [LiveServer], channel: String) -> [LiveServer] {
+        servers.map { server in
+            guard server.probe == .untested, let entry = probes["\(channel)|\(server.label)"], Date().timeIntervalSince(entry.at) < 240 else { return server }
+            var copy = server
+            copy.apply(entry.result)
+            copy.probedAt = entry.at
+            return copy
+        }
+    }
+
     static func remembered(_ channel: String) -> String? {
         UserDefaults.standard.string(forKey: "noctra.tv.server.\(channel)")
     }
@@ -198,9 +255,16 @@ enum LiveHealth {
             if server.fallback { base += 0.5 }
             if server.vip { base -= 2.5 }
             base -= health.score
+            // Le bonus d'un test réussi dépend de la confiance apprise pour ce
+            // fournisseur (un test « en ligne » suivi d'un échec de lecture la réduit).
+            let trust = probeTrust(server)
             switch server.probe {
-            case .up: base -= 6
-            case .slow: base -= 3
+            case .up:
+                base -= 6 * trust
+                // Réponse rapide et débit large : un peu devant.
+                base += min(1.5, server.probeMs / 4000)
+                if server.margin >= 2 { base -= 0.5 }
+            case .slow: base -= 3 * trust
             case .late: base += 1
             case .down, .noVideo, .stale: base += 8
             default: break
@@ -337,6 +401,7 @@ enum LiveServerFactory {
         var ms: Double = 0
         var margin: Double = 0
         var format: LiveServer.Format = .unknown
+        var note: String?
     }
 
     private enum Fetch {
@@ -435,32 +500,44 @@ enum LiveServerFactory {
         return false
     }
 
-    /// Liste HLS lue, puis dernier segment téléchargé : en ligne (et marge de
-    /// débit sur cette connexion), lent à répondre, sans vidéo, direct figé ou
-    /// hors ligne. Un flux MPEG-TS continu est reconnu à ses premiers paquets.
+    /// Test d'un serveur : flux direct (liste HLS ou flux continu) ou page de lecteur.
     static func probe(_ server: LiveServer, session: Session) async -> ProbeResult {
+        if server.kind == .web { return await probePage(server, session: session) }
+        return await probeStream(server, session: session)
+    }
+
+    /// Liste HLS lue, dernier segment téléchargé (marge de débit sur cette
+    /// connexion), puis liste relue pour vérifier que le direct avance. Un flux
+    /// MPEG-TS continu est reconnu à ses premiers paquets et son débit mesuré.
+    private static func probeStream(_ server: LiveServer, session: Session) async -> ProbeResult {
         guard let url = server.streamURL else { return ProbeResult(state: .untested) }
         let began = Date()
-        func elapsed() -> Double { Date().timeIntervalSince(began) * 1000 }
+        // Durée retenue : celle de la première réponse (le classement s'en sert),
+        // pas l'attente qui vérifie que le direct avance.
+        var latency: Double?
+        func elapsed() -> Double { latency ?? Date().timeIntervalSince(began) * 1000 }
+        func result(_ state: LiveServer.Probe, _ note: String? = nil, format: LiveServer.Format = .hls, margin: Double = 0) -> ProbeResult {
+            ProbeResult(state: state, ms: elapsed(), margin: margin, format: format, note: note)
+        }
         let first = await fetchHead(testRequest(url, server: server, session: session), limit: 524_288, seconds: 12)
+        latency = Date().timeIntervalSince(began) * 1000
         let data: Data
         let response: HTTPURLResponse
         switch first {
-        case .timedOut: return ProbeResult(state: .late, ms: elapsed())
-        case .failed: return ProbeResult(state: .down, ms: elapsed())
+        case .timedOut: return result(.late, "pas de réponse en 12 s", format: .unknown)
+        case .failed: return result(.down, "serveur injoignable", format: .unknown)
         case .done(let body, let answer):
-            guard answer.statusCode < 400 else { return ProbeResult(state: .down, ms: elapsed()) }
+            guard answer.statusCode < 400 else { return result(.down, statusNote(answer.statusCode), format: .unknown) }
             data = body
             response = answer
         }
-        let kind = format(of: data)
-        switch kind {
-        case .ts: return ProbeResult(state: .up, ms: elapsed(), format: .ts)
-        case .file: return ProbeResult(state: .up, ms: elapsed(), format: .file)
-        case .unknown: return ProbeResult(state: .noVideo, ms: elapsed())
+        switch format(of: data) {
+        case .ts: return await probeTransport(server, session: session, latency: elapsed())
+        case .file: return result(.up, "fichier vidéo", format: .file)
+        case .unknown: return result(.noVideo, pageLike(data) ? "page web reçue au lieu d’un flux" : "réponse sans vidéo", format: .unknown)
         case .hls: break
         }
-        guard var text = String(data: data, encoding: .utf8) else { return ProbeResult(state: .noVideo, ms: elapsed()) }
+        guard var text = String(data: data, encoding: .utf8) else { return result(.noVideo, "liste illisible") }
         var playlistURL = response.url ?? url
         // Liste principale : première variante.
         if text.contains("#EXT-X-STREAM-INF") {
@@ -468,37 +545,154 @@ enum LiveServerFactory {
             guard let index = lines.firstIndex(where: { $0.hasPrefix("#EXT-X-STREAM-INF") }),
                   let uri = lines[(index + 1)...].first(where: { !$0.isEmpty && !$0.hasPrefix("#") }),
                   let variant = URL(string: uri.trimmingCharacters(in: .whitespaces), relativeTo: playlistURL)?.absoluteURL else {
-                return ProbeResult(state: .noVideo, ms: elapsed(), format: .hls)
+                return result(.noVideo, "liste principale sans variante")
             }
             switch await fetchHead(testRequest(variant, server: server, session: session), limit: 524_288, seconds: 12) {
-            case .timedOut: return ProbeResult(state: .late, ms: elapsed(), format: .hls)
-            case .failed: return ProbeResult(state: .down, ms: elapsed(), format: .hls)
+            case .timedOut: return result(.late, "variante sans réponse en 12 s")
+            case .failed: return result(.down, "variante injoignable")
             case .done(let body, let answer):
-                guard answer.statusCode < 400, let variantText = String(data: body, encoding: .utf8), variantText.contains("#EXTM3U") else {
-                    return ProbeResult(state: .down, ms: elapsed(), format: .hls)
-                }
+                guard answer.statusCode < 400 else { return result(.down, "variante : " + statusNote(answer.statusCode)) }
+                guard let variantText = String(data: body, encoding: .utf8), variantText.contains("#EXTM3U") else { return result(.noVideo, "variante sans liste HLS") }
                 text = variantText
                 playlistURL = answer.url ?? variant
             }
         }
+        // Chiffrement FairPlay (« skd:// ») : illisible hors des applis du fournisseur.
+        if text.range(of: "METHOD=SAMPLE-AES", options: .caseInsensitive) != nil && text.contains("skd://") {
+            return result(.noVideo, "flux chiffré (FairPlay)")
+        }
+        let listedAt = Date()
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
         guard let last = lines.lastIndex(where: { !$0.isEmpty && !$0.hasPrefix("#") }),
               let segment = URL(string: lines[last], relativeTo: playlistURL)?.absoluteURL else {
-            return ProbeResult(state: .stale, ms: elapsed(), format: .hls)
+            return result(.stale, "liste vide (aucun segment)")
         }
         let duration = lines[..<last].last(where: { $0.hasPrefix("#EXTINF:") })
             .flatMap { Double($0.dropFirst(8).split(separator: ",").first ?? "") } ?? 0
         let sent = Date()
+        var margin = 0.0
         switch await fetchAll(testRequest(segment, server: server, session: session), seconds: 15) {
-        case .timedOut: return ProbeResult(state: .late, ms: elapsed(), format: .hls)
-        case .failed: return ProbeResult(state: .down, ms: elapsed(), format: .hls)
+        case .timedOut: return result(.late, "segment trop long à recevoir")
+        case .failed: return result(.down, "segment injoignable")
         case .done(let media, let answer):
-            guard answer.statusCode < 400 else { return ProbeResult(state: .down, ms: elapsed(), format: .hls) }
-            guard looksLikeMedia(media) else { return ProbeResult(state: .noVideo, ms: elapsed(), format: .hls) }
+            guard answer.statusCode < 400 else { return result(.down, "segment : " + statusNote(answer.statusCode)) }
+            guard looksLikeMedia(media) else { return result(.noVideo, pageLike(media) ? "segment remplacé par une page web" : "segment sans vidéo") }
             let took = max(1, Date().timeIntervalSince(sent) * 1000)
-            let margin = duration > 0 ? duration * 1000 / took : 0
-            return ProbeResult(state: margin > 0 && margin < 1.2 ? .slow : .up, ms: elapsed(), margin: margin, format: .hls)
+            margin = duration > 0 ? duration * 1000 / took : 0
         }
+        // Direct qui avance : la liste est relue après une durée de segment ;
+        // un numéro de séquence immobile signale un direct figé.
+        if !text.contains("#EXT-X-ENDLIST") {
+            let target = targetDuration(text) ?? max(duration, 4)
+            let pause = min(10, max(0, target * 1.15 - Date().timeIntervalSince(listedAt)))
+            if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
+            if case .done(let body, let answer) = await fetchHead(testRequest(playlistURL, server: server, session: session), limit: 524_288, seconds: 10),
+               answer.statusCode < 400, let again = String(data: body, encoding: .utf8), again.contains("#EXTM3U"),
+               answer.value(forHTTPHeaderField: "x-noctra-playlist") != "stale" {
+                let before = mediaSequence(text), after = mediaSequence(again)
+                let moved: Bool
+                if let before, let after { moved = after > before || segmentCount(again) > segmentCount(text) }
+                else { moved = lastSegment(again) != lines[last] }
+                if !moved { return result(.stale, "direct figé (aucun nouveau segment)") }
+            }
+        }
+        if margin > 0 && margin < 1.2 { return result(.slow, "débit trop juste ici (×\(String(format: "%.1f", margin)))", margin: margin) }
+        return result(.up, margin >= 2 ? "débit large (×\(String(format: "%.1f", margin)))" : margin > 0 ? "débit suffisant (×\(String(format: "%.1f", margin)))" : nil, margin: margin)
+    }
+
+    /// Flux MPEG-TS continu : débit reçu pendant 3 s (un direct à l'arrêt ou
+    /// au compte-gouttes ne fournit presque rien).
+    private static func probeTransport(_ server: LiveServer, session: Session, latency ms: Double) async -> ProbeResult {
+        guard let url = server.streamURL else { return ProbeResult(state: .untested) }
+        let started = Date()
+        let received = await countBytes(testRequest(url, server: server, session: session), seconds: 3, limit: 1_500_000)
+        let seconds = max(0.5, Date().timeIntervalSince(started))
+        let rate = Double(received) / seconds
+        if received < 32_768 { return ProbeResult(state: .stale, ms: ms, format: .ts, note: "flux MPEG-TS presque vide") }
+        if rate < 120_000 { return ProbeResult(state: .slow, ms: ms, format: .ts, note: "MPEG-TS · \(Int(rate * 8 / 1000)) kbit/s reçus") }
+        return ProbeResult(state: .up, ms: ms, format: .ts, note: String(format: "MPEG-TS · %.1f Mbit/s reçus", rate * 8 / 1_000_000))
+    }
+
+    /// Octets reçus d'un flux continu pendant `seconds` (au plus `limit`).
+    nonisolated private static func countBytes(_ request: URLRequest, seconds: Double, limit: Int) async -> Int {
+        let counter = ByteCounter()
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                guard let (bytes, response) = try? await URLSession.shared.bytes(for: request),
+                      ((response as? HTTPURLResponse)?.statusCode ?? 500) < 400 else { return }
+                var count = 0
+                do {
+                    for try await _ in bytes {
+                        count += 1
+                        if count % 4_096 == 0 { counter.set(count) }
+                        if count >= limit { break }
+                    }
+                } catch {}
+                counter.set(count)
+            }
+            group.addTask { try? await Task.sleep(for: .seconds(seconds)) }
+            await group.next()
+            group.cancelAll()
+        }
+        return counter.value
+    }
+
+    /// Page d'un lecteur web : réponse, protection anti-robot, lecteur présent.
+    private static func probePage(_ server: LiveServer, session: Session) async -> ProbeResult {
+        guard let url = server.pageURL else { return ProbeResult(state: .untested) }
+        let began = Date()
+        var request = testRequest(url, server: server, session: session)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        func ms() -> Double { Date().timeIntervalSince(began) * 1000 }
+        switch await fetchHead(request, limit: 262_144, seconds: 12) {
+        case .timedOut: return ProbeResult(state: .late, ms: ms(), note: "page sans réponse en 12 s")
+        case .failed: return ProbeResult(state: .down, ms: ms(), note: "site injoignable")
+        case .done(let body, let answer):
+            let html = String(decoding: body.prefix(262_144), as: UTF8.self).lowercased()
+            let challenge = html.contains("cf-chl") || html.contains("just a moment") || html.contains("challenge-platform") || html.contains("ddos-guard")
+            if challenge { return ProbeResult(state: .late, ms: ms(), note: "site protégé (vérification anti-robot)") }
+            guard answer.statusCode < 400 else { return ProbeResult(state: .down, ms: ms(), note: "page : " + statusNote(answer.statusCode)) }
+            let player = ["<video", "<iframe", ".m3u8", "jwplayer", "clappr", "hls.js", "hls.min.js", "videojs", "video.js", "plyr", "shaka", "mpegts", "flowplayer", "player"]
+            if player.contains(where: { html.contains($0) }) { return ProbeResult(state: .up, ms: ms(), note: "lecteur présent sur la page") }
+            if html.contains("404") && (html.contains("not found") || html.contains("introuvable")) || html.trimmingCharacters(in: .whitespacesAndNewlines).count < 64 {
+                return ProbeResult(state: .noVideo, ms: ms(), note: "page vide ou introuvable")
+            }
+            return ProbeResult(state: .up, ms: ms(), note: "page en ligne")
+        }
+    }
+
+    nonisolated private static func statusNote(_ code: Int) -> String {
+        switch code {
+        case 401, 403: return "accès refusé (\(code))"
+        case 404, 410: return "lien expiré (\(code))"
+        case 429: return "trop de demandes (429)"
+        case 500...599: return "erreur du fournisseur (\(code))"
+        default: return "réponse \(code)"
+        }
+    }
+
+    nonisolated private static func pageLike(_ data: Data) -> Bool {
+        let head = String(decoding: data.prefix(512), as: UTF8.self).lowercased()
+        return head.contains("<html") || head.contains("<!doctype") || head.hasPrefix("{")
+    }
+
+    nonisolated private static func targetDuration(_ text: String) -> Double? {
+        text.components(separatedBy: .newlines).first { $0.hasPrefix("#EXT-X-TARGETDURATION:") }
+            .flatMap { Double($0.dropFirst(22).trimmingCharacters(in: .whitespaces)) }
+    }
+
+    nonisolated private static func mediaSequence(_ text: String) -> Int? {
+        text.components(separatedBy: .newlines).first { $0.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") }
+            .flatMap { Int($0.dropFirst(22).trimmingCharacters(in: .whitespaces)) }
+    }
+
+    nonisolated private static func segmentCount(_ text: String) -> Int {
+        text.components(separatedBy: .newlines).filter { $0.hasPrefix("#EXTINF:") }.count
+    }
+
+    nonisolated private static func lastSegment(_ text: String) -> String? {
+        text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.last { !$0.isEmpty && !$0.hasPrefix("#") }
     }
 
     /// Tests de plusieurs serveurs, 6 à la fois ; chaque résultat est remis dès qu'il arrive.
@@ -526,6 +720,15 @@ enum LiveServerFactory {
         if ["ftyp", "moof", "styp", "sidx", "mdat", "free"].contains(box) { return true }
         return bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33
     }
+}
+
+/// Compteur partagé entre la tâche de lecture d'un flux et celle qui l'arrête.
+final class ByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int { lock.withLock { count } }
+    func set(_ value: Int) { lock.withLock { count = value } }
 }
 
 // MARK: Fenêtre de choix
@@ -631,7 +834,8 @@ struct LiveServerSheet: View {
                             .foregroundStyle(.black)
                     }
                 }
-                Text(LiveHealth.text(server, channel: pick.channel.id)).font(.caption).foregroundStyle(Theme.muted)
+                Text(([server.probeNote].compactMap { $0 } + [LiveHealth.text(server, channel: pick.channel.id)]).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
             }
             Spacer(minLength: 6)
             probeTag(server)

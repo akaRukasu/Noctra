@@ -42,6 +42,7 @@ final class LivePlayerModel {
     @ObservationIgnored private var played: Set<UUID> = []
     @ObservationIgnored private var renewed: Set<UUID> = []
     @ObservationIgnored private var watch: Task<Void, Never>?
+    @ObservationIgnored private var refresh: Task<Void, Never>?
     @ObservationIgnored private var stallObserver: NSObjectProtocol?
     @ObservationIgnored private var stalls = 0
     @ObservationIgnored private var readyAt: Date?
@@ -133,22 +134,43 @@ final class LivePlayerModel {
                 if found.isEmpty {
                     servers[index].probe = .down
                 } else {
-                    servers.replaceSubrange(index...index, with: LiveHealth.rank(found, channel: token))
+                    servers.replaceSubrange(index...index, with: LiveHealth.rank(LiveHealth.withCachedProbes(found, channel: token), channel: token))
                     probeAll()
                 }
             }
         }
         probeAll()
+        retest()
     }
 
-    /// Tests des flux directs (6 à la fois), pour la liste et le choix du serveur suivant.
+    /// Pendant la lecture : nouveau test des autres serveurs toutes les 3 min,
+    /// pour que le serveur de relais choisi en cas de coupure soit vérifié.
+    private func retest() {
+        refresh?.cancel()
+        guard let token = channel?.id else { return }
+        refresh = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(180))
+                guard let self, self.channel?.id == token, self.presented else { return }
+                let now = Date()
+                for index in self.servers.indices where self.servers[index].testable && self.servers[index].id != self.current?.id
+                    && self.servers[index].probe != .testing && now.timeIntervalSince(self.servers[index].probedAt ?? .distantPast) > 150 {
+                    self.servers[index].probe = .untested
+                }
+                self.probeAll()
+            }
+        }
+    }
+
+    /// Tests des serveurs (6 à la fois) : flux directs et pages des lecteurs,
+    /// pour la liste et le choix du serveur suivant.
     func probeAll(force: Bool = false) {
         guard let session, let channel else { return }
         let token = channel.id
         if force {
-            for index in servers.indices where servers[index].kind == .native && servers[index].probe != .testing { servers[index].probe = .untested }
+            for index in servers.indices where servers[index].testable && servers[index].probe != .testing { servers[index].probe = .untested }
         }
-        let targets = Array(servers.filter { $0.kind == .native && $0.probe == .untested }.prefix(30))
+        let targets = Array(servers.filter { $0.testable && $0.probe == .untested }.prefix(36))
         guard !targets.isEmpty else { return }
         for target in targets { if let index = servers.firstIndex(where: { $0.id == target.id }) { servers[index].probe = .testing } }
         probing += 1
@@ -156,6 +178,7 @@ final class LivePlayerModel {
             await LiveServerFactory.probeMany(targets, session: session) { [weak self] id, result in
                 guard let self, self.channel?.id == token, let index = self.servers.firstIndex(where: { $0.id == id }) else { return }
                 self.servers[index].apply(result)
+                LiveHealth.cache(result, for: self.servers[index], channel: token)
                 if [.down, .noVideo].contains(result.state) { LiveHealth.record(self.servers[index], channel: token, ok: false) }
             }
             if self.channel?.id == token { probing = max(0, probing - 1) } else { probing = 0 }
@@ -342,6 +365,7 @@ final class LivePlayerModel {
         status = nil
         played.insert(server.id)
         LiveHealth.record(server, channel: channel.id, ok: true)
+        LiveHealth.noteProbe(server, accurate: true)
         if server.kind == .native && !server.mpegts { LiveHealth.noteEngine(server, web: web, ok: true) }
     }
 
@@ -389,9 +413,12 @@ final class LivePlayerModel {
             return
         }
         LiveHealth.record(server, channel: channel.id, ok: false)
+        // Annoncé « en ligne » par le test mais jamais lu : ce test compte moins pour ce fournisseur.
+        if !played.contains(server.id) { LiveHealth.noteProbe(server, accurate: false) }
         let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
         let open = servers.filter { !tried.contains($0.id) && !$0.manualOnly }
-        let candidate = open.first { $0.probe == .up } ?? open.first { !failing.contains($0.probe) } ?? open.first
+        let candidate = open.first { $0.probe == .up } ?? open.first { $0.probe == .slow }
+            ?? open.first { !failing.contains($0.probe) && $0.probe != .late } ?? open.first { !failing.contains($0.probe) } ?? open.first
         guard let candidate else {
             stopVideo()
             web = nil
@@ -473,6 +500,7 @@ final class LivePlayerModel {
     }
 
     func close() {
+        refresh?.cancel()
         finishMeasure()
         generation += 1
         stopVideo()
@@ -846,7 +874,7 @@ struct LivePlayerServers: View {
                             .foregroundStyle(.black)
                     }
                 }
-                Text(detail(server)).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
+                Text(detail(server)).font(.caption).foregroundStyle(Theme.muted).lineLimit(3)
             }
             Spacer(minLength: 6)
             Text(probeText(server)).font(.caption2.weight(.bold)).foregroundStyle(probeColor(server)).multilineTextAlignment(.trailing)
@@ -860,7 +888,9 @@ struct LivePlayerServers: View {
         case .resolve: parts.append(server.vip ? "Accès VIP à préparer" : "Serveurs à demander")
         case .web: parts.append(server.manualOnly ? "Lecteur du site · secours manuel" : "Lecteur du site")
         }
+        if let note = server.probeNote { parts.append(note) }
         if server.probeMs > 0 && (server.probe == .up || server.probe == .slow) { parts.append("\(Int(server.probeMs)) ms") }
+        if let at = server.probedAt, Date().timeIntervalSince(at) > 60 { parts.append("testé il y a \(Int(Date().timeIntervalSince(at) / 60)) min") }
         parts.append(LiveHealth.text(server, channel: model.channel?.id ?? ""))
         return parts.joined(separator: " · ")
     }

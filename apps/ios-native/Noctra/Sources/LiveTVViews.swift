@@ -376,7 +376,7 @@ final class LiveLauncher {
             for await (index, list) in group { parts[index] = list }
             expanded = initial.indices.flatMap { parts[$0] ?? [] }
         }
-        return LiveHealth.rank(expanded, channel: channel.id)
+        return LiveHealth.rank(LiveHealth.withCachedProbes(expanded, channel: channel.id), channel: channel.id)
     }
 
     func open(_ channel: LiveChannel, context: [LiveChannel] = [], session: Session) async {
@@ -412,11 +412,12 @@ final class LiveLauncher {
     }
 
     private func probe(_ pick: LivePick, session: Session) async {
-        let targets = pick.servers.filter { $0.kind == .native }.prefix(16)
+        let targets = pick.servers.filter { $0.testable && $0.probe == .untested }.prefix(20)
         for target in targets { if let index = pick.servers.firstIndex(where: { $0.id == target.id }) { pick.servers[index].probe = .testing } }
         await LiveServerFactory.probeMany(Array(targets), session: session) { id, result in
             guard let index = pick.servers.firstIndex(where: { $0.id == id }) else { return }
             pick.servers[index].apply(result)
+            LiveHealth.cache(result, for: pick.servers[index], channel: pick.channel.id)
             if [.down, .noVideo].contains(result.state) { LiveHealth.record(pick.servers[index], channel: pick.channel.id, ok: false) }
         }
     }
