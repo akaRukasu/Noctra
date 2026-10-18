@@ -1,0 +1,6 @@
+Noctra.xcodeproj/
+build/
+DerivedData/
+Payload/
+*.ipa
+build.log
