@@ -447,7 +447,7 @@ struct RouletteView: View {
                         ForEach(libraries, id: \.id) { Text($0.name).tag($0.id) }
                     }
                 } label: {
-                    Label(libraries.first { $0.id == library }?.name ?? "Toutes les médiathèques", systemImage: "square.stack.fill")
+                    Label(libraries.first { $0.id == library }?.name ?? "Médiathèques", systemImage: "square.stack.fill")
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                 }
@@ -458,7 +458,7 @@ struct RouletteView: View {
                         ForEach(genres, id: \.self) { Text($0).tag($0) }
                     }
                 } label: {
-                    Label(genre.isEmpty ? "Tous les genres" : genre, systemImage: "tag.fill")
+                    Label(genre.isEmpty ? "Genres" : genre, systemImage: "tag.fill")
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                 }
@@ -466,7 +466,7 @@ struct RouletteView: View {
             }
             HStack(spacing: 10) {
                 Picker("Note", selection: $rating) {
-                    Text("Toutes notes").tag(0)
+                    Text("Toutes").tag(0)
                     Text("6+").tag(6)
                     Text("7+").tag(7)
                     Text("8+").tag(8)

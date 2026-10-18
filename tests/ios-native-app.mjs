@@ -79,4 +79,30 @@ assert.doesNotMatch(theme, /struct AuroraPrimaryStyle/);
 const components = await src('Components');
 assert.match(components, /\.contextMenu \{[\s\S]*\} preview: \{/);
 assert.equal((components.match(/\.modifier\(ItemContextMenu\(/g) || []).length, 2, 'appui long sur affiches et vignettes');
+// 2.4 : routes Noctra sous /noctra, mise en page, sous-titres, Chromecast, administration.
+const sessionSrc = await src('Session');
+assert.match(sessionSrc, /URL\(string: noctraBase \+ raw\)/, 'routes /api/… résolues sous le dossier Noctra');
+assert.match(components, /Color\.clear\s*\n\s*\.overlay\(alignment: alignment\)/, 'images rognées dans leur cadre');
+const subtitlesSrc = await src('Subtitles');
+assert.match(subtitlesSrc, /static func parse\(_ raw: String\) -> \[SubtitleCue\]/);
+assert.equal(WebVttSeconds('01:02:03.500'), 3723.5);
+const playbackSrc = await src('Playback');
+assert.match(playbackSrc, /Subtitles\/\\\(chosen\)\/0\/Stream\.vtt/);
+assert.match(playbackSrc, /"Method": "External"/);
+const chromecast = await src('Chromecast');
+assert.match(chromecast, /"_googlecast\._tcp"/);
+assert.match(chromecast, /"CC1AD845"/, 'lecteur multimédia par défaut de Google');
+assert.match(chromecast, /urn:x-cast:com\.google\.cast\.media/);
+assert.match(plistNative, /<string>_googlecast\._tcp<\/string>/, 'Bonjour autorisé pour le Cast');
+assert.match(await src('Cast'), /ChromecastController\.shared\.cast\(/);
+const admin = await src('AdminViews');
+for (const route of ['"/System/Info"', '"/Sessions"', '"/ScheduledTasks"', '"/System/ActivityLog/Entries"', '"/Users/New"', '/Policy"', '"/api/downloads/add"', 'jellyfin_credentials']) {
+  assert.ok(admin.includes(route), `administration : ${route}`);
+}
+assert.match(components, /NavigationLink \{ AdminDashboardView\(\) \}/);
 console.log('Appli iOS 26 native : OK');
+
+// Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).
+function WebVttSeconds(value) {
+  return value.replace(',', '.').split(':').reduce((total, field) => total * 60 + Number(field), 0);
+}

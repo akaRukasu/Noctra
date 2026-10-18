@@ -106,6 +106,18 @@ struct MainTabView: View {
             }
         }
         .animation(Theme.spring, value: sync.notice)
+        // Lecture en cours sur un Chromecast : capsule au-dessus des onglets.
+        .overlay(alignment: .bottom) {
+            ChromecastMiniPlayer()
+                .padding(.bottom, 74)
+        }
+        .animation(Theme.spring, value: ChromecastController.shared.isActive)
+        .alert("Chromecast", isPresented: Binding(get: { ChromecastController.shared.problem != nil && !ChromecastController.shared.isActive },
+                                                  set: { if !$0 { ChromecastController.shared.problem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(ChromecastController.shared.problem ?? "")
+        }
     }
 }
 

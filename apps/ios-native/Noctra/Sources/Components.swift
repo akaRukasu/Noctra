@@ -1,19 +1,26 @@
 import SwiftUI
 
 /// Image distante (cache d'URLSession), apparition en fondu.
+/// Elle occupe exactement la place proposée : une image large en mode
+/// « remplir » est rognée au lieu d'élargir la page (fiche, tuiles, carrousel).
 struct RemoteImage: View {
     let url: URL?
     var contentMode: ContentMode = .fill
+    var alignment: Alignment = .center
 
     var body: some View {
-        AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.25))) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: contentMode)
-            default:
-                Rectangle().fill(Theme.surface)
+        Color.clear
+            .overlay(alignment: alignment) {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.25))) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: contentMode)
+                    default:
+                        if contentMode == .fill { Rectangle().fill(Theme.surface) } else { Color.clear }
+                    }
+                }
             }
-        }
+            .clipped()
     }
 }
 
@@ -294,7 +301,7 @@ struct AccountButton: View {
         }
         .sheet(isPresented: $showing) {
             AccountSheet()
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
         }
     }
 }
@@ -302,14 +309,58 @@ struct AccountButton: View {
 struct AccountSheet: View {
     @Environment(Session.self) private var session
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("noctra.subtitles.size") private var subtitleSize = SubtitleSize.medium.rawValue
+    @State private var refreshNote: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    LabeledContent("Utilisateur", value: session.userName ?? "—")
+                    HStack(spacing: 14) {
+                        Text(String((session.userName ?? "?").prefix(1)).uppercased())
+                            .font(.title2.weight(.bold))
+                            .frame(width: 52, height: 52)
+                            .background(Theme.gradient, in: Circle())
+                            .foregroundStyle(Theme.onAccent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.userName ?? "—").font(.display(20, .bold, relativeTo: .headline))
+                            Text(session.isAdmin ? "Administrateur" : "Utilisateur").font(.caption).foregroundStyle(Theme.muted)
+                        }
+                    }
                     LabeledContent("Serveur", value: URL(string: session.jellyfinBase)?.host ?? "—")
                     LabeledContent("TV en direct", value: session.hasNoctra ? "Disponible" : "Indisponible")
+                }
+                Section("Lecture") {
+                    Picker("Taille des sous-titres", selection: $subtitleSize) {
+                        ForEach(SubtitleSize.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                }
+                if session.isAdmin {
+                    Section {
+                        NavigationLink { AdminDashboardView() } label: {
+                            Label("Tableau de bord", systemImage: "gauge.with.dots.needle.67percent")
+                        }
+                        NavigationLink { UsersAdminView() } label: {
+                            Label("Utilisateurs", systemImage: "person.2.fill")
+                        }
+                        if session.hasNoctra {
+                            NavigationLink { DownloadsView() } label: {
+                                Label("Téléchargements", systemImage: "arrow.down.circle.fill")
+                            }
+                        }
+                        Button {
+                            Task { await refreshLibraries() }
+                        } label: {
+                            Label("Actualiser les médiathèques", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        NavigationLink { FullDashboardView() } label: {
+                            Label("Tableau de bord complet", systemImage: "slider.horizontal.3")
+                        }
+                    } header: {
+                        Text("Administration")
+                    } footer: {
+                        if let refreshNote { Text(refreshNote) }
+                    }
                 }
                 Section {
                     Button("Se déconnecter", role: .destructive) {
@@ -328,6 +379,16 @@ struct AccountSheet: View {
                     Button("OK") { dismiss() }
                 }
             }
+        }
+    }
+
+    private func refreshLibraries() async {
+        do {
+            if session.hasNoctra { _ = try await session.noctraSend("POST", "/api/libraries/refresh", json: nil) }
+            else { _ = try await session.data("POST", "/Library/Refresh") }
+            refreshNote = "Actualisation des médiathèques lancée."
+        } catch {
+            refreshNote = error.localizedDescription
         }
     }
 }

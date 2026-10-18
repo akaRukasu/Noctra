@@ -149,7 +149,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.3.0\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.4.0\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }
@@ -251,9 +251,17 @@ final class Session {
 
     // MARK: Serveur Noctra (TV en direct)
 
+    /// Adresse d'une ressource Noctra. Les routes de l'appli (« /api/… ») sont
+    /// relatives au dossier du serveur (/noctra) ; les liens renvoyés par le
+    /// serveur contiennent déjà ce dossier (« /noctra/api/tv/stream/… »).
     func noctraURL(_ raw: String) -> URL? {
         if raw.lowercased().hasPrefix("http") { return URL(string: raw) }
         guard let base = URL(string: noctraBase + "/") else { return nil }
+        if raw.hasPrefix("/") {
+            let folder = URL(string: noctraBase)?.path ?? ""
+            let inFolder = folder.isEmpty || folder == "/" || raw == folder || raw.hasPrefix(folder + "/")
+            return inFolder ? URL(string: raw, relativeTo: base)?.absoluteURL : URL(string: noctraBase + raw)
+        }
         return URL(string: raw, relativeTo: base)?.absoluteURL
     }
 
@@ -305,11 +313,17 @@ final class Session {
     /// chaînes relayées par le serveur, demandés par le lecteur vidéo et les
     /// lecteurs web, passent avec lui (pas d'en-tête personnalisé possible).
     func establishNoctraSession() async {
-        guard hasNoctra || !noctraBase.isEmpty, token != nil else { return }
-        if let json = try? await noctraJSON("/api/session", timeout: 15) as? [String: Any] {
+        guard token != nil else { return }
+        if !noctraBase.isEmpty, let json = try? await noctraJSON("/api/session", timeout: 15) as? [String: Any] {
             hasNoctra = true
             UserDefaults.standard.set(true, forKey: "noctra.hasNoctra")
             isAdmin = (json["isAdmin"] as? Bool) ?? false
+            return
+        }
+        // Sans serveur Noctra : droits lus sur le compte Jellyfin.
+        if let raw = try? await data("GET", "/Users/Me"),
+           let json = try? JSONSerialization.jsonObject(with: raw) as? [String: Any] {
+            isAdmin = ((json["Policy"] as? [String: Any])?["IsAdministrator"] as? Bool) ?? false
         }
     }
 

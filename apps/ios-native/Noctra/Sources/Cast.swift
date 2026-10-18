@@ -22,13 +22,18 @@ struct CastTarget: Identifiable, Hashable {
     let playing: String?
 }
 
-/// « Lire sur… » : le titre démarre sur un autre appareil connecté au même compte.
+/// « Lire sur… » : Chromecast et Google TV, AirPlay, ou un autre appareil
+/// connecté au même compte (Noctra TV, navigateur, autre téléphone).
 struct CastSheet: View {
     @Environment(Session.self) private var session
     @Environment(\.dismiss) private var dismiss
     let item: BaseItem
     let startSeconds: Double
+    var audioIndex: Int?
+    var subtitleIndex: Int?
     @State private var targets: [CastTarget] = []
+    @State private var castingTo: String?
+    private var browser: ChromecastBrowser { .shared }
     @State private var loading = true
     @State private var sent: String?
     @State private var error: String?
@@ -36,6 +41,42 @@ struct CastSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    if browser.devices.isEmpty {
+                        HStack(spacing: 12) {
+                            if !browser.blocked { ProgressView() }
+                            Text(browser.blocked ? "Recherche bloquée : autorisez « Réseau local » pour Noctra dans Réglages › Confidentialité." : "Recherche sur le Wi-Fi…")
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                    ForEach(browser.devices) { device in
+                        Button {
+                            Task { await cast(to: device) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: device.model.lowercased().contains("tv") ? "tv" : "tv.badge.wifi")
+                                    .font(.title3)
+                                    .foregroundStyle(Theme.accent)
+                                    .frame(width: 30)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(device.name).font(.headline)
+                                    Text(device.model).font(.caption).foregroundStyle(Theme.muted)
+                                }
+                                Spacer()
+                                if castingTo == device.id { ProgressView() }
+                                if ChromecastController.shared.device?.id == device.id && castingTo == nil {
+                                    Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Theme.accent)
+                                }
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .disabled(castingTo != nil)
+                    }
+                } header: {
+                    Text("Chromecast et Google TV")
+                } footer: {
+                    Text("Chromecast, Google TV, Android TV et téléviseurs « Chromecast intégré » sur le même Wi-Fi.")
+                }
                 Section {
                     HStack {
                         Label("AirPlay", systemImage: "airplayvideo")
@@ -80,6 +121,7 @@ struct CastSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("OK") { dismiss() } } }
             .task { await load() }
             .refreshable { await load() }
+            .onAppear { browser.start() }
             .sensoryFeedback(.success, trigger: sent)
         }
     }
@@ -102,6 +144,20 @@ struct CastSheet: View {
             guard remote else { return nil }
             let now = (entry["NowPlayingItem"] as? [String: Any])?["Name"] as? String
             return CastTarget(id: id, name: (entry["DeviceName"] as? String) ?? "Appareil", client: (entry["Client"] as? String) ?? "", playing: now)
+        }
+    }
+
+    private func cast(to device: ChromecastDevice) async {
+        castingTo = device.id
+        defer { castingTo = nil }
+        do {
+            try await ChromecastController.shared.cast(item, session: session, startSeconds: startSeconds,
+                                                       audioIndex: audioIndex, subtitleIndex: subtitleIndex, to: device)
+            withAnimation(Theme.spring) { sent = device.id }
+            try? await Task.sleep(for: .milliseconds(600))
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

@@ -69,7 +69,9 @@ struct ItemDetailView: View {
         }
         .sheet(isPresented: $showCast) {
             if let target = playTarget {
-                CastSheet(item: target, startSeconds: target.resumeSeconds)
+                CastSheet(item: target, startSeconds: target.resumeSeconds,
+                          audioIndex: target.id == shown.id ? audioIndex : nil,
+                          subtitleIndex: target.id == shown.id ? subtitleIndex : nil)
                     .presentationDetents([.medium, .large])
             }
         }
@@ -102,7 +104,7 @@ struct ItemDetailView: View {
             LinearGradient(colors: [.clear, Theme.background.opacity(0.4), Theme.background], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
                 if let logo = session.logo(shown) {
-                    RemoteImage(url: logo, contentMode: .fit)
+                    RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
                         .frame(maxWidth: 260, maxHeight: 90, alignment: .leading)
                 } else {
                     Text(shown.type == "Episode" ? (shown.seriesName ?? shown.title) : shown.title)
@@ -177,7 +179,7 @@ struct ItemDetailView: View {
                         .auroraSecondary()
                     }
                     if target != nil {
-                        // Cast : AirPlay ou un autre appareil (Noctra TV, navigateur…).
+                        // Cast : Chromecast, AirPlay ou un autre appareil (Noctra TV, navigateur…).
                         Button {
                             showCast = true
                         } label: {

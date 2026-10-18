@@ -124,6 +124,8 @@ struct MediaSource: Decodable, Identifiable {
     let supportsTranscoding: Bool?
     let transcodingUrl: String?
     let mediaStreams: [MediaStream]?
+    let defaultSubtitleStreamIndex: Int?
+    let defaultAudioStreamIndex: Int?
 }
 
 struct MediaStream: Decodable, Identifiable, Hashable {
@@ -137,6 +139,8 @@ struct MediaStream: Decodable, Identifiable, Hashable {
     let isForced: Bool?
     let isExternal: Bool?
     let isTextSubtitleStream: Bool?
+    /// Sous-titres : External (fichier lu par l'appli), Encode (incrustés par le serveur)…
+    let deliveryMethod: String?
     let width: Int?
     let height: Int?
     let channels: Int?

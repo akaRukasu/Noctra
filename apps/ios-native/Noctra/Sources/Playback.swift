@@ -80,10 +80,34 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         }
         guard let url else { throw NoctraError.badAddress }
 
+        // Sous-titres texte : fichier WebVTT lu par l'appli. Sous-titres image
+        // (PGS, VobSub) : incrustés par le serveur dans le flux (« Encode »).
+        let chosen = subtitleIndex ?? source.defaultSubtitleStreamIndex ?? -1
+        var subtitles: URL?
+        if chosen >= 0, let stream = source.mediaStreams?.first(where: { $0.index == chosen && $0.type == "Subtitle" }),
+           stream.deliveryMethod != "Encode", stream.isTextSubtitleStream != false {
+            subtitles = session.url("/Videos/\(item.id)/\(source.id)/Subtitles/\(chosen)/0/Stream.vtt", ["api_key": session.token])
+        }
+        lastSubtitleURL = subtitles
+
         let report = Report(session: session, itemId: item.id, mediaSourceId: source.id, playSessionId: playSession, playMethod: method)
         let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
+        lastMediaURL = url
+        lastMediaIsDirect = method == "DirectPlay"
         present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync)
+        if let subtitles, let controller, let player {
+            let overlay = SubtitleOverlay()
+            overlay.attach(to: controller, player: player)
+            subtitleOverlay = overlay
+            Task { await overlay.load(subtitles, headers: session.authHeaders) }
+        }
     }
+
+    /// Dernier flux lancé (le cast vers Chromecast reprend le même choix de pistes).
+    private(set) var lastMediaURL: URL?
+    private(set) var lastMediaIsDirect = false
+    private(set) var lastSubtitleURL: URL?
+    private var subtitleOverlay: SubtitleOverlay?
 
     /// Profil de l'iPhone : formats lus directement par AVPlayer, sinon HLS en fMP4
     /// (copie de la vidéo et du son quand c'est possible : peu de travail pour le serveur).
@@ -103,15 +127,10 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         ],
         "ContainerProfiles": [] as [Any],
         "CodecProfiles": [] as [Any],
-        "SubtitleProfiles": [
-            ["Format": "vtt", "Method": "Hls"],
-            ["Format": "subrip", "Method": "Hls"],
-            ["Format": "srt", "Method": "Hls"],
-            ["Format": "ass", "Method": "Encode"],
-            ["Format": "ssa", "Method": "Encode"],
-            ["Format": "pgssub", "Method": "Encode"],
-            ["Format": "dvdsub", "Method": "Encode"]
-        ]
+        // Texte : fichier à part (WebVTT), la vidéo reste en lecture directe.
+        // Image : incrustation par le serveur.
+        "SubtitleProfiles": ["vtt", "webvtt", "srt", "subrip", "ass", "ssa", "mov_text", "ttml", "smi", "sub"].map { ["Format": $0, "Method": "External"] }
+            + ["pgssub", "pgs", "dvdsub", "dvbsub", "vobsub", "xsub"].map { ["Format": $0, "Method": "Encode"] }
     ]
 
     // MARK: TV en direct
@@ -238,6 +257,8 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         progressObserver = nil
         syncObserver = nil
         rateObservation = nil
+        subtitleOverlay?.detach()
+        subtitleOverlay = nil
         let position = positionSeconds
         player?.pause()
         if let report {

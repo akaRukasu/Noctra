@@ -77,7 +77,7 @@ struct HomeView: View {
                 .font(.caption.weight(.bold))
                 .tracking(2.6)
                 .foregroundStyle(Theme.gradient)
-            (Text("À l’affiche chez vous").foregroundStyle(Theme.titleGradient) + Text(".").foregroundStyle(Theme.gradient))
+            Text("\(Text("À l’affiche chez vous").foregroundStyle(Theme.titleGradient))\(Text(".").foregroundStyle(Theme.gradient))")
                 .font(.display(34, .bold, relativeTo: .largeTitle))
                 .kerning(-1.4)
                 .lineLimit(2)
@@ -97,23 +97,23 @@ struct HomeView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(libraries.prefix(4)) { library in
                     NavigationLink(value: LibraryRoute(id: library.id, name: library.name, collectionType: library.type)) {
-                        ZStack(alignment: .bottomLeading) {
+                        // Comme sur le site : l'image de la médiathèque (son nom y est déjà
+                        // dessiné), puis le nom et le nombre de titres sous la tuile.
+                        VStack(alignment: .leading, spacing: 6) {
                             RemoteImage(url: library.image ?? session.image(library.id, width: 600))
-                                .frame(height: 112)
-                                .frame(maxWidth: .infinity)
-                                .clipped()
-                            LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(library.name).font(.headline).lineLimit(1)
+                                .aspectRatio(16 / 9, contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .auroraCard(cornerRadius: 20)
+                            HStack(spacing: 6) {
+                                Text(library.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 if let count = library.count {
-                                    Text("\(count) titre\(count > 1 ? "s" : "")").font(.caption).foregroundStyle(.white.opacity(0.75))
+                                    Text("\(count)").font(.caption).foregroundStyle(Theme.muted)
                                 }
                             }
-                            .padding(12)
+                            .padding(.horizontal, 4)
                         }
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .auroraCard(cornerRadius: 22)
+                        .foregroundStyle(Color(hex: 0xF3F0FF))
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(PressableStyle(scale: 0.96))
                 }
@@ -221,6 +221,8 @@ struct HeroCarousel: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollIndicators(.hidden)
+            // Le halo des cartes déborde du carrousel sans être coupé net.
+            .scrollClipDisabled()
             .scrollPosition(id: $current)
             .frame(height: 470)
 
@@ -249,7 +251,7 @@ struct HeroCarousel: View {
             VStack(alignment: .leading, spacing: 10) {
                 Eyebrow(text: resume ? "CONTINUER À REGARDER" : "À L’AFFICHE")
                 if let logo = session.logo(item) {
-                    RemoteImage(url: logo, contentMode: .fit)
+                    RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading)
                         .frame(maxWidth: 230, maxHeight: 80, alignment: .leading)
                 } else {
                     Text(item.type == "Episode" ? (item.seriesName ?? item.title) : item.title)
