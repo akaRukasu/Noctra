@@ -214,7 +214,6 @@ final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = "Langue audio et sous-titres"
         button.accessibilityHint = "Choisir une langue audio ou une piste de sous-titres"
-        button.toolTip = "Audio et sous-titres"
         spinner.color = .white
         spinner.hidesWhenStopped = true
         spinner.translatesAutoresizingMaskIntoConstraints = false

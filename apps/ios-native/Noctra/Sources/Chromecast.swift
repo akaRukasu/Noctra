@@ -382,7 +382,8 @@ final class ChromecastController {
         }
         let access: [String: Any]?
         let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
-        let addressToShare = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (parts?.percentEncodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+        let encodedQuery = parts?.percentEncodedQuery
+        let addressToShare = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (encodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
         do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": addressToShare, "headers": server.headers]) as? [String: Any] }
         catch { throw NSError(domain: "NoctraCast", code: 2, userInfo: [NSLocalizedDescriptionKey: "La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version."]) }
         guard let path = access?["url"] as? String, let address = session.noctraURL(path) else { throw NoctraError.empty }
