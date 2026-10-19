@@ -47,6 +47,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -78,6 +79,7 @@ import com.noctra.mobile.NoctraApplication
 import com.noctra.mobile.cast.RemotePlayback
 import com.noctra.mobile.core.Net
 import com.noctra.mobile.core.Session
+import com.noctra.mobile.play.ImmersiveEffect
 import com.noctra.mobile.ui.NoctraSheet
 import com.noctra.mobile.ui.SearchField
 import com.noctra.mobile.ui.SettingGroup
@@ -111,6 +113,9 @@ object MultiviewStore {
         private set
     var featured by mutableStateOf<String?>(null)
         private set
+    /** Vignette en plein écran (les autres continuent en arrière-plan). */
+    var zoomed by mutableStateOf<String?>(null)
+        private set
 
     fun contains(channel: LiveChannel) = picked.any { it.id == channel.id }
 
@@ -130,6 +135,7 @@ object MultiviewStore {
         tiles += picked.take(MAX_TILES).map { MultiviewTile(it) }
         audio = tiles.firstOrNull()?.id
         featured = null
+        zoomed = null
         selecting = false
         presented = true
         tiles.forEachIndexed { index, tile -> tile.start(index * 400L) }
@@ -150,27 +156,36 @@ object MultiviewStore {
         tiles.remove(tile)
         picked.removeAll { it.id == tile.channel.id }
         if (featured == tile.id) featured = null
+        if (zoomed == tile.id) zoomed = null
         if (audio == tile.id) audio = tiles.firstOrNull()?.id
         if (tiles.isEmpty()) close() else applyAudio()
     }
 
     fun listen(tile: MultiviewTile) { audio = tile.id; applyAudio() }
 
-    fun feature(tile: MultiviewTile) { featured = if (featured == tile.id || tiles.size < 2) null else tile.id }
+    fun feature(tile: MultiviewTile) { zoomed = null; featured = if (featured == tile.id || tiles.size < 2) null else tile.id }
 
     /** Chaîne mise en avant, et seule écoutée. */
     fun solo(tile: MultiviewTile) {
         audio = tile.id
         featured = if (tiles.size > 1) tile.id else null
+        zoomed = null
         applyAudio()
     }
 
-    fun grid() { featured = null }
+    fun grid() { featured = null; zoomed = null }
+
+    /** Plein écran d'une vignette, avec son son. */
+    fun zoom(tile: MultiviewTile) {
+        zoomed = if (zoomed == tile.id) null else tile.id
+        if (zoomed != null) { audio = tile.id; applyAudio() }
+    }
 
     fun close() {
         stopAll()
         tiles.clear()
         featured = null
+        zoomed = null
         presented = false
     }
 
@@ -342,6 +357,8 @@ private fun multiviewLayout(width: Dp, height: Dp): List<TileFrame> {
     if (count == 0) return emptyList()
     val gap = 4.dp
     val landscape = width > height
+    val zoomed = tiles.indexOfFirst { it.id == MultiviewStore.zoomed }
+    if (zoomed >= 0) return (0 until count).map { if (it == zoomed) TileFrame(0.dp, 0.dp, width, height) else TileFrame(0.dp, 0.dp, 0.dp, 0.dp) }
     val main = tiles.indexOfFirst { it.id == MultiviewStore.featured }
     if (main >= 0 && count > 1) {
         val frames = MutableList(count) { TileFrame(0.dp, 0.dp, 0.dp, 0.dp) }
@@ -383,7 +400,9 @@ fun MultiviewScreen() {
     var menu by remember { mutableStateOf<MultiviewTile?>(null) }
     var adding by remember { mutableStateOf(false) }
     var casting by remember { mutableStateOf(false) }
-    BackHandler { MultiviewStore.close() }
+    ImmersiveEffect()
+    // Retour : quitte d'abord le plein écran d'une vignette, puis le multiview.
+    BackHandler { if (MultiviewStore.zoomed != null) MultiviewStore.grid() else MultiviewStore.close() }
     // Écran plein : les touches ne passent pas aux onglets en dessous.
     Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().padding(top = 52.dp)) {
@@ -391,7 +410,11 @@ fun MultiviewScreen() {
             MultiviewStore.tiles.forEachIndexed { index, tile ->
                 val frame = frames.getOrNull(index) ?: return@forEachIndexed
                 androidx.compose.runtime.key(tile.id) {
-                    MultiviewTileView(tile, Modifier.offset(frame.x, frame.y).size(frame.width, frame.height).clickable { menu = tile })
+                    // Vignette masquée (une autre en plein écran) : elle continue sans prendre de place.
+                    val hidden = frame.width == 0.dp
+                    MultiviewTileView(tile, Modifier.offset(frame.x, frame.y).size(if (hidden) 1.dp else frame.width, if (hidden) 1.dp else frame.height)
+                        .alpha(if (hidden) 0f else 1f)
+                        .pointerInput(tile.id, hidden) { if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { menu = tile }) })
                 }
             }
         }
@@ -402,7 +425,7 @@ fun MultiviewScreen() {
         ) {
             IconButton(onClick = { MultiviewStore.close() }) { Icon(Icons.Filled.Close, "Fermer le multiview", tint = Color.White) }
             Text("Multiview · ${MultiviewStore.tiles.size}/${MultiviewStore.MAX_TILES}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f))
-            if (MultiviewStore.featured != null) IconButton(onClick = { MultiviewStore.grid() }) { Icon(Icons.Filled.GridView, "Revenir à la grille", tint = Color.White) }
+            if (MultiviewStore.featured != null || MultiviewStore.zoomed != null) IconButton(onClick = { MultiviewStore.grid() }) { Icon(Icons.Filled.GridView, "Revenir à la grille", tint = Color.White) }
             if (MultiviewStore.tiles.size < MultiviewStore.MAX_TILES) IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Ajouter une chaîne", tint = Color.White) }
             IconButton(onClick = { casting = true }) { Icon(Icons.Filled.Tv, "Diffuser le multiview sur un téléviseur", tint = Color.White) }
         }
@@ -411,6 +434,7 @@ fun MultiviewScreen() {
         NoctraSheet({ menu = null }, full = false) {
             SheetColumn(tile.channel.name) {
                 SettingGroup {
+                    SettingRow(if (MultiviewStore.zoomed == tile.id) "Quitter le plein écran" else "Plein écran", onClick = { MultiviewStore.zoom(tile); menu = null })
                     if (MultiviewStore.audio != tile.id) SettingRow("Écouter cette chaîne", onClick = { MultiviewStore.listen(tile); menu = null })
                     if (MultiviewStore.tiles.size > 1) {
                         SettingRow("Mettre en avant avec le son", onClick = { MultiviewStore.solo(tile); menu = null })

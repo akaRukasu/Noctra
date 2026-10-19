@@ -683,6 +683,7 @@ struct LivePlayerView: View {
                 pill("server.rack", "Serveurs · \(model.servers.count)", busy: model.expanding > 0 || model.probing > 0) { showServers = true }
                 circleButton("tv.badge.wifi") { showCast = true }
                     .accessibilityLabel("Diffuser cette chaîne")
+                multiviewMenu
                 if pageMode {
                     circleButton("forward.end.fill") { zap(1) }
                 }
@@ -690,6 +691,37 @@ struct LivePlayerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    /// Chaîne en cours ajoutée au multiview (comme sur la version web), puis multiview ouvert.
+    private var multiviewMenu: some View {
+        let multiview = MultiviewStore.shared
+        return Menu {
+            if let channel = model.channel {
+                Button {
+                    multiview.toggle(channel)
+                } label: {
+                    Label(multiview.contains(channel) ? "Retirer du multiview" : "Ajouter au multiview (\(multiview.picked.count)/\(MultiviewStore.maxTiles))", systemImage: "square.grid.2x2")
+                }
+                Button {
+                    if !multiview.contains(channel) { multiview.toggle(channel) }
+                    multiview.selecting = true
+                    model.close()
+                } label: { Label("Choisir d’autres chaînes", systemImage: "checklist") }
+                if multiview.picked.count > (multiview.contains(channel) ? 1 : 0) {
+                    Button {
+                        if !multiview.contains(channel) { multiview.toggle(channel) }
+                        if let session = model.session { multiview.launch(session: session) }
+                    } label: { Label("Ouvrir le multiview", systemImage: "rectangle.split.2x2") }
+                }
+            }
+        } label: {
+            Image(systemName: "square.grid.2x2").font(.headline)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+                .glassEffect(.regular.interactive(), in: Circle())
+        }
+        .accessibilityLabel("Multiview")
     }
 
     private func circleButton(_ icon: String, size: CGFloat = 44, action: @escaping () -> Void) -> some View {

@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Language
@@ -306,6 +307,7 @@ private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, co
                 }
             }
             CircleButton(androidx.compose.material.icons.Icons.Filled.Cast, "Diffuser cette chaîne") { cast(); poke() }
+            MultiviewMenu(poke)
             if (!pageMode) CircleButton(Icons.Filled.PictureInPictureAlt, "Image dans l’image") { MainActivity.current?.enterPip() }
             if (pageMode) CircleButton(Icons.Filled.ExpandLess, "Replier les commandes") { collapse() }
         }
@@ -323,6 +325,32 @@ private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, co
             Pill(Icons.AutoMirrored.Filled.List, "Chaînes", Modifier.weight(1f)) { channels(); poke() }
             Pill(Icons.Filled.Dns, "Serveurs · ${model.servers.size}", Modifier.weight(1f), busy = model.expanding > 0 || model.probing > 0) { servers(); poke() }
             if (pageMode) CircleButton(Icons.Filled.SkipNext, "Chaîne suivante") { zap(1) }
+        }
+    }
+}
+
+/** Chaîne en cours ajoutée au multiview (comme sur la version web), puis multiview ouvert. */
+@Composable
+private fun MultiviewMenu(poke: () -> Unit) {
+    val channel = LivePlayerModel.channel ?: return
+    var open by remember { mutableStateOf(false) }
+    val inside = MultiviewStore.contains(channel)
+    Box {
+        CircleButton(androidx.compose.material.icons.Icons.Filled.GridView, "Multiview") { open = true; poke() }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(if (inside) "Retirer du multiview" else "Ajouter au multiview (${MultiviewStore.picked.size}/${MultiviewStore.MAX_TILES})") },
+                onClick = { MultiviewStore.toggle(channel); open = false })
+            DropdownMenuItem(text = { Text("Choisir d’autres chaînes") }, onClick = {
+                if (!MultiviewStore.contains(channel)) MultiviewStore.toggle(channel)
+                MultiviewStore.selecting = true
+                open = false
+                LivePlayerModel.close()
+            })
+            if (MultiviewStore.picked.size > (if (inside) 1 else 0)) DropdownMenuItem(text = { Text("Ouvrir le multiview") }, onClick = {
+                if (!MultiviewStore.contains(channel)) MultiviewStore.toggle(channel)
+                open = false
+                MultiviewStore.launch()
+            })
         }
     }
 }

@@ -19,6 +19,8 @@ final class MultiviewStore {
     private(set) var tiles: [MultiviewTile] = []
     private(set) var audio: UUID?
     private(set) var featured: UUID?
+    /// Vignette en plein écran (les autres continuent en arrière-plan).
+    private(set) var zoomed: UUID?
     @ObservationIgnored private weak var session: Session?
 
     func contains(_ channel: LiveChannel) -> Bool { picked.contains { $0.id == channel.id } }
@@ -40,6 +42,7 @@ final class MultiviewStore {
         tiles = picked.prefix(Self.maxTiles).map { MultiviewTile(channel: $0) }
         audio = tiles.first?.id
         featured = nil
+        zoomed = nil
         selecting = false
         presented = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -63,27 +66,36 @@ final class MultiviewStore {
         tiles.removeAll { $0.id == tile.id }
         picked.removeAll { $0.id == tile.channel.id }
         if featured == tile.id { featured = nil }
+        if zoomed == tile.id { zoomed = nil }
         if audio == tile.id { audio = tiles.first?.id }
         if tiles.isEmpty { close() } else { applyAudio() }
     }
 
     func listen(_ tile: MultiviewTile) { audio = tile.id; applyAudio() }
 
-    func feature(_ tile: MultiviewTile) { featured = featured == tile.id || tiles.count < 2 ? nil : tile.id }
+    func feature(_ tile: MultiviewTile) { zoomed = nil; featured = featured == tile.id || tiles.count < 2 ? nil : tile.id }
 
     /// Chaîne mise en avant, et seule écoutée.
     func solo(_ tile: MultiviewTile) {
         audio = tile.id
         featured = tiles.count > 1 ? tile.id : nil
+        zoomed = nil
         applyAudio()
     }
 
-    func grid() { featured = nil }
+    func grid() { featured = nil; zoomed = nil }
+
+    /// Plein écran d'une vignette, avec son son.
+    func zoom(_ tile: MultiviewTile) {
+        zoomed = zoomed == tile.id ? nil : tile.id
+        if zoomed != nil { audio = tile.id; applyAudio() }
+    }
 
     func close() {
         stopAll()
         tiles = []
         featured = nil
+        zoomed = nil
         presented = false
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -261,21 +273,27 @@ struct MultiviewView: View {
                 ForEach(Array(store.tiles.enumerated()), id: \.element.id) { index, tile in
                     if index < frames.count {
                         MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id)
-                            .frame(width: frames[index].width, height: frames[index].height)
+                            .frame(width: max(1, frames[index].width), height: max(1, frames[index].height))
                             .offset(x: frames[index].minX, y: frames[index].minY)
+                            .opacity(frames[index].width > 0 ? 1 : 0)
+                            .allowsHitTesting(frames[index].width > 0)
+                            .onTapGesture(count: 2) { store.zoom(tile) }
                             .onTapGesture { menuTile = tile }
                     }
                 }
             }
             .animation(Theme.spring, value: store.featured)
+            .animation(Theme.spring, value: store.zoomed)
             .animation(Theme.spring, value: store.tiles.count)
         }
         .safeAreaInset(edge: .top) { bar }
         .background(Color.black.ignoresSafeArea())
         .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
         .confirmationDialog(menuTile?.channel.name ?? "", isPresented: Binding(get: { menuTile != nil }, set: { if !$0 { menuTile = nil } }), titleVisibility: .visible) {
             if let tile = menuTile {
                 if store.audio != tile.id { Button("Écouter cette chaîne") { store.listen(tile) } }
+                Button(store.zoomed == tile.id ? "Quitter le plein écran" : "Plein écran") { store.zoom(tile) }
                 if store.tiles.count > 1 {
                     Button("Mettre en avant avec le son") { store.solo(tile) }
                     Button(store.featured == tile.id ? "Revenir à la grille" : "Mettre en avant") { store.feature(tile) }
@@ -295,7 +313,7 @@ struct MultiviewView: View {
                 .accessibilityLabel("Fermer le multiview")
             Text("Multiview · \(store.tiles.count)/\(MultiviewStore.maxTiles)").font(.subheadline.weight(.semibold))
             Spacer()
-            if store.featured != nil {
+            if store.featured != nil || store.zoomed != nil {
                 Button { store.grid() } label: { Image(systemName: "square.grid.2x2").frame(width: 40, height: 40) }
                     .accessibilityLabel("Revenir à la grille")
             }
@@ -319,6 +337,11 @@ struct MultiviewView: View {
         guard count > 0, size.width > 0, size.height > 0 else { return [] }
         let gap: CGFloat = 4
         let landscape = size.width > size.height
+        if let zoomed = store.zoomed, let main = store.tiles.firstIndex(where: { $0.id == zoomed }) {
+            var frames = Array(repeating: CGRect.zero, count: count)
+            frames[main] = CGRect(origin: .zero, size: size)
+            return frames
+        }
         if let featured = store.featured, let main = store.tiles.firstIndex(where: { $0.id == featured }), count > 1 {
             var frames = Array(repeating: CGRect.zero, count: count)
             let others = (0..<count).filter { $0 != main }

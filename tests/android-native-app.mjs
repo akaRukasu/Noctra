@@ -156,3 +156,9 @@ console.log('Appli Android native 1.6.1 : vérifiée.');
   assert.match(await read('apps/android-native/app/src/main/java/com/noctra/mobile/MainActivity.kt'), /MultiviewScreen\(\)/);
   console.log('Appli Android native 1.7 : vérifiée.');
 }
+// 1.7.1 : multiview comme sur la version web et sur iOS (depuis le lecteur, plein écran d'une vignette).
+assert.match(await src('live/LivePlayerScreen'), /private fun MultiviewMenu\(poke: \(\) -> Unit\)/);
+assert.match(await src('live/Multiview'), /fun zoom\(tile: MultiviewTile\)/);
+assert.match(await src('live/Multiview'), /onDoubleTap = \{ MultiviewStore\.zoom\(tile\) \}/);
+assert.match(await src('live/Multiview'), /ImmersiveEffect\(\)/);
+console.log('Appli Android native 1.7.1 : vérifiée.');

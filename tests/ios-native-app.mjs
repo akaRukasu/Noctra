@@ -306,3 +306,11 @@ function WebVttSeconds(value) {
   assert.match(await src('NoctraApp'), /MultiviewView\(\)/);
   console.log('Appli iOS native 2.15 : vérifiée.');
 }
+// 2.15.1 : multiview comme sur la version web et sur Android (depuis le lecteur, plein écran d'une vignette).
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  assert.match(await src('LivePlayer'), /private var multiviewMenu: some View/, 'chaîne en cours ajoutée au multiview');
+  assert.match(await src('Multiview'), /func zoom\(_ tile: MultiviewTile\)/);
+  assert.match(await src('Multiview'), /\.onTapGesture\(count: 2\) \{ store\.zoom\(tile\) \}/);
+  console.log('Appli iOS native 2.15.1 : vérifiée.');
+}
