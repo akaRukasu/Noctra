@@ -305,11 +305,13 @@ enum LiveServerFactory {
     /// Lecteurs publiés qui refusent toute restriction de cadre (comme sur PC).
     private static let openFrameProviders: Set<String> = ["BrigitteTV", "DLStreams", "DaddyLive", "Streamed", "Volkamax", "FCTV33", "RénéVéo", "BowdTV", "Xtemus", "Alternative"]
 
-    /// Lecteur d'un site dans un cadre (comme sur PC), sans restriction pour les fournisseurs qui les refusent.
+    /// Lecteur d'un site : le lecteur seul (pas la page entière du site).
     private static func framedPage(_ label: String, provider: String, url: URL, vip: Bool, raw: [String: Any], session: Session) -> LiveServer {
         var server = LiveServer(label: label, provider: provider, kind: .web, pageURL: url, vip: vip)
-        server.framed = true
+        // Lecteur ouvert seul, directement (pas dans un cadre) : dans un cadre, WebKit bloque
+        // les cookies des autres sites et la plupart de ces lecteurs ne lisent plus.
         let external = !session.isNoctraOrigin(url)
+        server.framed = false
         if (external && openFrameProviders.contains(provider)) || raw["noSandbox"] as? Bool == true || provider == "Alternative" { server.sandbox = nil }
         return server
     }
