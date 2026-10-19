@@ -19,3 +19,6 @@ Attention : le déploiement automatique installe chaque nouveau commit de la bra
 
 ## 200.0.141
 LiveWatch répond `403 {"code":"grant_required"}` : une autorisation de lecture est demandée avant le flux VIP. Le diagnostic (`/api/tv/livewatch/diagnostics?ref=…`) suit les morceaux du lecteur officiel chargés à la demande et rapporte les appels `rpc`, `functions.invoke`, tables, adresses d'API et extraits de code autour de « grant » et « stream ».
+
+## 200.0.142
+Autorisation de lecture LiveWatch : `POST https://livewatch.icu/api/play/grant` avec la session VIP (réponse `grant`, `tier`, `expires_in`), gardée en mémoire jusqu'à 2 minutes avant son expiration, puis en-tête `X-Play-Grant` sur les demandes de flux et sur la liste HLS. `425` : nouvel essai après `retry_after`. `403 grant_required` : nouvelle autorisation puis un seul nouvel essai. Le lecteur officiel relayé transmet aussi son en-tête `X-Play-Grant`. Le diagnostic affiche l'autorisation (palier, durée).

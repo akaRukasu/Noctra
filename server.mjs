@@ -5277,6 +5277,8 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
       const strip = [
         ...(trustedLiveWatchRedirect ? [] : ['authorization', 'apikey']),
+        // 200.0.142 : l'autorisation de lecture LiveWatch ne quitte jamais LiveWatch.
+        ...(trustedLiveWatchRedirect ? [] : ['x-play-grant']),
         ...(trustedProviderRedirect ? [] : ['cookie']),
         ...(trustedOhaRedirect ? [] : ['mediahubmx-signature', 'mediaurl-signature'])
       ];
@@ -6006,7 +6008,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
     for (const [name, value] of Object.entries(req?.headers || {})) {
       const lower = String(name || '').toLowerCase();
       if (!value || lower in headers) continue;
-      if (lower === 'prefer' || lower.startsWith('x-client-') || lower.startsWith('x-supabase-') || lower.startsWith('x-livewatch-')) headers[lower] = String(value).slice(0, 4096);
+      if (lower === 'prefer' || lower.startsWith('x-client-') || lower.startsWith('x-supabase-') || lower.startsWith('x-livewatch-') || lower.startsWith('x-play-')) headers[lower] = String(value).slice(0, 4096);
     }
     return headers;
   };
@@ -7243,6 +7245,7 @@ function liveWatchForwardHeaders(headers = {}) {
     ...(headers.origin ? { origin: headers.origin } : {}),
     ...(headers['accept-language'] ? { 'accept-language': headers['accept-language'] } : {}),
     ...(headers.authorization ? { authorization: headers.authorization } : {}),
+    ...(headers['x-play-grant'] ? { 'x-play-grant': headers['x-play-grant'] } : {}),
     ...(headers.cookie ? { cookie: headers.cookie } : {})
   };
 }
@@ -7268,6 +7271,64 @@ async function liveWatchPlayerCookies(kind, id, playerPath, session) {
   return known?.value || '';
 }
 
+// 200.0.142 : LiveWatch exige une autorisation de lecture avant chaque flux (« grant_required »).
+// Comme son lecteur officiel : POST /api/play/grant avec la session du compte (VIP : tier « vip »),
+// puis en-tête X-Play-Grant sur les demandes de flux ; 425 = patienter puis recommencer.
+const liveWatchPlayGrants = new Map();
+
+async function liveWatchPlayGrant(session, force = false) {
+  const key = String(session?.userId || session?.email || 'vip');
+  const known = liveWatchPlayGrants.get(key);
+  if (!force && known?.value && known.exp - Date.now() > 120_000) return known.value;
+  if (known?.promise) return known.promise;
+  const promise = (async () => {
+    let last = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await fetchTvRemote(`${liveWatchOrigin}/api/play/grant`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/plain, */*',
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.accessToken}`,
+          origin: liveWatchOrigin,
+          referer: `${liveWatchOrigin}/`,
+          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
+          'user-agent': liveWatchBrowserAgent
+        },
+        body: '{}',
+        signal: AbortSignal.timeout(10_000)
+      });
+      let data = {};
+      try { data = JSON.parse((await response.text()).slice(0, 64 * 1024) || '{}') || {}; } catch {}
+      if (response.status === 200 && data.grant) {
+        const value = String(data.grant);
+        liveWatchPlayGrants.set(key, { value, tier: String(data.tier || ''), exp: Date.now() + 1000 * Math.max(60, Number(data.expires_in) || 3600) });
+        return value;
+      }
+      last = { status: response.status, code: String(data?.code || data?.error || '') };
+      if (response.status === 425) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(3_000, 1000 * (Number(data?.retry_after) || 1) + 120)));
+        continue;
+      }
+      break;
+    }
+    throw new HttpError(last?.status === 401 ? 401 : 403, `LiveWatch refuse l’autorisation de lecture (${last?.status || 0}${last?.code ? ` · ${last.code}` : ''}).`);
+  })();
+  liveWatchPlayGrants.set(key, { ...(known || {}), promise });
+  try {
+    return await promise;
+  } finally {
+    const current = liveWatchPlayGrants.get(key);
+    if (current?.promise === promise) { delete current.promise; if (!current.value) liveWatchPlayGrants.delete(key); }
+  }
+}
+
+/** Autorisation déjà obtenue (pour un diagnostic) : palier et durée restante, sans la valeur. */
+function liveWatchPlayGrantInfo(session) {
+  const known = liveWatchPlayGrants.get(String(session?.userId || session?.email || 'vip'));
+  return known?.value ? { ok: true, tier: known.tier || '', expiresIn: Math.max(0, Math.round((known.exp - Date.now()) / 1000)) } : { ok: false };
+}
+
 async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, signal = null) {
   const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
   if (kind === 'page') throw new HttpError(422, 'Ce wrapper LiveWatch utilise le lecteur Premium officiel plutôt qu’une route HLS directe.');
@@ -7276,24 +7337,34 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
   if (cached && cached.expiresAt > Date.now() && tvReferences.has(String(cached.token || ''))) return cached.token;
   const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
   const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
-  const requestStream = async (session, attempt = 0) => {
+  const requestStream = async (session, attempt = 0, grantRetried = false) => {
     const endpointUrl = `${liveWatchOrigin}${apiPath}?vip=1&embed=1`;
     const client = liveWatchClientHeaders(playerPath);
     const playerCookie = liveWatchClientMode.browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
+    const grant = await liveWatchPlayGrant(session, grantRetried).catch(() => '');
     const response = await fetchTvRemote(endpointUrl, {
       headers: {
         accept: 'application/json, application/vnd.apple.mpegurl, application/x-mpegURL, text/plain;q=0.8, */*;q=0.5',
         authorization: `Bearer ${session.accessToken}`,
         ...client,
+        ...(grant ? { 'x-play-grant': grant } : {}),
         ...(playerCookie ? { cookie: playerCookie } : {})
       },
       signal: AbortSignal.any([AbortSignal.timeout(Math.max(3_500, Number(timeoutMs) || 8_500)), ...(signal ? [signal] : [])])
     });
+    if (response.status === 403 && !grantRetried) {
+      // Autorisation expirée ou absente : nouvelle autorisation puis un seul nouvel essai, comme le lecteur officiel.
+      const body = await response.clone().text().catch(() => '');
+      if (/grant_required/.test(body)) {
+        try { await response.body?.cancel?.(); } catch {}
+        return requestStream(session, attempt, true);
+      }
+    }
     if ([401, 403].includes(response.status) && attempt < 2) {
       try { await response.body?.cancel?.(); } catch {}
       // 1 : jeton VIP renouvelé ; 2 : autre manière de se présenter (lecteur dans un navigateur).
       if (attempt === 1) liveWatchClientMode = { browser: !liveWatchClientMode.browser, changedAt: Date.now() };
-      return requestStream(attempt === 0 ? await liveWatchAccessSession(true) : session, attempt + 1);
+      return requestStream(attempt === 0 ? await liveWatchAccessSession(true) : session, attempt + 1, grantRetried);
     }
     if (!response.ok) throw new HttpError(response.status, `LiveWatch VIP n’a pas pu ouvrir cette chaîne (${response.status}).`);
     const text = await response.text();
@@ -7330,6 +7401,7 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     const token = issueTvReference(streamUrl.toString(), {
       ...(liveWatchHost ? { authorization: `Bearer ${session.accessToken}` } : {}),
       ...(cookie && liveWatchHost ? { cookie } : {}),
+      ...(grant && liveWatchHost ? { 'x-play-grant': grant } : {}),
       ...client
     }, inlinePlaylist ? { kind: 'livewatch-vip', provider: 'LiveWatch', forceHls: true } : { kind: 'livewatch-vip', provider: 'LiveWatch' });
     liveWatchVipDirectCache.set(cacheKey, { token, expiresAt: Date.now() + 45_000 });
@@ -8165,6 +8237,15 @@ async function liveWatchStreamApiProbe(kindValue, idValue) {
   const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
   const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
   const results = [];
+  // Autorisation de lecture (POST /api/play/grant), demandée comme le lecteur officiel.
+  let grant = '';
+  try {
+    grant = await liveWatchPlayGrant(session, true);
+    const info = liveWatchPlayGrantInfo(session);
+    results.push({ client: 'autorisation', status: 200, ok: true, detail: `palier ${info.tier || '?'} · valable ${info.expiresIn || 0} s`, url: `${new URL(liveWatchOrigin).hostname}/api/play/grant` });
+  } catch (error) {
+    results.push({ client: 'autorisation', status: Number(error?.status || 0), ok: false, detail: cleanError(error), url: `${new URL(liveWatchOrigin).hostname}/api/play/grant` });
+  }
   for (const browser of [false, true]) {
     const client = browser ? 'navigateur' : 'Noctra';
     try {
@@ -8174,6 +8255,7 @@ async function liveWatchStreamApiProbe(kindValue, idValue) {
           accept: 'application/json, application/vnd.apple.mpegurl, text/plain;q=0.8, */*;q=0.5',
           authorization: `Bearer ${session.accessToken}`,
           ...liveWatchClientHeaders(playerPath, browser),
+          ...(grant ? { 'x-play-grant': grant } : {}),
           ...(cookie ? { cookie } : {})
         },
         signal: AbortSignal.timeout(10_000)
@@ -13324,12 +13406,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.141', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.142', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.141',
+        version: '200.0.142',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.141 — diagnostic de l'autorisation de lecture LiveWatch
+# Version actuelle : 200.0.142 — autorisation de lecture LiveWatch VIP
+
+LiveWatch demande maintenant une autorisation de lecture avant chaque flux (`grant_required`). Le serveur l'obtient comme le lecteur officiel (`POST /api/play/grant` avec la session VIP) et la joint aux demandes de flux (`X-Play-Grant`) : les flux VIP directs LiveWatch fonctionnent de nouveau. Validation : `npm run test:v200142`.
+
+# Historique : 200.0.141 — diagnostic de l'autorisation de lecture LiveWatch
 
 LiveWatch refuse le flux VIP avec « grant_required » (autorisation de lecture requise) : le diagnostic suit maintenant les morceaux du lecteur officiel et relève comment il obtient cette autorisation (appels rpc, fonctions, adresses, extraits de code). Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
 
