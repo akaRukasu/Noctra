@@ -185,3 +185,6 @@ assert.match(await src('live/LiveServers'), /list \+= LiveWatchDevice\.servers\(
 assert.match(await src('live/LiveServers'), /if \(server\.device\) base -= 5/);
 assert.match(await src('ui/Account'), /LiveWatchDeviceScreen\(\)/);
 console.log('Appli Android native 1.8 : vérifiée.');
+// 1.8.1 : lecteur « mon compte » déduit du résolveur VIP quand la fiche n'a pas l'adresse du lecteur.
+assert.match(await src('live/LiveWatchDevice'), /fun resolverEmbed\(resolver: String\?\): String\?/);
+console.log('Appli Android native 1.8.1 : vérifiée.');

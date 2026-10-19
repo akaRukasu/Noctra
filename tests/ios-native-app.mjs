@@ -344,3 +344,6 @@ console.log('Appli iOS native 2.15.7 : vérifiée.');
   assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /LiveWatchDeviceView\(\)/);
   console.log('Appli iOS native 2.16 : vérifiée.');
 }
+// 2.16.1 : lecteur « mon compte » déduit du résolveur VIP quand la fiche n'a pas l'adresse du lecteur.
+assert.match(await read('apps/ios-native/Noctra/Sources/LiveWatchDevice.swift'), /static func resolverEmbed\(_ resolver: String\?\) -> URL\?/);
+console.log('Appli iOS native 2.16.1 : vérifiée.');

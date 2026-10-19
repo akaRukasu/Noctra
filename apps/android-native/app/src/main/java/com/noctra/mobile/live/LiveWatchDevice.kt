@@ -63,6 +63,15 @@ object LiveWatchDevice {
         return uri.buildUpon().scheme("https").authority(Uri.parse(SITE).host).build().toString()
     }
 
+    private val resolverPath = Regex("/api/tv/livewatch/resolve/(main|daddy|north|frame)/([^?/]+)")
+
+    /** Lecteur officiel déduit du résolveur VIP du serveur, quand la fiche ne donne pas l'adresse du lecteur. */
+    fun resolverEmbed(resolver: String?): String? {
+        val match = resolver?.let { resolverPath.find(it) } ?: return null
+        val kind = match.groupValues[1]
+        return SITE + "embed/" + (if (kind == "main") "" else "$kind/") + match.groupValues[2]
+    }
+
     /** Session Supabase du site LiveWatch présente dans la page (stockage local ou cookie). */
     const val LOGGED_IN_SCRIPT = "(function(){try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){if(/^sb-.*-auth-token/.test(k[i])&&localStorage.getItem(k[i]))return true}}catch(e){}" +
         "return /(?:^|;\\s*)sb-[^=]*-auth-token/.test(document.cookie)})()"
@@ -71,7 +80,8 @@ object LiveWatchDevice {
     fun servers(raw: JsonMap, prefix: String, provider: String): List<LiveServer> {
         if (!enabled) return emptyList()
         val pages = mutableListOf<Pair<String, String>>()
-        listOf(raw.str("vipFallbackUrl"), raw.str("externalUrl"), raw.str("embedUrl")).firstNotNullOfOrNull { embedURL(it) }?.let { pages += "mon compte LiveWatch" to it }
+        (listOf(raw.str("vipFallbackUrl"), raw.str("externalUrl"), raw.str("embedUrl")).firstNotNullOfOrNull { embedURL(it) } ?: resolverEmbed(raw.str("resolverUrl")))
+            ?.let { pages += "mon compte LiveWatch" to it }
         for (variant in raw["liveWatchVariants"].asMaps()) {
             val url = listOf(variant.str("externalUrl"), variant.str("embedUrl")).firstNotNullOfOrNull { embedURL(it) } ?: continue
             pages += (variant.str("label")?.let { "$it · mon compte" } ?: "variante · mon compte") to url

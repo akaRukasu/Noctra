@@ -26,6 +26,15 @@ enum LiveWatchDevice {
         return parts.url
     }
 
+    /// Lecteur officiel déduit du résolveur VIP du serveur (/api/tv/livewatch/resolve/<famille>/<id>)
+    /// quand la fiche ne donne pas l'adresse du lecteur.
+    static func resolverEmbed(_ resolver: String?) -> URL? {
+        guard let resolver, let range = resolver.range(of: "/api/tv/livewatch/resolve/(main|daddy|north|frame)/[^?/]+", options: .regularExpression) else { return nil }
+        let parts = resolver[range].split(separator: "/").suffix(2).map(String.init)
+        guard parts.count == 2 else { return nil }
+        return URL(string: site.absoluteString + "embed/" + (parts[0] == "main" ? "" : parts[0] + "/") + parts[1])
+    }
+
     /// Session Supabase du site LiveWatch présente dans la page (stockage local ou cookie).
     static let loggedInScript = """
     (function(){try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){if(/^sb-.*-auth-token/.test(k[i])&&localStorage.getItem(k[i]))return true}}catch(e){}
@@ -36,7 +45,7 @@ enum LiveWatchDevice {
     static func servers(_ raw: [String: Any], prefix: String, provider: String) -> [LiveServer] {
         guard enabled else { return [] }
         var pages: [(String, URL)] = []
-        if let main = [raw["vipFallbackUrl"], raw["externalUrl"], raw["embedUrl"]].compactMap({ embedURL($0 as? String) }).first {
+        if let main = [raw["vipFallbackUrl"], raw["externalUrl"], raw["embedUrl"]].compactMap({ embedURL($0 as? String) }).first ?? resolverEmbed(raw["resolverUrl"] as? String) {
             pages.append(("mon compte LiveWatch", main))
         }
         for variant in (raw["liveWatchVariants"] as? [[String: Any]]) ?? [] {
