@@ -7,7 +7,14 @@ const start = server.indexOf('function liveWatchEmbedReference');
 const end = server.indexOf('\n}\n\nasync function liveWatchQuickVipStatus', start) + 2;
 assert.ok(start >= 0 && end > start, 'La fonction de reconnaissance LiveWatch doit être isolable.');
 const source = server.slice(start, end);
-const liveWatchEmbedReference = Function(`"use strict"; ${source}; return liveWatchEmbedReference;`)();
+// 200.0.132 : domaine LiveWatch commun (livewatch.icu, ancien livewatch.top).
+const isLiveWatchHost = host => /^(?:www\.)?livewatch\.(?:icu|top)$/i.test(String(host || ''));
+const liveWatchEmbedReference = Function('isLiveWatchHost', `"use strict"; ${source}; return liveWatchEmbedReference;`)(isLiveWatchHost);
+assert.deepEqual(
+  liveWatchEmbedReference({ embedUrl: 'https://livewatch.icu/embed/north/france-2-hd-b' }),
+  { kind: 'north', id: 'france-2-hd-b' },
+  'Nouveau domaine livewatch.icu reconnu'
+);
 
 assert.deepEqual(
   liveWatchEmbedReference({ embedUrl: 'https://livewatch.top/embed/23465702012318f8e19efa-8c71a606cd28bf' }),
@@ -103,9 +110,9 @@ const bridgeStart = server.indexOf('function liveWatchFakeJwt');
 const bridgeEnd = server.indexOf('async function liveWatchBridgeRequest', bridgeStart);
 assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'Le pont de lecteur LiveWatch doit être extractible.');
 const bridgeHelpers = new Function(
-  'publicPath', 'liveWatchSupabaseProjectRef', 'liveWatchSupabaseUrl', 'withoutSlash',
+  'publicPath', 'liveWatchSupabaseProjectRef', 'liveWatchSupabaseUrl', 'withoutSlash', 'isLiveWatchHost', 'liveWatchBaseDomains',
   `${server.slice(bridgeStart, bridgeEnd)}; return { sanitizeLiveWatchPlayerHtml };`
-)(value => `/noctra${value}`, 'atrhxsizjjqjdhjafgei', 'https://atrhxsizjjqjdhjafgei.supabase.co', value => String(value || '').replace(/\/+$/, ''));
+)(value => `/noctra${value}`, 'atrhxsizjjqjdhjafgei', 'https://atrhxsizjjqjdhjafgei.supabase.co', value => String(value || '').replace(/\/+$/, ''), isLiveWatchHost, ['livewatch.icu', 'livewatch.top']);
 const preparedVip = bridgeHelpers.sanitizeLiveWatchPlayerHtml(
   '<html><head><script src="/assets/app.js"></script></head><body><video></video></body></html>',
   'https://livewatch.top/embed/test-channel',

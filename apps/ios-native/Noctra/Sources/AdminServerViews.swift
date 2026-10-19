@@ -1338,7 +1338,7 @@ struct LiveAdminView: View {
                 if let seconds = (report["sessionExpiresIn"] as? NSNumber)?.intValue { LabeledContent("Session LiveWatch", value: seconds > 0 ? "valable \(seconds / 60) min" : "à renouveler") }
                 if let mode = report["clientMode"] as? String { LabeledContent("Méthode retenue", value: mode) }
                 if let check = (report["checks"] as? [[String: Any]])?.first {
-                    diagnosticRows(title: check["channel"] as? String ?? "Chaîne test", stream: check["stream"] as? [String: Any], api: check["api"] as? [[String: Any]],
+                    diagnosticRows(title: check["channel"] as? String ?? "Chaîne test", stream: (check["vip"] ?? check["stream"]) as? [String: Any], api: check["api"] as? [[String: Any]],
                                    failure: check["ok"] as? Bool == false ? check["message"] as? String : nil)
                 }
                 if let channel = report["channel"] as? [String: Any] {

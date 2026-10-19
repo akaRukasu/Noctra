@@ -1,6 +1,74 @@
-# Version actuelle : 200.0.121 — applications Android, Android TV, iOS, LG webOS et Samsung Tizen
+# Version actuelle : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
 
-Noctra s’installe maintenant en application sur téléphone et tablette Android, Android TV, iPhone et iPad, et sur les téléviseurs LG et Samsung. Ces applis sont construites automatiquement par GitHub Actions. Côté serveur, un pont gère la télécommande, la touche Retour et la veille. Installation : [apps/README.md](apps/README.md). Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
+Serveur de comptes LiveWatch détecté même sur un domaine personnalisé et vérifié ; le lecteur relayé signale les requêtes refusées et « Chaîne introuvable » ; « Tester LiveWatch » dans Accès TV ; changement de serveur plus patient sur un chargement long. Détails : [MISE-A-JOUR-V200137.md](MISE-A-JOUR-V200137.md). Validation : `npm run test:v200137`.
+
+# Historique : 200.0.136 — compte LiveWatch VIP dans « Accès TV »
+
+TV en direct › Accès TV permet de connecter, reconnecter ou déconnecter le compte LiveWatch VIP, même quand il paraît connecté ; « Gérer le compte » y mène depuis une source LiveWatch. Détails : [MISE-A-JOUR-V200136.md](MISE-A-JOUR-V200136.md). Validation : `npm run test:v200136`.
+
+# Historique : 200.0.135 — session LiveWatch de l'ancien site
+
+Une session LiveWatch VIP délivrée par l'ancien serveur de comptes (livewatch.top) est détectée : Noctra demande de reconnecter le compte LiveWatch au lieu d'afficher « Chaîne introuvable ». Détails : [MISE-A-JOUR-V200135.md](MISE-A-JOUR-V200135.md). Validation : `npm run test:v200135`.
+
+# Historique : 200.0.134 — flux directs LiveWatch (livewatch.icu)
+
+La session VIP est jointe aux flux servis par un sous-domaine LiveWatch et conservée lors des redirections entre hôtes LiveWatch ; le diagnostic décrit le flux direct d'une chaîne test. Détails : [MISE-A-JOUR-V200134.md](MISE-A-JOUR-V200134.md). Validation : `npm run test:v200134`.
+
+# Historique : 200.0.133 — lecteur LiveWatch : relais des sous-domaines et diagnostic
+
+Le relais VIP du lecteur LiveWatch accepte les sous-domaines LiveWatch (API, médias) ; le diagnostic LiveWatch liste les hôtes utilisés par le site. Détails : [MISE-A-JOUR-V200133.md](MISE-A-JOUR-V200133.md). Validation : `npm run test:v200133`.
+
+# Historique : 200.0.132 — LiveWatch sur livewatch.icu, Alternative mise à jour
+
+LiveWatch et ses dérivés passent sur `livewatch.icu` (domaine réglable par `LIVEWATCH_ORIGIN`, anciens liens redirigés) ; Alternative accepte les chaînes ajoutées à la page Haloule (L'Equipe TV, TF1). Détails : [MISE-A-JOUR-V200132.md](MISE-A-JOUR-V200132.md). Validation : `npm run test:v200132`.
+
+# Historique : 200.0.131 — serveurs de toutes les sources sous chaque chaîne
+
+Le pays deviné par iptv-org ne sépare plus une même chaîne entre sources (beIN Sport 1 retrouve ses serveurs LiveWatch, OHA…) ; l'apport de chaque source est affiché sous « Toutes les chaînes ». Détails : [MISE-A-JOUR-V200131.md](MISE-A-JOUR-V200131.md). Validation : `npm run test:v200131`.
+
+# Historique : 200.0.130 — tous les serveurs de chaque source au clic sur une chaîne
+
+Comme sur Noctra TV, chaque source « automatique » (LiveWatch VIP, OHA, WiTV…) est dépliée en tous ses serveurs, testés et classés ensemble ; les sources lentes sont ajoutées à leur arrivée, le secours manuel n'est jamais lancé seul. Détails : [MISE-A-JOUR-V200130.md](MISE-A-JOUR-V200130.md). Validation : `npm run test:v200130`.
+
+# Historique : 200.0.129 — chaînes françaises uniquement, plus de chaînes manquantes
+
+« Toutes les chaînes » et « Chaînes sport » n'affichent que les chaînes françaises ; les catalogues livrés en plusieurs fois (OHA, LiveWatch) sont complétés, les flux sans type gardés, 120 bouquets par source. Détails : [MISE-A-JOUR-V200129.md](MISE-A-JOUR-V200129.md). Validation : `npm run test:v200129`.
+
+# Historique : 200.0.128 — chaînes réunies, serveurs testés, génériques et épisodes comme sur Noctra TV
+
+La TV s'ouvre sur les chaînes de toutes les sources réunies (« Toutes les chaînes », « Chaînes sport »), avec la détection de serveurs de Noctra TV : serveurs testés, le meilleur vérifié lancé, relais automatique. Séries et animés : bouton « Passer l'intro / le générique », carte « À suivre » et transition entre épisodes. Détails : [MISE-A-JOUR-V200128.md](MISE-A-JOUR-V200128.md). Validation : `npm run test:v200128`.
+
+# Historique : 200.0.127 — logo de l'œuvre sur l'affiche d'accueil
+
+Comme sur la version TV, l'affiche « Continuer à regarder » montre le logo du film ou de la série à la place du titre. Logos préchargés et décodés d'avance : aucun délai à la rotation. Sans logo, le titre texte reste. Détails : [MISE-A-JOUR-V200127.md](MISE-A-JOUR-V200127.md). Validation : `npm run test:v200127`.
+
+# Historique : 200.0.126 — intro de démarrage plus longue
+
+Intro Noctra de 3,5 s à la première ouverture (2,5 s ensuite), animation plus posée. Inclut les 200.0.124 et 200.0.125. Détails : [MISE-A-JOUR-V200126.md](MISE-A-JOUR-V200126.md). Validation : `npm run test:v200126`.
+
+# Historique : 200.0.125 — direct TV sans boucle hors fenêtre, lien renouvelé à temps
+
+Hors de la fenêtre du direct, retour 20 s avant le bord ; lien LiveWatch expiré renouvelé dès trois 404 de playlist. Inclut la 200.0.124. Détails : [MISE-A-JOUR-V200125.md](MISE-A-JOUR-V200125.md). Validation : `npm run test:v200125`.
+
+# Historique : 200.0.124 — départ TV en retrait du direct
+
+Shaka démarre 30 s en retrait du direct, là où les segments sont déjà publiés : la réserve de 15 s devient atteignable. Détails : [MISE-A-JOUR-V200124.md](MISE-A-JOUR-V200124.md). Validation : `npm run test:v200124`.
+
+# Historique : 200.0.123 — démarrage TV avec réserve garantie
+
+La première image Shaka n’arrive qu’avec 15 s de réserve (20 s d’attente au plus). Détails : [MISE-A-JOUR-V200123.md](MISE-A-JOUR-V200123.md). Validation : `npm run test:v200123`.
+
+# Historique : 200.0.122 — télécommande Jellyfin débloquée
+
+La page « Contrôle à distance » n’est plus recouverte par sa file d’attente masquée ; inclut toutes les corrections 200.0.121. Détails : [MISE-A-JOUR-V200122.md](MISE-A-JOUR-V200122.md). Validation : `npm run test:v200122`.
+
+# Historique : 200.0.121 — survol fluide, fiches fiables, réglages en colonne
+
+Survol des affiches 100× moins coûteux, « Voir la fiche » / « Reprendre » fiables à chaque clic, réglages PC en une colonne, 15 s de réserve au démarrage TV, intro allongée. Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
+
+# Applications natives — applications Android, Android TV, iOS, LG webOS et Samsung Tizen
+
+Noctra s’installe maintenant en application sur téléphone et tablette Android, Android TV, iPhone et iPad, et sur les téléviseurs LG et Samsung. Ces applis sont construites automatiquement par GitHub Actions. Côté serveur, un pont gère la télécommande, la touche Retour et la veille. Installation : [apps/README.md](apps/README.md). Détails : [MISE-A-JOUR-APPLICATIONS.md](MISE-A-JOUR-APPLICATIONS.md). Validation : `npm run test:apps`.
 
 # Historique : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
 

@@ -1,4 +1,4 @@
-// Noctra 200.0.120 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
+// Noctra 200.0.126 — « Aurora Chroma », planificateur unique. Effets purement décoratifs :
 // - reflet lumineux qui suit le pointeur sur les cartes (écouteur passif,
 //   une mise à jour par image, inactif au tactile, en lecture, mouvement réduit) ;
 // - lumière ambiante de l'accueil : l'affiche en cours est reprise en halo
@@ -10,38 +10,9 @@
   if (root.dataset.noctraSkin !== 'aurora') return;
   const finePointer = window.matchMedia?.('(hover: hover) and (pointer: fine)');
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  const selector = '.card .cardImageContainer, .noctra-library-card';
-  let target = null;
-  let x = 0;
-  let y = 0;
-  let frame = 0;
-
-  const paint = () => {
-    frame = 0;
-    if (!target?.isConnected) return;
-    const rect = target.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    target.style.setProperty('--na-mx', `${Math.round(x - rect.left)}px`);
-    target.style.setProperty('--na-my', `${Math.round(y - rect.top)}px`);
-  };
-
-  const onMove = event => {
-    if (!finePointer?.matches || reducedMotion?.matches) return;
-    if (document.body?.classList.contains('noctra-playing')) return;
-    const element = event.target instanceof Element ? event.target : null;
-    const card = element?.closest('.card') || element?.closest('.noctra-library-card');
-    target = card ? (card.matches('.noctra-library-card') ? card : card.querySelector('.cardImageContainer')) : null;
-    if (!target || !target.matches(selector)) { target = null; return; }
-    x = event.clientX;
-    y = event.clientY;
-    if (!frame) frame = window.requestAnimationFrame(paint);
-  };
-
-  try {
-    document.addEventListener('pointermove', onMove, { passive: true });
-  } catch {
-    // Effet optionnel : l'interface reste pleinement fonctionnelle sans lui.
-  }
+  // 200.0.121 : le reflet des cartes ne suit plus le pointeur. Il relisait
+  // la position de la carte juste après avoir écrit son style, à chaque image
+  // (recalcul forcé de la mise en page) : il s'allume désormais, fixe, au survol.
 
   // Lumière ambiante : deux calques en fondu enchaîné, mis à jour au plus
   // toutes les 1,2 s et uniquement sur l'accueil visible.
@@ -174,9 +145,10 @@
       magnet.style.setProperty('--na-by', `${((y - rect.top - rect.height / 2) * 0.2).toFixed(1)}px`);
     }
     // 9. Lumière de fond qui suit le pointeur.
+    // 200.0.121 : position écrite sur la lumière elle-même. Posée en variables
+    // sur <html>, elle faisait recalculer le style de toute la page à chaque image.
     if (cursorLight && perfDesktop()) {
-      root.style.setProperty('--na-cx', `${Math.round(x)}px`);
-      root.style.setProperty('--na-cy', `${Math.round(y)}px`);
+      cursorLight.style.transform = `translate3d(${Math.round(x)}px,${Math.round(y)}px,0)`;
     }
   };
   const cursorLight = document.createElement('div');
@@ -318,10 +290,13 @@
       intro.innerHTML = `<div class="na-intro-mark"><img alt="" src="${mark.replace(/"/g, '')}"><b>NOCTRA</b></div>`;
       (document.body || document.documentElement).append(intro);
     }
-    const minimum = seen || !motionAllowed() ? 0 : 1100;
+    // 200.0.121 : intro un peu plus longue (2,2 s à la première ouverture de la
+    // session, 1,2 s ensuite) ; toujours retirée dès que possible en mouvement réduit.
+    // 200.0.126 : encore allongée (3,5 s à la première ouverture, 2,5 s ensuite).
+    const minimum = !motionAllowed() ? 0 : seen ? 2500 : 3500;
     const leave = () => {
       intro.classList.add('na-intro-leave');
-      window.setTimeout(() => intro.remove(), 500);
+      window.setTimeout(() => intro.remove(), 750);
     };
     const check = () => {
       if (!intro.isConnected) return;

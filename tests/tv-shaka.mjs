@@ -5,16 +5,26 @@ class Shaka extends EventTarget {
  constructor(){super();this.config={abr:{enabled:true},streaming:{}};this.tracks=[{height:720,bandwidth:1000000}];}
  configure(c){for(const [k,v]of Object.entries(c))this.config[k]={...this.config[k],...v};}
  getConfiguration(){return this.config;}getStats(){return {estimatedBandwidth:1000000};}getVariantTracks(){return this.tracks;}
- async attach(video){this.video=video;}async load(url){this.url=url;}async destroy(){this.destroyed=true;}
+ async attach(video){this.video=video;}async load(url,startTime){this.url=url;this.startTime=startTime;}async destroy(){this.destroyed=true;}
 }
 const p=await playerFixture('LiveWatch',false,{section:'channels'});
 const old=p.deps.tvHls;
 p.deps.tvEnginePreference='shaka';p.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await p.deps.tvDirectRestart();
+// 200.0.123 : la lecture attend 15 s de réserve (Shaka télécharge vidéo en pause).
+p.ahead=0;
+const restarting=p.deps.tvDirectRestart();
+await new Promise(r=>setImmediate(r));
+assert.equal(p.video.paused,true,'Pas de play() avant la réserve de démarrage');
+p.ahead=16;
+for(let i=0;i<5&&p.video.paused;i++){for(const [id,{fn}] of [...p.callbacks]){p.callbacks.delete(id);fn();}await new Promise(r=>setImmediate(r));}
+await restarting;
 assert.equal(old.destroyed,true);assert.equal(p.deps.tvHls,null);
 const shaka=p.deps.tvShaka;
 assert.ok(shaka instanceof Shaka);assert.equal(shaka.url,'/media/original');assert.equal(p.video.paused,false);
-assert.equal(shaka.config.streaming.rebufferingGoal,3);
+assert.equal(shaka.config.streaming.rebufferingGoal,15,'200.0.121 : démarrage avec 15 s de réserve');
+assert.equal(shaka.startTime,-30,'200.0.124 : départ 30 s en retrait du direct');
+assert.equal(shaka.config.streaming.returnToEndOfLiveWindowWhenOutside,true,'200.0.125 : hors fenêtre, retour vers le bord');
+assert.equal(shaka.config.streaming.safeSeekEndOffset,20,'200.0.125 : 20 s avant le bord');
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,1,'First image takes priority over parallel prefetch');
 assert.equal(shaka.config.streaming.bufferingGoal,45);
 const diagnosticEvents=[];
@@ -51,9 +61,20 @@ assert.equal(diagnosticEvents.at(-1).event,'shaka-media-source-recovered');
 assert.ok(!JSON.stringify(diagnosticEvents).includes('secret'),'No request or error payload leaks');
 p.video.dispatchEvent(new Event('playing'));
 assert.equal(shaka.config.streaming.segmentPrefetchLimit,2,'Restore continuity prefetch after first playback');
-assert.equal(shaka.config.streaming.rebufferingGoal,3,'Startup optimization retains the safety reserve');
+assert.equal(shaka.config.streaming.rebufferingGoal,6,'200.0.121 : reprise après coupure à partir de 6 s');
 for(let i=0;i<4;i++){p.video.dispatchEvent(new Event('waiting'));p.video.dispatchEvent(new Event('playing'));}
 assert.equal(p.video.paused,false,'No HLS managed rebuffer pause over Shaka');
+// 200.0.125 : lien expiré (playlist 404 répétée, erreurs non fatales) → renouvellement immédiat.
+const callsBeforeExpiry=p.apiCalls.length;
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.equal(p.apiCalls.length,callsBeforeExpiry,'Deux 404 : pas encore de renouvellement');
+emit('downloadfailed',{requestType:0,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.ok(diagnosticEvents.some(e=>e.event==='shaka-link-expired'),'Expiration diagnostiquée');
+assert.equal(p.apiCalls.length,callsBeforeExpiry+1,'Un seul renouvellement du lien');
+assert.match(p.apiCalls.at(-1).url,/refresh=1/);
+emit('downloadfailed',{requestType:1,httpResponseCode:404,aborted:false,error:{code:1001,category:1}});
+assert.equal(p.apiCalls.length,callsBeforeExpiry+1,'Un segment en 404 ne déclenche rien');
 p.deps.tvEnginePreference='hls';await p.deps.tvDirectRestart();
 assert.equal(shaka.destroyed,true);assert.equal(p.deps.tvShaka,null);assert.ok(p.deps.tvHls);
 const afterCleanup=diagnosticEvents.length;
@@ -98,21 +119,21 @@ console.log('Shaka slow startup: retains engine and pending load passed');
 const unstable=await playerFixture('LiveWatch',false,{section:'channels'});
 let now=1000;unstable.deps.performance={now:()=>now};
 unstable.deps.tvEnginePreference='shaka';unstable.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await unstable.deps.tvDirectRestart();unstable.video.dispatchEvent(new Event('playing'));
+unstable.ahead=20;await unstable.deps.tvDirectRestart();unstable.video.dispatchEvent(new Event('playing'));
 const unstablePlayer=unstable.deps.tvShaka;
 const buffering=active=>{const event=new Event('buffering');event.buffering=active;unstablePlayer.dispatchEvent(event);};
 for(let i=0;i<2;i++){buffering(true);now+=6000;buffering(false);now+=10000;}
 buffering(true);await new Promise(r=>setImmediate(r));
 assert.equal(unstable.deps.tvHls,null,'Repeated stalls must not switch engines');
 assert.equal(unstable.deps.tvShaka,unstablePlayer);
-assert.equal(unstablePlayer.config.streaming.rebufferingGoal,9);
+assert.equal(unstablePlayer.config.streaming.rebufferingGoal,12,'200.0.121 : 6 s + 2 coupures × 3 s');
 console.log('Shaka repeated stalls: adaptive reserve without engine switch passed');
 
 for (const provider of ['WiTV', 'Northlive']) {
  const frozen=await playerFixture(provider,false,{section:'channels'});
  frozen.deps.tvEnginePreference='shaka';
  frozen.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
- await frozen.deps.tvDirectRestart();
+ frozen.ahead=20;await frozen.deps.tvDirectRestart();
  frozen.video.dispatchEvent(new Event('playing'));
  frozen.ahead=12;
  const previous=frozen.deps.tvShaka;
@@ -133,7 +154,7 @@ console.log('WiTV and Northlive Shaka freeze recovery: same URL, same engine, bo
 const gapOwner=await playerFixture('LiveWatch',false,{section:'channels'});
 gapOwner.deps.tvEnginePreference='shaka';
 gapOwner.deps.ensureShakaLibrary=async()=>({Player:Shaka,polyfill:{installAll(){}}});
-await gapOwner.deps.tvDirectRestart();
+gapOwner.ahead=20;await gapOwner.deps.tvDirectRestart();
 gapOwner.video.dispatchEvent(new Event('playing'));
 let genericJumps=0;
 gapOwner.deps.tvSkipBufferedGap=()=>{genericJumps++;return true;};

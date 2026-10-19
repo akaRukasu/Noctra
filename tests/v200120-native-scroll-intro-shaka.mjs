@@ -29,7 +29,7 @@ assert.match(block, /@media \(prefers-reduced-motion:no-preference\) \{\s*html\[
 // première fois, 10 s maximum, immédiat vers la lecture.
 const intro = aurora.slice(aurora.indexOf('const playIntro = () => {'), aurora.indexOf('  try {\n    if (document.body) playIntro();'));
 assert.match(intro, /let intro = document\.getElementById\('na-intro'\);/);
-assert.match(intro, /const minimum = seen \|\| !motionAllowed\(\) \? 0 : 1100;/);
+assert.match(intro, /const minimum = [^;]*!motionAllowed\(\)[^;]*;/); // durée allongée en 200.0.121
 assert.match(intro, /const booting = document\.querySelector\('#reactRoot > \.splashLogo'\);/);
 assert.match(intro, /if \(\/video\|playback\/i\.test\(location\.hash\) \|\| \(!booting && now >= minimum\) \|\| now > 10000\) leave\(\);/);
 assert.ok(!/pointer-events:auto/.test(block), 'Aucune interaction interceptée');

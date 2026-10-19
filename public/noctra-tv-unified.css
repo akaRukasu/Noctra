@@ -1,0 +1,109 @@
+/* Noctra 200.0.128 — chaînes réunies : numéro et serveurs testés (Noctra TV). */
+.noctra-tv-channel-number {
+  display:inline-grid;
+  place-items:center;
+  min-width:1.7em;
+  height:1.45em;
+  margin-right:.42em;
+  padding:0 .3em;
+  border-radius:.4em;
+  background:rgba(255,255,255,.08);
+  color:#c9d0e2;
+  font-size:.78em;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+  vertical-align:.08em;
+}
+
+.noctra-tv-unified-servers {
+  display:grid;
+  gap:.4rem;
+  width:100%;
+  min-width:0;
+  margin-top:.45rem;
+  /* La rangée de serveurs défile à l'intérieur sans élargir le lecteur. */
+  contain:inline-size;
+}
+.noctra-tv-unified-servers[hidden] { display:none !important; }
+.noctra-tv-unified-servers > p {
+  display:flex;
+  align-items:baseline;
+  gap:.5rem;
+  margin:0;
+  font-size:.7rem;
+}
+.noctra-tv-unified-servers > p strong { color:#fff; letter-spacing:.02em; }
+.noctra-tv-unified-servers > p small { color:#8f98ad; }
+.noctra-tv-unified-servers > div {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.35rem;
+  max-height:9.5rem;
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+.noctra-tv-unified-servers button {
+  appearance:none;
+  display:inline-flex;
+  align-items:center;
+  gap:.4rem;
+  min-height:32px;
+  padding:.28rem .62rem .28rem .34rem;
+  border:1px solid rgba(255,255,255,.11);
+  border-radius:999px;
+  background:rgba(255,255,255,.035);
+  color:#c3cadb;
+  font:inherit;
+  font-size:.66rem;
+  text-align:left;
+  cursor:pointer;
+  transition:background .14s ease,border-color .14s ease,color .14s ease,opacity .14s ease;
+}
+.noctra-tv-unified-servers button:hover { color:#fff; border-color:rgba(130,110,255,.42); }
+.noctra-tv-unified-servers button[data-active="true"] { color:#fff; background:rgba(111,86,239,.22); border-color:rgba(130,110,255,.75); }
+.noctra-tv-unified-servers button[data-state="failed"],
+.noctra-tv-unified-servers button[data-state="down"] { opacity:.62; }
+.noctra-tv-unified-servers button > b {
+  display:grid;
+  place-items:center;
+  width:1.45rem;
+  height:1.45rem;
+  border-radius:50%;
+  background:rgba(255,255,255,.08);
+  font-size:.62rem;
+  font-variant-numeric:tabular-nums;
+}
+.noctra-tv-unified-servers button > span { font-weight:600; }
+.noctra-tv-unified-servers button > em { display:inline-flex; flex-wrap:wrap; gap:.22rem; font-style:normal; }
+.noctra-tv-unified-servers i {
+  padding:.08rem .38rem;
+  border-radius:999px;
+  background:rgba(255,255,255,.07);
+  color:#aab3c6;
+  font-size:.58rem;
+  font-style:normal;
+  white-space:nowrap;
+}
+.noctra-tv-unified-servers i[data-tone="good"] { background:rgba(70,200,140,.16); color:#7ee2b0; }
+.noctra-tv-unified-servers i[data-tone="ok"] { background:rgba(98,210,187,.14); color:#8be3d0; }
+.noctra-tv-unified-servers i[data-tone="warn"] { background:rgba(240,180,70,.16); color:#f2c779; }
+.noctra-tv-unified-servers i[data-tone="bad"] { background:rgba(240,90,90,.16); color:#f39a9a; }
+.noctra-tv-unified-servers i[data-tone="probe"] { background:rgba(130,110,255,.14); color:#b9acff; }
+@media (prefers-reduced-motion:no-preference) {
+  .noctra-tv-unified-servers i[data-tone="probe"] { animation:noctra-tv-probe 1.2s ease-in-out infinite; }
+}
+@keyframes noctra-tv-probe { 50% { opacity:.55; } }
+@media (max-width:760px) {
+  .noctra-tv-unified-servers > div { max-height:none; min-width:0; flex-wrap:nowrap; overflow-x:auto; padding-bottom:.15rem; }
+  .noctra-tv-unified-servers button { flex:0 0 auto; }
+}
+
+/* 200.0.137 — diagnostic LiveWatch d'Accès TV. */
+[data-livewatch-diagnostic] {
+  margin:.8rem 0 0;
+  padding-left:1.1rem;
+  color:#c3cadb;
+  font-size:.82rem;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}

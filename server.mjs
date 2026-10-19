@@ -5138,7 +5138,7 @@ async function enrichTvLogosFromIptvOrg(channels, preferFresh = false, waitForRe
       secondaryLogo,
       iptvOrgId: match.channelId || channel.iptvOrgId || '',
       // Nom officiel et pays (référentiel iptv-org) : identification des chaînes
-      // réunies de plusieurs sources dans les applis TV.
+      // réunies de plusieurs sources (« Toutes les chaînes », applis TV).
       iptvOrgName: match.name || channel.iptvOrgName || '',
       iptvOrgCountry: match.country || channel.iptvOrgCountry || ''
     };
@@ -5253,7 +5253,8 @@ async function assertPublicTvUrl(urlValue) {
 }
 
 async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
-  let url = await assertPublicTvUrl(urlValue);
+  // 200.0.132 : un lien de l'ancien domaine LiveWatch part vers le domaine actuel.
+  let url = await assertPublicTvUrl(currentLiveWatchUrl(urlValue instanceof URL ? urlValue.toString() : urlValue));
   let requestOptions = { ...options, headers: { ...(options.headers || {}) } };
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
     const response = await fetch(url, { ...requestOptions, redirect: 'manual' });
@@ -5271,8 +5272,8 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       // signé avant même que le client officiel puisse recevoir sa réponse.
       const trustedOhaRedirect = /^(?:www\.)?oha\.(?:to|cx)$/i.test(url.hostname)
         && /^(?:www\.)?oha\.(?:to|cx)$/i.test(nextUrl.hostname);
-      const trustedLiveWatchRedirect = /^(?:www\.)?livewatch\.top$/i.test(url.hostname)
-        && /^(?:www\.)?livewatch\.top$/i.test(nextUrl.hostname);
+      // 200.0.134 : redirection vers un sous-domaine LiveWatch (serveur de flux) : session VIP conservée.
+      const trustedLiveWatchRedirect = isLiveWatchFamilyHost(url.hostname) && isLiveWatchFamilyHost(nextUrl.hostname);
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
       const strip = [
         ...(trustedLiveWatchRedirect ? [] : ['authorization', 'apikey']),
@@ -5387,26 +5388,62 @@ function optionalTvRemoteUrl(value) {
   return source ? safeTvRemoteUrl(source).toString() : '';
 }
 
+// 200.0.132 : LiveWatch a quitté livewatch.top pour livewatch.icu. Domaine
+// réglable par LIVEWATCH_ORIGIN (prochain changement sans nouvelle version).
+// L'ancien domaine reste reconnu : liens encore en mémoire ou en cache,
+// réécrits vers le domaine actuel avant toute requête.
+const liveWatchOrigin = withoutSlash(process.env.LIVEWATCH_ORIGIN || 'https://livewatch.icu');
+const liveWatchHostNames = new Set(['livewatch.icu', 'livewatch.top']
+  .concat((() => { try { return [new URL(liveWatchOrigin).hostname.toLowerCase().replace(/^www\./, '')]; } catch { return []; } })())
+  .flatMap(host => [host, `www.${host}`]));
+
+function isLiveWatchHost(value) {
+  return liveWatchHostNames.has(String(value || '').toLowerCase());
+}
+
+// Sous-domaines LiveWatch (API, médias, ex. api.livewatch.icu) : relayés par
+// le pont VIP comme le site lui-même. Jamais un autre domaine.
+const liveWatchBaseDomains = [...liveWatchHostNames].filter(host => !host.startsWith('www.'));
+function isLiveWatchFamilyHost(value) {
+  const host = String(value || '').toLowerCase();
+  return isLiveWatchHost(host) || liveWatchBaseDomains.some(base => host.endsWith(`.${base}`));
+}
+
+// Lien LiveWatch d'un ancien domaine : même chemin sur le domaine actuel.
+function currentLiveWatchUrl(value) {
+  const raw = String(value || '');
+  try {
+    const url = new URL(raw);
+    if (!isLiveWatchHost(url.hostname)) return raw;
+    const current = new URL(liveWatchOrigin);
+    if (url.hostname.toLowerCase() === current.hostname.toLowerCase()) return raw;
+    url.protocol = current.protocol;
+    url.host = current.host;
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
 const liveWatchChannelCatalogUrls = [
-  ['LiveWatch', 'https://livewatch.top/api/v1/public/all'],
-  ['NorthTV', 'https://livewatch.top/api/v1/public/north/channels'],
-  ['FrameTV', 'https://livewatch.top/api/v1/public/frame/channels']
+  ['LiveWatch', `${liveWatchOrigin}/api/v1/public/all`],
+  ['NorthTV', `${liveWatchOrigin}/api/v1/public/north/channels`],
+  ['FrameTV', `${liveWatchOrigin}/api/v1/public/frame/channels`]
 ];
 
 const liveWatchBuiltInSources = [
   { id: 'livewatch-curated', name: 'LiveWatch', section: 'channels', description: 'Catalogue LiveWatch officiel · sources alternatives séparées', url: liveWatchChannelCatalogUrls[0][1], curated: true },
   // Les familles fonctionnelles restent distinctes de LiveWatch principal.
-  { id: 'livewatch-daddy', name: 'Daddy TV', section: 'channels', description: 'Catalogue Daddy TV · accès LiveWatch VIP', url: 'https://livewatch.top/api/v1/public/daddy/channels', family: 'daddy' },
+  { id: 'livewatch-daddy', name: 'Daddy TV', section: 'channels', description: 'Catalogue Daddy TV · accès LiveWatch VIP', url: `${liveWatchOrigin}/api/v1/public/daddy/channels`, family: 'daddy' },
   { id: 'livewatch-north', name: 'NorthTV', section: 'channels', description: 'NorthTV · direct HLS officiel LiveWatch', url: liveWatchChannelCatalogUrls[1][1], family: 'north' },
   { id: 'livewatch-frame', name: 'FrameTV', section: 'channels', description: 'FrameTV · direct HLS résolu par LiveWatch', url: liveWatchChannelCatalogUrls[2][1], family: 'frame' },
-  { id: 'livewatch-sports', name: 'Sports', section: 'sports', description: 'Événements sportifs du jour', url: 'https://livewatch.top/api/v1/public/sports' },
-  { id: 'livewatch-football', name: 'Football Live', section: 'sports', description: 'Football Live · embeds multi-serveurs opaques LiveWatch', url: 'https://livewatch.top/api/v1/public/football' },
-  { id: 'livewatch-bosstv', name: 'BossTV', section: 'sports', description: 'BossTV · embeds multi-serveurs opaques LiveWatch', url: 'https://livewatch.top/api/v1/public/bosstv' },
-  { id: 'livewatch-jacktv', name: 'JackTV', section: 'sports', description: 'Matchs, scores et informations JackTV', url: 'https://livewatch.top/api/v1/public/jacktv/matches' },
-  { id: 'livewatch-daily', name: 'Matchs du jour', section: 'sports', description: 'Programme sportif quotidien', url: 'https://livewatch.top/api/v1/public/sports/daily' }
+  { id: 'livewatch-sports', name: 'Sports', section: 'sports', description: 'Événements sportifs du jour', url: `${liveWatchOrigin}/api/v1/public/sports` },
+  { id: 'livewatch-football', name: 'Football Live', section: 'sports', description: 'Football Live · embeds multi-serveurs opaques LiveWatch', url: `${liveWatchOrigin}/api/v1/public/football` },
+  { id: 'livewatch-bosstv', name: 'BossTV', section: 'sports', description: 'BossTV · embeds multi-serveurs opaques LiveWatch', url: `${liveWatchOrigin}/api/v1/public/bosstv` },
+  { id: 'livewatch-jacktv', name: 'JackTV', section: 'sports', description: 'Matchs, scores et informations JackTV', url: `${liveWatchOrigin}/api/v1/public/jacktv/matches` },
+  { id: 'livewatch-daily', name: 'Matchs du jour', section: 'sports', description: 'Programme sportif quotidien', url: `${liveWatchOrigin}/api/v1/public/sports/daily` }
 ].map(source => ({ ...source, type: 'livewatch', provider: 'LiveWatch', origin: 'builtin', editable: false }));
 
-const liveWatchOrigin = 'https://livewatch.top';
 // V75: the v74 bundle accidentally changed the payload of the public Supabase
 // anon JWT without re-signing it (iss=HS256 instead of iss=supabase). Supabase
 // correctly rejected it as "Invalid API key". Keep the last known-good public
@@ -5436,21 +5473,65 @@ function liveWatchValidPublicKey(value, projectRef = '') {
   return true;
 }
 
-function liveWatchConfigFromText(textValue, fallbackUrl = liveWatchSupabaseUrl) {
+// 200.0.137 : toutes les paires (adresse, clé) plausibles, les plus sûres
+// d'abord. Le site peut servir ses comptes depuis un domaine personnalisé
+// (ex. auth.livewatch.icu) : l'adresse écrite juste avant la clé
+// (createClient(url, clé)) est alors la bonne ; une clé anon donne aussi son
+// projet (champ « ref ») et donc https://<ref>.supabase.co.
+function liveWatchConfigCandidates(textValue, fallbackUrl = liveWatchSupabaseUrl) {
   const text = String(textValue || '').replace(/\\u002f/gi, '/').replace(/\\\//g, '/');
-  const urls = [...text.matchAll(/https:\/\/([a-z0-9-]+)\.supabase\.co/gi)].map(match => `https://${match[1]}.supabase.co`);
   const keys = [
     ...text.matchAll(/sb_publishable_[A-Za-z0-9._-]+/g),
     ...text.matchAll(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g)
-  ].map(match => match[0]);
-  const urlCandidates = [...new Set([...urls, fallbackUrl].filter(Boolean))];
-  for (const url of urlCandidates) {
-    let ref = '';
-    try { ref = new URL(url).hostname.split('.')[0] || ''; } catch {}
-    const key = keys.find(candidate => liveWatchValidPublicKey(candidate, ref));
-    if (key) return { url: withoutSlash(url), anonKey: key, projectRef: ref || liveWatchSupabaseProjectRef };
+  ].sort((a, b) => a.index - b.index);
+  const candidates = [];
+  const seen = new Set();
+  const add = (urlValue, key) => {
+    let url;
+    try { url = new URL(urlValue); } catch { return; }
+    if (url.protocol !== 'https:' || /\.(?:js|css|png|svg|json|html?)$/i.test(url.pathname)) return;
+    const host = url.hostname.toLowerCase();
+    const supabaseRef = host.endsWith('.supabase.co') ? host.split('.')[0] : '';
+    if (!liveWatchValidPublicKey(key, supabaseRef)) return;
+    const base = withoutSlash(`${url.origin}`);
+    const id = `${base}|${key}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    candidates.push({ url: base, anonKey: key, projectRef: supabaseRef || liveWatchAnonKeyPayload(key)?.ref || liveWatchSupabaseProjectRef });
+  };
+  for (const match of keys) {
+    const key = match[0];
+    const before = text.slice(Math.max(0, match.index - 600), match.index);
+    const literals = [...before.matchAll(/["'`](https:\/\/[a-z0-9.-]+\.[a-z]{2,})\/?["'`]/gi)];
+    if (literals.length) add(literals[literals.length - 1][1], key);
   }
-  return null;
+  const urls = [...text.matchAll(/https:\/\/([a-z0-9-]+)\.supabase\.co/gi)].map(match => `https://${match[1]}.supabase.co`);
+  for (const url of [...new Set(urls)]) keys.forEach(match => add(url, match[0]));
+  keys.forEach(match => {
+    const ref = liveWatchAnonKeyPayload(match[0])?.ref;
+    if (ref && /^[a-z0-9]{8,40}$/i.test(String(ref))) add(`https://${ref}.supabase.co`, match[0]);
+  });
+  if (fallbackUrl) keys.forEach(match => add(fallbackUrl, match[0]));
+  return candidates;
+}
+
+function liveWatchConfigFromText(textValue, fallbackUrl = liveWatchSupabaseUrl) {
+  return liveWatchConfigCandidates(textValue, fallbackUrl)[0] || null;
+}
+
+// Paire vérifiée auprès du serveur de comptes lui-même : réglages publics
+// lisibles avec cette clé = bonne adresse et bonne clé.
+async function liveWatchPublicConfigWorks(config) {
+  try {
+    const response = await fetch(`${config.url}/auth/v1/settings`, {
+      headers: { apikey: config.anonKey, authorization: `Bearer ${config.anonKey}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(6_000)
+    });
+    await response.arrayBuffer().catch(() => undefined);
+    return response.ok ? true : (response.status === 401 || response.status === 403 || response.status === 404 ? false : null);
+  } catch {
+    return null;
+  }
 }
 
 async function discoverLiveWatchPublicConfig(force = false) {
@@ -5458,8 +5539,9 @@ async function discoverLiveWatchPublicConfig(force = false) {
   const fallback = { url: liveWatchSupabaseUrl, anonKey: liveWatchSupabaseAnonKey, projectRef: liveWatchSupabaseProjectRef };
   // Explicit administrator configuration always wins.
   if (process.env.LIVEWATCH_SUPABASE_URL || process.env.LIVEWATCH_SUPABASE_ANON_KEY) {
-    liveWatchPublicConfigCache = { expiresAt: Date.now() + 60 * 60_000, value: fallback };
-    return fallback;
+    const configured = { ...fallback, source: 'env', discovered: true };
+    liveWatchPublicConfigCache = { expiresAt: Date.now() + 60 * 60_000, value: configured };
+    return configured;
   }
   const pages = [`${liveWatchOrigin}/`, `${liveWatchOrigin}/embed/`];
   const scripts = new Set();
@@ -5480,13 +5562,15 @@ ${html}`;
       while ((match = re.exec(html)) && scripts.size < 12) {
         try {
           const url = new URL(match[1], response.url || pageUrl);
-          if (['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) scripts.add(url.toString());
+          if (isLiveWatchHost(url.hostname.toLowerCase())) scripts.add(url.toString());
         } catch {}
       }
     } catch {}
   }
-  let found = liveWatchConfigFromText(combined, fallback.url);
-  if (!found) {
+  const candidates = liveWatchConfigCandidates(combined, fallback.url);
+  // Scripts du site lus seulement si la page ne donne aucune autre adresse
+  // que le secours connu.
+  if (!candidates.some(item => item.url !== fallback.url)) {
     for (const scriptUrl of [...scripts].slice(0, 10)) {
       try {
         const response = await fetchTvRemote(scriptUrl, {
@@ -5497,13 +5581,24 @@ ${html}`;
         const length = Number(response.headers.get('content-length') || 0);
         if (length > 5 * 1024 * 1024) continue;
         const body = await response.text();
-        found = liveWatchConfigFromText(body, fallback.url);
-        if (found) break;
+        for (const candidate of liveWatchConfigCandidates(body, fallback.url)) {
+          if (!candidates.some(item => item.url === candidate.url && item.anonKey === candidate.anonKey)) candidates.push(candidate);
+        }
       } catch {}
     }
   }
-  const value = found || fallback;
-  liveWatchPublicConfigCache = { expiresAt: Date.now() + (found ? 6 * 60 * 60_000 : 10 * 60_000), value };
+  // Première paire confirmée par le serveur de comptes ; sinon la première
+  // qui n'a pas été refusée (serveur injoignable) ; sinon le secours connu.
+  let found = null;
+  let unverified = null;
+  for (const candidate of candidates.slice(0, 6)) {
+    const works = await liveWatchPublicConfigWorks(candidate);
+    if (works === true) { found = { ...candidate, source: 'site', discovered: true, verified: true }; break; }
+    if (works === null && !unverified) unverified = { ...candidate, source: 'site', discovered: true, verified: false };
+  }
+  found ||= unverified;
+  const value = found || { ...fallback, source: 'fallback', discovered: false };
+  liveWatchPublicConfigCache = { expiresAt: Date.now() + (found?.verified ? 6 * 60 * 60_000 : 10 * 60_000), value };
   return value;
 }
 
@@ -5603,10 +5698,36 @@ async function refreshLiveWatchVip(session) {
   return refreshed;
 }
 
+// 200.0.135 : serveur de comptes qui a émis la session (champ « iss » du jeton,
+// lu sans vérification : simple comparaison d'hôtes, aucune confiance accordée).
+function liveWatchTokenIssuerHost(token) {
+  try {
+    const part = String(token || '').split('.')[1] || '';
+    const payload = JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return new URL(String(payload?.iss || '')).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+// Session ouverte sur un autre serveur de comptes que celui du site actuel
+// (LiveWatch a changé de domaine et de serveur de comptes) : le nouveau site
+// la refuse (« Chaîne introuvable », flux directs en échec) alors qu'elle paraît
+// encore valide. config : configuration publique du site, ou null si inconnue.
+function liveWatchSessionFromOtherSite(session, config) {
+  const issuer = liveWatchTokenIssuerHost(session?.accessToken);
+  if (!issuer || !config?.url || config.discovered === false) return false;
+  try { return issuer !== new URL(config.url).hostname.toLowerCase(); } catch { return false; }
+}
+
+const liveWatchOtherSiteMessage = 'Ta session LiveWatch vient de l’ancien site : LiveWatch a changé de serveur de comptes avec livewatch.icu. Reconnecte ton compte LiveWatch VIP dans Noctra (TV en direct › Accès TV).';
+
 async function liveWatchAccessSession(forceRefresh = false) {
   const session = await readLiveWatchSession();
   if (!session) throw new HttpError(409, 'Aucun compte LiveWatch VIP n’est connecté dans Noctra.');
   if (!session.isVip) throw new HttpError(403, 'La session LiveWatch enregistrée n’est pas VIP Premium.');
+  const siteConfig = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  if (liveWatchSessionFromOtherSite(session, siteConfig)) throw new HttpError(401, liveWatchOtherSiteMessage);
   if (!forceRefresh && Number(session.expiresAt || 0) > Math.floor(Date.now() / 1000) + 120) return session;
   if (!liveWatchRefreshPromise) {
     liveWatchRefreshPromise = refreshLiveWatchVip(session).finally(() => { liveWatchRefreshPromise = null; });
@@ -5712,7 +5833,7 @@ function liveWatchAllowedBridgeHost(value, publicConfig = null) {
   try {
     const host = new URL(value).hostname.toLowerCase();
     const supabaseHost = new URL(publicConfig?.url || liveWatchSupabaseUrl).hostname.toLowerCase();
-    return ['livewatch.top', 'www.livewatch.top', supabaseHost].includes(host);
+    return isLiveWatchFamilyHost(host) || host === supabaseHost;
   } catch { return false; }
 }
 
@@ -5736,7 +5857,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   const proxiedAsset = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (!['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return String(value || '');
+      if (!isLiveWatchHost(target.hostname.toLowerCase())) return String(value || '');
       return `${siteRoot}${target.pathname}${target.search}`;
     } catch { return String(value || ''); }
   };
@@ -5750,7 +5871,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   const proxiedMedia = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
+      if (isLiveWatchHost(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
       return `${tunnel}?media=1&url=${encodeURIComponent(target.toString())}`;
     } catch { return String(value || ''); }
   };
@@ -5774,7 +5895,7 @@ function sanitizeLiveWatchPlayerHtml(htmlValue, pageUrl, kind, id, session, publ
   // lui aussi sa vraie route /embed/<id> : sans elle il affiche « Chaîne
   // introuvable » alors que l'identifiant et la session VIP sont valides.
   const remoteRoute = `${page.pathname || '/'}${page.search || ''}${page.hash || ''}`;
-  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body,#root{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const K=${JSON.stringify(storageKey)},V=${JSON.stringify(JSON.stringify(virtualSession))},T=${JSON.stringify(tunnel)},S=${JSON.stringify(siteRoot)},O=${JSON.stringify(page.toString())},LO=${JSON.stringify(page.origin)},R=${JSON.stringify(remoteRoute)},NativeURL=window.URL,NO=new NativeURL(location.href).origin,SU=${JSON.stringify(supabaseOrigin)},F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map([[K,V]]),store={getItem:k=>{const x=String(k);return mem.has(x)?mem.get(x):(/^sb-[a-z0-9_-]+-auth-token$/i.test(x)?V:null)},setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?|stream|live)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function map(v,media){try{const raw=String(v),fixed=/^null\//i.test(raw)?LO+raw.slice(4):raw,u=new URL(fixed,O);if(u.origin===NO&&u.pathname.includes('/api/tv/livewatch/'))return raw;if(media){const m=u.origin===LO?S+u.pathname+u.search:(u.origin===SU?T+'?url='+encodeURIComponent(u.href):T+'?media=1&url='+encodeURIComponent(u.href));try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}if(u.origin===LO)return S+u.pathname+u.search;if(u.origin===SU)return T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/livewatch/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}return String(v)}catch{return v}}window.fetch=async function(input,init){try{if(typeof input==='string'||input instanceof URL)return F(map(input,false),Object.assign({credentials:'omit'},init||{}));if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();return F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));}}}catch{}return F(input,init)};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';try{const src=v.getAttribute('src');if(src){const mapped=map(src,true);if(mapped!==src)v.setAttribute('src',mapped)}v.querySelectorAll?.('source[src]').forEach(s=>{const src=s.getAttribute('src');if(!src)return;const mapped=map(src,true);if(mapped!==src)s.setAttribute('src',mapped)})}catch{}v.addEventListener('loadedmetadata',()=>parent.postMessage({type:'noctra-livewatch-state',state:'ready'},'*'));v.addEventListener('playing',()=>parent.postMessage({type:'noctra-livewatch-state',state:'playing'},'*'));v.addEventListener('error',()=>parent.postMessage({type:'noctra-livewatch-state',state:'error',message:'Le média LiveWatch a signalé une erreur.'},'*'));}let gateReported=false;function inspect(){document.querySelectorAll('video').forEach(bind);if(gateReported)return;const text=(document.body?.innerText||'').replace(/\s+/g,' ');if(/Débloquer (?:la chaîne|le direct)|Pub\s*1|ÉTAPE\s*1\s*\/\s*2/i.test(text)){gateReported=true;parent.postMessage({type:'noctra-livewatch-state',state:'vip-missed',message:'LiveWatch affiche encore son écran publicitaire malgré la session VIP transmise.'},'*')}}new MutationObserver(inspect).observe(document.documentElement,{childList:true,subtree:true,characterData:true});addEventListener('DOMContentLoaded',()=>{parent.postMessage({type:'noctra-livewatch-state',state:'vip-ready'},'*');inspect()});})();</script>`;
+  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body,#root{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const K=${JSON.stringify(storageKey)},V=${JSON.stringify(JSON.stringify(virtualSession))},T=${JSON.stringify(tunnel)},S=${JSON.stringify(siteRoot)},O=${JSON.stringify(page.toString())},LO=${JSON.stringify(page.origin)},LD=${JSON.stringify(liveWatchBaseDomains)},R=${JSON.stringify(remoteRoute)},NativeURL=window.URL,NO=new NativeURL(location.href).origin,SU=${JSON.stringify(supabaseOrigin)},F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{Object.defineProperty(document,'referrer',{configurable:true,get:()=>''})}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=LO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map([[K,V]]),store={getItem:k=>{const x=String(k);return mem.has(x)?mem.get(x):(/^sb-[a-z0-9_-]+-auth-token$/i.test(x)?V:null)},setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?|stream|live)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function map(v,media){try{const raw=String(v),fixed=/^null\//i.test(raw)?LO+raw.slice(4):raw,u=new URL(fixed,O);if(u.origin===NO&&u.pathname.includes('/api/tv/livewatch/'))return raw;if(media){const m=u.origin===LO?S+u.pathname+u.search:(u.origin===SU?T+'?url='+encodeURIComponent(u.href):T+'?media=1&url='+encodeURIComponent(u.href));try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}if(u.origin===LO)return S+u.pathname+u.search;if(u.origin===SU)return T+'?url='+encodeURIComponent(u.href);if(LD.some(d=>u.hostname===d||u.hostname===('www.'+d)||u.hostname.endsWith('.'+d)))return T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/livewatch/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);try{parent.postMessage({type:'noctra-livewatch-state',state:'media',url:m},'*')}catch{}return m}return String(v)}catch{return v}}let netReports=0;function report(u,status){try{if(netReports>=30)return;netReports++;const x=new NativeURL(String(u),O);parent.postMessage({type:'noctra-livewatch-state',state:'net',host:x.hostname,path:x.pathname.slice(0,120),status:Number(status)||0},'*')}catch{}}function watch(p,u){return p.then(r=>{if(!r.ok&&r.type!=='opaque')report(u,r.status);return r},e=>{report(u,0);throw e})}window.fetch=async function(input,init){const orig=typeof input==='string'||input instanceof URL?String(input):(input&&input.url)||'';try{if(typeof input==='string'||input instanceof URL)return watch(F(map(input,false),Object.assign({credentials:'omit'},init||{})),orig);if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();return watch(F(mapped,Object.assign(cfg,init||{},{credentials:'omit'})),orig);}}}catch{}return watch(F(input,init),orig)};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);try{const o=String(url);this.addEventListener('loadend',()=>{if(!this.status||this.status>=400)report(o,this.status)})}catch{}return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';try{const src=v.getAttribute('src');if(src){const mapped=map(src,true);if(mapped!==src)v.setAttribute('src',mapped)}v.querySelectorAll?.('source[src]').forEach(s=>{const src=s.getAttribute('src');if(!src)return;const mapped=map(src,true);if(mapped!==src)s.setAttribute('src',mapped)})}catch{}v.addEventListener('loadedmetadata',()=>parent.postMessage({type:'noctra-livewatch-state',state:'ready'},'*'));v.addEventListener('playing',()=>parent.postMessage({type:'noctra-livewatch-state',state:'playing'},'*'));v.addEventListener('error',()=>parent.postMessage({type:'noctra-livewatch-state',state:'error',message:'Le média LiveWatch a signalé une erreur.'},'*'));}let gateReported=false,missingReported=false;function inspect(){document.querySelectorAll('video').forEach(bind);const text=(document.body?.innerText||'').replace(/\s+/g,' ');if(!missingReported&&/Cha[iî]ne introuvable/i.test(text)){missingReported=true;parent.postMessage({type:'noctra-livewatch-state',state:'not-found',message:'LiveWatch affiche « Chaîne introuvable » dans le lecteur relayé par Noctra.'},'*')}if(gateReported)return;if(/Débloquer (?:la chaîne|le direct)|Pub\s*1|ÉTAPE\s*1\s*\/\s*2/i.test(text)){gateReported=true;parent.postMessage({type:'noctra-livewatch-state',state:'vip-missed',message:'LiveWatch affiche encore son écran publicitaire malgré la session VIP transmise.'},'*')}}new MutationObserver(inspect).observe(document.documentElement,{childList:true,subtree:true,characterData:true});addEventListener('DOMContentLoaded',()=>{parent.postMessage({type:'noctra-livewatch-state',state:'vip-ready'},'*');inspect()});})();</script>`;
   if (/<head\b[^>]*>/i.test(html)) html = html.replace(/<head\b[^>]*>/i, match => `${match}${legacySessionMarker}${bridge}`);
   else html = `<!doctype html><html><head>${legacySessionMarker}${bridge}</head><body>${html}</body></html>`;
   return html;
@@ -5801,7 +5922,7 @@ function rewriteLiveWatchBridgeAssetText(textValue, kind, id, contentType = '') 
   const type = String(contentType || '').toLowerCase();
   let output = text;
   if (/javascript|ecmascript|text\/plain/.test(type)) {
-    output = output.replace(/https:\/\/(?:www\.)?livewatch\.top(?=\/|["'`])/gi, siteRoot);
+    output = output.replace(/https:\/\/(?:www\.)?livewatch\.(?:icu|top)(?=\/|["'`])/gi, siteRoot);
     output = output.replace(/(["'`])\/(?!\/)((?:assets|static|_next|build|dist|chunks?|js|css|fonts?|images?|icons?|workers?|manifest|favicon)\/[^"'`\\\r\n]{1,500})\1/gi, (_m, q, path) => `${q}${siteRoot}/${path}${q}`);
   }
   if (/text\/css/.test(type)) {
@@ -5822,7 +5943,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
   const method = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req?.method) ? req.method : 'GET';
   const body = req && !['GET', 'HEAD'].includes(method) ? await readTvProxyBody(req) : undefined;
   const isSupabase = officialTarget && target.origin === new URL(publicConfig.url).origin;
-  const isLiveWatch = officialTarget && ['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase());
+  const isLiveWatch = officialTarget && isLiveWatchFamilyHost(target.hostname.toLowerCase());
   const key = liveWatchBridgeKey(kind, id);
   const cookies = liveWatchBridgeCookies.get(key)?.value || '';
   const cors = {
@@ -5871,7 +5992,8 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
       accept: req?.headers?.accept || (html ? 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' : '*/*'),
       'accept-language': req?.headers?.['accept-language'] || 'fr-FR,fr;q=0.9,en;q=0.6',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36',
-      origin: isSupabase || externalMedia ? liveWatchOrigin : target.origin,
+      // API d'un sous-domaine LiveWatch : même origine que le site officiel.
+      origin: isSupabase || externalMedia || !isLiveWatchHost(target.hostname) ? liveWatchOrigin : target.origin,
       referer: liveWatchOfficialPlayerUrl(kind, id),
       ...(officialTarget ? { authorization: `Bearer ${activeSession.accessToken}` } : {}),
       ...(isSupabase ? { apikey: publicConfig.anonKey } : {}),
@@ -5944,7 +6066,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
       referer: headers.referer,
       'user-agent': headers['user-agent'],
       ...(externalMedia && playlistCookie ? { cookie: playlistCookie } : {}),
-      ...(['livewatch.top', 'www.livewatch.top'].includes(new URL(finalUrl).hostname.toLowerCase()) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
+      ...(isLiveWatchFamilyHost(new URL(finalUrl).hostname) ? { authorization: `Bearer ${session.accessToken}`, ...(liveWatchBridgeCookies.get(key)?.value ? { cookie: liveWatchBridgeCookies.get(key).value } : {}) } : {})
     };
     const rewritten = rewriteTvPlaylist(text, finalUrl, inherited, { provider: 'LiveWatch' });
     res.writeHead(response.status, { ...cors, 'content-type': 'application/vnd.apple.mpegurl; charset=utf-8', 'x-accel-buffering': 'no' });
@@ -6379,7 +6501,7 @@ function liveWatchBridgeReference(tokenValue) {
   if (!['main', 'daddy', 'north', 'frame', 'page'].includes(kind) || !id) return null;
   try {
     const url = safeTvRemoteUrl(reference.url);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     return { token, kind, id, url: url.toString(), reference };
   } catch {
     return null;
@@ -6712,7 +6834,22 @@ function liveWatchCatalogName(payload, baseUrl) {
   return payload?.name || payload?.title || 'LiveWatch TV';
 }
 
+// 200.0.132 : liens d'un catalogue LiveWatch ramenés au domaine actuel
+// (l'API peut encore renvoyer des liens livewatch.top).
 function parseLiveWatchCatalog(payload, baseUrl) {
+  const catalog = parseLiveWatchCatalogLinks(payload, currentLiveWatchUrl(baseUrl));
+  const linkFields = ['embedUrl', 'externalUrl', 'vipFallbackUrl', 'streamUrl'];
+  const current = item => {
+    if (!item || typeof item !== 'object') return item;
+    const copy = { ...item };
+    linkFields.forEach(field => { if (typeof copy[field] === 'string' && copy[field]) copy[field] = currentLiveWatchUrl(copy[field]); });
+    if (Array.isArray(copy.liveWatchVariants)) copy.liveWatchVariants = copy.liveWatchVariants.map(current);
+    return copy;
+  };
+  return { ...catalog, channels: Array.isArray(catalog?.channels) ? catalog.channels.map(current) : catalog?.channels };
+}
+
+function parseLiveWatchCatalogLinks(payload, baseUrl) {
   const entries = liveWatchCatalogEntries(payload);
   const channels = entries.map(item => normalizeTvChannel(item, baseUrl, item.group || 'LiveWatch')).filter(Boolean);
   return { channels, groups: [], name: liveWatchCatalogName(payload, baseUrl) };
@@ -6846,7 +6983,7 @@ function collapseLiveWatchLogicalChannels(channelsValue = []) {
 function liveWatchEmbedReference(channel) {
   try {
     const url = new URL(channel?.externalUrl || channel?.embedUrl || '');
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     const match = url.pathname.match(/^\/embed\/(?:(daddy|north|frame)\/)?([^/]+)\/?$/i);
     if (!match) return null;
     return { kind: String(match[1] || 'main').toLowerCase(), id: decodeURIComponent(match[2]) };
@@ -6860,11 +6997,11 @@ function liveWatchOfficialEmbedUrl(channel) {
     // V113 : les catalogues Sports peuvent publier de nouveaux wrappers
     // LiveWatch qui ne suivent pas encore la forme /embed/{daddy,north,frame}.
     // On n'étend jamais le VIP à un hôte tiers : seul un embed explicitement
-    // livré par livewatch.top peut recevoir le bridge de la session Premium.
+    // livré par LiveWatch (livewatch.icu, ex-livewatch.top) peut recevoir le bridge de la session Premium.
     const raw = String(channel?.embedUrl || '').trim();
     if (!raw) return '';
     const url = safeTvRemoteUrl(raw);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return '';
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return '';
     return url.toString();
   } catch {
     return '';
@@ -6878,7 +7015,7 @@ function liveWatchPageReference(tokenValue) {
   if (!reference || reference.expiresAt <= Date.now() || reference.meta?.kind !== 'livewatch-page') return null;
   try {
     const url = safeTvRemoteUrl(reference.url);
-    if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+    if (!isLiveWatchHost(url.hostname.toLowerCase())) return null;
     return { ...reference, url: url.toString() };
   } catch {
     return null;
@@ -6901,6 +7038,12 @@ function liveWatchOfficialPlayerUrl(kindValue, idValue) {
 async function liveWatchQuickVipStatus() {
   const stored = await readLiveWatchSession();
   if (!stored) return { configured: false, active: false, isVip: false };
+  // Session d'un autre serveur de comptes (ancien site) : pas « connectée ».
+  // Configuration du site lue en cache seulement (le catalogue n'attend rien).
+  if (!liveWatchPublicConfigCache) void discoverLiveWatchPublicConfig(false).catch(() => undefined);
+  if (liveWatchSessionFromOtherSite(stored, liveWatchPublicConfigCache?.value)) {
+    return { configured: true, active: false, isVip: Boolean(stored.isVip), otherSite: true, message: liveWatchOtherSiteMessage };
+  }
   const active = Boolean(stored.isVip && stored.accessToken && stored.refreshToken);
   // Le catalogue TV ne doit jamais attendre un refresh Supabase. Si le jeton
   // approche de l'expiration, on le renouvelle en arrière-plan ; le resolver
@@ -6974,7 +7117,7 @@ async function decorateLiveWatchVipPlayback(catalog, source = {}) {
         .flatMap((variant, index) => {
           try {
             const url = safeTvRemoteUrl(variant.embedUrl || variant.externalUrl || '').toString();
-            if (!['livewatch.top', 'www.livewatch.top'].includes(new URL(url).hostname.toLowerCase())) return [];
+            if (!isLiveWatchHost(new URL(url).hostname)) return [];
             return [{
               url,
               label: String(variant.label || `Serveur ${index + 1}`).slice(0, 80),
@@ -7175,7 +7318,9 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     }
     if (!rawUrl) throw new HttpError(502, 'LiveWatch n’a renvoyé aucun flux pour cette chaîne.');
     const streamUrl = safeTvRemoteUrl(new URL(rawUrl, response.url || liveWatchOrigin).toString());
-    const liveWatchHost = ['livewatch.top', 'www.livewatch.top'].includes(streamUrl.hostname.toLowerCase());
+    // 200.0.134 : flux servi par un sous-domaine LiveWatch (ex. hls.livewatch.icu) :
+    // session VIP et cookies jointes au flux et à ses segments, comme sur le site.
+    const liveWatchHost = isLiveWatchFamilyHost(streamUrl.hostname.toLowerCase());
     const officialProxy = liveWatchHost && /^\/api\/(?:hls\b|proxy\b|stream\b|(?:daddy|north|frame)\/(?:proxy|stream)\b)/i.test(streamUrl.pathname);
     const publicHls = streamUrl.protocol === 'https:' && /\.m3u8?(?:$|[?#/])/i.test(streamUrl.toString());
     if (!officialProxy && !publicHls) throw new HttpError(502, 'LiveWatch a renvoyé une adresse de flux inattendue.');
@@ -7680,7 +7825,7 @@ async function liveWatchChannelVariants(kindValue, idValue, nameValue = '', coun
   let catalogUrl = defaults[kind] || '';
   try {
     const candidate = safeTvRemoteUrl(sourceValue).toString();
-    if (new URL(candidate).hostname.toLowerCase().endsWith('livewatch.top') && /\/api\//i.test(candidate)) catalogUrl = candidate;
+    if (isLiveWatchHost(new URL(candidate).hostname) && /\/api\//i.test(candidate)) catalogUrl = currentLiveWatchUrl(candidate);
   } catch {}
   if (!catalogUrl) return [{ kind, id, label: '' }];
   try {
@@ -7799,7 +7944,7 @@ async function resolveLiveWatchVipPlayback(kindValue, idValue, options = {}) {
     const variantOptions = pageReference.meta.variants.flatMap((variant, index) => {
       try {
         const variantUrl = safeTvRemoteUrl(variant?.url || '').toString();
-        if (!['livewatch.top', 'www.livewatch.top'].includes(new URL(variantUrl).hostname.toLowerCase())) return [];
+        if (!isLiveWatchHost(new URL(variantUrl).hostname)) return [];
         const variantPageToken = issueTvReference(variantUrl, {}, {
           kind: 'livewatch-page',
           sourceFamily: familyLabel,
@@ -7988,17 +8133,19 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     try { await response.body?.cancel?.(); } catch {}
     if (!response.ok || !/html/i.test(contentType)) throw new HttpError(response.status || 502, `Lecteur LiveWatch officiel inaccessible (${response.status || 0}).`);
     // Flux VIP direct (celui des applis et du lecteur natif), jusqu'au premier segment.
-    let stream;
+    let vip;
     try {
       liveWatchVipDirectCache.delete(`main:${ref.id}`);
       const token = await liveWatchStreamReference('main', ref.id, 10_000);
       await validateLiveWatchStreamReference(token, 12_000);
-      stream = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
+      vip = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
     } catch (error) {
-      stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
+      vip = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
     }
     const api = await liveWatchStreamApiProbe('main', ref.id).catch(() => []);
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, api };
+    // 200.0.134 : flux direct de la même chaîne (hôte et réponse de la playlist).
+    const stream = await liveWatchDiagnosticStream(ref).catch(error => ({ ok: false, message: cleanError(error) }));
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, vip, api };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }
@@ -8063,22 +8210,122 @@ async function liveWatchChannelDiagnostic(referenceValue) {
   return { kind, id, stream, api: await liveWatchStreamApiProbe(kind, id).catch(error => [{ client: '?', status: 0, ok: false, detail: cleanError(error) }]), durationMs: Date.now() - startedAt };
 }
 
+async function liveWatchDiagnosticStream(ref) {
+  const token = await liveWatchStreamReference(ref.kind, ref.id, 9_000);
+  const reference = tvReferences.get(String(token || ''));
+  if (!reference) return { ok: false, message: 'Référence de flux absente.' };
+  const target = new URL(reference.url);
+  const response = await fetchTvRemote(reference.url, {
+    headers: liveWatchProbeHeaders(reference, 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*;q=0.6'),
+    signal: AbortSignal.timeout(8_000)
+  });
+  const text = response.ok ? (await response.text()).slice(0, 4096) : '';
+  if (!response.ok) { try { await response.body?.cancel?.(); } catch {} }
+  return {
+    ok: response.ok && /^\s*#EXTM3U/.test(text),
+    host: target.hostname,
+    path: target.pathname.replace(/[A-Za-z0-9_-]{24,}/g, '…'),
+    livewatchHost: isLiveWatchFamilyHost(target.hostname),
+    sessionSent: Boolean(reference.headers?.authorization),
+    status: response.status,
+    finalHost: (() => { try { return new URL(response.url || reference.url).hostname; } catch { return ''; } })(),
+    playlist: /^\s*#EXTM3U/.test(text) ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide')
+  };
+}
+
+// 200.0.132 : serveurs réellement utilisés par le site LiveWatch (page
+// d'accueil, lecteur et leurs scripts) : domaine actuel, redirection vers un
+// autre domaine, serveur d'authentification, hôtes d'API. Aucune donnée
+// sensible : seulement des noms d'hôtes.
+async function liveWatchSiteHosts() {
+  const result = { origin: liveWatchOrigin, finalOrigin: '', supabaseHost: '', hosts: [], errors: [] };
+  const hosts = new Map();
+  const note = (host, where) => {
+    const value = String(host || '').toLowerCase();
+    if (!value || /(?:googleapis|gstatic|google|cloudflare|jsdelivr|unpkg|w3\.org|schema\.org|reactjs|github|sentry|fontawesome|cdnjs)\b/.test(value)) return;
+    if (!hosts.has(value)) hosts.set(value, new Set());
+    hosts.get(value).add(where);
+  };
+  const read = async (url, accept) => {
+    const response = await fetchTvRemote(url, { signal: AbortSignal.timeout(8_000), headers: { accept, 'user-agent': 'Mozilla/5.0 Noctra/132' } });
+    const text = response.ok ? (await response.text()).slice(0, 4 * 1024 * 1024) : '';
+    return { response, text };
+  };
+  const scripts = new Set();
+  for (const pageUrl of [`${liveWatchOrigin}/`, `${liveWatchOrigin}/embed/`]) {
+    try {
+      const { response, text } = await read(pageUrl, 'text/html,*/*;q=0.5');
+      if (!result.finalOrigin) result.finalOrigin = new URL(response.url || pageUrl).origin;
+      if (!response.ok) result.errors.push(`${new URL(pageUrl).pathname} : HTTP ${response.status}`);
+      for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+        try { const url = new URL(match[1], response.url || pageUrl); note(url.hostname, 'script'); if (isLiveWatchFamilyHost(url.hostname)) scripts.add(url.toString()); } catch {}
+      }
+      for (const match of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) note(match[1], 'page');
+    } catch (error) {
+      result.errors.push(`${pageUrl} : ${cleanError(error)}`);
+    }
+  }
+  for (const scriptUrl of [...scripts].slice(0, 6)) {
+    try {
+      const { text } = await read(scriptUrl, 'application/javascript,*/*;q=0.5');
+      for (const match of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) note(match[1], 'code');
+    } catch (error) {
+      result.errors.push(`script : ${cleanError(error)}`);
+    }
+  }
+  const config = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  try { result.supabaseHost = new URL(config?.url || liveWatchSupabaseUrl).hostname; } catch {}
+  result.hosts = [...hosts.entries()]
+    .map(([host, where]) => ({ host, where: [...where], livewatch: isLiveWatchFamilyHost(host), supabase: /\.supabase\.co$/i.test(host) }))
+    .sort((a, b) => Number(b.livewatch) - Number(a.livewatch) || Number(b.supabase) - Number(a.supabase) || a.host.localeCompare(b.host))
+    .slice(0, 40);
+  return result;
+}
+
+// 200.0.137 : serveur de comptes utilisé et origine de ce choix.
+function liveWatchAuthDiagnostic(config) {
+  let host = '';
+  try { host = new URL(config?.url || '').hostname; } catch {}
+  return { host, source: String(config?.source || 'fallback'), verified: Boolean(config?.verified), keyType: String(config?.anonKey || '').startsWith('sb_publishable_') ? 'publishable' : 'anon' };
+}
+
 async function liveWatchVipDiagnostics(reference = '') {
   const startedAt = Date.now();
+  const stored = await readLiveWatchSession();
+  const siteConfig = await discoverLiveWatchPublicConfig(false).catch(() => null);
+  const auth = liveWatchAuthDiagnostic(siteConfig);
+  if (stored && liveWatchSessionFromOtherSite(stored, siteConfig)) {
+    return {
+      ok: false,
+      authenticated: false,
+      auth,
+      otherSite: true,
+      sessionIssuer: liveWatchTokenIssuerHost(stored.accessToken),
+      siteAuthHost: (() => { try { return new URL(siteConfig.url).hostname; } catch { return ''; } })(),
+      message: liveWatchOtherSiteMessage,
+      site: await liveWatchSiteHosts().catch(error => ({ errors: [cleanError(error)] }))
+    };
+  }
   const session = await liveWatchAccessSession();
   const profile = await liveWatchProfile(session.accessToken, session.userId).catch(() => null);
   const profileVip = Boolean(profile?.is_vip || profile?.role === 'vip' || profile?.role === 'admin' || session.isVip);
-  const checks = [await liveWatchVipDiagnosticCheck('LiveWatch', liveWatchChannelCatalogUrls[0][1])];
+  const [checks, site] = await Promise.all([
+    Promise.all([liveWatchVipDiagnosticCheck('LiveWatch', liveWatchChannelCatalogUrls[0][1])]),
+    liveWatchSiteHosts().catch(error => ({ errors: [cleanError(error)] }))
+  ]);
   const reachable = checks.filter(item => item.ok).length;
   const channel = reference ? await liveWatchChannelDiagnostic(reference).catch(error => ({ error: cleanError(error) })) : null;
   return {
     ok: profileVip && reachable === checks.length,
     authenticated: true,
+    auth,
+    sessionIssuer: liveWatchTokenIssuerHost(session.accessToken),
     isVip: profileVip,
     account: maskedLiveWatchEmail(session.email),
     sessionExpiresIn: Math.max(0, Number(session.expiresAt || 0) - Math.floor(Date.now() / 1000)),
     clientMode: liveWatchClientMode.browser ? 'navigateur' : 'Noctra',
     checks,
+    site,
     channel,
     durationMs: Date.now() - startedAt,
     message: profileVip
@@ -8164,6 +8411,8 @@ async function readPersistedLiveWatchCuratedCatalog() {
       const age = Date.now() - Number(payload?.savedAt || 0);
       const value = payload?.value;
       if (age < 0 || age > 24 * 60 * 60_000 || !Array.isArray(value?.channels) || !value.channels.length) return null;
+      // 200.0.132 : catalogue enregistré avec un autre domaine LiveWatch (liens morts).
+      if (payload?.origin !== liveWatchOrigin) return null;
       return value;
     } catch {
       return null;
@@ -8175,7 +8424,7 @@ async function readPersistedLiveWatchCuratedCatalog() {
 async function persistLiveWatchCuratedCatalog(value) {
   if (!Array.isArray(value?.channels) || !value.channels.length) return;
   await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(liveWatchCatalogCachePath, `${JSON.stringify({ savedAt: Date.now(), value })}\n`, { encoding: 'utf8', mode: 0o600 });
+  await writeFile(liveWatchCatalogCachePath, `${JSON.stringify({ savedAt: Date.now(), origin: liveWatchOrigin, value })}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 async function refreshLiveWatchCuratedCatalog(cacheKey) {
@@ -10504,9 +10753,12 @@ function normalizeHalouleDirectSportLabel(labelValue = '') {
     .toLowerCase();
 }
 
+// 200.0.132 : page mise à jour le 10/10/26 (nouvelles adresses pour toutes
+// les chaînes) : ajout de L'Equipe TV et TF1 ; « ESPN FR by DISNEY » avec ou
+// sans « + » dans le lien.
 function halouleDirectSportLabelAllowed(labelValue = '') {
-  const label = normalizeHalouleDirectSportLabel(labelValue);
-  return /^(?:canal\+|canal\+\s+sport|canal\+\s+foot|canal\+\s+sport\s+360|canal\+\s+sport\s+[1-5]\s+afrik|c\+\s+live\s+(?:[1-9]|10)|canal\+\s+live\s+(?:[1-9]|10)|ligue\s*1\+(?:\s+\(v2\)|\s+(?:[1-9]|10)(?:\s+\(v2\))?)?|beinsport\s+(?:fr\s+)?[1-3]|beinsport\s+max\s+(?:[4-9]|10)|max\s+(?:[4-9]|10)|rmc\s+sport\s+[1-2]|eurosport\s+[1-2]|espn\s+fr\s+by\s+disney\+|automoto|sportenfrance|trace\s+(?:urban|caribbean|terranga|latina|toca|gospel|vanilla|africa)|bblack\s+(?:africa|caribbean|classic)|bblack\s+classic|clubbing\s+tv)$/i.test(label);
+  const label = normalizeHalouleDirectSportLabel(labelValue).replace(/[’`]/g, "'");
+  return /^(?:canal\+|canal\+\s+sport|canal\+\s+foot|canal\+\s+sport\s+360|canal\+\s+sport\s+[1-5]\s+afrik|c\+\s+live\s+(?:[1-9]|10)|canal\+\s+live\s+(?:[1-9]|10)|ligue\s*1\+(?:\s+\(v2\)|\s+(?:[1-9]|10)(?:\s+\(v2\))?)?|beinsport\s+(?:fr\s+)?[1-3]|beinsport\s+max\s+(?:[4-9]|10)|max\s+(?:[4-9]|10)|rmc\s+sport\s+[1-2]|eurosport\s+[1-2]|espn\s+fr\s+by\s+disney\+?|automoto|sportenfrance|l'?\s*equipe(?:\s+tv)?|tf1|trace\s+(?:urban|caribbean|terranga|latina|toca|gospel|vanilla|africa)|bblack\s+(?:africa|caribbean|classic)|bblack\s+classic|clubbing\s+tv)$/i.test(label);
 }
 
 function halouleLinkAllowed(urlValue, labelValue = '') {
@@ -11794,9 +12046,9 @@ function mergeTvCatalogChannels(catalogs, providerLabel = 'LiveWatch') {
 }
 
 async function tvCatalogFromJackTvWithFallback() {
-  const primary = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/jacktv/matches', 'JackTV');
+  const primary = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/jacktv/matches`, 'JackTV');
   if (primary.channels?.length) return primary;
-  const football = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/football', 'Football Live').catch(() => ({ channels: [] }));
+  const football = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/football`, 'Football Live').catch(() => ({ channels: [] }));
   const channels = (football.channels || []).map(channel => ({
     ...channel,
     description: [channel.description, 'Secours Football Live · JackTV ne publie actuellement aucun match'].filter(Boolean).join(' · ')
@@ -11813,11 +12065,11 @@ async function tvCatalogFromJackTvWithFallback() {
 }
 
 async function tvCatalogFromDailyWithFallback() {
-  const primary = await liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/sports/daily', 'Matchs du jour');
+  const primary = await liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/sports/daily`, 'Matchs du jour');
   if (primary.channels?.length) return primary;
   const [sports, football] = await Promise.all([
-    liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/sports', 'Sports').catch(() => ({ channels: [] })),
-    liveWatchCatalogFromPublicUrl('https://livewatch.top/api/v1/public/football', 'Football Live').catch(() => ({ channels: [] }))
+    liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/sports`, 'Sports').catch(() => ({ channels: [] })),
+    liveWatchCatalogFromPublicUrl(`${liveWatchOrigin}/api/v1/public/football`, 'Football Live').catch(() => ({ channels: [] }))
   ]);
   const channels = mergeTvCatalogChannels([sports, football], 'LiveWatch').map(channel => ({
     ...channel,
@@ -12338,7 +12590,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   const proxiedMedia = value => {
     try {
       const target = new URL(String(value || ''), page);
-      if (['livewatch.top', 'www.livewatch.top'].includes(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
+      if (isLiveWatchHost(target.hostname.toLowerCase())) return `${siteRoot}${target.pathname}${target.search}`;
       return `${tunnel}?media=1&url=${encodeURIComponent(target.toString())}`;
     } catch { return String(value || ''); }
   };
@@ -12977,12 +13229,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.121', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.137', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.121',
+        version: '200.0.137',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

@@ -392,7 +392,7 @@ fun LiveAdminScreen() {
                 result.int("sessionExpiresIn")?.let { seconds -> AdminRow("Session LiveWatch", trailing = { Text(if (seconds > 0) "valable ${seconds / 60} min" else "à renouveler", color = Theme.muted, fontSize = 14.sp) }) }
                 result.str("clientMode")?.let { mode -> AdminRow("Méthode retenue", trailing = { Text(mode, color = Theme.muted, fontSize = 14.sp) }) }
                 result.maps("checks").firstOrNull()?.let { check ->
-                    DiagnosticRows(check.str("channel") ?: "Chaîne test", check.map("stream"), check.maps("api"), if (check.flag("ok")) null else check.str("message"))
+                    DiagnosticRows(check.str("channel") ?: "Chaîne test", check.map("vip") ?: check.map("stream"), check.maps("api"), if (check.flag("ok")) null else check.str("message"))
                 }
                 result.map("channel")?.let { channel ->
                     val name = liveWatchVipChannels().firstOrNull { it.first == diagnosticRef }?.second ?: "Chaîne choisie"

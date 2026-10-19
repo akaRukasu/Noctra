@@ -14,7 +14,8 @@ const index = await read('public/client/index.html');
 const bridge = await read('public/noctra-app-bridge.js');
 const server = await read('server.mjs');
 
-assert.equal(pkg.version, '200.0.121');
+// Les applications suivent la version du serveur (fusionnées avec production à partir de 200.0.137).
+assert.match(pkg.version, /^200\.0\.\d+$/);
 
 // 1. Le pont est synchrone, placé après la balise viewport et avant tout le
 //    moteur Jellyfin (window.NoctraApp et la mise en page TV existent dès le départ).
@@ -49,8 +50,8 @@ assert.match(bridge, /AbortSignal\.timeout = function/, 'AbortSignal.timeout pou
 const health = server.slice(server.indexOf("if (path === '/health') {"), server.indexOf("if (path === '/api/config') {"));
 assert.match(health, /'access-control-allow-origin': '\*'/);
 assert.match(health, /if \(req\.method === 'OPTIONS'\) \{ res\.writeHead\(204, appProbe\); return res\.end\(\); \}/);
-assert.match(health, /client: 'Noctra', version: '200\.0\.121'/);
-assert.match(server, /version: '200\.0\.121',\n\s+jellyfinUrl,/);
+assert.match(health, /client: 'Noctra', version: '200\.0\.\d+'/);
+assert.match(server, /version: '200\.0\.\d+',\n\s+jellyfinUrl,/);
 
 // 3. Écran de connexion : normalisation des adresses saisies.
 const launcher = await read('apps/shared/launcher/launcher.js');

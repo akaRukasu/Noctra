@@ -155,6 +155,19 @@
   let requestNavigationSequence = 0;
   let mediaDetailState = null;
   let tvState = { sources: [], sourceId: '', section: 'channels', ref: '', group: 'Toutes', search: '', catalog: null, resolvedEmbeds: [], currentChannelIndex: -1, currentPlaybackType: '', currentStreamUrl: '', visibleLimit: 120, showSports: false, mobileView: 'channels' };
+  // 200.0.128 : comme sur Noctra TV, « TV en direct » s'ouvre sur les chaînes
+  // de toutes les sources réunies ; « Chaînes sport » en fait de même pour les
+  // chaînes sportives. Sources virtuelles, construites dans le navigateur.
+  const TV_UNIFIED_SOURCES = [
+    { id: 'all', name: 'Toutes les chaînes', section: 'channels', provider: 'Noctra', virtual: true, editable: false,
+      description: 'Les chaînes de toutes les sources réunies · serveur vérifié le plus fiable lancé d’abord' },
+    { id: 'all-sport', name: 'Chaînes sport', section: 'sports', provider: 'Noctra', virtual: true, editable: false,
+      description: 'beIN, Canal+, RMC Sport, Eurosport… de toutes les sources · serveur vérifié lancé d’abord' }
+  ];
+  let tvUnifiedCache = null;
+  let tvUnifiedLoading = null;
+  let tvUnifiedRun = null;
+  const tvUnifiedWebChannels = new WeakMap();
   const TV_FAVORITES_STORAGE_KEY = 'noctra-tv-favorites-v1';
   let tvFavorites = [];
   try {
@@ -312,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.120';
+  const NOCTRA_BUILD_VERSION = '200.0.137';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2057,16 +2070,48 @@
     return Math.max(1280, Math.min(2560, Math.round(width * ratio / 160) * 160));
   }
 
+  // 200.0.127 : logos de l'affiche d'accueil, chargés et décodés d'avance.
+  const premiereLogos = new Map();
+  function preloadPremiereLogo(url) {
+    if (!url) return null;
+    let entry = premiereLogos.get(url);
+    if (entry) return entry;
+    entry = { ready: false, failed: false };
+    const image = new Image();
+    image.decoding = 'async';
+    entry.promise = new Promise(resolve => {
+      image.onload = () => {
+        Promise.resolve(image.decode?.()).catch(() => {}).then(() => {
+          entry.ready = image.naturalWidth > 0;
+          entry.failed = !entry.ready;
+          resolve(entry.ready);
+        });
+      };
+      image.onerror = () => { entry.failed = true; resolve(false); };
+    });
+    image.src = url;
+    premiereLogos.set(url, entry);
+    if (premiereLogos.size > 60) premiereLogos.delete(premiereLogos.keys().next().value);
+    return entry;
+  }
+
   function premiereResumeData(item) {
     const client = window.ApiClient;
     const serverId = item.ServerId || client?.serverInfo?.()?.Id || '';
     const imageId = item.BackdropImageTags?.length ? item.Id : item.ParentBackdropItemId || item.Id;
     const imageType = item.BackdropImageTags?.length || item.ParentBackdropItemId ? 'Backdrop' : 'Primary';
     const image = client?.getImageUrl?.(imageId, { type: imageType, maxWidth: premiereImageWidth(), quality: 90 }) || appPath('/api/jellyfin/image/' + encodeURIComponent(item.Id));
+    // 200.0.127 : logo de l'œuvre (film : le sien ; épisode : celui de la série).
+    const logoTag = item.ImageTags?.Logo || item.ParentLogoImageTag || '';
+    const logoId = item.ImageTags?.Logo ? item.Id : item.ParentLogoItemId || '';
+    const logo = logoTag && logoId ? client?.getImageUrl?.(logoId, { type: 'Logo', tag: logoTag, maxWidth: 900, quality: 90 }) || '' : '';
     const action = name => ({ click: () => {
       // Use this bundled client's native action handler, preserving resume ticks and player choice.
-      let runtime;
-      window.webpackChunk.push([['noctra-premiere-actions'], {}, require => { runtime = require; }]);
+      // 200.0.121 : require webpack mémorisé (homeWebpackRequire). L'ancien
+      // identifiant de chunk fixe n'était exécuté par webpack qu'une fois : dès
+      // le deuxième clic, « Reprendre » / « Voir la fiche » affichaient « Le
+      // lecteur est encore en cours de chargement ».
+      const runtime = homeWebpackRequire();
       if (!runtime) { toast('Le lecteur est encore en cours de chargement. Réessayez dans un instant.'); return; }
       runtime.e(12011).then(() => {
         const button = document.createElement('button');
@@ -2075,7 +2120,7 @@
         runtime(22832).Ay.onClick({ target: button, preventDefault() {}, stopPropagation() {} });
       }).catch(() => toast('Impossible d’ouvrir le lecteur. Réessayez.'));
     }});
-    return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, resume: action('resume'), visual: action('link') };
+    return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, logo, resume: action('resume'), visual: action('link') };
   }
 
   function currentJellyfinUserId() {
@@ -2165,13 +2210,14 @@
     // Ne jamais utiliser une rangée native non vérifiée comme reprise : lors d'un
     // changement de compte, Jellyfin peut conserver quelques cartes de l'ancien DOM.
     let items = resumeItems ?? [];
+    items.forEach(entry => preloadPremiereLogo(entry.logo));
     if (!container) return;
     home.querySelector('.noctra-premiere')?.remove();
     const premiere = document.createElement('section');
     premiere.className = 'noctra-premiere';
     premiere.setAttribute('aria-label', 'Continuer à regarder');
     premiere.setAttribute('aria-roledescription', 'carrousel');
-    premiere.innerHTML = '<div class="noctra-premiere-art" aria-hidden="true"></div><div class="noctra-premiere-atmosphere" aria-hidden="true"></div><div class="noctra-premiere-copy"><p class="noctra-eyebrow">CONTINUER À REGARDER</p><span class="noctra-premiere-label"></span><h1></h1><p class="noctra-premiere-subtitle"></p><div class="noctra-premiere-actions"><button type="button" class="noctra-button noctra-button--primary" data-premiere-play>'+icons.play+'<span>Reprendre</span></button><button type="button" class="noctra-button" data-premiere-details>Voir la fiche</button></div></div><div class="noctra-premiere-controls"><button type="button" data-premiere-prev aria-label="Titre précédent">'+icons.back+'</button><span data-premiere-count></span><button type="button" data-premiere-next aria-label="Titre suivant">'+icons.next+'</button><button type="button" class="noctra-premiere-motion" aria-label="Mettre le défilement en pause" aria-pressed="false">'+icons.pause+'</button></div>';
+    premiere.innerHTML = '<div class="noctra-premiere-art" aria-hidden="true"></div><div class="noctra-premiere-atmosphere" aria-hidden="true"></div><div class="noctra-premiere-copy"><p class="noctra-eyebrow">CONTINUER À REGARDER</p><span class="noctra-premiere-label"></span><h1><img class="noctra-premiere-logo" alt="" decoding="async" hidden><span class="noctra-premiere-title-text"></span></h1><p class="noctra-premiere-subtitle"></p><div class="noctra-premiere-actions"><button type="button" class="noctra-button noctra-button--primary" data-premiere-play>'+icons.play+'<span>Reprendre</span></button><button type="button" class="noctra-button" data-premiere-details>Voir la fiche</button></div></div><div class="noctra-premiere-controls"><button type="button" data-premiere-prev aria-label="Titre précédent">'+icons.back+'</button><span data-premiere-count></span><button type="button" data-premiere-next aria-label="Titre suivant">'+icons.next+'</button><button type="button" class="noctra-premiere-motion" aria-label="Mettre le défilement en pause" aria-pressed="false">'+icons.pause+'</button></div>';
     home.querySelector('.noctra-home-heading')?.remove();
     const homeHeading = document.createElement('header');
     homeHeading.className = 'noctra-home-heading';
@@ -2193,12 +2239,42 @@
       premiere.dataset.motionPaused = String(!canRun());
       if (canRun()) timer = setTimeout(() => { index = (index + 1) % items.length; render(); sync(); }, 8000);
     };
+    // 200.0.127 : logo de l'œuvre à la place du titre (comme l'interface TV
+    // de Jellyfin). Logos préchargés dès l'arrivée de la liste ; affiché tout
+    // de suite s'il est prêt, sinon le titre patiente 0,7 s au plus (invisible)
+    // pour éviter l'enchaînement texte puis logo ; sans logo, le titre reste.
+    let logoFallbackTimer = 0;
+    const showPremiereLogo = item => {
+      const logo = premiere.querySelector('.noctra-premiere-logo');
+      if (!logo) return;
+      window.clearTimeout(logoFallbackTimer);
+      const url = item?.logo || '';
+      const entry = url ? preloadPremiereLogo(url) : null;
+      const display = () => {
+        logo.src = url;
+        logo.alt = item.title || '';
+        logo.hidden = false;
+        premiere.dataset.logo = 'true';
+      };
+      if (entry?.ready) return display();
+      logo.hidden = true;
+      logo.removeAttribute('src');
+      if (!entry || entry.failed) { premiere.dataset.logo = 'false'; return; }
+      premiere.dataset.logo = 'pending';
+      logoFallbackTimer = window.setTimeout(() => { if (premiere.dataset.logo === 'pending') premiere.dataset.logo = 'false'; }, 700);
+      entry.promise.then(ok => {
+        if (disposed || items[index]?.id !== item.id) return;
+        if (ok) { window.clearTimeout(logoFallbackTimer); display(); }
+        else premiere.dataset.logo = 'false';
+      });
+    };
     const render = () => {
       const item = items[index];
       if (!item) {
         premiere.querySelector('.noctra-premiere-art').replaceChildren();
         delete premiere.dataset.itemId;
-        text('h1', resumeItems === null ? 'Vos lectures en cours' : 'Tout est à jour');
+        text('.noctra-premiere-title-text', resumeItems === null ? 'Vos lectures en cours' : 'Tout est à jour');
+        showPremiereLogo(null);
         text('.noctra-premiere-label', 'Continuer à regarder');
         text('.noctra-premiere-subtitle', resumeItems === null ? 'Retrouvez votre prochaine reprise ici.' : 'Vos films et épisodes commencés apparaîtront ici.');
         premiere.querySelector('.noctra-premiere-actions').hidden = true;
@@ -2208,7 +2284,8 @@
       premiere.querySelector('.noctra-premiere-actions').hidden = false;
       premiere.querySelector('.noctra-premiere-controls').hidden = false;
       premiere.dataset.itemId = item.id;
-      text('h1', item.title); text('.noctra-premiere-subtitle', item.subtitle);
+      text('.noctra-premiere-title-text', item.title); text('.noctra-premiere-subtitle', item.subtitle);
+      showPremiereLogo(item);
       text('.noctra-premiere-label', item.resume ? 'L’histoire continue' : 'À découvrir dans votre collection');
       text('[data-premiere-count]', (index + 1) + ' / ' + items.length);
       const art = premiere.querySelector('.noctra-premiere-art');
@@ -2274,6 +2351,7 @@
     const refresh = () => {
       const id = items[index]?.id;
       items = resumeItems ?? [];
+      items.forEach(entry => preloadPremiereLogo(entry.logo));
       index = Math.max(0, items.findIndex(item => item.id === id));
       render();
       // Image loads must not postpone an already scheduled slide indefinitely.
@@ -2375,6 +2453,7 @@
       premiereResumeCache = {user: resolvedUser, items: cleanItems};
       reconcileNativeResumeSections(home, cleanItems, resolvedUser);
       resumeItems = cleanItems.map(premiereResumeData);
+      resumeItems.forEach(entry => preloadPremiereLogo(entry.logo));
       refresh();
     }).catch(error => {
       if (disposed || error.name === 'AbortError') return;
@@ -5451,7 +5530,8 @@
   }
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
-  const tvTrustedEmbedHosts = new Set(['livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;
@@ -5503,6 +5583,9 @@
       return;
     }
     const trusted = tvTrustedEmbedHosts.has(host) || channel?.provider === 'LiveWatch' || channel?.provider === 'WiTV' || channel?.provider === 'OHA' || channel?.provider === 'Streamed' || channel?.provider === 'Volkamax';
+    // 200.0.137 : lecteur LiveWatch ouvert sans référent, comme le lien direct
+    // qui fonctionne dans le navigateur (le nouveau site peut filtrer les sites hôtes).
+    if (/(?:^|\.)livewatch\.(?:icu|top)$/.test(host)) frame.referrerPolicy = 'no-referrer';
     if (trusted) frame.removeAttribute('sandbox');
     else frame.setAttribute('sandbox', tvDefaultIframeSandbox);
     frame.setAttribute('allow', 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *');
@@ -6060,6 +6143,7 @@
       tvDiagnosticStatusKey = key;
       recordTvDiagnostic('status', { state, message: String(message || '') });
     }
+    if (tvUnifiedRun) noteTvUnifiedStatus(state);
   }
 
   function tvDiagnosticsSnapshot() {
@@ -6272,7 +6356,7 @@
   function tvSourceButton(source) {
     const detail = source.description ? `<small>${escapeHtml(source.description)}</small>` : '';
     const provider = String(source.provider || source.name || '').toLowerCase();
-    const icon = provider.includes('livewatch') ? icons.sparkle : tvSourceSection(source) === 'sports' ? icons.live : tvSourceSection(source) === 'portals' ? icons.external : icons.tv;
+    const icon = source.virtual || provider.includes('livewatch') ? icons.sparkle : tvSourceSection(source) === 'sports' ? icons.live : tvSourceSection(source) === 'portals' ? icons.external : icons.tv;
     const active = source.id === tvState.sourceId;
     return `<button class="noctra-tv-source-chip" type="button" data-tv-source="${escapeHtml(source.id)}" data-active="${active}" aria-pressed="${active}">${icon}<span><strong>${escapeHtml(source.name)}</strong>${detail}</span>${active ? '<i>ACTIF</i>' : ''}</button>`;
   }
@@ -6345,7 +6429,7 @@
       return `<div class="noctra-livewatch-status" data-state="active">
         <i aria-hidden="true"></i>
         <span><strong>${officialEmbedSource ? 'LiveWatch connecté' : 'LiveWatch VIP connecté'}</strong><small>${status.account ? escapeHtml(status.account) : 'Session partagée active'}</small></span>
-        <b>Connecté</b>
+        <b>Connecté</b>${authContext?.isAdmin ? `<button class="noctra-tv-source-mini" type="button" data-tv-provider-keys title="Changer de compte ou se déconnecter">${icons.tools}<span>Gérer le compte</span></button>` : ''}
       </div>`;
     }
     if (!authContext?.isAdmin) {
@@ -6360,12 +6444,52 @@
     </form>`;
   }
 
+  // 200.0.136 : compte LiveWatch VIP géré depuis « Accès TV », qu'il soit
+  // actif, refusé par le site (ancienne session) ou absent.
+  function liveWatchAccountCardMarkup(status = {}) {
+    const account = status.account ? ` (${escapeHtml(status.account)})` : '';
+    const state = status.error ? `Statut indisponible : ${escapeHtml(status.error)}`
+      : status.active ? `Compte connecté${account}. Tu peux le remplacer ou te déconnecter.`
+      : status.configured ? `Session enregistrée mais refusée par LiveWatch${account}. Reconnecte le compte.`
+      : 'Aucun compte LiveWatch connecté.';
+    return `<form data-livewatch-account-form class="noctra-provider-access-card"><h4>LiveWatch VIP</h4><p>${state}</p>${status.message ? `<p>${escapeHtml(status.message)}</p>` : ''}
+      <label class="noctra-field"><span>Email LiveWatch</span><input name="email" type="email" autocomplete="username" required maxlength="254" placeholder="compte@exemple.fr"></label>
+      <label class="noctra-field"><span>Mot de passe LiveWatch</span><input name="password" type="password" autocomplete="current-password" required minlength="6" maxlength="512" placeholder="••••••••"></label>
+      <button class="noctra-button noctra-button--primary" type="submit">${status.configured || status.error ? 'Reconnecter le compte' : 'Connecter le compte'}</button>${status.configured || status.error ? ` <button class="noctra-button" type="button" data-livewatch-account-disconnect>Se déconnecter</button>` : ''} <button class="noctra-button" type="button" data-livewatch-account-diagnostic>Tester LiveWatch</button><p data-key-status role="status"></p><ul data-livewatch-diagnostic hidden></ul></form>`;
+  }
+
+  // 200.0.137 : diagnostic LiveWatch lisible (à envoyer en capture d'écran).
+  function liveWatchDiagnosticLines(result = {}) {
+    const lines = [];
+    if (result.message) lines.push(result.message);
+    if (result.account) lines.push(`Compte : ${result.account}${result.isVip ? ' · VIP confirmé' : ''}`);
+    const auth = result.auth || {};
+    if (auth.host) lines.push(`Serveur de comptes : ${auth.host} (${auth.source === 'site' ? `trouvé sur le site${auth.verified ? ', vérifié' : ', non vérifié'}` : auth.source === 'env' ? 'imposé par le .env' : 'secours intégré à Noctra'}, clé ${auth.keyType || '?'})`);
+    if (result.sessionIssuer) lines.push(`Session émise par : ${result.sessionIssuer}`);
+    if (result.siteAuthHost) lines.push(`Comptes du site : ${result.siteAuthHost}`);
+    (Array.isArray(result.checks) ? result.checks : []).forEach(check => {
+      lines.push(`Lecteur de test${check.channel ? ` (${check.channel})` : ''} : ${check.ok ? `OK · HTTP ${check.status || '?'}` : `échec · ${check.message || '?'}`}`);
+      const stream = check.stream;
+      if (stream) lines.push(`Flux direct : ${stream.ok ? 'OK' : 'échec'}${stream.status ? ` · HTTP ${stream.status}` : ''}${stream.finalHost ? ` · ${stream.finalHost}` : ''}${stream.message ? ` · ${stream.message}` : ''}`);
+    });
+    const site = result.site || {};
+    if (site.finalOrigin || site.hosts?.length) lines.push(`Site : ${site.finalOrigin || site.origin || ''}${site.hosts?.length ? ` · hôtes : ${site.hosts.slice(0, 8).join(', ')}` : ''}`);
+    if (site.errors?.length) lines.push(`Erreurs du site : ${site.errors.slice(0, 4).join(' · ')}`);
+    const relayed = tvDiagnostics.filter(item => item.event === 'livewatch-net' || item.event === 'livewatch-not-found').slice(-6);
+    relayed.forEach(item => lines.push(`Lecteur relayé (${item.channel || item.provider || 'LiveWatch'}) : ${item.request || item.refused || '« Chaîne introuvable »'}`));
+    return lines;
+  }
+
   async function openTvProviderKeys() {
     destroyTvPlayback();
-    setLoading('Accès TV', 'MOVIX · NORTHLIVE', true);
+    setLoading('Accès TV', 'LIVEWATCH · MOVIX · NORTHLIVE', true);
     try {
-      const status = await api('/api/tv/provider-keys');
+      const [status, liveWatch] = await Promise.all([
+        api('/api/tv/provider-keys'),
+        api('/api/tv/livewatch/session', { timeoutMs: 25_000 }).catch(error => ({ error: error.message || 'erreur inconnue' }))
+      ]);
       setPanelBody(`<div class="noctra-provider-access"><h3>Vos accès, dans Noctra.</h3><p>Activez chaque fournisseur avec sa propre clé. L’accès sera disponible aux membres connectés à Noctra.</p>
+        ${liveWatchAccountCardMarkup(liveWatch)}
         ${[['movix','Movix VIP'],['northlive','Northlive']].map(([provider,label]) => `<form data-tv-provider-key-form="${provider}" class="noctra-provider-access-card"><h4>${label}</h4><p>${status[provider] ? 'Une clé est configurée. Vous pouvez la remplacer.' : 'Aucune clé configurée.'}</p><label class="noctra-field"><span>Clé ${label}</span><input type="password" name="key" autocomplete="off" required maxlength="512" placeholder="Saisir la clé"></label><button class="noctra-button noctra-button--primary" type="submit">Vérifier et activer</button><p data-key-status role="status"></p></form>`).join('')}
         <button class="noctra-button" type="button" data-noctra="tv">Retour à la TV</button></div>`);
     } catch(error) { showError(error); }
@@ -6436,8 +6560,8 @@
       data-tv-channel-group="${escapeHtml(channel.group || 'Chaînes')}"
       data-active="${Number(index) === Number(tvState.currentChannelIndex)}">
       <span class="noctra-tv-channel-logo" data-tv-logo-label="${escapeHtml(channel.name)}" data-tv-logo-state="idle">${tvLogoMarkup(channel, '', logoLoadMode)}</span>
-      <span><strong>${escapeHtml(channel.name)}</strong><small>${escapeHtml(programme)}</small>${meta.length ? `<em>${meta.map(value => escapeHtml(value)).join('<b>·</b>')}</em>` : ''}</span>
-      <i>${channel.isLive ? 'LIVE' : ['embed','resolver'].includes(channel.playbackType) ? 'WEB' : 'DIRECT'}</i>
+      <span><strong>${channel.lcn ? `<b class="noctra-tv-channel-number">${Number(channel.lcn)}</b>` : ''}${escapeHtml(channel.name)}</strong><small>${escapeHtml(programme)}</small>${meta.length ? `<em>${meta.map(value => escapeHtml(value)).join('<b>·</b>')}</em>` : ''}</span>
+      <i>${channel.unified ? `${channel._entries?.length || 1} SRV` : channel.isLive ? 'LIVE' : ['embed','resolver'].includes(channel.playbackType) ? 'WEB' : 'DIRECT'}</i>
       <span class="noctra-tv-favorite-toggle" role="button" tabindex="0" data-tv-favorite-toggle data-tv-favorite-index="${index}" data-favorite="${favorite}" aria-pressed="${favorite}" aria-label="${favorite ? 'Retirer' : 'Ajouter'} ${escapeHtml(channel.name)} ${favorite ? 'des' : 'aux'} favoris" title="${favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">${icons.heart}</span>
     </button>`;
   }
@@ -6445,10 +6569,12 @@
   function filteredTvChannels() {
     const channels = Array.isArray(tvState.catalog?.channels) ? tvState.catalog.channels : [];
     const search = normalizedText(tvState.search || '');
-    return channels.map((channel, index) => ({ channel, index })).filter(({ channel }) => {
+    const matches = channels.map((channel, index) => ({ channel, index })).filter(({ channel }) => {
       if (tvState.group !== 'Toutes' && (channel.group || 'Chaînes') !== tvState.group) return false;
       return !search || tvChannelSearchBlob(channel).includes(search);
-    }).sort((a, b) => String(a.channel?.name || '').localeCompare(String(b.channel?.name || ''), 'fr', { sensitivity: 'base', numeric: true }));
+    });
+    if (tvState.catalog?.unified) return matches;
+    return matches.sort((a, b) => String(a.channel?.name || '').localeCompare(String(b.channel?.name || ''), 'fr', { sensitivity: 'base', numeric: true }));
   }
 
   function resetTvVirtualState() {
@@ -6722,7 +6848,7 @@
     const portalMode = Boolean(catalog.portalFallback) || (catalog.source?.section === 'portals' && channels.length === 1);
     const isOhaPortal = portalMode && catalog.source?.provider === 'OHA';
     const frameSource = catalog.source?.id === 'livewatch-frame';
-    const groupNames = [...new Set(channels.map(channel => channel.group || 'Chaînes'))].sort((a, b) => {
+    const groupNames = Array.isArray(catalog.groupOrder) ? catalog.groupOrder : [...new Set(channels.map(channel => channel.group || 'Chaînes'))].sort((a, b) => {
       const aFrance = normalizedText(a) === 'france';
       const bFrance = normalizedText(b) === 'france';
       return aFrance === bFrance ? a.localeCompare(b, 'fr') : (aFrance ? -1 : 1);
@@ -6778,6 +6904,7 @@
                     <div class="noctra-tv-now-heading"><strong data-tv-now-title>Aucune chaîne sélectionnée</strong><b data-tv-now-score hidden></b></div>
                     <small data-tv-now-group>TV en direct</small>
                     <div class="noctra-tv-now-badges" data-tv-now-badges></div>
+                    <div class="noctra-tv-unified-servers" data-tv-unified-servers hidden></div>
                     <div class="noctra-tv-stream-options" data-tv-stream-options hidden></div>
                   </div>
                 </div>
@@ -6793,7 +6920,7 @@
               <div class="noctra-tv-browser-head"><div><p class="noctra-eyebrow">ZAPPING</p><strong>Choisir une chaîne</strong></div><span data-tv-visible-count>${channels.length} chaîne${channels.length > 1 ? 's' : ''}</span></div>
               <div class="noctra-tv-filters">
                 <label>${icons.search}<input type="search" data-tv-search value="${escapeHtml(tvState.search)}" placeholder="Chaîne, pays ou programme"><button type="button" data-tv-clear-search aria-label="Effacer la recherche" ${tvState.search ? '' : 'hidden'}>×</button></label>
-                <select data-tv-group-filter><option value="Toutes" ${tvState.group === 'Toutes' ? 'selected' : ''}>${frameSource ? 'Tous les pays' : 'Tous les groupes'}</option>${groupNames.map(group => `<option value="${escapeHtml(group)}" ${group === tvState.group ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}</select>
+                <select data-tv-group-filter><option value="Toutes" ${tvState.group === 'Toutes' ? 'selected' : ''}>${frameSource ? 'Tous les pays' : catalog.unified ? 'Toutes les catégories' : 'Tous les groupes'}</option>${groupNames.map(group => `<option value="${escapeHtml(group)}" ${group === tvState.group ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}</select>
               </div>
               <div class="noctra-tv-channel-list" aria-live="polite"><div class="noctra-loading noctra-tv-list-loading"><i></i><span>Préparation des chaînes…</span></div></div>
             </section>
@@ -6817,7 +6944,10 @@
     tvState.catalog = enriched;
     if (currentIdentity) {
       const moved = (enriched.channels || []).findIndex(channel => tvChannelStableIdentity(channel) === currentIdentity);
-      if (moved >= 0) tvState.currentChannelIndex = moved;
+      if (moved >= 0) {
+        if (tvUnifiedRun && tvUnifiedRun.channelIndex === Number(tvState.currentChannelIndex)) tvUnifiedRun.channelIndex = moved;
+        tvState.currentChannelIndex = moved;
+      }
     }
     const title = document.querySelector('.noctra-tv-title');
     const titleCopy = title?.querySelector('p:last-child');
@@ -6838,12 +6968,14 @@
     window.clearTimeout(tvLogoRefreshTimer);
     const tvPanelOpen = document.querySelector('#noctra-panel[data-noctra-panel-kind="tv"]');
     if (!tvPanelOpen) setLoading('TV en direct', 'NOCTRA · LECTEUR TV', true);
+    stopTvUnifiedRun();
     destroyTvPlayback();
     try {
-      if (options.force) clearApiCache('/api/tv');
+      if (options.force) { clearApiCache('/api/tv'); tvUnifiedCache = null; }
       const sourceData = await cachedApi('/api/tv/sources', 2 * 60_000);
       if (sequence !== tvNavigationSequence) return;
-      tvState.sources = sourceData.sources || [];
+      const realSources = Array.isArray(sourceData.sources) ? sourceData.sources : [];
+      tvState.sources = realSources.length ? [...TV_UNIFIED_SOURCES, ...realSources] : [];
       if (!sourceId && tvState.section === 'favorites') {
         renderTvFavoritesWorkspace();
         return;
@@ -6853,10 +6985,10 @@
         setPanelBody(`<section class="noctra-tv-empty"><span>${icons.tv}</span><p class="noctra-eyebrow">TV EN DIRECT</p><h3>Ajoute ta première source</h3><p>Noctra propose les API LiveWatch documentées et accepte aussi tes playlists M3U/M3U8, catalogues JSON et portails web autorisés.</p>${tvLegalNote()}${authContext?.isAdmin ? tvSourceFormMarkup(true) : '<p>Demande à un administrateur de configurer une source.</p>'}</section>`, { preserveScroll: false });
         return;
       }
-      let rememberedSourceId = '';
-      if (!sourceId && !options.preferSection) {
-        try { rememberedSourceId = window.localStorage?.getItem('noctra-tv-last-source') || ''; } catch {}
-      }
+      // 200.0.128 : comme sur Noctra TV, l'ouverture se fait sur les chaînes
+      // réunies (première source de l'univers) ; la dernière source choisie
+      // n'est plus rouverte d'office.
+      const rememberedSourceId = '';
       const requested = tvState.sources.find(source => source.id === sourceId)
         || tvState.sources.find(source => source.id === rememberedSourceId);
       const sectionSources = tvState.sources.filter(source => tvSourceSection(source) === tvState.section);
@@ -6872,6 +7004,10 @@
       tvState.section = tvSourceSection(selected);
       if (tvState.section === 'sports') tvState.showSports = true;
       tvState.ref = ref || '';
+      if (selected.virtual) {
+        await openTvUnified(selected, sequence);
+        return;
+      }
       const catalogPath = ref
         ? `/api/tv/catalog?ref=${encodeURIComponent(ref)}`
         : `/api/tv/catalog?source=${encodeURIComponent(selected.id)}`;
@@ -6946,6 +7082,13 @@
   function renderTvStreamOptions(options = [], activeIndex = 0) {
     const target = document.querySelector('[data-tv-stream-options]');
     if (!target) return;
+    // 200.0.130 : serveur déplié d'une chaîne réunie : tous les serveurs de la
+    // source sont déjà dans la liste « Serveurs » au-dessus.
+    if (tvUnifiedActive() && tvUnifiedRun.servers[tvUnifiedRun.index]?.option) {
+      target.hidden = true;
+      target.innerHTML = '';
+      return;
+    }
     target.hidden = !options.length;
     target.innerHTML = options.length > 1
       ? options.map((item, index) => `<button type="button" data-tv-embed-option="${index}" data-tv-embed-compat="${item.compatPage ? 'true' : 'false'}" data-active="${index === activeIndex}">${escapeHtml(item.label || `Serveur ${index + 1}`)}</button>`).join('')
@@ -7095,6 +7238,9 @@
       let vipReady = false;
       let mobileNativeHandoffStarted = false;
       let publicFallbackStarted = false;
+      // 200.0.137 : requêtes refusées pendant le chargement du lecteur relayé,
+      // affichées avec « Chaîne introuvable » pour savoir ce que le site refuse.
+      const liveWatchNetFailures = [];
       const liveWatchLabel = String(channel?.provider || 'LiveWatch');
       // V115 : pour les familles alternatives, le lecteur officiel LiveWatch
       // reste maître sur iOS. On ne le remplace plus immédiatement par une URL
@@ -7147,6 +7293,16 @@
         } else if (event.data.state === 'playing') {
           mediaPlaying = true;
           setTvPlaybackStatus(`${liveWatchLabel} · VIP Premium · lecture en direct`, 'playing');
+        } else if (event.data.state === 'net') {
+          const failure = `${String(event.data.host || '').slice(0, 80)}${String(event.data.path || '').slice(0, 120)} (${Number(event.data.status) || 'réseau'})`;
+          if (liveWatchNetFailures.length < 12) liveWatchNetFailures.push(failure);
+          recordTvDiagnostic('livewatch-net', { provider: liveWatchLabel, request: failure });
+        } else if (event.data.state === 'not-found') {
+          const refused = liveWatchNetFailures.slice(0, 3).join(' · ');
+          recordTvDiagnostic('livewatch-not-found', { provider: liveWatchLabel, refused: liveWatchNetFailures.join(' | ') });
+          setTvPlaybackStatus(`${liveWatchLabel} · « Chaîne introuvable » dans le lecteur relayé${refused ? ` · refusé : ${refused}` : ''}`, 'error');
+          if (refused) toast(`LiveWatch · requêtes refusées : ${refused}`);
+          if (startPublicFallback('chaîne introuvable dans le lecteur relayé')) return;
         } else if (event.data.state === 'vip-missed') {
           setTvPlaybackStatus(`${liveWatchLabel} · le lecteur n’a pas reconnu le VIP`, 'error');
           toast(event.data.message || 'LiveWatch affiche encore son mode public malgré la session VIP.');
@@ -7419,7 +7575,7 @@
   }
 
   function tvSafeCurrentChannel() {
-    return tvState.catalog?.channels?.[Number(tvState.currentChannelIndex)] || null;
+    return tvPlaybackChannel();
   }
 
   function tvSafeDirectSlot() {
@@ -7433,11 +7589,11 @@
       : '';
     if (!channel || (!streamUrl && !embedUrl)) return null;
     return {
-      id: `${tvState.sourceId || 'tv'}|${tvChannelStableIdentity(channel)}`,
+      id: `${tvActiveSourceId() || 'tv'}|${tvChannelStableIdentity(channel)}`,
       name: String(channel.name || 'Chaîne TV'),
       provider: String(channel.provider || tvState.catalog?.source?.provider || 'TV'),
       group: String(channel.group || ''),
-      sourceId: String(tvState.sourceId || ''),
+      sourceId: tvActiveSourceId(),
       playbackType: streamUrl ? 'stream' : 'embed',
       streamUrl,
       resolveUrl: String(resolvedStream?.resolveUrl || ''),
@@ -7988,6 +8144,12 @@
     player.configure({ abr: { restrictions: { maxHeight: maximum } } });
   }
 
+  // 200.0.123 : réserve visée avant la première image Shaka, et attente maximale.
+  const TV_SHAKA_STARTUP_RESERVE = 15;
+  const TV_SHAKA_STARTUP_WAIT_MS = 20_000;
+  const TV_SHAKA_START_BEHIND_LIVE = -30;
+  const TV_SHAKA_EXPIRED_LINK_FAILURES = 3;
+
   function installTvShakaContinuity(player, video, signal, initialGoal, onAdjust = () => {}) {
     // Count short, real starvation events too, but never startup, seeks or pauses.
     // Shaka owns buffering; no extra pause/play loop or parallel recovery timer.
@@ -8418,7 +8580,7 @@
       : appPath(source);
     tvState.currentPlaybackType = 'stream';
     tvState.currentStreamUrl = streamUrl;
-    window.NoctraServerChoice?.track({ ...channel, sourceId: tvState.sourceId }, tvState.resolvedEmbeds?.[optionIndex], video, startSignal);
+    window.NoctraServerChoice?.track({ ...channel, sourceId: tvActiveSourceId() }, tvState.resolvedEmbeds?.[optionIndex], video, startSignal);
     refreshTvDesktopLiveControls();
     refreshTvLiveEdgeControl();
     updateTvCastButton({ ...channel, playbackType: 'stream' });
@@ -9459,8 +9621,17 @@
           // 200.0.110 : 15 s sans octet avant relance (10 s en 108 coupait des
           // segments que le relais partageait encore) ; 45 s pour les gros
           // segments qui progressent. Les variantes écartées reviennent plus vite.
-          streaming: { bufferingGoal: 45, rebufferingGoal: 3, bufferBehind: 15, segmentPrefetchLimit: 1,
+          // 200.0.121 : démarrage avec 15 s de réserve (2,5 segments) au lieu de
+          // 3 s ; le diagnostic 200.0.120 montrait deux coupures dans les 20
+          // premières secondes après un départ à 7,5 s de réserve.
+          streaming: { bufferingGoal: 45, rebufferingGoal: 15, bufferBehind: 15, segmentPrefetchLimit: 1,
             lowLatencyMode: false, maxDisabledTime: 15,
+            // 200.0.125 : si la lecture sort de la fenêtre du direct (retard
+            // accumulé + panne du fournisseur), revenir 20 s avant son bord, là
+            // où les segments existent, au lieu du début de la fenêtre : Shaka y
+            // retombait toutes les 11 s en annulant ses téléchargements
+            // (diagnostic 200.0.123 : 4 min sans image après 51 min de match).
+            returnToEndOfLiveWindowWhenOutside: true, safeSeekEndOffset: 20,
             retryParameters: { maxAttempts: 5, baseDelay: 500, backoffFactor: 1.5, timeout: 45000, stallTimeout: 15000, connectionTimeout: 12000 } },
           // Les horodatages PROGRAM-DATE-TIME des flux IPTV sont souvent
           // incohérents : l'alignement par numéro de séquence évite trous et
@@ -9484,8 +9655,10 @@
         });
         video.addEventListener('playing', () => {
           if (videoEventSignal.aborted || tvShaka !== player) return;
-          player.configure({ streaming: { segmentPrefetchLimit: 2 } });
-          recordTvDiagnostic('shaka-continuity-prefetch', { segments: 2 });
+          // Après la première image : reprise après coupure à partir de 6 s
+          // (un segment) au lieu de 3 s, pour ne pas repartir sur une réserve vide.
+          player.configure({ streaming: { segmentPrefetchLimit: 2, rebufferingGoal: 6 } });
+          recordTvDiagnostic('shaka-continuity-prefetch', { segments: 2, reserve: 6 });
         }, { once: true, signal: videoEventSignal });
         // Keep download failures before Shaka exhausts its own retries. Never
         // copy request URLs, response bodies or error.data into the diagnostic.
@@ -9496,6 +9669,7 @@
           if (event.requestType === 1) lastSegmentAt = Date.now();
           if (event.requestType === 0) lastManifestAt = Date.now();
         });
+        let expiredManifestFailures = [];
         player.addEventListener('downloadfailed', event => {
           if (videoEventSignal.aborted) return;
           // In Shaka 5.2, aborted=true means its connection/stall timer
@@ -9508,6 +9682,19 @@
             httpStatus: Number.isFinite(event.httpResponseCode) ? event.httpResponseCode : null,
             timedOut
           });
+          // 200.0.125 : lien du direct expiré. La playlist répond 403/404/410 en
+          // boucle (erreurs non fatales pour Shaka) : renouveler le lien tout de
+          // suite, pendant que la réserve se lit encore, au lieu d'attendre le gel.
+          if (event.requestType === 0 && [403, 404, 410].includes(event.httpResponseCode)) {
+            const now = Date.now();
+            expiredManifestFailures = expiredManifestFailures.filter(at => now - at < 60_000);
+            expiredManifestFailures.push(now);
+            if (expiredManifestFailures.length >= TV_SHAKA_EXPIRED_LINK_FAILURES && playbackBecameActive) {
+              expiredManifestFailures = [];
+              recordTvDiagnostic('shaka-link-expired', { httpStatus: event.httpResponseCode, bufferAhead: Number(tvBufferedAhead(video).toFixed(2)) });
+              refreshResolvedStream(playbackProvider, true);
+            }
+          }
         });
         video.addEventListener('seeking', () => {
           const range = player.seekRange?.();
@@ -9562,7 +9749,7 @@
             reportShakaFailure('error-' + (error?.code || 0));
           }
         });
-        installTvShakaContinuity(player, video, videoEventSignal, 3, reserve => recordTvDiagnostic('shaka-reserve-adjusted', { reserve }));
+        installTvShakaContinuity(player, video, videoEventSignal, 6, reserve => recordTvDiagnostic('shaka-reserve-adjusted', { reserve }));
         player.addEventListener('buffering', event => {
           if (videoEventSignal.aborted) return;
           recordTvDiagnostic('shaka-buffering', {
@@ -9581,9 +9768,35 @@
         await player.attach(video);
         if (videoEventSignal.aborted) return;
         recordTvDiagnostic('shaka-player-started', { engine: engine.Player.version });
-        await player.load(streamUrl, undefined, 'application/x-mpegurl');
+        // 200.0.124 : départ 30 s en retrait du bord calculé par Shaka (valeur
+        // négative = relative au direct, bornée au début de la fenêtre). Le
+        // fournisseur publie ses segments en retard sur l'horloge : le départ par
+        // défaut tombait à ~7,5 s du dernier segment réel, et la réserve ne
+        // pouvait pas dépasser ces 7,5 s (diagnostic 200.0.123 : 20 s d'attente
+        // bloquées à 7,58 s). En retrait, les segments existent déjà.
+        await player.load(streamUrl, TV_SHAKA_START_BEHIND_LIVE, 'application/x-mpegurl');
         if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return;
         refreshTvSafeToolsMenu();
+        // 200.0.123 : réserve de démarrage garantie. Shaka démarre dès qu'il
+        // croit avoir atteint le bord du direct : quand la playlist tarde à se
+        // rafraîchir, il partait avec ~7,5 s (diagnostic 200.0.122) malgré
+        // rebufferingGoal. Shaka télécharge déjà pendant que la vidéo est en
+        // pause : on attend 15 s de réserve (20 s d'attente au plus) avant play().
+        const startupWaitStarted = performance.now();
+        setTvPlaybackStatus(`Préchargement du direct · ${TV_SHAKA_STARTUP_RESERVE} s…`, 'loading');
+        await new Promise(resolve => {
+          const check = () => {
+            if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return resolve();
+            if (tvBufferedAhead(video) >= TV_SHAKA_STARTUP_RESERVE || performance.now() - startupWaitStarted >= TV_SHAKA_STARTUP_WAIT_MS) return resolve();
+            window.setTimeout(check, 250);
+          };
+          check();
+        });
+        if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return;
+        recordTvDiagnostic('shaka-startup-reserve', {
+          reserve: Number(tvBufferedAhead(video).toFixed(2)),
+          waitedMs: Math.round(performance.now() - startupWaitStarted)
+        });
         await video.play().catch(error => {
           if (videoEventSignal.aborted || benignTvPlayInterruption(error)) return;
           playbackNeedsGesture = error?.name === 'NotAllowedError';
@@ -9673,7 +9886,7 @@
     if (resolvedOption?.url) playTvEmbedUrl(channel, resolvedOption.url, label, { compatPage: Boolean(resolvedOption.compatPage), optionIndex: index }, playbackSequence);
   }
 
-  async function resolveAndPlayTvChannel(channel, playbackSequence = tvPlaybackSequence) {
+  async function resolveAndPlayTvChannel(channel, playbackSequence = tvPlaybackSequence, prefetched = null) {
     const provider = String(channel?.provider || 'TV').trim() || 'TV';
     const resolverStartedAt = performance.now();
     recordTvDiagnostic('resolver-requested', { provider, elapsedMs: tvPlaybackElapsedMs() });
@@ -9688,7 +9901,7 @@
       : /^(?:OHA|WiTV|StreamSports99)$/i.test(provider)
         ? Math.max(55_000, Number(resolverProfile.resolverTimeout || 0))
         : resolverProfile.resolverTimeout;
-    const result = await api(channel.resolverUrl, { timeoutMs: resolverTimeout, signal: tvResolverController.signal });
+    const result = prefetched || await api(channel.resolverUrl, { timeoutMs: resolverTimeout, signal: tvResolverController.signal });
     if (playbackSequence !== tvPlaybackSequence) return;
     recordTvDiagnostic('resolver-ready', {
       provider,
@@ -9768,7 +9981,7 @@
     }
     if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1) {
       setTvPlaybackStatus('Vérification rapide des serveurs… · choix manuel disponible', 'loading');
-      initialOptionIndex = await window.NoctraServerChoice.choose({ ...channel, sourceId: tvState.sourceId }, options, initialOptionIndex, {
+      initialOptionIndex = await window.NoctraServerChoice.choose({ ...channel, sourceId: tvActiveSourceId() }, options, initialOptionIndex, {
         signal: tvResolverController.signal,
         current: () => playbackSequence === tvPlaybackSequence,
         resolve: (url, signal) => api(url, { signal, timeoutMs: 4000 }),
@@ -9797,7 +10010,7 @@
   }
 
   async function castCurrentTv() {
-    const channel = tvState.catalog?.channels?.[tvState.currentChannelIndex];
+    const channel = tvPlaybackChannel();
     const video = document.querySelector('#noctra-tv-video');
     if (!channel || !video || tvState.currentPlaybackType !== 'stream') {
       toast('Le cast direct est disponible pour les flux vidéo/HLS. Les lecteurs web intégrés restent dans leur iframe.');
@@ -10103,22 +10316,29 @@
   ]);
 
   function currentTvSource() {
-    return (tvState.sources || []).find(source => source.id === tvState.sourceId) || tvState.catalog?.source || null;
+    const sourceId = tvActiveSourceId();
+    return (tvState.sources || []).find(source => source.id === sourceId) || tvState.catalog?.source || null;
   }
 
   function liveWatchOfficialEmbedSource() {
-    return LIVEWATCH_OFFICIAL_EMBED_SOURCES.has(String(tvState.sourceId || ''));
+    return LIVEWATCH_OFFICIAL_EMBED_SOURCES.has(tvActiveSourceId());
+  }
+
+  // 200.0.132 : LiveWatch a quitté livewatch.top pour livewatch.icu ; un lien
+  // ancien (catalogue gardé par le navigateur) est ouvert sur le domaine actuel.
+  function currentLiveWatchEmbedUrl(value) {
+    return String(value || '').replace(/^https:\/\/(www\.)?livewatch\.top(?=[\/?#]|$)/i, 'https://$1livewatch.icu');
   }
 
   function officialLiveWatchEmbedUrl(channel) {
     const candidates = [channel?.vipFallbackUrl, channel?.externalUrl, channel?.embedUrl];
-    return String(candidates.find(value => /^https?:\/\//i.test(String(value || '').trim())) || '').trim();
+    return currentLiveWatchEmbedUrl(String(candidates.find(value => /^https?:\/\//i.test(String(value || '').trim())) || '').trim());
   }
 
   function documentedLiveWatchEmbedReference(value) {
     try {
       const url = new URL(String(value || ''), window.location.origin);
-      if (!['livewatch.top', 'www.livewatch.top'].includes(url.hostname.toLowerCase())) return null;
+      if (!/^(?:www\.)?livewatch\.(?:icu|top)$/i.test(url.hostname)) return null;
       const match = url.pathname.match(/^\/embed\/(?:(north|frame)\/)?([^/]+)\/?$/i);
       if (!match) return null;
       return { kind: String(match[1] || 'main').toLowerCase(), id: decodeURIComponent(match[2]) };
@@ -10133,7 +10353,7 @@
     const officialUrl = officialLiveWatchEmbedUrl(channel);
     if (!officialUrl) return false;
     const source = currentTvSource();
-    const sourceId = String(tvState.sourceId || '');
+    const sourceId = tvActiveSourceId();
     const provider = String(source?.name || channel?.provider || 'LiveWatch').trim() || 'LiveWatch';
     const reference = documentedLiveWatchEmbedReference(officialUrl);
     const northSameOrigin = sourceId === 'livewatch-north'
@@ -10172,7 +10392,7 @@
     // champs de lecture éventuellement hérités d'un ancien catalogue Safari/PWA.
     // Même si l'objet contient encore vipPlayback/resolverUrl, Daddy/North/Frame
     // et les wrappers Sports repartent de leur embed_url officiel exact.
-    if (tvState.catalog?.channels?.[Number(index)]) tvState.catalog.channels[Number(index)] = safeChannel;
+    if (!tvUnifiedActive() && tvState.catalog?.channels?.[Number(index)]) tvState.catalog.channels[Number(index)] = safeChannel;
     tvState.resolvedEmbeds = [{
       label: northSameOrigin ? `${provider} · relais officiel` : (mandatoryGate ? `${provider} · lecteur officiel` : `${provider} · embed officiel`),
       url: playbackUrl,
@@ -10190,12 +10410,793 @@
     return true;
   }
 
+  // ── 200.0.128 : « Toutes les chaînes » et « Chaînes sport » (Noctra TV) ──
+  // Les catalogues de toutes les sources sont réunis par noctra-tv-unified.js
+  // (règles de la version TV : une carte par chaîne, numéros TNT, catégories).
+  // Au lancement, les serveurs de la chaîne (un par source) sont testés comme
+  // le ferait le lecteur, 6 à la fois : le meilleur serveur vérifié démarre,
+  // et en cas d'échec le suivant prend le relais dans le même ordre.
+  const TV_UNIFIED_WAIT_MS = 12_000;
+  const TV_UNIFIED_PROBE_LIMIT = 12;
+  const TV_UNIFIED_PROBE_WORKERS = 6;
+  const TV_UNIFIED_DECIDE_MS = 6_000;
+  // 200.0.137 : bascule plus patiente. Premier contrôle à 45 s ; tant que la
+  // vidéo continue d'arriver, nouveau délai de 15 s (2 min au plus). Une erreur
+  // passagère laisse 8 s au fournisseur (12 s si la lecture avait démarré).
+  const TV_UNIFIED_START_TIMEOUT_MS = 45_000;
+  const TV_UNIFIED_START_EXTEND_MS = 15_000;
+  const TV_UNIFIED_START_MAX_MS = 120_000;
+  const TV_UNIFIED_ERROR_GRACE_MS = 8_000;
+  const TV_UNIFIED_PLAYING_GRACE_MS = 12_000;
+  const TV_UNIFIED_CACHE_MS = 10 * 60_000;
+
+  function tvUnifiedDelay(ms) {
+    return new Promise(resolve => window.setTimeout(resolve, ms));
+  }
+
+  function tvUnifiedSourcesToMerge() {
+    return (tvState.sources || []).filter(source => !source.virtual && tvSourceSection(source) !== 'portals');
+  }
+
+  // Catalogues de toutes les sources (et de leurs bouquets, 120 au plus,
+  // français d'abord), 6 à la fois ; un catalogue en échec est redemandé une
+  // fois. La liste s'affiche dès que tout est arrivé, ou au bout de 12 s avec
+  // ce qui est déjà reçu, puis se complète toute seule.
+  // 200.0.129 : un catalogue livré en plusieurs fois (OHA, LiveWatch pendant
+  // son rafraîchissement : « progressive ») est redemandé jusqu'à être
+  // complet ; avant, seule sa première partie entrait dans la liste.
+  const TV_UNIFIED_GROUP_LIMIT = 120;
+  const TV_UNIFIED_PROGRESSIVE_DELAYS = [2_500, 5_000, 9_000, 15_000, 24_000, 40_000];
+  const tvUnifiedSubscribers = new Set();
+
+  function publishTvUnified(data) {
+    tvUnifiedSubscribers.forEach(listener => {
+      let keep = true;
+      try { keep = listener(data) !== false; } catch {}
+      if (!keep) tvUnifiedSubscribers.delete(listener);
+    });
+  }
+
+  function tvUnifiedGroupOrder(groups) {
+    const french = group => /(?:^|[^a-z])(?:fr|fra|france|french|français|francais|tnt)(?:[^a-z]|$)/i.test(String(group?.name || ''));
+    return groups.filter(group => group?.ref)
+      .map((group, index) => ({ group, index, first: french(group) ? 0 : 1 }))
+      .sort((a, b) => a.first - b.first || a.index - b.index)
+      .map(item => item.group);
+  }
+
+  function loadTvUnified(onProgress = null) {
+    if (tvUnifiedCache && Date.now() - tvUnifiedCache.at < TV_UNIFIED_CACHE_MS) return Promise.resolve(tvUnifiedCache.data);
+    if (tvUnifiedLoading) {
+      if (onProgress) tvUnifiedLoading.progress.add(onProgress);
+      return tvUnifiedLoading.first;
+    }
+    const unifiedApi = window.NoctraTvUnified;
+    if (!unifiedApi) return Promise.reject(new Error('Le module des chaînes réunies n’est pas chargé. Recharge la page.'));
+    const sources = tvUnifiedSourcesToMerge();
+    const parts = [];
+    const failed = [];
+    const queue = [];
+    let total = 0;
+    let done = 0;
+    let running = 0;
+    let finishedLoading = false;
+    let generation = 0;
+    const progress = new Set(onProgress ? [onProgress] : []);
+    let slot = 0;
+    const enqueue = (source, ref = '') => {
+      queue.push({ source, ref, retry: 0, index: slot++ });
+      total += 1;
+    };
+    sources.forEach(source => enqueue(source));
+    const build = () => {
+      const loaded = parts.filter(Boolean);
+      const channels = unifiedApi.mergeChannels(loaded);
+      const pending = sources.filter(source => !loaded.some(part => part.source.id === source.id) && !failed.includes(source.name)).map(source => source.name);
+      // Apport de chaque source (chaînes gardées, bouquets compris) : affiché
+      // sous le titre pour repérer une source absente de la liste réunie.
+      const coverage = {};
+      loaded.forEach(part => {
+        coverage[part.source.name] = (coverage[part.source.name] || 0) + part.channels.filter(channel => unifiedApi.keepChannel(channel, part.source)).length;
+      });
+      const data = { channels, count: channels.length, pending, failedSources: failed.slice(), coverage, at: Date.now() };
+      if (failed.length) data.warning = `Sources indisponibles pour le moment : ${failed.join(', ')}.`;
+      return data;
+    };
+    let updateTimer = 0;
+    let lastUpdate = 0;
+    const notify = () => {
+      if (updateTimer) return;
+      const wait = Math.max(0, 2_500 - (Date.now() - lastUpdate));
+      updateTimer = window.setTimeout(() => {
+        updateTimer = 0;
+        lastUpdate = Date.now();
+        // Chargement remplacé depuis (actualisation forcée) : plus rien à publier.
+        if (finishedLoading && tvUnifiedCache?.generation !== generation) return;
+        const data = build();
+        if (!finishedLoading) data.partial = true;
+        else tvUnifiedCache.data = data;
+        publishTvUnified(data);
+      }, wait);
+    };
+    // Catalogue encore incomplet côté serveur : redemandé plus tard, jusqu'à
+    // ce qu'il soit complet (au plus 6 fois, en 1 min 30 environ).
+    const followProgressive = (job, path, attempt = 0) => {
+      if (attempt >= TV_UNIFIED_PROGRESSIVE_DELAYS.length) return;
+      window.setTimeout(() => {
+        if (finishedLoading && tvUnifiedCache?.generation !== generation) return;
+        apiResponseCache.delete(path);
+        cachedApi(path, 5 * 60_000, { timeoutMs: 45_000 }).then(data => {
+          const channels = Array.isArray(data?.channels) ? data.channels : [];
+          if (channels.length) {
+            parts[job.index] = { source: job.source, channels };
+            notify();
+          }
+          if (data?.progressive) followProgressive(job, path, attempt + 1);
+        }, () => followProgressive(job, path, attempt + 1));
+      }, TV_UNIFIED_PROGRESSIVE_DELAYS[attempt]);
+    };
+    const finished = new Promise(resolve => {
+      const pump = () => {
+        if (!queue.length && !running) { resolve(); return; }
+        while (running < 6 && queue.length) {
+          const job = queue.shift();
+          running += 1;
+          const path = job.ref
+            ? `/api/tv/catalog?ref=${encodeURIComponent(job.ref)}`
+            : `/api/tv/catalog?source=${encodeURIComponent(job.source.id)}`;
+          cachedApi(path, job.ref ? 90_000 : 5 * 60_000, { timeoutMs: 45_000 }).then(data => {
+            parts[job.index] = { source: job.source, channels: Array.isArray(data?.channels) ? data.channels : [] };
+            if (data?.progressive) followProgressive(job, path);
+            // Source en bouquets : les chaînes de chaque bouquet (120 au plus,
+            // bouquets français d'abord).
+            if (!job.ref) {
+              tvUnifiedGroupOrder(Array.isArray(data?.groups) ? data.groups : []).slice(0, TV_UNIFIED_GROUP_LIMIT)
+                .forEach(group => enqueue(job.source, group.ref));
+            }
+            notify();
+          }, () => {
+            if (!job.retry) { queue.push({ ...job, retry: 1 }); total += 1; }
+            else if (!job.ref) failed.push(job.source.name);
+          }).finally(() => {
+            running -= 1;
+            done += 1;
+            progress.forEach(listener => { try { listener(done, total); } catch {} });
+            pump();
+          });
+        }
+      };
+      pump();
+    });
+    const final = finished.then(() => {
+      window.clearTimeout(updateTimer);
+      updateTimer = 0;
+      finishedLoading = true;
+      generation = Date.now();
+      const data = build();
+      tvUnifiedCache = { at: Date.now(), data, generation };
+      tvUnifiedLoading = null;
+      publishTvUnified(data);
+      return data;
+    }).catch(error => {
+      tvUnifiedLoading = null;
+      throw error;
+    });
+    const first = Promise.race([final, tvUnifiedDelay(TV_UNIFIED_WAIT_MS).then(() => 'late')]).then(result => {
+      if (result !== 'late') return result;
+      const partial = build();
+      partial.partial = true;
+      partial.warning = 'Certaines sources répondent lentement : la liste se complète toute seule.';
+      return partial;
+    });
+    tvUnifiedLoading = { first, final, progress };
+    return first;
+  }
+
+  // Numéros : chaînes françaises comme la TNT (1 TF1, 2 France 2…), puis 30,
+  // 31… ; chaînes des autres pays ensuite, par pays. Calculés une fois par
+  // liste : une chaîne garde son numéro dans « Chaînes sport ».
+  function tvUnifiedOrder(data) {
+    if (data._order) return data._order;
+    const unifiedApi = window.NoctraTvUnified;
+    const all = Array.isArray(data.channels) ? data.channels : [];
+    const french = unifiedApi.numberChannels(all.filter(channel => channel.country === 'fr'), true);
+    const counts = {};
+    all.forEach(channel => {
+      if (channel.country === 'fr') return;
+      const code = channel.country || '?';
+      counts[code] = (counts[code] || 0) + 1;
+    });
+    const codes = Object.keys(counts).filter(code => code !== '?').sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+    if (counts['?']) codes.push('?');
+    let next = french.reduce((max, channel) => Math.max(max, channel._lcn || 0), 0) + 1;
+    const foreign = [];
+    codes.forEach(code => all.forEach(channel => {
+      if (channel.country !== 'fr' && (channel.country || '?') === code) { channel._lcn = next++; foreign.push(channel); }
+    }));
+    data._order = [...french, ...foreign];
+    return data._order;
+  }
+
+  // « Chaînes sport » : catégorie Sport (nom de la chaîne ou catégorie de la
+  // source), ou chaîne (non-match) proposée par une source de l'univers Sports.
+  function tvUnifiedIsSport(channel) {
+    if (channel.category === 'Sport') return true;
+    return (channel._entries || []).some(entry => tvSourceSection(entry.source) === 'sports'
+      || /\bsports?\b|foot|ligue|rugby|tennis|basket|nba|nfl|f1\b|moto ?gp|ufc|boxe|golf/i.test(String(entry.channel?.group || '')));
+  }
+
+  function tvUnifiedWebChannel(channel) {
+    const known = tvUnifiedWebChannels.get(channel);
+    if (known) return known;
+    const unifiedApi = window.NoctraTvUnified;
+    const official = unifiedApi.officialLogo(channel);
+    const sourceLogos = [channel.logo, ...channel._entries.map(entry => entry.channel.logo)].filter(Boolean);
+    const logo = official || sourceLogos[0] || '';
+    const secondaryLogo = sourceLogos.find(value => value !== logo) || '';
+    // Chaînes françaises seulement (200.0.129) : rangées par catégorie.
+    const group = channel.category || 'Autres';
+    const webChannel = {
+      id: `u:${channel._key}`,
+      name: channel.name,
+      logo,
+      secondaryLogo,
+      group,
+      provider: channel.provider || '',
+      category: '',
+      isLive: Boolean(channel.isLive),
+      now: channel.now || null,
+      next: channel.next || null,
+      epgId: channel.epgId || '',
+      iptvOrgId: channel.iptvOrgId || '',
+      lcn: channel._lcn || 0,
+      playbackType: 'unified',
+      unified: true,
+      // Recherche : la chaîne se trouve aussi par ses noms dans chaque source.
+      description: [...new Set(channel._entries.map(entry => String(entry.channel?.name || '')).filter(Boolean))].slice(0, 12).join(' · '),
+      _entries: channel._entries,
+      _sources: channel._sources || [],
+      _key: channel._key
+    };
+    tvUnifiedWebChannels.set(channel, webChannel);
+    return webChannel;
+  }
+
+  // 200.0.129 : chaînes françaises uniquement. Pays reconnu « France », ou pays
+  // non indiqué mais rangée par une de ses sources dans une catégorie française.
+  function tvUnifiedIsFrench(channel) {
+    if (channel.country === 'fr') return true;
+    if (channel.country) return false;
+    return (channel._entries || []).some(entry => /(?:^|[^a-z])(?:fr|fra|france|french|français|francais|tnt)(?:[^a-z]|$)/i.test(String(entry.channel?.group || '')));
+  }
+
+  function tvUnifiedCatalog(selected, data) {
+    const sportOnly = selected.id === 'all-sport';
+    const channels = tvUnifiedOrder(data)
+      .filter(tvUnifiedIsFrench)
+      .filter(channel => !sportOnly || tvUnifiedIsSport(channel))
+      .map(tvUnifiedWebChannel);
+    const counts = {};
+    channels.forEach(channel => { counts[channel.group] = (counts[channel.group] || 0) + 1; });
+    const categories = window.NoctraTvUnified.CATEGORY_ORDER.filter(name => counts[name]);
+    const others = Object.keys(counts).filter(name => !categories.includes(name) && name !== 'Pays non indiqué')
+      .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b, 'fr'));
+    const groupOrder = [...categories, ...others, ...(counts['Pays non indiqué'] ? ['Pays non indiqué'] : [])];
+    const pending = Array.isArray(data.pending) && data.pending.length ? ` En attente : ${data.pending.slice(0, 6).join(', ')}${data.pending.length > 6 ? '…' : ''}.` : '';
+    const coverage = Object.entries(data.coverage || {}).sort((a, b) => b[1] - a[1]);
+    const coverageText = [
+      coverage.length ? `${coverage.length} sources réunies : ${coverage.map(([name, count]) => `${name} ${count}`).join(' · ')}` : '',
+      data.pending?.length ? `en attente : ${data.pending.join(', ')}` : '',
+      data.failedSources?.length ? `indisponibles : ${data.failedSources.join(', ')}` : ''
+    ].filter(Boolean).join(' — ');
+    return {
+      name: selected.name,
+      unified: true,
+      logosReady: true,
+      source: coverageText ? { ...selected, description: coverageText } : selected,
+      channels,
+      groups: [],
+      count: channels.length,
+      groupOrder,
+      warning: data.warning ? `${data.warning}${pending}` : ''
+    };
+  }
+
+  async function openTvUnified(selected, sequence) {
+    let rendered = false;
+    const current = () => sequence === tvNavigationSequence && tvState.sourceId === selected.id;
+    const show = data => {
+      if (!current() || !data) return;
+      const catalog = tvUnifiedCatalog(selected, data);
+      if (!rendered) {
+        rendered = true;
+        if (tvState.group !== 'Toutes' && !catalog.groupOrder.includes(tvState.group)) tvState.group = 'Toutes';
+        renderTvWorkspace(catalog, sequence);
+      } else {
+        applyTvCatalogRefresh(catalog, sequence);
+        // Catégories : la liste déroulante suit les chaînes reçues entre-temps.
+        const select = document.querySelector('[data-tv-group-filter]');
+        if (select && select.options.length - 1 !== catalog.groupOrder.length) {
+          const active = tvState.group;
+          select.innerHTML = `<option value="Toutes">Toutes les catégories</option>${catalog.groupOrder.map(group => `<option value="${escapeHtml(group)}" ${group === active ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}`;
+        }
+      }
+    };
+    // Liste complétée ou mise à jour ensuite (sources lentes, catalogues livrés
+    // en plusieurs fois) : redessinée sur place, lecture en cours conservée.
+    tvUnifiedSubscribers.add(data => {
+      if (!current()) return false;
+      if (rendered) show(data);
+      return true;
+    });
+    if (tvUnifiedCache && Date.now() - tvUnifiedCache.at < TV_UNIFIED_CACHE_MS) {
+      show(tvUnifiedCache.data);
+      return;
+    }
+    renderTvLoading(selected);
+    const stageCopy = document.querySelector('.noctra-tv-loading-stage strong');
+    if (stageCopy) stageCopy.textContent = 'Réunion des chaînes de toutes les sources…';
+    const onProgress = (done, total) => {
+      if (rendered || !current()) return;
+      const copy = document.querySelector('.noctra-tv-loading-stage strong');
+      if (copy) copy.textContent = `Réunion des chaînes de toutes les sources… ${done} / ${total}`;
+    };
+    try {
+      const data = await loadTvUnified(onProgress);
+      show(data);
+    } catch (error) {
+      if (!current()) return;
+      setPanelBody(`<section class="noctra-tv-shell" data-tv-layout="error">${tvNavigationMarkup()}<section class="noctra-tv-empty"><span>${icons.tv}</span><p class="noctra-eyebrow">${escapeHtml(selected.name)}</p><h3>Les chaînes n’ont pas pu être réunies</h3><p>${escapeHtml(error?.message || 'Erreur inconnue.')}</p><small>Chaque source reste accessible séparément dans le bandeau ci-dessus.</small><div class="noctra-tv-source-actions"><button class="noctra-button" type="button" data-tv-retry>${icons.retry}<span>Réessayer</span></button></div></section></section>`, { preserveScroll: false });
+    }
+  }
+
+  // ── Lecture d'une chaîne réunie ──
+  function tvUnifiedActive() {
+    return Boolean(tvUnifiedRun && !tvUnifiedRun.stopped && tvUnifiedRun.channelIndex === Number(tvState.currentChannelIndex));
+  }
+
+  function tvActiveSourceId() {
+    if (!tvUnifiedActive()) return String(tvState.sourceId || '');
+    return String(tvUnifiedRun.servers[tvUnifiedRun.index]?.sourceId || tvState.sourceId || '');
+  }
+
+  // Chaîne réellement lue : pour une chaîne réunie, celle de la source du
+  // serveur en cours (son fournisseur et ses liens), sous le nom réuni.
+  function tvPlaybackChannel() {
+    const channel = tvState.catalog?.channels?.[Number(tvState.currentChannelIndex)] || null;
+    if (!tvUnifiedActive()) return channel;
+    const server = tvUnifiedRun.servers[tvUnifiedRun.index];
+    return server ? { ...server.entry.channel, name: channel?.name || server.entry.channel.name } : channel;
+  }
+
+  function stopTvUnifiedRun() {
+    const run = tvUnifiedRun;
+    if (!run) return;
+    run.stopped = true;
+    try { run.controller.abort(); } catch {}
+    window.clearTimeout(run.watchdog);
+    window.clearTimeout(run.errorTimer);
+    tvUnifiedRun = null;
+    renderTvUnifiedServers(null);
+  }
+
+  function tvUnifiedServers(channel) {
+    const perSource = {};
+    channel._entries.forEach(entry => { perSource[entry.source.id] = (perSource[entry.source.id] || 0) + 1; });
+    const seen = {};
+    return channel._entries.map(entry => {
+      const source = entry.source || {};
+      let label = String(source.name || 'Source');
+      if (perSource[source.id] > 1) {
+        const variant = /\.([A-Za-z0-9]{1,3})\s*$/.exec(String(entry.channel.name || '').trim());
+        if (variant) label += ` · variante ${variant[1].toLowerCase()}`;
+        else {
+          seen[source.id] = (seen[source.id] || 0) + 1;
+          if (seen[source.id] > 1) label += ` · ${seen[source.id]}`;
+        }
+      }
+      const item = entry.channel;
+      const kind = item.playbackType === 'resolver' && item.resolverUrl ? 'resolve' : item.streamUrl && item.playbackType !== 'embed' ? 'native' : item.resolverUrl ? 'resolve' : 'web';
+      return { entry, label, kind, sourceId: String(source.id || ''), probeState: '', probeMs: 0, probed: false, resolved: null, failed: false };
+    });
+  }
+
+  function tvUnifiedResultOptions(result) {
+    const options = Array.isArray(result?.options)
+      ? result.options.filter(option => option?.url || option?.streamUrl || option?.resolveUrl)
+      : (result?.streamUrl || result?.url ? [result] : []);
+    // OHA : les autres serveurs natifs sont listés à part (serverChoices).
+    const labels = new Set(options.map(option => String(option.label || '')));
+    const choices = Array.isArray(result?.serverChoices)
+      ? result.serverChoices.filter(choice => (choice?.resolveUrl || choice?.url || choice?.streamUrl) && !labels.has(String(choice.label || '')))
+      : [];
+    return [...options, ...choices];
+  }
+
+  // 200.0.130 : comme sur Noctra TV, une source « automatique » (LiveWatch VIP,
+  // OHA, WiTV…) est remplacée dans la liste par tous ses serveurs (Serveur 1,
+  // 2, VIP…), préfixés du nom de la source, testés et classés avec les autres.
+  function tvUnifiedExpand(server, result) {
+    const options = tvUnifiedResultOptions(result).map((option, index) => ({ ...option, label: option.label || `Serveur ${index + 1}` }));
+    if (!options.length) return null;
+    return options.map((option, optionIndex) => ({
+      entry: server.entry,
+      sourceId: server.sourceId,
+      label: `${server.label} · ${option.label}`,
+      kind: option.streamUrl || option.playbackType === 'stream' ? 'native' : option.resolveUrl && !option.url ? 'resolve' : 'web',
+      option,
+      group: options,
+      optionIndex,
+      compatPage: Boolean(option.compatPage),
+      manualOnly: Boolean(option.manualOnly),
+      fallback: Boolean(option.fallback),
+      probeState: '',
+      probeMs: 0,
+      probed: false,
+      failed: false
+    }));
+  }
+
+  // Résolution arrivée : la source est dépliée sur place (sauf si elle est
+  // déjà en lecture), ses nouveaux serveurs sont ensuite testés.
+  function expandTvUnifiedServer(run, server, outcome) {
+    run.pending.delete(server);
+    if (run.stopped || !run.servers.includes(server)) return [];
+    if (outcome?.error) {
+      if (Number(outcome.error?.status)) {
+        server.probeState = 'down';
+        server.probed = true;
+        window.NoctraTvUnified.recordHealth(server, run.key, false);
+      }
+      return [];
+    }
+    const playing = run.playSequence !== undefined && run.servers[run.index] === server;
+    const expanded = tvUnifiedExpand(server, outcome?.result);
+    if (!expanded) {
+      server.probeState = 'down';
+      server.probed = true;
+      return [];
+    }
+    if (playing) return [];
+    // Même flux proposé par deux sources : un seul serveur.
+    const known = new Set(run.servers.map(item => item.option?.streamUrl || item.option?.url || item.entry.channel.streamUrl || '').filter(Boolean));
+    const fresh = expanded.filter(item => {
+      const address = item.option.streamUrl || item.option.url || '';
+      if (address && known.has(address)) return false;
+      if (address) known.add(address);
+      return true;
+    });
+    const position = run.servers.indexOf(server);
+    run.servers.splice(position, 1, ...fresh);
+    if (run.playSequence !== undefined && run.index > position) run.index += fresh.length - 1;
+    return fresh;
+  }
+
+  // Test d'un serveur : flux direct relayé par Noctra (liste, qualité, dernier
+  // segment) ; serveur imbriqué (« automatique ») : résolu puis son premier
+  // flux testé. Lecteur web : non testable.
+  async function probeTvUnifiedServer(server, signal) {
+    const unifiedApi = window.NoctraTvUnified;
+    const option = server.option;
+    if (server.kind === 'native') return unifiedApi.probeStream(appPath(option ? option.streamUrl : server.entry.channel.streamUrl), signal);
+    if (server.kind !== 'resolve' || !option?.resolveUrl) return '';
+    let result = null;
+    try {
+      result = await api(option.resolveUrl, { timeoutMs: 12_000, signal });
+    } catch (error) {
+      return signal?.aborted || !Number(error?.status) ? '' : 'down';
+    }
+    const options = tvUnifiedResultOptions(result);
+    if (!options.length) return 'down';
+    const first = options.find(item => item?.streamUrl);
+    return first ? unifiedApi.probeStream(appPath(first.streamUrl), signal) : '';
+  }
+
+  function startTvUnifiedProbes(run) {
+    const listeners = new Set();
+    const testable = server => server.kind === 'native' || (server.kind === 'resolve' && server.option?.resolveUrl);
+    const queue = run.servers.filter(testable).slice(0, TV_UNIFIED_PROBE_LIMIT);
+    queue.forEach(server => run.pending.add(server));
+    let active = 0;
+    let queued = queue.length;
+    const settled = () => listeners.forEach(listener => { try { listener(); } catch {} });
+    const next = async () => {
+      const server = queue.shift();
+      if (!server || run.stopped) return;
+      active += 1;
+      const began = performance.now();
+      const result = await probeTvUnifiedServer(server, run.controller.signal).catch(() => '');
+      run.pending.delete(server);
+      if (run.stopped) return;
+      server.probeState = result;
+      server.probeMs = Math.round(performance.now() - began);
+      server.probed = true;
+      // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
+      if (result === 'down') window.NoctraTvUnified.recordHealth(server, run.key, false);
+      active -= 1;
+      renderTvUnifiedServers(run);
+      settled();
+      await next();
+    };
+    for (let worker = 0; worker < TV_UNIFIED_PROBE_WORKERS; worker += 1) void next();
+    renderTvUnifiedServers(run);
+    return {
+      onSettled: listener => listeners.add(listener),
+      off: listener => listeners.delete(listener),
+      settled,
+      // Serveurs dépliés après coup : testés à leur tour (12 au plus en tout).
+      add(servers) {
+        const extra = servers.filter(testable).slice(0, Math.max(0, TV_UNIFIED_PROBE_LIMIT - queued));
+        queued += extra.length;
+        extra.forEach(server => { run.pending.add(server); queue.push(server); });
+        for (let worker = active; worker < TV_UNIFIED_PROBE_WORKERS && queue.length; worker += 1) void next();
+        renderTvUnifiedServers(run);
+      }
+    };
+  }
+
+  // Serveur lancé : le mieux classé parmi ceux vérifiés « en ligne », sans
+  // attendre plus de 6 s les tests en cours ; les serveurs placés avant lui
+  // doivent avoir fini leur test. Sans serveur vérifié : le premier qui n'est
+  // pas hors ligne (même règle que Noctra TV).
+  function decideTvUnifiedServer(run, probes) {
+    const unifiedApi = window.NoctraTvUnified;
+    const usable = server => !server.failed && !server.manualOnly && server.probeState !== 'down';
+    const bestVerified = () => {
+      const verified = run.servers.filter(server => usable(server) && server.probeState === 'up');
+      return run.servers.indexOf(unifiedApi.rankServers(verified, run.key)[0]);
+    };
+    const decide = final => {
+      let waiting = false;
+      for (const server of run.servers) {
+        if (!usable(server)) continue;
+        if (server.probeState === 'up') return waiting && !final ? -1 : bestVerified();
+        if (run.pending.has(server)) waiting = true;
+      }
+      if (waiting && !final) return -1;
+      const index = run.servers.findIndex(usable);
+      return index >= 0 ? index : 0;
+    };
+    return new Promise(resolve => {
+      let finished = false;
+      let timer = 0;
+      const finish = index => {
+        if (finished) return;
+        finished = true;
+        probes.off(check);
+        window.clearTimeout(timer);
+        resolve(index);
+      };
+      function check() {
+        const index = decide(false);
+        if (index >= 0) finish(index);
+      }
+      timer = window.setTimeout(() => finish(decide(true)), TV_UNIFIED_DECIDE_MS);
+      probes.onSettled(check);
+      run.controller.signal.addEventListener('abort', () => finish(0), { once: true });
+      check();
+    });
+  }
+
+  function renderTvUnifiedServers(run) {
+    const target = document.querySelector('[data-tv-unified-servers]');
+    if (!target) return;
+    if (!run || tvUnifiedRun !== run) {
+      target.hidden = true;
+      target.innerHTML = '';
+      return;
+    }
+    const unifiedApi = window.NoctraTvUnified;
+    const remembered = unifiedApi.rememberedServer(run.key);
+    const sources = run.channel._sources?.length || 1;
+    target.hidden = false;
+    target.innerHTML = `<p><strong>Serveurs</strong><small>${run.servers.length} serveur${run.servers.length > 1 ? 's' : ''} · ${sources} source${sources > 1 ? 's' : ''}${run.pending.size ? ' · test en cours…' : ''}</small></p><div>${run.servers.map((server, index) => {
+      const health = unifiedApi.serverHealth(server, run.key);
+      const tags = [[server.kind === 'web' ? 'web' : 'kind', server.kind === 'native' ? 'Direct' : server.kind === 'resolve' ? 'Automatique' : server.compatPage ? 'Page web' : 'Lecteur web']];
+      if (server.manualOnly) tags.push(['warn', 'Secours manuel']);
+      if (run.pending.has(server)) tags.push(['probe', 'Test…']);
+      else if (server.probeState === 'up') tags.push(['good', server.probeMs > 3_500 ? 'En ligne · lent' : 'En ligne']);
+      else if (server.probeState === 'down') tags.push(['bad', 'Hors ligne']);
+      else if (server.probed) tags.push(['probe', 'Sans réponse']);
+      if (server.failed) tags.push(['bad', 'Échec']);
+      else if (health.verdict === 'recent-fail') tags.push(['warn', 'Échec récent']);
+      else if (health.verdict === 'unstable') tags.push(['warn', 'Instable']);
+      else if (health.verdict === 'good') tags.push(['good', 'Fiable']);
+      if (remembered && remembered === server.label) tags.push(['ok', 'Dernier utilisé']);
+      const active = run.playSequence !== undefined && index === run.index;
+      return `<button type="button" data-tv-unified-server="${index}" data-active="${active}" data-state="${server.failed ? 'failed' : escapeHtml(server.probeState || 'unknown')}" title="${escapeHtml(`${server.label} · ${unifiedApi.healthText(server, run.key)}`)}"><b>${index + 1}</b><span>${escapeHtml(server.label)}</span><em>${tags.map(([tone, text]) => `<i data-tone="${tone}">${escapeHtml(text)}</i>`).join('')}</em></button>`;
+    }).join('')}</div>`;
+  }
+
+  async function playTvUnifiedChannel(channel, index, playbackSequence) {
+    const unifiedApi = window.NoctraTvUnified;
+    if (!unifiedApi) {
+      setTvPlaybackStatus('Module des chaînes réunies indisponible · recharge la page', 'error');
+      return;
+    }
+    const key = `all:${channel._key}`;
+    const run = {
+      channel,
+      channelIndex: Number(index),
+      key,
+      servers: unifiedApi.rankServers(tvUnifiedServers(channel), key),
+      index: 0,
+      pending: new Set(),
+      controller: new AbortController(),
+      stopped: false,
+      played: false,
+      exhausted: false,
+      playSequence: undefined,
+      watchdog: 0,
+      errorTimer: 0
+    };
+    tvUnifiedRun = run;
+    if (!run.servers.length) {
+      renderTvUnifiedServers(run);
+      setTvPlaybackStatus('Aucun serveur pour cette chaîne', 'error');
+      return;
+    }
+    recordTvDiagnostic('unified-channel', { servers: run.servers.length, sources: channel._sources?.length || 1 });
+    setTvPlaybackStatus(`Recherche des serveurs de ${channel._sources?.length || 1} source${(channel._sources?.length || 1) > 1 ? 's' : ''}…`, 'loading');
+    // Sources « automatiques » : leurs serveurs sont demandés tout de suite, en
+    // parallèle ; la liste s'ouvre sans attendre plus de 2,5 s, les retardataires
+    // sont dépliés et testés à leur arrivée (comme sur Noctra TV).
+    const resolving = run.servers.filter(server => server.kind === 'resolve' && !server.option);
+    resolving.forEach(server => {
+      run.pending.add(server);
+      server.resolution = api(server.entry.channel.resolverUrl, { timeoutMs: 15_000, signal: run.controller.signal })
+        .then(result => ({ result }), error => ({ error }))
+        .then(outcome => { server.outcome = outcome; return outcome; });
+    });
+    renderTvUnifiedServers(run);
+    if (resolving.length) await Promise.race([Promise.all(resolving.map(server => server.resolution)), tvUnifiedDelay(2_500)]);
+    if (tvUnifiedRun !== run || run.stopped || playbackSequence !== tvPlaybackSequence) return;
+    resolving.filter(server => server.outcome).forEach(server => expandTvUnifiedServer(run, server, server.outcome));
+    run.servers = unifiedApi.rankServers(run.servers, key);
+    setTvPlaybackStatus(`Test de ${run.servers.length} serveur${run.servers.length > 1 ? 's' : ''}…`, 'loading');
+    const probes = startTvUnifiedProbes(run);
+    resolving.filter(server => !server.outcome).forEach(server => {
+      server.resolution.then(outcome => {
+        if (tvUnifiedRun !== run || run.stopped) return;
+        probes.add(expandTvUnifiedServer(run, server, outcome));
+        probes.settled();
+      });
+    });
+    const chosen = run.servers.length === 1 && !run.pending.size ? 0 : await decideTvUnifiedServer(run, probes);
+    if (tvUnifiedRun !== run || run.stopped || playbackSequence !== tvPlaybackSequence) return;
+    // Serveurs reclassés avec le résultat des tests (vérifiés d'abord, hors
+    // ligne à la fin) : en cas d'échec, le suivant est pris dans cet ordre.
+    const best = run.servers[chosen] || run.servers[0];
+    run.servers = [best, ...unifiedApi.rankServers(run.servers.filter(server => server !== best), key)];
+    await playTvUnifiedServer(run, 0, false);
+  }
+
+  async function playTvUnifiedServer(run, serverIndex, manual = false) {
+    if (tvUnifiedRun !== run || run.stopped) return;
+    const server = run.servers[serverIndex];
+    if (!server) return;
+    window.clearTimeout(run.watchdog);
+    window.clearTimeout(run.errorTimer);
+    destroyTvPlayback();
+    window.NoctraServerChoice?.begin(true);
+    const playbackSequence = tvPlaybackSequence;
+    run.index = serverIndex;
+    run.playSequence = playbackSequence;
+    run.played = false;
+    run.exhausted = false;
+    tvState.resolvedEmbeds = [];
+    renderTvStreamOptions([]);
+    renderTvUnifiedServers(run);
+    recordTvDiagnostic('unified-server', { server: server.label, kind: server.kind, probe: server.probeState || 'unknown', manual });
+    setTvPlaybackStatus(`${server.label} · connexion…`, 'loading');
+    if (server.kind !== 'web') {
+      const startedAt = Date.now();
+      let lastSpan = 0;
+      const checkStart = () => {
+        if (tvUnifiedRun !== run || run.playSequence !== playbackSequence || run.played) return;
+        // Données encore en arrivée : chargement long mais vivant, on patiente.
+        const span = tvBufferedSpan();
+        if (span > lastSpan + .25 && Date.now() - startedAt < TV_UNIFIED_START_MAX_MS) {
+          lastSpan = span;
+          recordTvDiagnostic('unified-start-grace', { server: server.label, buffered: Number(span.toFixed(2)) });
+          run.watchdog = window.setTimeout(checkStart, TV_UNIFIED_START_EXTEND_MS);
+          return;
+        }
+        failTvUnifiedServer(run, 'Ce serveur ne démarre pas.');
+      };
+      run.watchdog = window.setTimeout(checkStart, TV_UNIFIED_START_TIMEOUT_MS);
+    }
+    const prefetched = server.outcome?.result || null;
+    try {
+      if (server.option) {
+        // Serveur d'une source « automatique » : ses voisins restent les secours
+        // internes de la source (reprise, autre serveur du même fournisseur).
+        tvState.resolvedEmbeds = server.group.slice();
+        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence, false);
+      } else {
+        await playTvSourceChannel({ ...server.entry.channel }, run.channelIndex, playbackSequence, { prefetched, unified: true });
+      }
+    } catch (error) {
+      if (tvUnifiedRun !== run || run.playSequence !== playbackSequence) return;
+      failTvUnifiedServer(run, error?.message || 'Serveur indisponible.');
+    }
+  }
+
+  function failTvUnifiedServer(run, message = '') {
+    if (tvUnifiedRun !== run || run.stopped) return;
+    window.clearTimeout(run.watchdog);
+    window.clearTimeout(run.errorTimer);
+    const server = run.servers[run.index];
+    if (server && !server.failed) {
+      server.failed = true;
+      window.NoctraTvUnified.recordHealth(server, run.key, false);
+    }
+    recordTvDiagnostic('unified-server-failed', { server: server?.label || '', message: String(message || '').slice(0, 160) });
+    // Serveur suivant : d'abord ceux vérifiés en ligne, puis ceux qui ne sont
+    // pas « hors ligne » au test, puis les autres.
+    let next = -1;
+    for (let pass = 0; pass < 3 && next < 0; pass += 1) {
+      for (let step = 1; step <= run.servers.length; step += 1) {
+        const index = (run.index + step) % run.servers.length;
+        const candidate = run.servers[index];
+        if (!candidate || candidate.failed || candidate.manualOnly) continue;
+        if (pass === 0 && candidate.probeState !== 'up') continue;
+        if (pass === 1 && candidate.probeState === 'down') continue;
+        next = index;
+        break;
+      }
+    }
+    if (next < 0) {
+      run.exhausted = true;
+      renderTvUnifiedServers(run);
+      setTvPlaybackStatus(`Aucun serveur ne fonctionne pour ${run.channel.name} en ce moment · choisis-en un pour réessayer`, 'error');
+      return;
+    }
+    toast(`${server?.label || 'Serveur'} indisponible · essai de ${run.servers[next].label}…`);
+    void playTvUnifiedServer(run, next, false);
+  }
+
+  function noteTvUnifiedStatus(state) {
+    const run = tvUnifiedRun;
+    if (!run || run.stopped || run.exhausted || run.playSequence === undefined || run.playSequence !== tvPlaybackSequence) return;
+    if (state === 'playing') {
+      window.clearTimeout(run.errorTimer);
+      if (run.played) return;
+      run.played = true;
+      window.clearTimeout(run.watchdog);
+      const server = run.servers[run.index];
+      if (server) {
+        window.NoctraTvUnified.recordHealth(server, run.key, true);
+        window.NoctraTvUnified.rememberServer(run.key, server.label);
+      }
+      renderTvUnifiedServers(run);
+      return;
+    }
+    if (state === 'loading') {
+      window.clearTimeout(run.errorTimer);
+      return;
+    }
+    if (state !== 'error') return;
+    window.clearTimeout(run.errorTimer);
+    const sequence = run.playSequence;
+    const index = run.index;
+    // Laisse au fournisseur le temps de son propre secours avant de changer
+    // de serveur (plus longtemps quand la lecture avait démarré).
+    run.errorTimer = window.setTimeout(() => {
+      if (tvUnifiedRun !== run || run.playSequence !== sequence || run.index !== index || sequence !== tvPlaybackSequence) return;
+      const status = document.querySelector('[data-tv-player-status]');
+      if (status && status.dataset.state !== 'error') return;
+      failTvUnifiedServer(run, status?.textContent || '');
+    }, run.played ? TV_UNIFIED_PLAYING_GRACE_MS : TV_UNIFIED_ERROR_GRACE_MS);
+  }
+
   async function playTvChannel(index) {
     const channel = tvState.catalog?.channels?.[Number(index)];
     const video = document.querySelector('#noctra-tv-video');
     const frame = document.querySelector('#noctra-tv-embed');
     if (!channel || !video) return;
     if (tvEnginePreference === 'shaka') void ensureShakaLibrary().catch(() => {});
+    stopTvUnifiedRun();
     destroyTvPlayback();
     window.NoctraServerChoice?.begin(tvState.section === 'channels');
     tvPlaybackStartedAt = performance.now();
@@ -10244,15 +11245,30 @@
     document.querySelectorAll('[data-tv-channel-index]').forEach(button => button.dataset.active = String(Number(button.dataset.tvChannelIndex) === Number(index)));
     setTvPlaybackStatus('Connexion…', 'loading');
 
+    // 200.0.128 : chaîne réunie (plusieurs sources) : serveurs testés et classés.
+    if (channel.unified && Array.isArray(channel._entries)) {
+      await playTvUnifiedChannel(channel, index, playbackSequence);
+      return;
+    }
+    await playTvSourceChannel(channel, index, playbackSequence);
+  }
+
+  // Lecture d'une chaîne d'une source précise (logique propre à chaque
+  // fournisseur). Pour une chaîne réunie, appelée avec la chaîne de la source
+  // du serveur choisi ; ses échecs sont alors renvoyés pour passer au suivant.
+  async function playTvSourceChannel(channel, index, playbackSequence, extras = {}) {
+    const unified = Boolean(extras.unified);
+
     // V121 : Daddy/North/Frame et les univers Sports LiveWatch utilisent leurs
     // embed_url officiels. Ce garde-fou client corrige aussi un catalogue ancien
     // encore présent dans le cache Safari/PWA et empêche « initialisation VIP… ».
     if (await playDocumentedLiveWatchEmbed(channel, index, playbackSequence)) return;
 
     if (channel.playbackType === 'resolver' && channel.resolverUrl) {
-      try { await resolveAndPlayTvChannel(channel, playbackSequence); }
+      try { await resolveAndPlayTvChannel(channel, playbackSequence, extras.prefetched || null); }
       catch (error) {
         if (playbackSequence !== tvPlaybackSequence) return;
+        if (unified) throw error;
         const provider = channel.provider || 'TV';
         if (Number(error?.status) === 410) {
           setTvPlaybackStatus(`${provider} · actualisation du lecteur…`, 'loading');
@@ -11839,6 +12855,26 @@
         .finally(() => { button.disabled = false; });
       return;
     }
+    const liveWatchForm = event.target.closest('[data-livewatch-account-form]');
+    if (liveWatchForm) {
+      event.preventDefault();
+      const button = liveWatchForm.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      button.disabled = true;
+      const status = liveWatchForm.querySelector('[data-key-status]');
+      status.textContent = 'Connexion à LiveWatch…';
+      const fields = new FormData(liveWatchForm);
+      const payload = { email: String(fields.get('email') || '').trim(), password: String(fields.get('password') || '') };
+      api('/api/tv/livewatch/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), timeoutMs: 25_000 })
+        .then(() => { clearApiCache('/api/tv'); toast('Compte LiveWatch VIP connecté pour Noctra.'); return openTvProviderKeys(); })
+        .catch(error => {
+          const password = liveWatchForm.querySelector('input[name="password"]');
+          if (password) password.value = '';
+          status.textContent = error.message;
+          button.disabled = false;
+        });
+      return;
+    }
     if (event.target.id !== 'noctra-roulette-form') return;
     event.preventDefault(); void spinRoulette(event.target);
   });
@@ -11867,6 +12903,34 @@
     const platform = event.target.closest('[data-platform-id]');
     if (platform) { await openDiscoveries('streaming', platform.dataset.platformId, 'all', 'balanced', ''); return; }
     if (event.target.closest('[data-tv-provider-keys]')) { await openTvProviderKeys(); return; }
+    const liveWatchDiagnosticButton = event.target.closest('[data-livewatch-account-diagnostic]');
+    if (liveWatchDiagnosticButton) {
+      const form = liveWatchDiagnosticButton.closest('[data-livewatch-account-form]');
+      const list = form?.querySelector('[data-livewatch-diagnostic]');
+      if (!list || liveWatchDiagnosticButton.disabled) return;
+      liveWatchDiagnosticButton.disabled = true;
+      list.hidden = false;
+      list.innerHTML = '<li>Test de LiveWatch depuis le serveur Noctra…</li>';
+      try {
+        const result = await api('/api/tv/livewatch/diagnostics', { timeoutMs: 90_000 });
+        list.innerHTML = liveWatchDiagnosticLines(result).map(line => `<li>${escapeHtml(line)}</li>`).join('') || '<li>Aucun résultat.</li>';
+      } catch (error) {
+        list.innerHTML = [`Diagnostic impossible : ${error.message}`, ...liveWatchDiagnosticLines({})].map(line => `<li>${escapeHtml(line)}</li>`).join('');
+      } finally {
+        liveWatchDiagnosticButton.disabled = false;
+      }
+      return;
+    }
+    if (event.target.closest('[data-livewatch-account-disconnect]')) {
+      if (!window.confirm('Déconnecter le compte LiveWatch VIP de Noctra ?')) return;
+      try {
+        await api('/api/tv/livewatch/session', { method: 'DELETE' });
+        clearApiCache('/api/tv');
+        toast('Compte LiveWatch VIP déconnecté.');
+        await openTvProviderKeys();
+      } catch (error) { toast(error.message); }
+      return;
+    }
     const rouletteItem = event.target.closest('[data-roulette-item]');
     if (rouletteItem) {
       const id = rouletteItem.dataset.rouletteItem;
@@ -12482,11 +13546,23 @@
       return;
     }
 
+    const tvUnifiedServer = event.target.closest('[data-tv-unified-server]');
+    if (tvUnifiedServer) {
+      const run = tvUnifiedRun;
+      const serverIndex = Number(tvUnifiedServer.dataset.tvUnifiedServer);
+      if (run && run.servers[serverIndex]) {
+        run.servers[serverIndex].failed = false;
+        recordTvDiagnostic('unified-server-manual', { server: run.servers[serverIndex].label });
+        await playTvUnifiedServer(run, serverIndex, true);
+      }
+      return;
+    }
+
     const tvEmbedOption = event.target.closest('[data-tv-embed-option]');
     if (tvEmbedOption) {
       const optionIndex = Number(tvEmbedOption.dataset.tvEmbedOption);
       const option = tvState.resolvedEmbeds?.[optionIndex];
-      const channel = tvState.catalog?.channels?.[tvState.currentChannelIndex];
+      const channel = tvPlaybackChannel();
       if (option && channel) {
         window.NoctraServerChoice?.manual();
         renderTvStreamOptions(tvState.resolvedEmbeds, optionIndex);
