@@ -336,7 +336,7 @@ struct AccountButton: View {
         Button {
             showing = true
         } label: {
-            UserAvatar(size: 30, font: .headline)
+            AccountAvatar(size: 30, font: .headline)
                 .shadow(color: Theme.violet.opacity(0.7), radius: 8)
         }
         .sheet(isPresented: $showing) {
@@ -347,7 +347,7 @@ struct AccountButton: View {
 }
 
 /// Photo de profil Jellyfin dans un rond ; initiale du nom tant qu'elle charge ou sans photo.
-struct UserAvatar: View {
+struct AccountAvatar: View {
     @Environment(Session.self) private var session
     let size: CGFloat
     var font: Font = .headline
@@ -393,7 +393,7 @@ struct AccountSheet: View {
             List {
                 Section {
                     HStack(spacing: 14) {
-                        UserAvatar(size: 52, font: .title2.weight(.bold))
+                        AccountAvatar(size: 52, font: .title2.weight(.bold))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.userName ?? "—").font(.display(20, .bold, relativeTo: .headline))
                             Text(session.isAdmin ? "Administrateur" : "Utilisateur").font(.caption).foregroundStyle(Theme.muted)

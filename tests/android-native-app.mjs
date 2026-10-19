@@ -100,7 +100,7 @@ assert.match(await src('live/LiveStore'), /server\.kind != LiveServer\.Kind\.res
 assert.match(await src('live/LivePlayer'), /if \(target\.vip\) 30_000 else 15_000/);
 assert.match(await src('live/LivePlayer'), /Lecteur VIP sans image : lecture directe du flux repéré/);
 assert.match(await src('core/Session'), /fun avatarURL/);
-assert.match(await src('ui/Account'), /UserAvatar\(34, 16/, 'photo en haut à droite à la place de l’initiale');
+assert.match(await src('ui/Account'), /AccountAvatar\(34, 16/, 'photo en haut à droite à la place de l’initiale');
 console.log('Appli Android native 1.2.1 : VIP et photo de profil vérifiés.');
 assert.match(await src('ui/Intro'), /fun NoctraIntro/, 'intro animée à l’ouverture, comme sur le site');
 assert.match(await src('MainActivity'), /NoctraIntro \{ intro = false \}/);

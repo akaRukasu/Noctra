@@ -1,28 +1,5 @@
 import SwiftUI
 
-/// Logo Noctra (public/noctra-mark.svg) dessiné en natif : tuile nuit, « N » en dégradé, point ciel.
-struct NoctraMark: View {
-    var body: some View {
-        Canvas { context, size in
-            let scale = min(size.width, size.height) / 64
-            context.scaleBy(x: scale, y: scale)
-            let tile = Path(roundedRect: CGRect(x: 2, y: 2, width: 60, height: 60), cornerRadius: 18)
-            context.fill(tile, with: .radialGradient(Gradient(colors: [Color(hex: 0x242B50), Color(hex: 0x080B17)]),
-                                                     center: CGPoint(x: 19, y: 14), startRadius: 0, endRadius: 54))
-            var letter = Path()
-            letter.move(to: CGPoint(x: 17, y: 45))
-            letter.addLine(to: CGPoint(x: 17, y: 19))
-            letter.addLine(to: CGPoint(x: 47, y: 45))
-            letter.addLine(to: CGPoint(x: 47, y: 19))
-            let stops: [Gradient.Stop] = [.init(color: Color(hex: 0x78A8FF), location: 0), .init(color: Color(hex: 0x8B6CFF), location: 0.52),
-                                          .init(color: Color(hex: 0xD070FF), location: 1)]
-            context.stroke(letter, with: .linearGradient(Gradient(stops: stops), startPoint: CGPoint(x: 9, y: 9), endPoint: CGPoint(x: 55, y: 55)),
-                           style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
-            context.fill(Path(ellipseIn: CGRect(x: 43, y: 14, width: 8, height: 8)), with: .color(Color(hex: 0x72E8FF)))
-        }
-    }
-}
-
 /// Intro animée à l'ouverture, comme sur le site : le logo arrive en tournant
 /// avec un halo violet, « NOCTRA » se resserre en dégradé, puis tout s'efface.
 struct NoctraIntro: View {
@@ -38,8 +15,7 @@ struct NoctraIntro: View {
             RadialGradient(colors: [Color(hex: 0x12112A), Theme.background], center: .center, startRadius: 0, endRadius: 420)
                 .ignoresSafeArea()
             VStack(spacing: 18) {
-                NoctraMark()
-                    .frame(width: 84, height: 84)
+                NoctraMark(size: 84)
                     .shadow(color: Theme.violet.opacity(markIn ? 0.9 : 0), radius: 30)
                     .scaleEffect(markIn ? 1 : 0.4)
                     .rotationEffect(.degrees(markIn ? 0 : -12))

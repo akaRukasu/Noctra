@@ -4,7 +4,6 @@ import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,42 +18,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/** Logo Noctra (public/noctra-mark.svg) dessiné en natif : tuile nuit, « N » en dégradé, point ciel. */
-@Composable
-fun NoctraMark(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        scale(size.minDimension / 64f, pivot = Offset.Zero) {
-            drawRoundRect(
-                brush = Brush.radialGradient(listOf(Color(0xFF242B50), Color(0xFF080B17)), center = Offset(19f, 14f), radius = 54f),
-                topLeft = Offset(2f, 2f), size = Size(60f, 60f), cornerRadius = CornerRadius(18f)
-            )
-            val letter = Path().apply { moveTo(17f, 45f); lineTo(17f, 19f); lineTo(47f, 45f); lineTo(47f, 19f) }
-            drawPath(
-                letter,
-                Brush.linearGradient(0f to Color(0xFF78A8FF), 0.52f to Color(0xFF8B6CFF), 1f to Color(0xFFD070FF), start = Offset(9f, 9f), end = Offset(55f, 55f)),
-                style = Stroke(width = 7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-            drawCircle(Color(0xFF72E8FF), radius = 4f, center = Offset(47f, 18f))
-        }
-    }
-}
 
 /**
  * Intro animée à l'ouverture, comme sur le site : le logo arrive en tournant
@@ -93,7 +64,7 @@ fun NoctraIntro(finished: () -> Unit) {
             ) {
                 // Halo violet du site (drop-shadow 30 px).
                 Box(Modifier.requiredSize(170.dp).background(Brush.radialGradient(listOf(Theme.violet.copy(alpha = 0.55f), Color.Transparent))))
-                NoctraMark(Modifier.fillMaxSize())
+                NoctraMark(84.dp)
             }
             // letter-spacing du site : 1,2 em → 0,5 em (police de 22).
             val spacing = 26.4f - 15.4f * word.value

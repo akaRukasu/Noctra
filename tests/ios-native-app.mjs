@@ -207,8 +207,8 @@ function WebVttSeconds(value) {
   assert.match(session, /func avatarURL/, 'photo de profil');
   assert.match(session, /\/Users\/\\\(userId\)\/Images\/Primary/);
   const components = await read('apps/ios-native/Noctra/Sources/Components.swift');
-  assert.match(components, /struct UserAvatar/);
-  assert.match(components, /UserAvatar\(size: 30/, 'photo en haut à droite à la place de l’initiale');
+  assert.match(components, /struct AccountAvatar/);
+  assert.match(components, /AccountAvatar\(size: 30/, 'photo en haut à droite à la place de l’initiale');
   console.log('Appli iOS native 2.10.1 : VIP et photo de profil vérifiés.');
 }
 {
