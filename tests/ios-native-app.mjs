@@ -249,3 +249,15 @@ function WebVttSeconds(value) {
   assert.match(await src('ItemDetailView'), /SeriesStatusBadge\(id: shown\.id, large: true\)/, 'état de la série sur la fiche');
   console.log('Appli iOS native 2.11 : vérifiée.');
 }
+// 2.12 : variantes VIP, trackers patients, tri par compte, destination des demandes.
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  assert.match(await src('LiveServers'), /func liveWatchVipVariants/, 'variantes LiveWatch d’une chaîne VIP en flux VIP');
+  assert.match(await src('LiveServers'), /\/api\/tv\/livewatch\/hls\//);
+  assert.match(await src('ArrViews'), /patient=1/, 'trackers : jusqu’à une minute');
+  assert.match(await src('ArrViews'), /download-options\?mediaType=/, 'destination proposée selon la catégorie');
+  assert.match(await src('LibraryViews'), /noctra\.sort\./, 'tri gardé pour le compte de l’appareil');
+  assert.match(await src('DiscoverViews'), /struct RequestDestinationView/);
+  assert.match(await src('DiscoverViews'), /\/approve" : "decline"|approve \? "approve" : "decline"/);
+  console.log('Appli iOS native 2.12 : vérifiée.');
+}

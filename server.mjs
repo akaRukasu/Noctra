@@ -1176,6 +1176,44 @@ async function jellyseerrDestinations(mediaType) {
   };
 }
 
+// Rangement automatique d'une demande ou d'un téléchargement : animés (animation
+// japonaise) à part des séries, films d'animation à part des films.
+async function mediaCategoryFor(mediaType, tmdbId) {
+  const type = mediaType === 'tv' ? 'tv' : 'movie';
+  const detail = await requestMetadataDetail(type, tmdbId).catch(() => null);
+  const genres = [...(Array.isArray(detail?.genres) ? detail.genres : []), ...(Array.isArray(detail?.genreIds) ? detail.genreIds : [])]
+    .map(genre => Number(typeof genre === 'object' ? genre?.id : genre));
+  const keywordRows = Array.isArray(detail?.keywords) ? detail.keywords : (detail?.keywords?.results || detail?.keywords?.keywords || []);
+  const keywords = keywordRows.map(keyword => String(keyword?.name || keyword || '').toLowerCase());
+  const countries = [...(detail?.originCountry || detail?.origin_country || []), ...((detail?.productionCountries || []).map(country => country?.iso_3166_1))];
+  const japanese = String(detail?.originalLanguage || detail?.original_language || '').toLowerCase() === 'ja' || countries.includes('JP');
+  const animation = genres.includes(16);
+  const anime = keywords.includes('anime') || (animation && japanese);
+  if (type === 'tv') return anime ? 'animes' : 'series';
+  return animation || anime ? 'animation' : 'films';
+}
+
+const mediaCategoryFolderPatterns = {
+  animes: [/(?:^|[^a-z])anim[eé]s?(?:$|[^a-z])|manga|japanim/i],
+  animation: [/animation|dessins?[ _-]*anim/i, /anim[eé]s?(?:$|[^a-z])|cartoon/i],
+  series: [/s[eé]ries?|shows?|(?:^|[^a-z])tv(?:$|[^a-z])/i],
+  films: [/films?|movies?|cin[eé]ma/i]
+};
+
+/** Dossier d'une catégorie parmi ceux proposés (nom du dernier dossier du chemin). */
+function folderForMediaCategory(paths, category, fallback = '') {
+  const list = (paths || []).map(String).filter(Boolean);
+  const leaf = path => path.split('/').filter(Boolean).at(-1) || path;
+  const plain = ['series', 'films'].includes(category);
+  for (const pattern of mediaCategoryFolderPatterns[category] || []) {
+    const match = list.find(path => pattern.test(leaf(path)) && !(plain && /anim|manga|trash|corbeille/i.test(leaf(path))) && !/trash|corbeille/i.test(leaf(path)));
+    if (match) return match;
+  }
+  return fallback || list.find(path => !/trash|corbeille/i.test(leaf(path))) || list[0] || '';
+}
+
+const mediaCategoryLabels = { animes: 'Animés', series: 'Séries', animation: 'Films d’animation', films: 'Films' };
+
 let cachedQbitCookie = '';
 let cachedQbitCookieUntil = 0;
 
@@ -3849,7 +3887,7 @@ async function loadProwlarrAvailability(mediaType, title, year = '', options = {
     ? indexerIds
     : (prowlarrIndexerCache.fastIds?.filter(id => indexerIds.includes(id)) || []).slice(0, 2);
   const { rows, rejectedRows, query, error: searchError, checkedIndexerIds } = await searchTrackerReleases({
-    mediaType, identity, indexerIds, preferredIndexerIds, exhaustive: force,
+    mediaType, identity, indexerIds, preferredIndexerIds, exhaustive: force, patient: Boolean(options?.patient),
     request: async (path, requestOptions) => (await prowlarrRequest(path, requestOptions)).payload
   });
   const lastError = searchError || (tmdbId && !metadata ? new Error('Métadonnées du titre indisponibles. Relance la vérification.') : null);
@@ -13168,13 +13206,19 @@ const server = createServer(async (req, res) => {
         {
           tmdbId: requestUrl.searchParams.get('tmdbId'),
           force: requestUrl.searchParams.get('force') === '1' || requestUrl.searchParams.get('live') === '1',
+          patient: requestUrl.searchParams.get('patient') === '1',
           limit: Number(requestUrl.searchParams.get('limit') || 8)
         }
       ));
     }
 
     if (path === '/api/discovery/download-options' && req.method === 'GET') {
-      return json(res, 200, { destinations: await qbitAllowedDestinations() });
+      const destinations = await qbitAllowedDestinations();
+      const tmdbId = positiveInteger(requestUrl.searchParams.get('tmdbId'));
+      const mediaType = requestUrl.searchParams.get('mediaType') === 'tv' ? 'tv' : 'movie';
+      if (!tmdbId) return json(res, 200, { destinations });
+      const category = await mediaCategoryFor(mediaType, tmdbId);
+      return json(res, 200, { destinations, suggested: { category, label: mediaCategoryLabels[category], path: folderForMediaCategory(destinations.map(item => item.path), category) } });
     }
     if (path === '/api/discovery/grab' && req.method === 'POST') {
       return json(res, 200, await grabDiscoveryTorrent(await readJsonBody(req)));
@@ -13499,6 +13543,34 @@ const server = createServer(async (req, res) => {
       requireAdministrator(session);
       const requestId = Number(requestStatusMatch[1]);
       const status = requestStatusMatch[2];
+      if (status === 'approve') {
+        // Validation d'une demande : destination choisie par l'administrateur, sinon
+        // dossier de la catégorie (animés, séries, films d'animation, films).
+        const body = await readJsonBody(req).catch(() => ({}));
+        const current = await jellyseerr(`/api/v1/request/${requestId}`);
+        const mediaType = current?.type === 'tv' || current?.media?.mediaType === 'tv' ? 'tv' : 'movie';
+        const destinations = await jellyseerrDestinations(mediaType);
+        const server = destinations.servers.find(item => item.id === Number(body.serverId ?? current?.serverId))
+          || destinations.servers.find(item => item.isDefault) || destinations.servers[0];
+        if (server) {
+          const folders = server.rootFolders.map(folder => folder.path);
+          const rootFolder = folders.includes(String(body.rootFolder || ''))
+            ? String(body.rootFolder)
+            : folderForMediaCategory(folders, await mediaCategoryFor(mediaType, current?.media?.tmdbId), current?.rootFolder || server.defaultRootFolder);
+          const profileId = server.profiles.some(profile => profile.id === Number(body.profileId)) ? Number(body.profileId)
+            : server.profiles.some(profile => profile.id === Number(current?.profileId)) ? Number(current.profileId) : server.defaultProfileId;
+          await jellyseerr(`/api/v1/request/${requestId}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              mediaType,
+              serverId: server.id,
+              profileId,
+              rootFolder,
+              ...(mediaType === 'tv' ? { seasons: (current?.seasons || []).map(season => Number(season.seasonNumber)).filter(Number.isInteger) } : {})
+            })
+          });
+        }
+      }
       const result = await jellyseerr(`/api/v1/request/${requestId}/${status}`, { method: 'POST' });
       return json(res, 200, { ok: true, request: result });
     }
@@ -13531,7 +13603,16 @@ const server = createServer(async (req, res) => {
       const requestPolicy = mediaType === 'tv' && mediaId
         ? await seriesRequestPolicyFor(mediaId)
         : { status: null, forceAutomatic: false, completed: false, reason: null };
-      if (session.isAdmin) return json(res, 200, { ...destinations, requestPolicy });
+      const category = mediaId ? await mediaCategoryFor(mediaType, mediaId) : (mediaType === 'tv' ? 'series' : 'films');
+      const suggestedServer = destinations.servers.find(server => server.isDefault) || destinations.servers[0];
+      const suggested = suggestedServer ? {
+        category,
+        label: mediaCategoryLabels[category],
+        serverId: suggestedServer.id,
+        profileId: suggestedServer.defaultProfileId,
+        rootFolder: folderForMediaCategory(suggestedServer.rootFolders.map(folder => folder.path), category, suggestedServer.defaultRootFolder)
+      } : null;
+      if (session.isAdmin) return json(res, 200, { ...destinations, requestPolicy, suggested });
       return json(res, 200, {
         ...destinations,
         requestPolicy,
@@ -13610,9 +13691,10 @@ const server = createServer(async (req, res) => {
         ? requestedProfileId
         : selectedServer.defaultProfileId;
       const requestedRootFolder = String(body.rootFolder || '').trim();
+      // Sans choix de l'administrateur : dossier de la catégorie (animés, séries, films d'animation, films).
       const rootFolder = session.isAdmin && selectedServer.rootFolders.some(folder => folder.path === requestedRootFolder)
         ? requestedRootFolder
-        : selectedServer.defaultRootFolder;
+        : folderForMediaCategory(selectedServer.rootFolders.map(folder => folder.path), await mediaCategoryFor(mediaType, mediaId), selectedServer.defaultRootFolder);
       if (!selectedServer.profiles.some(profile => profile.id === profileId)) {
         throw new HttpError(409, `Aucun profil qualité valide n’est disponible sur ${selectedServer.name}.`);
       }

@@ -294,6 +294,26 @@ object LiveServerFactory {
         }
     }
 
+    private val liveWatchEmbedPath = Regex("^/embed/(?:(daddy|north|frame)/)?([A-Za-z0-9._:-]+)/?$", RegexOption.IGNORE_CASE)
+
+    /** Variantes LiveWatch d'une chaîne VIP : flux VIP du serveur pour chacune (/api/tv/livewatch/hls/<famille>/<id>), relais automatiques entre elles. */
+    private fun liveWatchVipVariants(raw: JsonMap, prefix: String, provider: String, resolver: String): List<LiveServer> {
+        // Lecteur de la chaîne elle-même en plus de ses variantes publiées.
+        val variants = raw["liveWatchVariants"].asMaps() + listOf(mapOf("embedUrl" to raw.str("vipFallbackUrl"), "label" to "direct"))
+        val used = mutableSetOf<String>()
+        return variants.take(13).mapIndexedNotNull { index, variant ->
+            val page = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstOrNull() ?: return@mapIndexedNotNull null
+            val url = page.toHttpUrlOrNull() ?: return@mapIndexedNotNull null
+            if (!url.host.lowercase().endsWith("livewatch.top")) return@mapIndexedNotNull null
+            val match = liveWatchEmbedPath.find(url.encodedPath) ?: return@mapIndexedNotNull null
+            val kind = match.groupValues[1].lowercase().ifEmpty { "main" }
+            val id = match.groupValues[2]
+            if (!used.add("$kind/$id")) return@mapIndexedNotNull null
+            val stream = Session.noctraURL("/api/tv/livewatch/hls/$kind/$id") ?: return@mapIndexedNotNull null
+            LiveServer(label = "$prefix · ${variant.str("label") ?: "serveur ${index + 1}"} · VIP", provider = provider, kind = LiveServer.Kind.native, streamURL = stream, vip = true, renewURL = resolver)
+        }
+    }
+
     /** Sources LiveWatch à lecteur officiel (comme sur PC et Noctra TV). */
     private val liveWatchOfficial = setOf("livewatch-north", "livewatch-frame", "livewatch-sports", "livewatch-football", "livewatch-bosstv", "livewatch-jacktv", "livewatch-daily")
     private val variantSuffix = Regex("\\.([A-Za-z0-9]{1,3})\\s*$")
@@ -360,8 +380,9 @@ object LiveServerFactory {
         if (pageUrl != null && pageUrl !in used) {
             val manual = list.isNotEmpty()
             list += framedPage(prefix + if (manual) " · lecteur du site" else " · lecteur web", provider, pageUrl, vip, raw).copy(fallback = manual, manualOnly = manual)
-            // VIP : chaque variante arrive du résolveur en flux VIP (comme sur PC), pas en page publique.
-            if (!(vip && resolver != null)) list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
+            // VIP : chaque variante en flux VIP du serveur (comme sur PC), pas en page publique.
+            if (vip && resolver != null) list += liveWatchVipVariants(raw, prefix, provider, resolver)
+            else list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
         }
         return list
     }

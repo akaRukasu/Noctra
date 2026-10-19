@@ -141,6 +141,7 @@ struct SeerrSheet: View {
     @State private var note: String?
     @State private var requested = false
     @State private var opened: ItemRoute?
+    @State private var choosing = false
 
     var body: some View {
         NavigationStack {
@@ -168,7 +169,8 @@ struct SeerrSheet: View {
                             }
                             if (item.status ?? 0) < 5 {
                                 Button {
-                                    Task { await request() }
+                                    // Administrateur : choix du dossier (catégorie détectée proposée d'abord).
+                                    if session.isAdmin { choosing = true } else { Task { await request(nil) } }
                                 } label: {
                                     HStack {
                                         if sending { ProgressView() }
@@ -209,16 +211,27 @@ struct SeerrSheet: View {
                 if let base = route.item { ItemDetailView(item: base) }
             }
             .sensoryFeedback(.success, trigger: requested)
+            .sheet(isPresented: $choosing) {
+                NavigationStack {
+                    RequestDestinationView(mediaType: item.mediaType, mediaId: item.id, title: item.title, confirm: "Demander") { destination in
+                        choosing = false
+                        Task { await request(destination) }
+                    }
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
     }
 
-    private func request() async {
+    private func request(_ destination: RequestDestination?) async {
         sending = true
         defer { sending = false }
         do {
-            _ = try await session.noctraSend("POST", "/api/jellyseerr/request", json: [
+            var body: [String: Any] = [
                 "mediaType": item.mediaType, "mediaId": item.id, "title": item.title, "year": item.year.flatMap { Int($0) }.map { $0 as Any } ?? NSNull()
-            ])
+            ]
+            if let destination { body.merge(destination.json) { _, new in new } }
+            _ = try await session.noctraSend("POST", "/api/jellyseerr/request", json: body)
             withAnimation(Theme.spring) { requested = true }
             note = "Demande envoyée. Elle apparaîtra dans « Mes demandes »."
         } catch {
@@ -306,12 +319,30 @@ struct DiscoverView: View {
     }
 }
 
+/// Ligne de « Mes demandes » (toutes les demandes pour un administrateur).
+struct RequestEntry: Identifiable {
+    let id: Int
+    let title: String
+    let poster: URL?
+    let label: String
+    let jellyfinId: String?
+    let mediaType: String
+    let tmdbId: Int?
+    let year: String?
+    let serviceId: Int?
+    let requestId: Int?
+    let pending: Bool
+    let requester: String?
+}
+
 /// Demandes : recherche Jellyseerr et suivi de « Mes demandes ».
 struct RequestsView: View {
     @Environment(Session.self) private var session
     @State private var query = ""
     @State private var results: [SeerrItem] = []
-    @State private var mine: [(title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?, serviceId: Int?)] = []
+    @State private var mine: [RequestEntry] = []
+    @State private var reviewing: RequestEntry?
+    @State private var reviewNote: String?
     @State private var quota: String?
     @State private var loading = true
     @State private var searching = false
@@ -346,12 +377,12 @@ struct RequestsView: View {
                     }
                     .padding(.horizontal, 20)
                     if loading { LoadingView() }
+                    if let reviewNote { Text(reviewNote).font(.footnote).foregroundStyle(Theme.accent).padding(.horizontal, 20) }
                     if !loading && mine.isEmpty {
                         MessageView(icon: "tray", text: "Aucune demande pour le moment. Cherchez un titre ci-dessus.")
                     }
                     LazyVStack(spacing: 12) {
-                        ForEach(mine.indices, id: \.self) { index in
-                            let entry = mine[index]
+                        ForEach(mine) { entry in
                             HStack(spacing: 14) {
                                 RemoteImage(url: entry.poster)
                                     .frame(width: 54, height: 81)
@@ -359,8 +390,19 @@ struct RequestsView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(entry.title).font(.headline).lineLimit(2)
                                     Text(entry.label).font(.caption.weight(.semibold)).foregroundStyle(entry.label == "Disponible" ? Theme.accent : .orange)
+                                    if session.isAdmin, let requester = entry.requester {
+                                        Text(requester).font(.caption2).foregroundStyle(Theme.muted)
+                                    }
                                 }
                                 Spacer()
+                                // Demande d'un utilisateur à valider : destination choisie (catégorie détectée proposée).
+                                if session.isAdmin, entry.pending, entry.requestId != nil, entry.tmdbId != nil {
+                                    Button { reviewing = entry } label: {
+                                        Image(systemName: "checkmark.seal.fill").padding(12)
+                                    }
+                                    .glassEffect(.regular.interactive(), in: Circle())
+                                    .accessibilityLabel("Valider la demande")
+                                }
                                 if session.isAdmin, let tmdb = entry.tmdbId, entry.label != "Disponible" {
                                     NavigationLink {
                                         ReleaseSearchHub(mediaType: entry.mediaType, tmdbId: tmdb, title: entry.title, year: entry.year, serviceId: entry.serviceId)
@@ -387,6 +429,15 @@ struct RequestsView: View {
         }
         .task { await loadMine() }
         .refreshable { await loadMine() }
+        .sheet(item: $reviewing) { entry in
+            NavigationStack {
+                RequestDestinationView(mediaType: entry.mediaType, mediaId: entry.tmdbId ?? 0, title: entry.title, confirm: "Approuver", requester: entry.requester,
+                                       onDecline: { Task { await review(entry, approve: false, destination: nil) } }) { destination in
+                    Task { await review(entry, approve: true, destination: destination) }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .task(id: query) {
             let term = query.trimmingCharacters(in: .whitespaces)
             guard term.count >= 2 else { results = []; return }
@@ -400,11 +451,24 @@ struct RequestsView: View {
         }
     }
 
+    /// Validation (avec destination) ou refus d'une demande d'utilisateur.
+    private func review(_ entry: RequestEntry, approve: Bool, destination: RequestDestination?) async {
+        reviewing = nil
+        guard let id = entry.requestId else { return }
+        do {
+            _ = try await session.noctraSend("POST", "/api/jellyseerr/request/\(id)/\(approve ? "approve" : "decline")", json: destination?.json ?? [String: Any](), timeout: 60)
+            reviewNote = approve ? "« \(entry.title) » approuvée." : "« \(entry.title) » refusée."
+        } catch {
+            reviewNote = error.localizedDescription
+        }
+        await loadMine()
+    }
+
     private func loadMine() async {
         defer { loading = false }
         guard let json = try? await session.noctraJSON("/api/jellyseerr/requests") as? [String: Any] else { return }
         let labels = [1: "En attente", 2: "Approuvée", 3: "Refusée"]
-        mine = ((json["results"] as? [[String: Any]]) ?? []).prefix(40).map { request -> (title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?, serviceId: Int?) in
+        mine = ((json["results"] as? [[String: Any]]) ?? []).prefix(60).enumerated().map { index, request -> RequestEntry in
             let media = (request["media"] as? [String: Any]) ?? [:]
             let available = (media["status"] as? Int) == 5
             let title = (request["displayTitle"] as? String) ?? (media["title"] as? String) ?? (media["name"] as? String) ?? "Demande"
@@ -414,7 +478,10 @@ struct RequestsView: View {
             let tmdb = (media["tmdbId"] as? Int) ?? (media["tmdbId"] as? String).flatMap { Int($0) }
             let date = (request["releaseDate"] as? String) ?? ""
             let service = (request["resolvedServiceId"] as? Int) ?? (media["externalServiceId"] as? Int)
-            return (title, poster, label, media["jellyfinMediaId"] as? String, type, tmdb, date.count >= 4 ? String(date.prefix(4)) : nil, service)
+            let requester = (request["requestedBy"] as? [String: Any]).flatMap { ($0["displayName"] as? String) ?? ($0["username"] as? String) ?? ($0["jellyfinUsername"] as? String) }
+            return RequestEntry(id: (request["id"] as? Int) ?? -(index + 1), title: title, poster: poster, label: label, jellyfinId: media["jellyfinMediaId"] as? String,
+                                mediaType: type, tmdbId: tmdb, year: date.count >= 4 ? String(date.prefix(4)) : nil, serviceId: service,
+                                requestId: request["id"] as? Int, pending: !available && (request["status"] as? Int) == 1, requester: requester)
         }
         if let quota = json["quota"] as? [String: Any], (quota["enforced"] as? Bool) == true, let remaining = quota["remaining"] as? Int {
             self.quota = "\(remaining) demande\(remaining > 1 ? "s" : "") possible\(remaining > 1 ? "s" : "")"
@@ -613,5 +680,114 @@ struct RouletteView: View {
         try? await Task.sleep(for: .milliseconds(700))
         withAnimation(.spring(response: 0.55, dampingFraction: 0.7)) { revealed = true }
         rolling = false
+    }
+}
+
+// MARK: Destination d'une demande (administrateurs)
+
+/// Serveur Radarr/Sonarr, dossier et profil qualité d'une demande.
+struct RequestDestination {
+    let serverId: Int
+    let profileId: Int
+    let rootFolder: String
+    let manual: Bool
+
+    var json: [String: Any] {
+        ["serverId": serverId, "profileId": profileId, "rootFolder": rootFolder, "selectionMode": manual ? "manual" : "auto"]
+    }
+}
+
+/// Choix du dossier de destination : la catégorie détectée par le serveur (animés,
+/// séries, films d'animation, films) est proposée d'abord.
+struct RequestDestinationView: View {
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let mediaType: String
+    let mediaId: Int
+    let title: String
+    let confirm: String
+    var requester: String?
+    var onDecline: (() -> Void)?
+    let onConfirm: (RequestDestination) -> Void
+    @State private var servers: [[String: Any]] = []
+    @State private var serverId = -1
+    @State private var rootFolder = ""
+    @State private var profileId = 0
+    @State private var category: String?
+    @State private var loading = true
+    @State private var failed: String?
+
+    private var server: [String: Any]? { servers.first { $0["id"] as? Int == serverId } }
+    private var folders: [String] { (server?["rootFolders"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String } }
+    private var profiles: [(Int, String)] { (server?["profiles"] as? [[String: Any]] ?? []).compactMap { entry in (entry["id"] as? Int).map { ($0, entry["name"] as? String ?? "Profil \($0)") } } }
+
+    var body: some View {
+        List {
+            Section {
+                Text(title).font(.headline)
+                if let requester { Text("Demandé par \(requester)").font(.caption).foregroundStyle(Theme.muted) }
+                if let category { Label("Catégorie détectée : \(category)", systemImage: "sparkles").font(.footnote).foregroundStyle(Theme.accent) }
+                if loading { ProgressView() }
+                if let failed { Text(failed).foregroundStyle(.orange) }
+            }
+            if !servers.isEmpty {
+                Section("Destination") {
+                    if servers.count > 1 {
+                        Picker("Serveur", selection: $serverId) {
+                            ForEach(servers.indices, id: \.self) { index in
+                                Text(servers[index]["name"] as? String ?? "Serveur").tag(servers[index]["id"] as? Int ?? -1)
+                            }
+                        }
+                    }
+                    Picker("Dossier", selection: $rootFolder) {
+                        ForEach(folders, id: \.self) { path in
+                            Text(path.split(separator: "/").last.map(String.init) ?? path).tag(path)
+                        }
+                    }
+                    Text(rootFolder).font(.system(.caption2, design: .monospaced)).foregroundStyle(Theme.muted)
+                    if profiles.count > 1 {
+                        Picker("Qualité", selection: $profileId) {
+                            ForEach(profiles.indices, id: \.self) { index in Text(profiles[index].1).tag(profiles[index].0) }
+                        }
+                    }
+                }
+                Section {
+                    Button {
+                        onConfirm(RequestDestination(serverId: serverId, profileId: profileId, rootFolder: rootFolder, manual: server?["preventSearch"] as? Bool == true))
+                    } label: {
+                        Label(confirm, systemImage: "checkmark.circle.fill").frame(maxWidth: .infinity)
+                    }
+                    .disabled(rootFolder.isEmpty)
+                    if let onDecline {
+                        Button(role: .destructive) { onDecline() } label: { Label("Refuser la demande", systemImage: "xmark.circle").frame(maxWidth: .infinity) }
+                    }
+                }
+            }
+        }
+        .navigationTitle(mediaType == "tv" ? "Destination de la série" : "Destination du film")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } } }
+        .onChange(of: serverId) { _, _ in
+            if !folders.contains(rootFolder) { rootFolder = server?["defaultRootFolder"] as? String ?? folders.first ?? "" }
+            if !profiles.contains(where: { $0.0 == profileId }) { profileId = server?["defaultProfileId"] as? Int ?? profiles.first?.0 ?? 0 }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        defer { loading = false }
+        do {
+            let json = try await session.noctraJSON("/api/jellyseerr/destinations?mediaType=\(mediaType)&mediaId=\(mediaId)", timeout: 30) as? [String: Any]
+            servers = json?["servers"] as? [[String: Any]] ?? []
+            let suggested = json?["suggested"] as? [String: Any]
+            category = suggested?["label"] as? String
+            let fallback = servers.first { $0["isDefault"] as? Bool == true } ?? servers.first
+            serverId = suggested?["serverId"] as? Int ?? fallback?["id"] as? Int ?? -1
+            rootFolder = suggested?["rootFolder"] as? String ?? server?["defaultRootFolder"] as? String ?? folders.first ?? ""
+            profileId = suggested?["profileId"] as? Int ?? server?["defaultProfileId"] as? Int ?? profiles.first?.0 ?? 0
+            if servers.isEmpty { failed = "Aucune destination \(mediaType == "tv" ? "Sonarr" : "Radarr") disponible dans Jellyseerr." }
+        } catch {
+            failed = error.localizedDescription
+        }
     }
 }

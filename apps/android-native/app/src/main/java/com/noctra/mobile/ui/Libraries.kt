@@ -71,6 +71,7 @@ import com.noctra.mobile.core.Fields
 import com.noctra.mobile.core.Json
 import com.noctra.mobile.core.LibraryRoute
 import com.noctra.mobile.core.NoctraException
+import com.noctra.mobile.core.Prefs
 import com.noctra.mobile.core.Session
 import com.noctra.mobile.core.asMap
 import com.noctra.mobile.core.int
@@ -191,7 +192,9 @@ class LibraryGridModel(val library: LibraryRoute) {
     var items by mutableStateOf<List<BaseItem>>(emptyList())
     var total = Int.MAX_VALUE
     var loading by mutableStateOf(false)
-    var sort by mutableStateOf(LibrarySort.Added)
+    /** Tri choisi gardé pour le compte connecté sur cet appareil (par médiathèque). */
+    private val sortKey = "noctra.sort.${Session.userId ?: "anonyme"}.${library.id}"
+    var sort by mutableStateOf(Prefs.string(sortKey)?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } } ?: LibrarySort.Added)
 
     suspend fun loadMore() {
         if (loading || items.size >= total) return
@@ -213,6 +216,7 @@ class LibraryGridModel(val library: LibraryRoute) {
 
     suspend fun resort(value: LibrarySort) {
         sort = value
+        Prefs.set(sortKey, value.name)
         items = emptyList()
         total = Int.MAX_VALUE
         loadMore()

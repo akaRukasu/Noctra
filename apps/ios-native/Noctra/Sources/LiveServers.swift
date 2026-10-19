@@ -342,6 +342,30 @@ enum LiveServerFactory {
         return list
     }
 
+    /// Variantes LiveWatch d'une chaîne VIP : flux VIP du serveur pour chacune
+    /// (/api/tv/livewatch/hls/<famille>/<id>), relais automatiques entre elles.
+    private static func liveWatchVipVariants(_ raw: [String: Any], prefix: String, provider: String, resolver: String, session: Session) -> [LiveServer] {
+        // Lecteur de la chaîne elle-même en plus de ses variantes publiées.
+        let variants = ((raw["liveWatchVariants"] as? [[String: Any]]) ?? []) + [["embedUrl": raw["vipFallbackUrl"] ?? "", "label": "direct"]]
+        var used: Set<String> = []
+        var list: [LiveServer] = []
+        for (index, variant) in variants.prefix(12).enumerated() {
+            guard let page = [variant["embedUrl"], variant["externalUrl"]].compactMap({ $0 as? String }).first(where: { !$0.isEmpty }),
+                  let url = URL(string: page), url.host?.lowercased().hasSuffix("livewatch.top") == true,
+                  let match = url.path.range(of: "^/embed/((daddy|north|frame)/)?[A-Za-z0-9._:-]+/?$", options: .regularExpression) else { continue }
+            let parts = url.path[match].split(separator: "/").map(String.init)
+            let kind = parts.count == 3 ? parts[1].lowercased() : "main"
+            let id = parts.last ?? ""
+            guard !id.isEmpty, used.insert("\(kind)/\(id)").inserted,
+                  let stream = session.noctraURL("/api/tv/livewatch/hls/\(kind)/\(id)") else { continue }
+            let name = (variant["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "serveur \(index + 1)"
+            var server = LiveServer(label: prefix + " · " + name + " · VIP", provider: provider, kind: .native, streamURL: stream, vip: true)
+            server.renewURL = resolver
+            list.append(server)
+        }
+        return list
+    }
+
     /// Sources LiveWatch à lecteur officiel (comme sur PC et Noctra TV).
     private static let liveWatchOfficial: Set<String> = ["livewatch-north", "livewatch-frame", "livewatch-sports", "livewatch-football", "livewatch-bosstv", "livewatch-jacktv", "livewatch-daily"]
 
@@ -409,8 +433,10 @@ enum LiveServerFactory {
             server.fallback = !list.isEmpty
             server.manualOnly = !list.isEmpty
             list.append(server)
-            // VIP : chaque variante arrive du résolveur en flux VIP (comme sur PC), pas en page publique.
-            if !(vip && resolver != nil) {
+            // VIP : chaque variante en flux VIP du serveur (comme sur PC), pas en page publique.
+            if vip, let resolver {
+                list += liveWatchVipVariants(raw, prefix: prefix, provider: provider, resolver: resolver, session: session)
+            } else {
                 list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: [url.absoluteString], session: session).map { variant in
                     var copy = variant
                     copy.manualOnly = server.manualOnly

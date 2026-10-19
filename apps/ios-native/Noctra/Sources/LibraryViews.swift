@@ -114,7 +114,21 @@ struct LibraryGridView: View {
     @State private var items: [BaseItem] = []
     @State private var total = Int.max
     @State private var loading = false
-    @State private var sort: Sort = .added
+    @State private var sort: Sort
+
+    init(library: LibraryRoute) {
+        self.library = library
+        _sort = State(initialValue: Self.savedSort(library.id))
+    }
+
+    /// Tri choisi gardé pour le compte connecté sur cet appareil (par médiathèque).
+    private static func sortKey(_ library: String) -> String {
+        "noctra.sort.\(UserDefaults.standard.string(forKey: "noctra.userId") ?? "anonyme").\(library)"
+    }
+
+    private static func savedSort(_ library: String) -> Sort {
+        UserDefaults.standard.string(forKey: sortKey(library)).flatMap(Sort.init(rawValue:)) ?? .added
+    }
 
     enum Sort: String, CaseIterable, Identifiable {
         case added, name, year, rating
@@ -163,6 +177,7 @@ struct LibraryGridView: View {
             }
         }
         .onChange(of: sort) {
+            UserDefaults.standard.set(sort.rawValue, forKey: Self.sortKey(library.id))
             items = []
             total = Int.max
             Task { await loadMore() }

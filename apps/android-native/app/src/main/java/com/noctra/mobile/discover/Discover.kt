@@ -121,6 +121,9 @@ import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material3.TextButton
+import com.noctra.mobile.admin.ChoiceLine
 
 /** Titre proposé par Jellyseerr / TMDB (Découvrir, Demandes). */
 data class SeerrItem(
@@ -220,7 +223,28 @@ fun SeerrSheet(item: SeerrItem, onDismiss: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var requested by remember { mutableStateOf(false) }
+    var choosing by remember { mutableStateOf(false) }
     val status = item.status ?: 0
+    fun send(destination: RequestDestination?) {
+        sending = true
+        scope.launch {
+            try {
+                Session.noctraSend("POST", "/api/jellyseerr/request", mapOf("mediaType" to item.mediaType, "mediaId" to item.id, "title" to item.title, "year" to item.year?.toIntOrNull()) + (destination?.json() ?: emptyMap()))
+                requested = true
+                note = "Demande envoyée. Elle apparaîtra dans « Mes demandes »."
+            } catch (failure: Exception) {
+                note = failure.message
+            } finally {
+                sending = false
+            }
+        }
+    }
+    if (choosing) {
+        RequestDestinationDialog(item.mediaType, item.id, item.title, "Demander", onDismiss = { choosing = false }) { destination ->
+            choosing = false
+            send(destination)
+        }
+    }
     NoctraSheet(onDismiss) {
         SheetColumn(item.title) {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -240,20 +264,8 @@ fun SeerrSheet(item: SeerrItem, onDismiss: () -> Unit) {
                     }
                 }
                 if (status < 5) {
-                    AuroraSecondaryButton(onClick = {
-                        sending = true
-                        scope.launch {
-                            try {
-                                Session.noctraSend("POST", "/api/jellyseerr/request", mapOf("mediaType" to item.mediaType, "mediaId" to item.id, "title" to item.title, "year" to item.year?.toIntOrNull()))
-                                requested = true
-                                note = "Demande envoyée. Elle apparaîtra dans « Mes demandes »."
-                            } catch (failure: Exception) {
-                                note = failure.message
-                            } finally {
-                                sending = false
-                            }
-                        }
-                    }, enabled = !sending && !requested && status < 2, modifier = Modifier.fillMaxWidth()) {
+                    // Administrateur : choix du dossier (catégorie détectée proposée d'abord).
+                    AuroraSecondaryButton(onClick = { if (Session.isAdmin) choosing = true else send(null) }, enabled = !sending && !requested && status < 2, modifier = Modifier.fillMaxWidth()) {
                         if (sending) CircularProgressIndicator(color = Theme.ink, strokeWidth = 2.dp, modifier = Modifier.size(16.dp)) else Icon(Icons.Filled.AddCircle, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (requested || status >= 2) "Déjà demandé" else "Demander")
@@ -364,7 +376,10 @@ private fun Pill(title: String, selected: Boolean, action: () -> Unit) {
 
 // MARK: Demandes
 
-private data class Request(val title: String, val poster: String?, val label: String, val jellyfinId: String?, val mediaType: String, val tmdbId: Int?, val year: String?, val serviceId: Int?)
+private data class Request(
+    val title: String, val poster: String?, val label: String, val jellyfinId: String?, val mediaType: String, val tmdbId: Int?, val year: String?, val serviceId: Int?,
+    val requestId: Int? = null, val pending: Boolean = false, val requester: String? = null
+)
 
 private class RequestsModel {
     var query by mutableStateOf("")
@@ -373,12 +388,27 @@ private class RequestsModel {
     var quota by mutableStateOf<String?>(null)
     var loading by mutableStateOf(true)
     var searching by mutableStateOf(false)
+    var reviewing by mutableStateOf<Request?>(null)
+    var reviewNote by mutableStateOf<String?>(null)
+
+    /** Validation (avec destination) ou refus d'une demande d'utilisateur. */
+    suspend fun review(entry: Request, approve: Boolean, destination: RequestDestination?) {
+        reviewing = null
+        val id = entry.requestId ?: return
+        reviewNote = try {
+            Session.noctraSend("POST", "/api/jellyseerr/request/$id/${if (approve) "approve" else "decline"}", destination?.json() ?: emptyMap<String, Any>(), 60.0)
+            if (approve) "« ${entry.title} » approuvée." else "« ${entry.title} » refusée."
+        } catch (failure: Exception) {
+            failure.message
+        }
+        loadMine()
+    }
 
     suspend fun loadMine() {
         try {
             val json = runCatching { Session.noctraJSON("/api/jellyseerr/requests").asMap() }.getOrNull() ?: return
             val labels = mapOf(1 to "En attente", 2 to "Approuvée", 3 to "Refusée")
-            mine = json.maps("results").take(40).map { request ->
+            mine = json.maps("results").take(60).map { request ->
                 val media = request.map("media") ?: emptyMap()
                 val available = media.int("status") == 5
                 val date = request.str("releaseDate") ?: ""
@@ -388,7 +418,9 @@ private class RequestsModel {
                     if (available) "Disponible" else labels[request.int("status") ?: 0] ?: "Enregistrée",
                     media.str("jellyfinMediaId"), if (request.str("mediaType") == "tv") "tv" else "movie", media.int("tmdbId"),
                     date.takeIf { it.length >= 4 }?.take(4),
-                    request.int("resolvedServiceId") ?: media.int("externalServiceId")
+                    request.int("resolvedServiceId") ?: media.int("externalServiceId"),
+                    request.int("id"), !available && request.int("status") == 1,
+                    request.map("requestedBy")?.let { it.str("displayName") ?: it.str("username") ?: it.str("jellyfinUsername") }
                 )
             }
             val quota = json.map("quota")
@@ -434,6 +466,7 @@ private fun RequestsView() {
                     }
                 }
                 if (model.loading) item(span = full) { LoadingView() }
+                model.reviewNote?.let { text -> item(span = full) { Text(text, color = Theme.accent, fontSize = 13.sp) } }
                 if (!model.loading && model.mine.isEmpty()) item(span = full) { MessageView(Icons.Filled.Inbox, "Aucune demande pour le moment. Cherchez un titre ci-dessus.") }
                 itemsIndexed(model.mine, span = { _, _ -> GridItemSpan(maxLineSpan) }) { _, entry ->
                     Row(
@@ -444,6 +477,11 @@ private fun RequestsView() {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(entry.title, color = Theme.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(entry.label, color = if (entry.label == "Disponible") Theme.accent else Theme.orange, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            if (Session.isAdmin) entry.requester?.let { Text(it, color = Theme.muted, fontSize = 11.sp) }
+                        }
+                        // Demande d'un utilisateur à valider : destination choisie (catégorie détectée proposée).
+                        if (Session.isAdmin && entry.pending && entry.requestId != null && entry.tmdbId != null) {
+                            RoundAction(Icons.Filled.Verified, "Valider la demande") { model.reviewing = entry }
                         }
                         val tmdb = entry.tmdbId
                         if (Session.isAdmin && tmdb != null && entry.label != "Disponible") {
@@ -456,6 +494,12 @@ private fun RequestsView() {
         }
     }
     selected?.let { item -> SeerrSheet(item) { selected = null } }
+    model.reviewing?.let { entry ->
+        RequestDestinationDialog(entry.mediaType, entry.tmdbId ?: 0, entry.title, "Approuver", entry.requester,
+            onDecline = { scope.launch { model.review(entry, false, null) } }, onDismiss = { model.reviewing = null }) { destination ->
+            scope.launch { model.review(entry, true, destination) }
+        }
+    }
 }
 
 @Composable
@@ -642,4 +686,78 @@ private fun Choice(icon: ImageVector, title: String, options: List<Pair<String, 
             }
         }
     }
+}
+
+// MARK: Destination d'une demande (administrateurs)
+
+/** Serveur Radarr/Sonarr, dossier et profil qualité d'une demande. */
+data class RequestDestination(val serverId: Int, val profileId: Int, val rootFolder: String, val manual: Boolean) {
+    fun json(): Map<String, Any> = mapOf("serverId" to serverId, "profileId" to profileId, "rootFolder" to rootFolder, "selectionMode" to if (manual) "manual" else "auto")
+}
+
+/** Choix du dossier de destination : la catégorie détectée par le serveur (animés, séries, films d'animation, films) est proposée d'abord. */
+@Composable
+fun RequestDestinationDialog(
+    mediaType: String, mediaId: Int, title: String, confirm: String, requester: String? = null,
+    onDecline: (() -> Unit)? = null, onDismiss: () -> Unit, onConfirm: (RequestDestination) -> Unit
+) {
+    var servers by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
+    var serverId by remember { mutableStateOf(-1) }
+    var rootFolder by remember { mutableStateOf("") }
+    var profileId by remember { mutableStateOf(0) }
+    var category by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    val server = servers.firstOrNull { it.int("id") == serverId }
+    val folders = server?.maps("rootFolders")?.mapNotNull { it.str("path") } ?: emptyList()
+    val profiles = server?.maps("profiles")?.mapNotNull { entry -> entry.int("id")?.let { it to (entry.str("name") ?: "Profil $it") } } ?: emptyList()
+    LaunchedEffect(mediaId) {
+        try {
+            val json = Session.noctraJSON("/api/jellyseerr/destinations?mediaType=$mediaType&mediaId=$mediaId", 30.0).asMap()
+            servers = json?.maps("servers") ?: emptyList()
+            val suggested = json?.map("suggested")
+            category = suggested?.str("label")
+            val fallback = servers.firstOrNull { it.flag("isDefault") } ?: servers.firstOrNull()
+            serverId = suggested?.int("serverId") ?: fallback?.int("id") ?: -1
+            val chosen = servers.firstOrNull { it.int("id") == serverId }
+            rootFolder = suggested?.str("rootFolder") ?: chosen?.str("defaultRootFolder") ?: ""
+            profileId = suggested?.int("profileId") ?: chosen?.int("defaultProfileId") ?: 0
+            if (servers.isEmpty()) failed = "Aucune destination ${if (mediaType == "tv") "Sonarr" else "Radarr"} disponible dans Jellyseerr."
+        } catch (failure: Exception) {
+            failed = failure.message
+        } finally {
+            loading = false
+        }
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss, containerColor = Color(0xFF151932),
+        title = { Text(if (mediaType == "tv") "Destination de la série" else "Destination du film", color = Theme.ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, color = Theme.ink, fontWeight = FontWeight.SemiBold)
+                requester?.let { Text("Demandé par $it", color = Theme.muted, fontSize = 12.sp) }
+                category?.let { Text("Catégorie détectée : $it", color = Theme.accent, fontSize = 13.sp) }
+                if (loading) CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                failed?.let { Text(it, color = Theme.orange, fontSize = 13.sp) }
+                if (servers.size > 1) ChoiceLine("Serveur", servers.mapNotNull { entry -> entry.int("id")?.let { it to (entry.str("name") ?: "Serveur") } }, serverId) { value ->
+                    serverId = value
+                    val chosen = servers.firstOrNull { it.int("id") == value }
+                    rootFolder = chosen?.str("defaultRootFolder") ?: ""
+                    profileId = chosen?.int("defaultProfileId") ?: 0
+                }
+                if (folders.isNotEmpty()) ChoiceLine("Dossier", folders.map { it to (it.split('/').lastOrNull { part -> part.isNotEmpty() } ?: it) }, rootFolder) { rootFolder = it }
+                if (rootFolder.isNotEmpty()) Text(rootFolder, color = Theme.muted, fontSize = 11.sp)
+                if (profiles.size > 1) ChoiceLine("Qualité", profiles, profileId) { profileId = it }
+            }
+        },
+        confirmButton = {
+            Row {
+                onDecline?.let { decline -> TextButton(onClick = { onDismiss(); decline() }) { Text("Refuser", color = Theme.red) } }
+                TextButton(onClick = { onConfirm(RequestDestination(serverId, profileId, rootFolder, server?.flag("preventSearch") == true)) }, enabled = rootFolder.isNotEmpty() && serverId >= 0) {
+                    Text(confirm, color = Theme.accent)
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler", color = Theme.muted) } }
+    )
 }

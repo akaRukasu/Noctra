@@ -119,3 +119,10 @@ assert.match(await src('ui/SeriesStatus'), /\/api\/library\/series-status/);
 assert.match(await src('ui/Components'), /SeriesStatusBadge\(item\.id/);
 assert.match(await src('ui/Libraries'), /FileExplorerScreen\(\)/);
 console.log('Appli Android native 1.3 : vérifiée.');
+// 1.4 : variantes VIP, trackers patients, tri par compte, destination des demandes.
+assert.match(await src('live/LiveServers'), /fun liveWatchVipVariants/);
+assert.match(await src('admin/Arr'), /patient=1/);
+assert.match(await src('ui/Libraries'), /noctra\.sort\./);
+assert.match(await src('discover/Discover'), /fun RequestDestinationDialog/);
+assert.match(await src('discover/Discover'), /if \(approve\) "approve" else "decline"/);
+console.log('Appli Android native 1.4 : vérifiée.');

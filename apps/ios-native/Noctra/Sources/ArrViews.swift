@@ -547,7 +547,7 @@ struct InteractiveSearchView: View {
     @State private var warnings: [String] = []
     @State private var loading = true
     @State private var failed: String?
-    @State private var sort: ReleaseSort = .best
+    @State private var sort: ReleaseSort = .saved
     @State private var grabbing: String?
     @State private var grabbed: Set<String> = []
     @State private var confirm: Pick?
@@ -606,6 +606,7 @@ struct InteractiveSearchView: View {
         .scrollContentBackground(.hidden)
         .background(AuroraBackground(palette: .requests))
         .navigationTitle(title)
+        .onChange(of: sort) { sort.save() }
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Télécharger cette release ?", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible, presenting: confirm) { pick in
             Button("Envoyer au client de téléchargement") { Task { await grab(pick) } }
@@ -670,6 +671,11 @@ struct InteractiveSearchView: View {
 enum ReleaseSort: String, CaseIterable, Identifiable {
     case best, seeders, size, age
     var id: String { rawValue }
+
+    /// Tri gardé pour le compte connecté sur cet appareil.
+    private static var key: String { "noctra.sort.\(UserDefaults.standard.string(forKey: "noctra.userId") ?? "anonyme").releases" }
+    static var saved: ReleaseSort { UserDefaults.standard.string(forKey: key).flatMap(ReleaseSort.init(rawValue:)) ?? .best }
+    func save() { UserDefaults.standard.set(rawValue, forKey: Self.key) }
     var label: String { ["Conseillé", "Sources", "Taille", "Récent"][Self.allCases.firstIndex(of: self) ?? 0] }
 
     static func number(_ value: Any?) -> Double { (value as? Double) ?? (value as? Int).map(Double.init) ?? (value as? Int64).map(Double.init) ?? 0 }
@@ -735,7 +741,7 @@ struct TrackerSearchView: View {
     @State private var destination = ""
     @State private var loading = true
     @State private var message: String?
-    @State private var sort: ReleaseSort = .best
+    @State private var sort: ReleaseSort = .saved
     @State private var grabbed: Set<String> = []
     @State private var grabbing: String?
 
@@ -770,6 +776,7 @@ struct TrackerSearchView: View {
         .scrollContentBackground(.hidden)
         .background(AuroraBackground(palette: .requests))
         .navigationTitle(title)
+        .onChange(of: sort) { sort.save() }
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load(force: true) }
         .task { await load(force: false) }
@@ -778,20 +785,26 @@ struct TrackerSearchView: View {
     private func load(force: Bool) async {
         loading = true
         defer { loading = false }
-        var path = "/api/media/detail?mediaType=\(mediaType)&id=\(tmdbId)&title=\(title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        // Tous les indexeurs, en laissant aux trackers lents jusqu'à une minute (mode « patient » du serveur).
+        let term = title.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? title
+        var path = "/api/discovery/availability?mediaType=\(mediaType)&tmdbId=\(tmdbId)&title=\(term)&limit=40&force=1&patient=1"
         if let year { path += "&year=\(year)" }
-        if force { path += "&forceTrackers=1" }
-        async let detail = try? session.noctraJSON(path, timeout: 90) as? [String: Any]
-        async let options = try? session.noctraJSON("/api/discovery/download-options", timeout: 20) as? [String: Any]
-        let (json, settings) = await (detail, options)
-        let availability = json?["availability"] as? [String: Any]
+        async let found = try? session.noctraJSON(path, timeout: 120) as? [String: Any]
+        async let options = try? session.noctraJSON("/api/discovery/download-options?mediaType=\(mediaType)&tmdbId=\(tmdbId)", timeout: 20) as? [String: Any]
+        let (availability, settings) = await (found, options)
         releases = availability?["releases"] as? [[String: Any]] ?? []
-        message = availability?["message"] as? String
+        message = availability == nil ? "Les trackers ne répondent pas : réessaie dans un instant." : availability?["message"] as? String
         destinations = (settings?["destinations"] as? [[String: Any]] ?? []).compactMap { entry -> (path: String, label: String)? in
             guard let path = entry["path"] as? String else { return nil }
             return (path: path, label: (entry["label"] as? String) ?? path)
         }
-        if destination.isEmpty { destination = destinations.first?.path ?? "" }
+        // Dossier de la catégorie (animés, séries, films d'animation, films), jamais Trash par défaut.
+        if destination.isEmpty {
+            let suggested = (settings?["suggested"] as? [String: Any])?["path"] as? String
+            destination = suggested.flatMap { path in destinations.contains { $0.path == path } ? path : nil }
+                ?? destinations.first { !$0.path.localizedCaseInsensitiveContains("trash") }?.path
+                ?? destinations.first?.path ?? ""
+        }
     }
 
     private func grab(_ release: [String: Any], key: String) async {

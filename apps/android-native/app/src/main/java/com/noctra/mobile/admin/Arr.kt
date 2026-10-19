@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.noctra.mobile.core.JsonMap
+import com.noctra.mobile.core.Prefs
 import com.noctra.mobile.core.Session
 import com.noctra.mobile.core.asMap
 import com.noctra.mobile.core.flag
@@ -462,6 +463,14 @@ private fun ArrAddSheet(kind: ArrKind, lookup: JsonMap, onDismiss: () -> Unit) {
 private enum class ReleaseSort(val label: String) {
     best("Conseillé"), seeders("Sources"), size("Taille"), age("Récent");
 
+    /** Tri gardé pour le compte connecté sur cet appareil. */
+    fun save() = Prefs.set(key(), name)
+
+    companion object {
+        private fun key() = "noctra.sort.${Session.userId ?: "anonyme"}.releases"
+        fun saved(): ReleaseSort = Prefs.string(key())?.let { saved -> entries.firstOrNull { it.name == saved } } ?: best
+    }
+
     fun apply(list: List<JsonMap>): List<JsonMap> = when (this) {
         best -> list
         seeders -> list.sortedByDescending { AdminFormat.number(it["seeders"]) }
@@ -516,7 +525,7 @@ fun InteractiveSearchScreen(kind: ArrKind, title: String, query: String) {
     var warnings by remember { mutableStateOf<List<String>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf<String?>(null) }
-    var sort by remember { mutableStateOf(ReleaseSort.best) }
+    var sort by remember { mutableStateOf(ReleaseSort.saved()) }
     var grabbing by remember { mutableStateOf<String?>(null) }
     var grabbed by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirm by remember { mutableStateOf<Pair<String, JsonMap>?>(null) }
@@ -561,7 +570,7 @@ fun InteractiveSearchScreen(kind: ArrKind, title: String, query: String) {
     LaunchedEffect(query) { load(false) }
     val shown = sort.apply(if (pack.isEmpty()) releases else releases.filter { it.str("packKind") == pack })
     AdminScaffold(title, AuroraPalette.requests, actions = { BarButton(Icons.Filled.Refresh, "Relancer la recherche") { scope.launch { load(true) } } }) {
-        item { SortPicker(sort) { sort = it } }
+        item { SortPicker(sort) { sort = it; it.save() } }
         // Série : intégrales (toutes saisons) ou packs de saisons complètes, comme sur le site.
         if (series) section { ChoiceLine("Type de pack", listOf("" to "Tout", "integral" to "Intégrales ($integrals)", "season" to "Saisons complètes ($seasonPacks)"), pack) { pack = it } }
         if (loading || running) item { LoadingLine(progress.ifEmpty { "Interrogation des indexeurs…" }) }
@@ -603,26 +612,31 @@ fun TrackerSearchScreen(mediaType: String, tmdbId: Int, title: String, year: Str
     var destination by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf<String?>(null) }
-    var sort by remember { mutableStateOf(ReleaseSort.best) }
+    var sort by remember { mutableStateOf(ReleaseSort.saved()) }
     var grabbed by remember { mutableStateOf<Set<String>>(emptySet()) }
     var grabbing by remember { mutableStateOf<String?>(null) }
     suspend fun load(force: Boolean) = coroutineScope {
         loading = true
-        var path = "/api/media/detail?mediaType=$mediaType&id=$tmdbId&title=${encode(title)}"
+        // Tous les indexeurs, en laissant aux trackers lents jusqu'à une minute (mode « patient » du serveur).
+        var path = "/api/discovery/availability?mediaType=$mediaType&tmdbId=$tmdbId&title=${encode(title)}&limit=40&force=1&patient=1"
         if (year != null) path += "&year=$year"
-        if (force) path += "&forceTrackers=1"
-        val detail = async { runCatching { Session.noctraJSON(path, 90.0).asMap() }.getOrNull() }
-        val options = async { runCatching { Session.noctraJSON("/api/discovery/download-options", 20.0).asMap() }.getOrNull() }
-        val availability = detail.await()?.map("availability")
+        val found = async { runCatching { Session.noctraJSON(path, 120.0).asMap() }.getOrNull() }
+        val options = async { runCatching { Session.noctraJSON("/api/discovery/download-options?mediaType=$mediaType&tmdbId=$tmdbId", 20.0).asMap() }.getOrNull() }
+        val availability = found.await()
         releases = availability?.maps("releases") ?: emptyList()
-        message = availability?.str("message")
-        destinations = options.await()?.maps("destinations")?.mapNotNull { entry -> entry.str("path")?.let { it to (entry.str("label") ?: it) } } ?: emptyList()
-        if (destination.isEmpty()) destination = destinations.firstOrNull()?.first ?: ""
+        message = if (availability == null) "Les trackers ne répondent pas : réessaie dans un instant." else availability.str("message")
+        val settings = options.await()
+        destinations = settings?.maps("destinations")?.mapNotNull { entry -> entry.str("path")?.let { it to (entry.str("label") ?: it) } } ?: emptyList()
+        // Dossier de la catégorie (animés, séries, films d'animation, films), jamais Trash par défaut.
+        if (destination.isEmpty()) {
+            val suggested = settings?.map("suggested")?.str("path")?.takeIf { path -> destinations.any { it.first == path } }
+            destination = suggested ?: destinations.firstOrNull { !it.first.contains("trash", ignoreCase = true) }?.first ?: destinations.firstOrNull()?.first ?: ""
+        }
         loading = false
     }
     LaunchedEffect(tmdbId) { load(false) }
     AdminScaffold(title, AuroraPalette.requests, actions = { BarButton(Icons.Filled.Refresh, "Relancer la recherche") { scope.launch { load(true) } } }) {
-        item { SortPicker(sort) { sort = it } }
+        item { SortPicker(sort) { sort = it; it.save() } }
         if (destinations.isNotEmpty()) section { ChoiceLine("Destination", destinations, destination) { destination = it } }
         if (loading) item { LoadingLine("Recherche sur les trackers…") }
         message?.let { text -> item { NoteLine(text, Theme.orange) } }
