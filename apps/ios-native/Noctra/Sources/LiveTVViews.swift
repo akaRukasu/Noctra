@@ -372,14 +372,21 @@ final class LiveLauncher {
         await withTaskGroup(of: (Int, [LiveServer]).self) { group in
             for (index, server) in initial.enumerated() {
                 group.addTask {
-                    guard server.kind == .resolve, !server.vip else { return (index, [server]) }
+                    // VIP LiveWatch : variantes de la chaîne listées tout de suite (flux VIP), sans attendre la vérification.
+                    if server.kind == .resolve, server.vip { return (index, [server] + (await LiveServerFactory.liveWatchVariants(of: server, session: session))) }
+                    guard server.kind == .resolve else { return (index, [server]) }
                     let found = await LiveServerFactory.resolve(server, session: session, timeout: 4)
                     return (index, found.isEmpty ? [server] : found)
                 }
             }
             var parts: [Int: [LiveServer]] = [:]
             for await (index, list) in group { parts[index] = list }
-            expanded = initial.indices.flatMap { parts[$0] ?? [] }
+            // Même flux proposé deux fois (variante du catalogue et variante du serveur) : une seule ligne.
+            var streams: Set<String> = []
+            expanded = initial.indices.flatMap { parts[$0] ?? [] }.filter { server in
+                guard let stream = server.streamURL?.absoluteString else { return true }
+                return streams.insert(stream).inserted
+            }
         }
         return LiveHealth.rank(LiveHealth.withCachedProbes(expanded, channel: channel.id), channel: channel.id)
     }

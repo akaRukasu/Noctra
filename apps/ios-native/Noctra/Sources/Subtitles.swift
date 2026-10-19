@@ -182,9 +182,9 @@ final class SubtitleOverlay {
     }
 }
 
-/// Bouton « Audio et sous-titres » posé sur le lecteur d'Apple : menu des pistes
-/// du titre (langues, sous-titres texte ou incrustés). Il apparaît avec les
-/// commandes (toucher l'image) et s'efface tout seul.
+/// Bouton rond « Audio et sous-titres » posé sur le lecteur d'Apple, sous le bouton
+/// du volume (hors de la barre du haut d'Apple : image dans l'image, AirPlay) : menu
+/// des pistes du titre. Il apparaît avec les commandes (toucher l'image) et s'efface tout seul.
 @MainActor
 final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
     private let button = UIButton(type: .system)

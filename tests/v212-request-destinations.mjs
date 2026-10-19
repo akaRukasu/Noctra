@@ -36,3 +36,8 @@ const quota = parseQuotaOutput('Disk quotas for user u (uid 1000):\n     Filesys
 assert.deepEqual(quota, { used: 1073741824, limit: 2147483648, free: 1073741824, filesystem: '/dev/md0' });
 assert.equal(parseQuotaOutput('quota: no limited resources'), null);
 console.log('Déplacements et stockage vérifiés.');
+
+// Variantes LiveWatch d'une chaîne, sans vérification (liste des serveurs des applis).
+assert.match(server, /path\.startsWith\('\/api\/tv\/livewatch\/variants\/'\)/);
+assert.ok(server.indexOf("'/api/tv/livewatch/variants/'") < server.indexOf("path.startsWith('/api/tv/livewatch/resolve/')"), 'route des variantes avant le résolveur');
+console.log('Variantes LiveWatch vérifiées.');

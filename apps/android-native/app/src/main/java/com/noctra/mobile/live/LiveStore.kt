@@ -331,10 +331,18 @@ object LiveLauncher {
         val initial = LiveServerFactory.servers(channel)
         val expanded = initial.map { server ->
             async {
-                if (server.kind != LiveServer.Kind.resolve || server.vip) listOf(server)
-                else LiveServerFactory.resolve(server, 4.0).ifEmpty { listOf(server) }
+                when {
+                    // VIP LiveWatch : variantes de la chaîne listées tout de suite (flux VIP), sans attendre la vérification.
+                    server.kind == LiveServer.Kind.resolve && server.vip -> listOf(server) + LiveServerFactory.liveWatchVariantsOf(server)
+                    server.kind != LiveServer.Kind.resolve -> listOf(server)
+                    else -> LiveServerFactory.resolve(server, 4.0).ifEmpty { listOf(server) }
+                }
             }
-        }.awaitAll().flatten()
+        }.awaitAll().flatten().let { list ->
+            // Même flux proposé deux fois (variante du catalogue et variante du serveur) : une seule ligne.
+            val streams = mutableSetOf<String>()
+            list.filter { server -> server.streamURL?.let { streams.add(it) } ?: true }
+        }
         LiveHealth.rank(LiveHealth.withCachedProbes(expanded, channel.id), channel.id)
     }
 

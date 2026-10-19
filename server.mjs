@@ -13238,6 +13238,39 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Variantes d'une chaîne VIP (même nom dans le catalogue LiveWatch, secours des autres
+    // familles), sans la vérification VIP : les applis les listent dès l'ouverture.
+    if (path.startsWith('/api/tv/livewatch/variants/') && req.method === 'GET') {
+      const parts = path.slice('/api/tv/livewatch/variants/'.length).split('/');
+      const safe = validLiveWatchChannelReference(parts.shift() || '', decodeURIComponent(parts.join('/')));
+      if (safe.kind === 'page') return json(res, 200, { variants: [] });
+      const name = requestUrl.searchParams.get('name') || '';
+      const country = requestUrl.searchParams.get('country') || '';
+      const source = requestUrl.searchParams.get('source') || '';
+      const selected = await liveWatchChannelVariants(safe.kind, safe.id, name, country, source).catch(() => []);
+      let timer;
+      const cross = await Promise.race([
+        liveWatchCrossFamilyVariants(safe.kind, safe.id, name, country, source, selected).catch(() => []),
+        new Promise(resolveCross => { timer = setTimeout(() => resolveCross([]), 12_000); })
+      ]).finally(() => clearTimeout(timer));
+      const seen = new Set();
+      const variants = [];
+      for (const variant of [...selected, ...(cross || [])]) {
+        try { validLiveWatchChannelReference(variant?.kind, variant?.id); } catch { continue; }
+        const key = `${variant.kind}:${variant.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        variants.push({
+          label: variant.crossFamily ? `Secours ${variant.familyLabel || liveWatchFamilyLabel(variant.kind)} · ${variant.label || 'direct'}` : (variant.label || 'Serveur principal'),
+          streamUrl: liveWatchStableHlsUrl(variant.kind, variant.id),
+          kind: variant.kind,
+          id: variant.id,
+          crossFamily: Boolean(variant.crossFamily)
+        });
+      }
+      return json(res, 200, { variants: variants.slice(0, 16) });
+    }
+
     if (path.startsWith('/api/tv/livewatch/resolve/') && req.method === 'GET') {
       const parts = path.slice('/api/tv/livewatch/resolve/'.length).split('/');
       const kind = parts.shift() || '';

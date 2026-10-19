@@ -199,7 +199,7 @@ function WebVttSeconds(value) {
 {
   const livePlayer = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
   const liveViews = await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift');
-  assert.match(liveViews, /guard server\.kind == \.resolve, !server\.vip else/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
+  assert.match(liveViews, /if server\.kind == \.resolve, server\.vip \{ return \(index, \[server\] \+/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
   assert.match(livePlayer, /server\.vip \? 30 : 20/, 'VIP : premier chargement du flux plus long');
   assert.match(livePlayer, /Lecteur VIP sans image : lecture directe du flux repéré/, 'flux repéré par le pont VIP lu par l’appli');
   assert.match(livePlayer, /noctraJSON\("\/api\/session", timeout: 10\)/, 'cookie de session renouvelé avant le VIP');
@@ -273,4 +273,13 @@ function WebVttSeconds(value) {
   assert.match(await src('ArrViews'), /\/api\/servarr\/move/);
   assert.match(await src('Components'), /StorageView\(\)/, 'stockage dans le compte (administrateurs)');
   console.log('Appli iOS native 2.13 : vérifiée.');
+}
+// 2.14 : variantes LiveWatch dans la liste des serveurs, bouton pistes du lecteur hors de la barre Apple.
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  assert.match(await src('LiveServers'), /static func liveWatchVariants\(of server: LiveServer, session: Session\)/);
+  assert.match(await src('LiveServers'), /\/api\/tv\/livewatch\/variants\//);
+  assert.match(await src('LiveTVViews'), /LiveServerFactory\.liveWatchVariants\(of: server, session: session\)/, 'variantes listées dès la préparation');
+  assert.match(await src('Subtitles'), /button\.topAnchor\.constraint\(equalTo: host\.safeAreaLayoutGuide\.topAnchor, constant: 68\)/, 'bouton pistes sous le bouton volume');
+  console.log('Appli iOS native 2.14 : vérifiée.');
 }

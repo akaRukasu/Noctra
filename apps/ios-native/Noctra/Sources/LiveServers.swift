@@ -352,14 +352,17 @@ enum LiveServerFactory {
     /// (/api/tv/livewatch/hls/<famille>/<id>), relais automatiques entre elles.
     private static func liveWatchVipVariants(_ raw: [String: Any], prefix: String, provider: String, resolver: String, session: Session) -> [LiveServer] {
         // Lecteur de la chaîne elle-même en plus de ses variantes publiées.
-        let variants = ((raw["liveWatchVariants"] as? [[String: Any]]) ?? []) + [["embedUrl": raw["vipFallbackUrl"] ?? "", "label": "direct"]]
+        let variants = ((raw["liveWatchVariants"] as? [[String: Any]]) ?? []) + [["externalUrl": raw["externalUrl"] ?? "", "embedUrl": raw["vipFallbackUrl"] ?? "", "label": "direct"]]
         var used: Set<String> = []
         var list: [LiveServer] = []
         for (index, variant) in variants.enumerated() {
-            guard let page = [variant["embedUrl"], variant["externalUrl"]].compactMap({ $0 as? String }).first(where: { !$0.isEmpty }),
-                  let url = URL(string: page), isLiveWatchURL(url),
-                  let match = url.path.range(of: "^/embed/((daddy|north|frame)/)?[A-Za-z0-9._:-]+/?$", options: .regularExpression) else { continue }
-            let parts = url.path[match].split(separator: "/").map(String.init)
+            // Adresse du lecteur LiveWatch (/embed/[daddy|north|frame/]<id>), telle que publiée (encodée).
+            let pages = [variant["embedUrl"], variant["externalUrl"]].compactMap { $0 as? String }.filter { !$0.isEmpty }
+            guard let encodedPath = pages.lazy.compactMap({ URL(string: $0) }).filter({ isLiveWatchURL($0) })
+                    .compactMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath })
+                    .first(where: { $0.range(of: "^/embed/((daddy|north|frame)/)?[A-Za-z0-9._:%-]+/?$", options: [.regularExpression, .caseInsensitive]) != nil })
+            else { continue }
+            let parts = encodedPath.split(separator: "/").map(String.init)
             let kind = parts.count == 3 ? parts[1].lowercased() : "main"
             let id = parts.last ?? ""
             guard !id.isEmpty, used.insert("\(kind)/\(id)").inserted,
@@ -454,6 +457,22 @@ enum LiveServerFactory {
                 }
             }
         return list
+    }
+
+    /// Variantes d'une chaîne VIP LiveWatch (même nom dans le catalogue, secours des autres familles),
+    /// données par le serveur sans la vérification VIP : flux VIP de chacune, relais automatiques.
+    static func liveWatchVariants(of server: LiveServer, session: Session) async -> [LiveServer] {
+        guard let resolve = server.resolveURL, resolve.contains("/api/tv/livewatch/resolve/"), !resolve.contains("/resolve/page/"),
+              let json = try? await session.noctraJSON(resolve.replacingOccurrences(of: "/api/tv/livewatch/resolve/", with: "/api/tv/livewatch/variants/"), timeout: 20) as? [String: Any]
+        else { return [] }
+        let base = server.label.replacingOccurrences(of: " · VIP", with: "")
+        return (json["variants"] as? [[String: Any]] ?? []).compactMap { variant in
+            guard let raw = variant["streamUrl"] as? String, let url = session.noctraURL(raw) else { return nil }
+            var item = LiveServer(label: base + " · " + (variant["label"] as? String ?? "variante") + " · VIP", provider: server.provider, kind: .native, streamURL: url, vip: true)
+            item.renewURL = resolve
+            item.fallback = variant["crossFamily"] as? Bool == true
+            return item
+        }
     }
 
     /// Serveurs proposés par un résolveur du serveur Noctra (VIP, serveurs automatiques).

@@ -96,7 +96,7 @@ assert.match(await src('ui/detail/ItemDetail'), /Fiche incomplète : toucher pou
 console.log('Appli Android native 1.1 : corrections vérifiées.');
 
 // 1.2.1 : VIP LiveWatch préparé une seule fois et lu comme sur PC ; photo de profil.
-assert.match(await src('live/LiveStore'), /server\.kind != LiveServer\.Kind\.resolve \|\| server\.vip/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
+assert.match(await src('live/LiveStore'), /server\.kind == LiveServer\.Kind\.resolve && server\.vip -> listOf\(server\) \+/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
 assert.match(await src('live/LivePlayer'), /if \(target\.vip\) 30_000 else 20_000/);
 assert.match(await src('live/LivePlayer'), /Lecteur VIP sans image : lecture directe du flux repéré/);
 assert.match(await src('core/Session'), /fun avatarURL/);
@@ -133,3 +133,8 @@ assert.match(await src('admin/FileExplorer'), /fun FolderPickerScreen/);
 assert.match(await src('admin/Arr'), /fun ArrMoveScreen/);
 assert.match(await src('ui/Account'), /StorageScreen\(\)/);
 console.log('Appli Android native 1.5 : vérifiée.');
+// 1.6 : variantes LiveWatch dans la liste des serveurs.
+assert.match(await src('live/LiveServers'), /suspend fun liveWatchVariantsOf\(server: LiveServer\)/);
+assert.match(await src('live/LiveServers'), /\/api\/tv\/livewatch\/variants\//);
+assert.match(await src('live/LiveStore'), /LiveServerFactory\.liveWatchVariantsOf\(server\)/);
+console.log('Appli Android native 1.6 : vérifiée.');

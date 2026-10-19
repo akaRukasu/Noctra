@@ -297,18 +297,31 @@ object LiveServerFactory {
         }
     }
 
-    private val liveWatchEmbedPath = Regex("^/embed/(?:(daddy|north|frame)/)?([A-Za-z0-9._:-]+)/?$", RegexOption.IGNORE_CASE)
+    private val liveWatchEmbedPath = Regex("^/embed/(?:(daddy|north|frame)/)?([A-Za-z0-9._:%-]+)/?$", RegexOption.IGNORE_CASE)
+
+    /** Variantes d'une chaîne VIP LiveWatch (même nom dans le catalogue, secours des autres familles), données par le serveur sans la vérification VIP. */
+    suspend fun liveWatchVariantsOf(server: LiveServer): List<LiveServer> {
+        val resolve = server.resolveURL ?: return emptyList()
+        if (!resolve.contains("/api/tv/livewatch/resolve/") || resolve.contains("/resolve/page/")) return emptyList()
+        val json = runCatching { Session.noctraJSON(resolve.replace("/api/tv/livewatch/resolve/", "/api/tv/livewatch/variants/"), 20.0).asMap() }.getOrNull() ?: return emptyList()
+        val base = server.label.replace(" · VIP", "")
+        return json["variants"].asMaps().mapNotNull { variant ->
+            val stream = variant.str("streamUrl")?.let { Session.noctraURL(it) } ?: return@mapNotNull null
+            LiveServer(label = "$base · ${variant.str("label") ?: "variante"} · VIP", provider = server.provider, kind = LiveServer.Kind.native, streamURL = stream,
+                vip = true, renewURL = resolve, fallback = variant.flag("crossFamily"))
+        }
+    }
 
     /** Variantes LiveWatch d'une chaîne VIP : flux VIP du serveur pour chacune (/api/tv/livewatch/hls/<famille>/<id>), relais automatiques entre elles. */
     private fun liveWatchVipVariants(raw: JsonMap, prefix: String, provider: String, resolver: String): List<LiveServer> {
         // Lecteur de la chaîne elle-même en plus de ses variantes publiées.
-        val variants = raw["liveWatchVariants"].asMaps() + listOf(mapOf("embedUrl" to raw.str("vipFallbackUrl"), "label" to "direct"))
+        val variants = raw["liveWatchVariants"].asMaps() + listOf(mapOf("externalUrl" to raw.str("externalUrl"), "embedUrl" to raw.str("vipFallbackUrl"), "label" to "direct"))
         val used = mutableSetOf<String>()
         return variants.mapIndexedNotNull { index, variant ->
-            val page = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstOrNull() ?: return@mapIndexedNotNull null
-            val url = page.toHttpUrlOrNull() ?: return@mapIndexedNotNull null
-            if (!isLiveWatchHost(url.host)) return@mapIndexedNotNull null
-            val match = liveWatchEmbedPath.find(url.encodedPath) ?: return@mapIndexedNotNull null
+            // Adresse du lecteur LiveWatch (/embed/[daddy|north|frame/]<id>), telle que publiée (encodée).
+            val match = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstNotNullOfOrNull { page ->
+                page.toHttpUrlOrNull()?.takeIf { isLiveWatchHost(it.host) }?.let { liveWatchEmbedPath.find(it.encodedPath) }
+            } ?: return@mapIndexedNotNull null
             val kind = match.groupValues[1].lowercase().ifEmpty { "main" }
             val id = match.groupValues[2]
             if (!used.add("$kind/$id")) return@mapIndexedNotNull null
