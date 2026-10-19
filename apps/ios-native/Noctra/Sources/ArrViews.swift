@@ -551,6 +551,13 @@ struct InteractiveSearchView: View {
     @State private var grabbing: String?
     @State private var grabbed: Set<String> = []
     @State private var confirm: Pick?
+    @State private var running = false
+    @State private var progress = ""
+    @State private var series = false
+    @State private var integrals = 0
+    @State private var seasonPacks = 0
+    @State private var pack = ""
+    @State private var generation = 0
 
     struct Pick: Identifiable {
         let id: String
@@ -565,16 +572,26 @@ struct InteractiveSearchView: View {
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
-                if loading {
-                    HStack(spacing: 10) { ProgressView(); Text("Interrogation des indexeurs (jusqu’à une minute)…").font(.footnote).foregroundStyle(Theme.muted) }
+                if series {
+                    // Série : intégrales (toutes saisons) ou packs de saisons complètes, comme sur le site.
+                    Picker("Type de pack", selection: $pack) {
+                        Text("Tout").tag("")
+                        Text("Intégrales (\(integrals))").tag("integral")
+                        Text("Saisons complètes (\(seasonPacks))").tag("season")
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                }
+                if loading || running {
+                    HStack(spacing: 10) { ProgressView(); Text(progress.isEmpty ? "Interrogation des indexeurs…" : progress).font(.footnote).foregroundStyle(Theme.muted) }
                 }
                 if let failed { Text(failed).foregroundStyle(.orange) }
                 ForEach(warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
                 if !loading && releases.isEmpty && failed == nil { Text("Aucune release trouvée.").foregroundStyle(Theme.muted) }
             }
-            Section("\(releases.count) résultat\(releases.count > 1 ? "s" : "")") {
-                ForEach(ReleaseSort.sorted(releases, by: sort).indices, id: \.self) { index in
-                    let release = ReleaseSort.sorted(releases, by: sort)[index]
+            Section("\(shown.count) résultat\(shown.count > 1 ? "s" : "")") {
+                ForEach(shown.indices, id: \.self) { index in
+                    let release = shown[index]
                     let key = "\(release["indexerId"] ?? 0):\(release["guid"] as? String ?? "")"
                     Button {
                         confirm = Pick(id: key, release: release)
@@ -595,19 +612,46 @@ struct InteractiveSearchView: View {
         } message: { pick in
             Text(pick.release["title"] as? String ?? "")
         }
-        .refreshable { await load(force: true) }
+        .refreshable { Task { await load(force: true) } }
         .task { await load(force: false) }
     }
 
+    private var shown: [[String: Any]] {
+        let list = pack.isEmpty ? releases : releases.filter { $0["packKind"] as? String == pack }
+        return ReleaseSort.sorted(list, by: sort)
+    }
+
+    /// Recherche suivie comme sur le site : le serveur interroge les indexeurs (saison par
+    /// saison pour une série complète) et renvoie les résultats au fur et à mesure.
     private func load(force: Bool) async {
+        generation += 1
+        let token = generation
         loading = true
-        defer { loading = false }
-        do {
-            let json = try await session.noctraSend("GET", "/api/servarr/releases?type=\(kind.rawValue)&\(query)\(force ? "&force=1" : "")", json: nil) as? [String: Any]
-            releases = json?["releases"] as? [[String: Any]] ?? []
-            warnings = json?["warnings"] as? [String] ?? []
-            failed = (json?["error"] as? String)
-        } catch { failed = error.localizedDescription }
+        defer { if token == generation { loading = false; running = false } }
+        var forced = force
+        for _ in 0..<3600 {
+            guard token == generation else { return }
+            do {
+                let json = try await session.noctraSend("GET", "/api/servarr/releases?type=\(kind.rawValue)&\(query)&progress=1\(forced ? "&force=1" : "")", json: nil) as? [String: Any]
+                forced = false
+                releases = json?["releases"] as? [[String: Any]] ?? []
+                warnings = json?["warnings"] as? [String] ?? []
+                failed = json?["error"] as? String
+                series = json?["searchKind"] as? String == "series"
+                integrals = Int(ReleaseSort.number(json?["integralCount"]))
+                seasonPacks = Int(ReleaseSort.number(json?["seasonPackCount"]))
+                if series, pack.isEmpty, let mode = json?["packMode"] as? String { pack = mode }
+                running = json?["running"] as? Bool == true
+                let total = Int(ReleaseSort.number(json?["total"]))
+                progress = total > 1 ? "\(Int(ReleaseSort.number(json?["completed"])))/\(total) saisons interrogées" : "Interrogation des indexeurs…"
+                guard running else { return }
+            } catch {
+                failed = error.localizedDescription
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+            if Task.isCancelled { return }
+        }
     }
 
     private func grab(_ pick: Pick) async {
@@ -760,5 +804,114 @@ struct TrackerSearchView: View {
             grabbed.insert(key)
             SyncPlayManager.shared.announce("Torrent envoyé à qBittorrent.")
         } catch { message = error.localizedDescription }
+    }
+}
+
+// MARK: Recherche interactive depuis Découvrir et les demandes
+
+/// Recherche interactive comme sur le site : film → releases Radarr ; série → œuvre complète
+/// (intégrales et toutes saisons), pack d'une saison ou épisode ; torrents des trackers en plus.
+struct ReleaseSearchHub: View {
+    @Environment(Session.self) private var session
+    let mediaType: String
+    let tmdbId: Int
+    let title: String
+    let year: String?
+    @State private var serviceId: Int?
+    @State private var resolving = true
+    @State private var seasons: [Int] = []
+    @State private var episodes: [[String: Any]] = []
+
+    init(mediaType: String, tmdbId: Int, title: String, year: String?, serviceId: Int?) {
+        self.mediaType = mediaType
+        self.tmdbId = tmdbId
+        self.title = title
+        self.year = year
+        _serviceId = State(initialValue: serviceId)
+    }
+
+    private var kind: ArrKind { mediaType == "tv" ? .sonarr : .radarr }
+
+    var body: some View {
+        List {
+            if let id = serviceId {
+                if kind == .radarr {
+                    Section {
+                        NavigationLink { InteractiveSearchView(kind: .radarr, title: title, query: "id=\(id)") } label: {
+                            Label("Releases du film", systemImage: "film")
+                        }
+                    } footer: { Text("Radarr interroge tous les indexeurs actifs.") }
+                } else {
+                    Section {
+                        NavigationLink { InteractiveSearchView(kind: .sonarr, title: "\(title) · œuvre complète", query: "seriesId=\(id)&allSeasons=1") } label: {
+                            Label("Œuvre complète · intégrales et toutes saisons", systemImage: "square.stack.3d.up.fill")
+                        }
+                    } footer: { Text("Sonarr interroge tous les indexeurs actifs, saison par saison.") }
+                    ForEach(seasons, id: \.self) { season in seasonSection(id, season) }
+                }
+            } else if resolving {
+                HStack(spacing: 10) { ProgressView(); Text("Recherche de la fiche \(kind.label)…").font(.footnote).foregroundStyle(Theme.muted) }
+            } else {
+                Text("Ce titre n’est pas encore dans \(kind.label) : fais d’abord la demande, puis reviens ici pour choisir la release.")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
+            Section {
+                NavigationLink { TrackerSearchView(mediaType: mediaType, tmdbId: tmdbId, title: title, year: year) } label: {
+                    Label("Torrents disponibles sur les trackers", systemImage: "antenna.radiowaves.left.and.right")
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(AuroraBackground(palette: .requests))
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await resolve() }
+    }
+
+    private func seasonSection(_ id: Int, _ season: Int) -> some View {
+        let list = episodes.filter { $0["seasonNumber"] as? Int == season }
+        return Section("Saison \(season)") {
+            NavigationLink { InteractiveSearchView(kind: .sonarr, title: "\(title) · saison \(season)", query: "seriesId=\(id)&seasonNumber=\(season)") } label: {
+                Label("Pack saison complète", systemImage: "square.stack.3d.down.forward")
+            }
+            DisclosureGroup("\(list.count) épisode\(list.count > 1 ? "s" : "")") {
+                ForEach(list.indices, id: \.self) { index in
+                    let episode = list[index]
+                    let number = episode["episodeNumber"] as? Int ?? 0
+                    NavigationLink {
+                        InteractiveSearchView(kind: .sonarr, title: "\(title) · S\(season)E\(number)", query: "id=\(episode["id"] as? Int ?? 0)")
+                    } label: {
+                        HStack {
+                            Text("\(number). \(episode["title"] as? String ?? "")").font(.subheadline).lineLimit(1)
+                            Spacer()
+                            Image(systemName: episode["hasFile"] as? Bool == true ? "checkmark.circle.fill" : "circle.dashed")
+                                .foregroundStyle(episode["hasFile"] as? Bool == true ? Theme.teal : .orange)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fiche Radarr/Sonarr retrouvée par l'identifiant TMDB (ou le titre et l'année).
+    private func resolve() async {
+        defer { resolving = false }
+        if serviceId == nil {
+            let term = title.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? title
+            if let json = try? await session.noctraJSON("/api/servarr/catalog?type=\(kind.rawValue)&q=\(term)", timeout: 30) as? [String: Any] {
+                let items = json["items"] as? [[String: Any]] ?? []
+                let byTmdb = items.first { ($0["tmdbId"] as? Int) == tmdbId }
+                let byTitle = items.first { item in
+                    (item["title"] as? String)?.localizedCaseInsensitiveCompare(title) == .orderedSame
+                        && (year == nil || "\(item["year"] ?? "")".hasPrefix(year ?? ""))
+                }
+                serviceId = (byTmdb ?? byTitle)?["id"] as? Int
+            }
+        }
+        if kind == .sonarr, let id = serviceId,
+           let json = try? await session.noctraJSON("/api/servarr/episodes?seriesId=\(id)", timeout: 30) as? [String: Any] {
+            seasons = json["seasons"] as? [Int] ?? []
+            episodes = json["episodes"] as? [[String: Any]] ?? []
+        }
     }
 }

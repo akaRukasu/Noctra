@@ -952,6 +952,7 @@ struct LiveWebView: UIViewRepresentable {
         var allowedHosts: Set<String> = []
         var loaded = false
         var requestID = UUID()
+        var noctraBase = ""
 
         private func host(_ url: URL?) -> String { (url?.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "") }
 
@@ -989,6 +990,17 @@ struct LiveWebView: UIViewRepresentable {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any] else { return }
+            if body["state"] as? String == "need-hls" {
+                // Lecteur d'un site qui confie un flux HLS au lecteur natif de WebKit (refusé :
+                // erreur 224003…) : hls.js servi par Noctra, chargé dans ce cadre, comme sur PC.
+                let target = UncheckedBox(value: (message.webView, message.frameInfo))
+                let base = noctraBase
+                Task { @MainActor in
+                    guard let source = await HlsLibrary.source(base: base) else { return }
+                    target.value.0?.evaluateJavaScript(source, in: target.value.1, in: .page) { _ in }
+                }
+                return
+            }
             report(state: body["state"] as? String ?? "", message: body["message"] as? String ?? "", url: body["url"] as? String ?? "")
         }
 
@@ -1014,6 +1026,7 @@ struct LiveWebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(WKUserScript(source: Self.bridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         configuration.userContentController.add(context.coordinator, name: "noctra")
         context.coordinator.requestID = request.id
+        context.coordinator.noctraBase = session.noctraBase
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
@@ -1046,8 +1059,10 @@ struct LiveWebView: UIViewRepresentable {
                     // Lecteur d'un site : seul, dans un cadre réglé comme sur PC.
                     view.loadHTMLString(Self.framePage(url, sandbox: request.sandbox), baseURL: base)
                 } else {
-                    // Sans référent, comme les lecteurs officiels l'attendent.
-                    view.load(URLRequest(url: url))
+                    // Sans référent, comme les lecteurs officiels l'attendent ; jeton joint pour une page Noctra.
+                    var page = URLRequest(url: url)
+                    if local, !token.isEmpty { page.setValue(token, forHTTPHeaderField: "x-noctra-token") }
+                    view.load(page)
                 }
             case .mpegts(let url):
                 view.loadHTMLString(Self.enginePage(url, transport: true, token: local ? token : ""), baseURL: base)
@@ -1067,12 +1082,31 @@ struct LiveWebView: UIViewRepresentable {
 
     /// Relais vers l'appli : vidéo lancée (y compris dans les cadres des sites)
     /// et messages « noctra-…-state » des ponts du serveur (lecture, flux, VIP).
+    /// Flux HLS qu'un lecteur de site confie à la vidéo native (refusé sur iPhone,
+    /// erreur 224003 de JW Player…) : lu par hls.js dans la page, comme sur PC.
     private static let bridgeScript = """
     (function(){if(window.__noctraBridge)return;window.__noctraBridge=1;
     function send(o){try{window.webkit.messageHandlers.noctra.postMessage(o)}catch(e){}}
     addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;var t=String(d.type||'');
     if(!/^noctra-[a-z0-9]+-state$/.test(t))return;send({state:String(d.state||''),message:String(d.message||''),url:String(d.url||'')})},true);
     document.addEventListener('playing',function(e){var t=e.target;if(t&&t.tagName==='VIDEO')send({state:'playing'})},true);
+    var MS=window.ManagedMediaSource||window.MediaSource,proto=window.HTMLMediaElement&&HTMLMediaElement.prototype;
+    var desc=proto&&Object.getOwnPropertyDescriptor(proto,'src'),setAttr=Element.prototype.setAttribute,pending=[];
+    if(!MS||!desc||!desc.set)return;
+    function isHls(u){return /\\.m3u8(\\?|#|$)|mpegurl/i.test(String(u||''))}
+    function attach(video,url){
+    if(window.Hls&&Hls.isSupported()){
+    if(video.__noctraHls){try{video.__noctraHls.destroy()}catch(e){}}
+    var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:4,fragLoadingMaxRetry:8,manifestLoadingMaxRetry:6,levelLoadingMaxRetry:6});video.__noctraHls=h;
+    var net=0,media=0;
+    h.on(Hls.Events.ERROR,function(e,d){if(!d||!d.fatal)return;if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net++<4)h.startLoad();else if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&media++<3)h.recoverMediaError()});
+    try{video.disableRemotePlayback=true}catch(e){}
+    h.loadSource(new URL(url,location.href).href);h.attachMedia(video);return}
+    pending.push([video,url]);if(pending.length===1)send({state:'need-hls'})}
+    window.__noctraHlsReady=function(){var list=pending;pending=[];list.forEach(function(p){attach(p[0],p[1])})};
+    Object.defineProperty(proto,'src',{configurable:true,enumerable:desc.enumerable,get:function(){return desc.get.call(this)},
+    set:function(v){if(this.tagName==='VIDEO'&&isHls(v)){attach(this,v);return}desc.set.call(this,v)}});
+    Element.prototype.setAttribute=function(n,v){if(this.tagName==='VIDEO'&&String(n).toLowerCase()==='src'&&isHls(v)){attach(this,v);return}return setAttr.apply(this,arguments)};
     })();
     """
 
@@ -1109,34 +1143,58 @@ struct LiveWebView: UIViewRepresentable {
         p.on(mpegts.Events.ERROR,function(a,b){send('error','flux MPEG-TS interrompu ('+a+(b?' · '+b:'')+')')});
     """
 
+    /// Comme le site (moteur par défaut) : Shaka réglé pour les flux IPTV (horodatages
+    /// ignorés, mode séquence, fenêtre du direct élargie), puis hls.js, puis la vidéo native.
     private static let hlsScript = """
-        if(window.Hls&&Hls.isSupported()){
-        var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:3,maxBufferLength:30,backBufferLength:30,
-        manifestLoadingTimeOut:20000,manifestLoadingMaxRetry:3,levelLoadingTimeOut:20000,levelLoadingMaxRetry:4,fragLoadingTimeOut:30000,fragLoadingMaxRetry:4,
+        function reset(){try{v.pause()}catch(e){}v.removeAttribute('src');try{v.load()}catch(e){}}
+        function useNative(){reset();v.src=U;start();v.addEventListener('error',function(){if(!playing)send('error','vidéo illisible')})}
+        function useHls(){
+        if(!(window.Hls&&Hls.isSupported()))return useNative();
+        reset();
+        var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:4,liveMaxLatencyDurationCount:9,maxBufferLength:60,backBufferLength:30,
+        manifestLoadingTimeOut:20000,manifestLoadingMaxRetry:6,levelLoadingTimeOut:20000,levelLoadingMaxRetry:6,fragLoadingTimeOut:45000,fragLoadingMaxRetry:8,
         xhrSetup:function(x,u){if(K&&same(u))x.setRequestHeader('x-noctra-token',K)}});
         var net=0,media=0;
         h.on(Hls.Events.ERROR,function(e,d){if(!d||!d.fatal)return;
         if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net++<2){h.startLoad();return}
         if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&media++<2){h.recoverMediaError();return}
+        if(!playing){try{h.destroy()}catch(x){}useNative();return}
         send('error','moteur web : '+d.details+(d.response&&d.response.code?' ('+d.response.code+')':''))});
         h.on(Hls.Events.MANIFEST_PARSED,start);
         h.loadSource(U);h.attachMedia(v);
-        }else{v.src=U;start();v.addEventListener('error',function(){send('error','vidéo illisible')})}
+        }
+        function useShaka(){
+        if(!(window.shaka&&shaka.Player&&shaka.Player.isBrowserSupported()))return useHls();
+        try{shaka.polyfill.installAll()}catch(e){}
+        var p=new shaka.Player(),failed=false;
+        function fallback(){if(failed||playing)return;failed=true;p.destroy().catch(function(){}).then(useHls)}
+        p.getNetworkingEngine().registerRequestFilter(function(t,r){if(K&&r.uris&&r.uris.length&&same(r.uris[0]))r.headers['x-noctra-token']=K});
+        p.configure({streaming:{bufferingGoal:45,rebufferingGoal:3,bufferBehind:15,segmentPrefetchLimit:1,lowLatencyMode:false,maxDisabledTime:15,
+        retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:1.5,timeout:45000,stallTimeout:15000,connectionTimeout:12000}},
+        manifest:{defaultPresentationDelay:30,availabilityWindowOverride:120,hls:{ignoreManifestProgramDateTime:true,sequenceMode:true},
+        retryParameters:{maxAttempts:4,baseDelay:500,backoffFactor:1.5,timeout:20000,stallTimeout:8000,connectionTimeout:10000}},
+        abr:{enabled:true,defaultBandwidthEstimate:1000000,switchInterval:12,bandwidthUpgradeTarget:0.7,bandwidthDowngradeTarget:0.9}});
+        v.addEventListener('playing',function(){try{p.configure({streaming:{segmentPrefetchLimit:2}})}catch(e){}},{once:true});
+        p.addEventListener('error',function(e){var d=e.detail;if(!d||d.severity!==2)return;if(!playing){fallback();return}send('error','Shaka : erreur '+(d.code||''))});
+        p.attach(v).then(function(){return p.load(U,undefined,'application/x-mpegurl')}).then(start).catch(fallback);
+        }
+        useShaka();
     """
 
-    /// Moteur web : mpegts.js (flux MPEG-TS continu) ou hls.js (liste HLS),
+    /// Moteur web : mpegts.js (flux MPEG-TS continu) ou Shaka puis hls.js (liste HLS),
     /// servis par Noctra ; jeton Noctra joint aux requêtes vers Noctra seulement.
     /// Lecture, coupure prolongée et erreurs signalées à l'appli.
     private static func enginePage(_ url: URL, transport: Bool, token: String) -> String {
         let address = literal(url.absoluteString)
         let key = literal(token)
-        let library = transport ? "mpegts.js" : "hls.min.js"
+        let libraries = transport ? ["mpegts.js"] : ["shaka-player.compiled.js", "hls.min.js"]
+        let tags = libraries.map { "<script src=\"vendor/\($0)\"></script>" }.joined()
         let script = transport ? tsScript : hlsScript
         return """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{position:fixed;inset:0;width:100%;height:100%;background:#000;object-fit:contain}</style></head>
         <body><video id="v" playsinline webkit-playsinline autoplay></video>
-        <script src="vendor/\(library)"></script>
+        \(tags)
         <script>
         (function(){
         var v=document.getElementById('v'),U='\(address)',K='\(key)',playing=false,waitSince=0;
@@ -1152,5 +1210,23 @@ struct LiveWebView: UIViewRepresentable {
         })();
         </script></body></html>
         """
+    }
+}
+
+/// hls.js servi par Noctra, chargé une fois puis glissé dans les pages des sites qui en ont besoin.
+@MainActor
+enum HlsLibrary {
+    private static var cached: String?
+
+    static func source(base: String) async -> String? {
+        if let cached { return cached }
+        guard let url = URL(string: base + "/vendor/hls.min.js"),
+              let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        // define/exports/module masqués : hls.js se pose toujours sur window, même si la page a un chargeur AMD.
+        let wrapped = "(function(){var define,exports,module;\n" + text + "\n})();window.__noctraHlsReady&&window.__noctraHlsReady();"
+        cached = wrapped
+        return wrapped
     }
 }

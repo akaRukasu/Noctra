@@ -57,7 +57,7 @@ const live = await src('LiveTVViews');
 const names = await src('LiveNames');
 assert.match(names, /static func key\(_ name: String, country: String\) -> String/, 'chaînes réunies par nom et par pays');
 assert.match(live, /for _ in 0\.\.<6 \{/, 'catalogues chargés 6 à la fois');
-assert.match(live, /let library = transport \? "mpegts\.js" : "hls\.min\.js"/, 'flux MPEG-TS lus par mpegts.js, HLS par hls.js');
+assert.match(live, /let libraries = transport \? \["mpegts\.js"\] : \["shaka-player\.compiled\.js", "hls\.min\.js"\]/, 'flux MPEG-TS lus par mpegts.js, HLS par Shaka puis hls.js (comme le site)');
 const syncplay = await src('SyncPlay');
 for (const route of ['/SyncPlay/List', '/SyncPlay/New', '/SyncPlay/Join', '/SyncPlay/Ready', '/SyncPlay/SetNewQueue', '/GetUtcTime', '/Sessions/Capabilities/Full']) {
   assert.ok(syncplay.includes(route), `SyncPlay : ${route}`);
@@ -121,7 +121,7 @@ assert.match(components, /if let hit = ImagePipeline\.shared\.cached\(url\) \{\s
 assert.match(names, /static let tntNumbers/);
 assert.match(names, /"fr": "France"/);
 const servers = await src('LiveServers');
-for (const piece of ['static func rank(', 'static func probe(', 'if server.vip { base -= 2.5 }', 'noctra.tv.health.v1']) assert.ok(servers.includes(piece), `serveurs TV : ${piece}`);
+for (const piece of ['static func rank(', 'static func probe(', 'if server.vip && server.kind == .resolve { base += 2 }', 'noctra.tv.health.v1']) assert.ok(servers.includes(piece), `serveurs TV : ${piece}`);
 assert.match(live, /"\/api\/tv\/livewatch\/session"/, 'accès VIP lus sur le serveur');
 assert.match(live, /var country: String = UserDefaults\.standard\.string\(forKey: "noctra\.tv\.country"\) \?\? "fr"/, 'France par défaut');
 assert.match(subtitlesSrc, /guard let host = controller\.view/, 'sous-titres posés au-dessus du lecteur');
@@ -148,7 +148,7 @@ for (const route of ['/api/servarr/center', '/api/servarr/lookup', '/api/servarr
 }
 assert.match(adminServer, /ArrHubView\(kind: \.radarr\)/);
 assert.match(adminServer, /ArrHubView\(kind: \.sonarr\)/);
-assert.match(await src('DiscoverViews'), /TrackerSearchView\(mediaType: item\.mediaType/, 'recherche interactive depuis les demandes');
+assert.match(await src('DiscoverViews'), /ReleaseSearchHub\(mediaType: item\.mediaType/, 'recherche interactive depuis les demandes');
 // 2.8 : moteur web comme Northlive, test des flux continus, VIP, bouquets, logo, SyncPlay, cast partout.
 assert.match(servers, /URLSession\.shared\.bytes\(for: request\)/, 'flux continus testés sur leurs premiers octets');
 assert.match(servers, /static func sniff\(/);
@@ -200,7 +200,7 @@ function WebVttSeconds(value) {
   const livePlayer = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
   const liveViews = await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift');
   assert.match(liveViews, /guard server\.kind == \.resolve, !server\.vip else/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
-  assert.match(livePlayer, /server\.vip \? 30 : 12/, 'VIP : premier chargement du flux plus long');
+  assert.match(livePlayer, /server\.vip \? 30 : 20/, 'VIP : premier chargement du flux plus long');
   assert.match(livePlayer, /Lecteur VIP sans image : lecture directe du flux repéré/, 'flux repéré par le pont VIP lu par l’appli');
   assert.match(livePlayer, /noctraJSON\("\/api\/session", timeout: 10\)/, 'cookie de session renouvelé avant le VIP');
   const session = await read('apps/ios-native/Noctra/Sources/Session.swift');
@@ -217,4 +217,35 @@ function WebVttSeconds(value) {
   assert.match(intro, /Text\("NOCTRA"\)/);
   assert.match(await read('apps/ios-native/Noctra/Sources/NoctraApp.swift'), /NoctraIntro \{/);
   console.log('Appli iOS native 2.10.1 : intro vérifiée.');
+}
+
+// 2.11 : moteur du site (Shaka), VIP non prioritaire, variantes VIP, lecteurs des sites, recherche interactive, explorateur, état des séries.
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  const views = await src('LiveTVViews');
+  assert.match(views, /ignoreManifestProgramDateTime:true,sequenceMode:true/, 'Shaka réglé comme sur le site');
+  assert.match(views, /need-hls/, 'hls.js glissé dans les lecteurs des sites (erreur 224003)');
+  assert.match(views, /enum HlsLibrary/);
+  const servers = await src('LiveServers');
+  assert.match(servers, /if server\.vip && server\.kind == \.resolve \{ base \+= 2 \}/, 'VIP plus prioritaire d’office');
+  assert.ok(!/if server\.vip \{ base -= 2\.5 \}/.test(servers));
+  assert.match(servers, /return !server\.provider\.localizedCaseInsensitiveContains\("NorthTV"\)/, 'moteur web d’abord, lecteur d’Apple pour NorthTV');
+  assert.match(servers, /mobile", value: "1"/, 'liens Alternative ouverts directement');
+  assert.match(servers, /!\(item\.vip && item\.kind == \.native\)/, 'variantes VIP en relais automatiques');
+  const arr = await src('ArrViews');
+  assert.match(arr, /struct ReleaseSearchHub/);
+  assert.match(arr, /allSeasons=1/);
+  assert.match(arr, /progress=1/, 'recherche suivie comme sur le site');
+  assert.match(arr, /Saisons complètes/);
+  const discover = await src('DiscoverViews');
+  assert.match(discover, /ReleaseSearchHub\(mediaType: item\.mediaType/);
+  assert.match(discover, /Déjà demandé mais pas encore disponible/);
+  const files = await src('FileExplorer');
+  for (const route of ['/api/files/roots', '/api/files?root=', '/api/files/rename', '/api/files/trash', '/api/files/mkdir', '/api/files/empty-trash', '/api/files/duplicates/start', '/api/files/duplicates/delete', '/api/files/completeness/start', '/api/files/completeness/group', '/api/library/series-status']) {
+    assert.ok(files.includes(route), `explorateur : ${route}`);
+  }
+  assert.match(await src('LibraryViews'), /FileExplorerView\(\)/, 'bouton Explorateur des médiathèques');
+  assert.match(await src('Components'), /SeriesStatusBadge\(id: item\.id\)/, 'état des séries sur les affiches');
+  assert.match(await src('ItemDetailView'), /SeriesStatusBadge\(id: shown\.id, large: true\)/, 'état de la série sur la fiche');
+  console.log('Appli iOS native 2.11 : vérifiée.');
 }

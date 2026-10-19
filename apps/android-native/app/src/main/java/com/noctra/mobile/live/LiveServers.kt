@@ -144,7 +144,11 @@ object LiveHealth {
     private const val engineKey = "noctra.tv.engine.v1"
     private fun engineID(server: LiveServer) = "${server.provider}|${server.host}"
 
-    fun prefersWeb(server: LiveServer): Boolean = ((Prefs.json(engineKey).asMap()?.double(engineID(server))) ?: 0.0) > 0
+    /** Moteur appris pour ce fournisseur ; sinon, comme le site : moteur web (Shaka) d'abord. */
+    fun prefersWeb(server: LiveServer): Boolean {
+        val learned = Prefs.json(engineKey).asMap()?.double(engineID(server)) ?: 0.0
+        return learned >= 0
+    }
 
     fun noteEngine(server: LiveServer, web: Boolean, ok: Boolean) {
         val all = (Prefs.json(engineKey).asMap() ?: emptyMap()).mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap().toMutableMap()
@@ -234,7 +238,7 @@ object LiveHealth {
         return "Jamais essayé"
     }
 
-    /** Classement : VIP et flux directs d'abord, fiabilité, résultat des tests, dernier serveur qui a marché. */
+    /** Classement : flux directs d'abord, fiabilité, résultat des tests, dernier serveur qui a marché. */
     fun rank(servers: List<LiveServer>, channel: String): List<LiveServer> {
         val remembered = remembered(channel)
         val failing = setOf(LiveServer.Probe.down, LiveServer.Probe.noVideo, LiveServer.Probe.stale)
@@ -244,7 +248,9 @@ object LiveHealth {
             if (server.compatPage) base += 3
             if (server.manualOnly) base += 4
             if (server.fallback) base += 0.5
-            if (server.vip) base -= 2.5
+            // VIP LiveWatch : plus prioritaire d'office (vérification jusqu'à 1 min 30) ;
+            // il remonte s'il a déjà marché (fiabilité apprise ci-dessous).
+            if (server.vip && server.kind == LiveServer.Kind.resolve) base += 2
             base -= health
             val trust = probeTrust(server)
             when (server.probe) {
@@ -354,10 +360,8 @@ object LiveServerFactory {
         if (pageUrl != null && pageUrl !in used) {
             val manual = list.isNotEmpty()
             list += framedPage(prefix + if (manual) " · lecteur du site" else " · lecteur web", provider, pageUrl, vip, raw).copy(fallback = manual, manualOnly = manual)
-            list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
-        } else if (list.any { it.kind == LiveServer.Kind.resolve }) {
-            // VIP : variantes officielles proposées en secours manuel.
-            list += liveWatchVariants(raw, prefix, provider, false, emptySet()).map { it.copy(fallback = true, manualOnly = true) }
+            // VIP : chaque variante arrive du résolveur en flux VIP (comme sur PC), pas en page publique.
+            if (!(vip && resolver != null)) list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
         }
         return list
     }
@@ -385,7 +389,9 @@ object LiveServerFactory {
                 page != null -> framedPage(name, server.provider, page, vip, option)
                 else -> return@mapIndexedNotNull null
             }
-            item.copy(compatPage = option.flag("compatPage"), manualOnly = option.flag("manualOnly"), fallback = option.flag("fallback"))
+            // Variantes VIP non vérifiées d'avance : la route HLS du serveur les résout à la lecture ;
+            // elles servent de relais automatiques, comme sur PC.
+            item.copy(compatPage = option.flag("compatPage"), manualOnly = option.flag("manualOnly") && !(item.vip && item.kind == LiveServer.Kind.native), fallback = option.flag("fallback"))
         }
     }
 

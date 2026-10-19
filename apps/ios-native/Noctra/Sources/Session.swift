@@ -156,7 +156,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.10.1\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.11.0\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }
@@ -309,11 +309,11 @@ final class Session {
     }
 
     /// Requête Noctra avec corps JSON (demandes Jellyseerr…).
-    func noctraSend(_ method: String, _ path: String, json: Any?) async throws -> Any? {
+    func noctraSend(_ method: String, _ path: String, json: Any?, timeout: TimeInterval = 45) async throws -> Any? {
         guard let url = noctraURL(path) else { throw NoctraError.badAddress }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 45
+        request.timeoutInterval = timeout
         if let token { request.setValue(token, forHTTPHeaderField: "x-noctra-token") }
         if let json {
             request.setValue("application/json", forHTTPHeaderField: "content-type")

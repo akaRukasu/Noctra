@@ -520,28 +520,56 @@ fun InteractiveSearchScreen(kind: ArrKind, title: String, query: String) {
     var grabbing by remember { mutableStateOf<String?>(null) }
     var grabbed by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirm by remember { mutableStateOf<Pair<String, JsonMap>?>(null) }
+    var running by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf("") }
+    var series by remember { mutableStateOf(false) }
+    var integrals by remember { mutableStateOf(0) }
+    var seasonPacks by remember { mutableStateOf(0) }
+    var pack by remember { mutableStateOf("") }
+    var generation by remember { mutableStateOf(0) }
+    /** Recherche suivie comme sur le site : le serveur interroge les indexeurs (saison par saison pour une série complète) et renvoie les résultats au fur et à mesure. */
     suspend fun load(force: Boolean) {
+        val token = ++generation
         loading = true
+        var forced = force
         try {
-            val json = Session.noctraSend("GET", "/api/servarr/releases?type=${kind.key}&$query${if (force) "&force=1" else ""}", null, 120.0).asMap()
-            releases = json?.maps("releases") ?: emptyList()
-            warnings = json?.strings("warnings") ?: emptyList()
-            failed = json?.str("error")
+            repeat(3600) {
+                if (token != generation) return
+                val json = Session.noctraSend("GET", "/api/servarr/releases?type=${kind.key}&$query&progress=1${if (forced) "&force=1" else ""}", null, 45.0).asMap()
+                forced = false
+                releases = json?.maps("releases") ?: emptyList()
+                warnings = json?.strings("warnings") ?: emptyList()
+                failed = json?.str("error")
+                series = json?.str("searchKind") == "series"
+                integrals = AdminFormat.number(json?.get("integralCount")).toInt()
+                seasonPacks = AdminFormat.number(json?.get("seasonPackCount")).toInt()
+                if (series && pack.isEmpty()) json?.str("packMode")?.let { pack = it }
+                running = json?.flag("running") == true
+                val total = AdminFormat.number(json?.get("total")).toInt()
+                progress = if (total > 1) "${AdminFormat.number(json?.get("completed")).toInt()}/$total saisons interrogées" else "Interrogation des indexeurs…"
+                if (!running) return
+                delay(1000)
+            }
+        } catch (failure: kotlinx.coroutines.CancellationException) {
+            throw failure
         } catch (failure: Exception) {
             failed = failure.message
         } finally {
-            loading = false
+            if (token == generation) { loading = false; running = false }
         }
     }
     LaunchedEffect(query) { load(false) }
+    val shown = sort.apply(if (pack.isEmpty()) releases else releases.filter { it.str("packKind") == pack })
     AdminScaffold(title, AuroraPalette.requests, actions = { BarButton(Icons.Filled.Refresh, "Relancer la recherche") { scope.launch { load(true) } } }) {
         item { SortPicker(sort) { sort = it } }
-        if (loading) item { LoadingLine("Interrogation des indexeurs (jusqu’à une minute)…") }
+        // Série : intégrales (toutes saisons) ou packs de saisons complètes, comme sur le site.
+        if (series) section { ChoiceLine("Type de pack", listOf("" to "Tout", "integral" to "Intégrales ($integrals)", "season" to "Saisons complètes ($seasonPacks)"), pack) { pack = it } }
+        if (loading || running) item { LoadingLine(progress.ifEmpty { "Interrogation des indexeurs…" }) }
         failed?.let { text -> item { NoteLine(text, Theme.orange) } }
         warnings.forEach { text -> item { NoteLine(text, Theme.orange) } }
         if (!loading && releases.isEmpty() && failed == null) item { NoteLine("Aucune release trouvée.", Theme.muted) }
-        section("${releases.size} résultat${if (releases.size > 1) "s" else ""}") {
-            sort.apply(releases).forEachIndexed { index, release ->
+        section("${shown.size} résultat${if (shown.size > 1) "s" else ""}") {
+            shown.forEachIndexed { index, release ->
                 if (index > 0) RowDivider()
                 val key = "${release["indexerId"] ?: 0}:${release.str("guid") ?: ""}"
                 ReleaseRow(release, key in grabbed, grabbing == key, grabbing == null && key !in grabbed) { confirm = key to release }
@@ -619,6 +647,66 @@ fun TrackerSearchScreen(mediaType: String, tmdbId: Int, title: String, year: Str
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: Recherche interactive depuis Découvrir et les demandes
+
+/**
+ * Recherche interactive comme sur le site : film → releases Radarr ; série → œuvre complète
+ * (intégrales et toutes saisons), pack d'une saison ou épisode ; torrents des trackers en plus.
+ */
+@Composable
+fun ReleaseSearchHubScreen(mediaType: String, tmdbId: Int, title: String, year: String?, initialServiceId: Int?) {
+    val push = rememberPush()
+    val kind = if (mediaType == "tv") ArrKind.Sonarr else ArrKind.Radarr
+    var serviceId by remember { mutableStateOf(initialServiceId) }
+    var resolving by remember { mutableStateOf(true) }
+    var seasons by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var episodes by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
+    LaunchedEffect(tmdbId) {
+        // Fiche Radarr/Sonarr retrouvée par l'identifiant TMDB (ou le titre et l'année).
+        if (serviceId == null) {
+            val items = runCatching { Session.noctraJSON("/api/servarr/catalog?type=${kind.key}&q=${encode(title)}", 30.0).asMap() }.getOrNull()?.maps("items") ?: emptyList()
+            val match = items.firstOrNull { it.int("tmdbId") == tmdbId }
+                ?: items.firstOrNull { it.str("title")?.equals(title, ignoreCase = true) == true && (year == null || (it["year"]?.toString() ?: "").startsWith(year)) }
+            serviceId = match?.int("id")
+        }
+        val id = serviceId
+        if (kind == ArrKind.Sonarr && id != null) {
+            runCatching { Session.noctraJSON("/api/servarr/episodes?seriesId=$id", 30.0).asMap() }.getOrNull()?.let { json ->
+                seasons = (json["seasons"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() } ?: emptyList()
+                episodes = json.maps("episodes")
+            }
+        }
+        resolving = false
+    }
+    AdminScaffold(title, AuroraPalette.requests) {
+        val id = serviceId
+        when {
+            id != null && kind == ArrKind.Radarr -> section(footer = "Radarr interroge tous les indexeurs actifs.") {
+                ActionLine("Releases du film", Icons.Filled.Search) { push { InteractiveSearchScreen(kind, title, "id=$id") } }
+            }
+            id != null -> {
+                section(footer = "Sonarr interroge tous les indexeurs actifs, saison par saison.") {
+                    ActionLine("Œuvre complète · intégrales et toutes saisons", Icons.Filled.Search) { push { InteractiveSearchScreen(kind, "$title · œuvre complète", "seriesId=$id&allSeasons=1") } }
+                }
+                for (season in seasons) section("Saison $season", key = "hub-season-$season") {
+                    ActionLine("Pack saison complète", Icons.Filled.Search) { push { InteractiveSearchScreen(kind, "$title · saison $season", "seriesId=$id&seasonNumber=$season") } }
+                    episodes.filter { it.int("seasonNumber") == season }.forEach { episode ->
+                        RowDivider()
+                        val number = episode.int("episodeNumber") ?: 0
+                        AdminRow("$number. ${episode.str("title") ?: ""}", onClick = { push { InteractiveSearchScreen(kind, "$title · S${season}E$number", "id=${episode.int("id") ?: 0}") } },
+                            trailing = { Icon(if (episode.flag("hasFile")) Icons.Filled.CheckCircle else Icons.Filled.Schedule, contentDescription = null, tint = if (episode.flag("hasFile")) Theme.teal else Theme.orange, modifier = Modifier.size(20.dp)) })
+                    }
+                }
+            }
+            resolving -> item { LoadingLine("Recherche de la fiche ${kind.label}…") }
+            else -> item { NoteLine("Ce titre n’est pas encore dans ${kind.label} : fais d’abord la demande, puis reviens ici pour choisir la release.", Theme.orange) }
+        }
+        section {
+            ActionLine("Torrents disponibles sur les trackers", Icons.Filled.RssFeed) { push { TrackerSearchScreen(mediaType, tmdbId, title, year) } }
         }
     }
 }

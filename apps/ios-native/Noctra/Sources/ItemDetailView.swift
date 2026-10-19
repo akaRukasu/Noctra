@@ -163,6 +163,10 @@ struct ItemDetailView: View {
                     Text([shown.episodeLabel, shown.name].compactMap { $0 }.joined(separator: " · "))
                         .font(.headline)
                 }
+                if shown.type == "Series" {
+                    // Complète, épisodes manquants ou en cours (comme sur le site).
+                    SeriesStatusBadge(id: shown.id, large: true)
+                }
                 HStack(spacing: 10) {
                     if !shown.subtitleLine.isEmpty { Text(shown.subtitleLine) }
                     if let rating = shown.communityRating {

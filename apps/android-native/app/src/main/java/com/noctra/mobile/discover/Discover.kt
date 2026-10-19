@@ -80,7 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.noctra.mobile.admin.TrackerSearchScreen
+import com.noctra.mobile.admin.ReleaseSearchHubScreen
 import com.noctra.mobile.core.BaseItem
 import com.noctra.mobile.core.Json
 import com.noctra.mobile.core.JsonMap
@@ -125,7 +125,9 @@ import kotlin.math.roundToInt
 /** Titre proposé par Jellyseerr / TMDB (Découvrir, Demandes). */
 data class SeerrItem(
     val id: Int, val mediaType: String, val title: String, val posterPath: String?, val backdropPath: String?, val date: String?,
-    val vote: Double?, val overview: String?, val status: Int?, val jellyfinId: String?, val reason: String?
+    val vote: Double?, val overview: String?, val status: Int?, val jellyfinId: String?, val reason: String?,
+    /** Fiche Radarr/Sonarr déjà créée (demande faite) : recherche interactive possible. */
+    val serviceId: Int? = null
 ) {
     val key: String get() = "$mediaType:$id"
     val year: String? get() = date?.takeIf { it.length >= 4 }?.take(4)
@@ -141,7 +143,8 @@ data class SeerrItem(
             return SeerrItem(
                 id, type, json.str("title") ?: json.str("name") ?: "Sans titre", json.str("posterPath"), json.str("backdropPath"),
                 json.str("releaseDate") ?: json.str("firstAirDate"), json.double("voteAverage"), json.str("overview"),
-                info?.int("status"), info?.str("jellyfinMediaId"), json.str("reason")
+                info?.int("status"), info?.str("jellyfinMediaId"), json.str("reason"),
+                json.int("resolvedServiceId") ?: info?.int("externalServiceId")
             )
         }
     }
@@ -257,11 +260,15 @@ fun SeerrSheet(item: SeerrItem, onDismiss: () -> Unit) {
                     }
                 }
                 if (Session.isAdmin && status < 5) {
-                    AuroraSecondaryButton(onClick = { onDismiss(); push { TrackerSearchScreen(item.mediaType, item.id, item.title, item.year) } }, modifier = Modifier.fillMaxWidth()) {
+                    // Comme sur le site : film → releases Radarr ; série → œuvre complète, saison ou épisode.
+                    AuroraSecondaryButton(onClick = { onDismiss(); push { ReleaseSearchHubScreen(item.mediaType, item.id, item.title, item.year, item.serviceId) } }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Filled.Search, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Recherche interactive")
+                        Text(if (item.mediaType == "tv") "Recherche interactive · série" else "Recherche interactive · film")
                     }
+                }
+                if (Session.isAdmin && status in 2..4) {
+                    Text("Déjà demandé mais pas encore disponible : lance la recherche interactive pour choisir la release.", color = Theme.orange, fontSize = 13.sp)
                 }
                 note?.let { Text(it, color = Theme.muted, fontSize = 13.sp) }
                 item.overview?.takeIf { it.isNotEmpty() }?.let { Text(it, color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp) }
@@ -357,7 +364,7 @@ private fun Pill(title: String, selected: Boolean, action: () -> Unit) {
 
 // MARK: Demandes
 
-private data class Request(val title: String, val poster: String?, val label: String, val jellyfinId: String?, val mediaType: String, val tmdbId: Int?, val year: String?)
+private data class Request(val title: String, val poster: String?, val label: String, val jellyfinId: String?, val mediaType: String, val tmdbId: Int?, val year: String?, val serviceId: Int?)
 
 private class RequestsModel {
     var query by mutableStateOf("")
@@ -380,7 +387,8 @@ private class RequestsModel {
                     request.str("posterPath")?.let { "https://image.tmdb.org/t/p/w185$it" },
                     if (available) "Disponible" else labels[request.int("status") ?: 0] ?: "Enregistrée",
                     media.str("jellyfinMediaId"), if (request.str("mediaType") == "tv") "tv" else "movie", media.int("tmdbId"),
-                    date.takeIf { it.length >= 4 }?.take(4)
+                    date.takeIf { it.length >= 4 }?.take(4),
+                    request.int("resolvedServiceId") ?: media.int("externalServiceId")
                 )
             }
             val quota = json.map("quota")
@@ -439,7 +447,7 @@ private fun RequestsView() {
                         }
                         val tmdb = entry.tmdbId
                         if (Session.isAdmin && tmdb != null && entry.label != "Disponible") {
-                            RoundAction(Icons.Filled.Search, "Recherche interactive") { push { TrackerSearchScreen(entry.mediaType, tmdb, entry.title, entry.year) } }
+                            RoundAction(Icons.Filled.Search, "Recherche interactive") { push { ReleaseSearchHubScreen(entry.mediaType, tmdb, entry.title, entry.year, entry.serviceId) } }
                         }
                         entry.jellyfinId?.let { id -> RoundAction(Icons.Filled.PlayArrow, "Regarder") { push { ItemDetailScreen(itemRef(id)) } } }
                     }

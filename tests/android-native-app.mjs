@@ -62,7 +62,7 @@ const screen = await src('live/LivePlayerScreen');
 assert.match(screen, /addJavascriptInterface/, 'pont des lecteurs web');
 assert.match(screen, /addDocumentStartJavaScript/);
 assert.match(screen, /allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation/, 'cadre isolé du VIP comme sur PC');
-assert.match(screen, /vendor\/\$library/, 'hls.js et mpegts.js servis par Noctra');
+assert.match(screen, /vendor\/\$it/, 'Shaka, hls.js et mpegts.js servis par Noctra');
 assert.match(screen, /Key\.ChannelUp/, 'touches Chaîne + et − de la télécommande');
 assert.match(screen, /onCreateWindow[^\n]*= false/, 'fenêtres surgissantes bloquées');
 assert.ok(!/Jellyfin/.test(await src('live/LiveScreens')), 'pas de mention « Jellyfin » dans l’interface TV');
@@ -97,7 +97,7 @@ console.log('Appli Android native 1.1 : corrections vérifiées.');
 
 // 1.2.1 : VIP LiveWatch préparé une seule fois et lu comme sur PC ; photo de profil.
 assert.match(await src('live/LiveStore'), /server\.kind != LiveServer\.Kind\.resolve \|\| server\.vip/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
-assert.match(await src('live/LivePlayer'), /if \(target\.vip\) 30_000 else 15_000/);
+assert.match(await src('live/LivePlayer'), /if \(target\.vip\) 30_000 else 20_000/);
 assert.match(await src('live/LivePlayer'), /Lecteur VIP sans image : lecture directe du flux repéré/);
 assert.match(await src('core/Session'), /fun avatarURL/);
 assert.match(await src('ui/Account'), /AccountAvatar\(34, 16/, 'photo en haut à droite à la place de l’initiale');
@@ -105,3 +105,17 @@ console.log('Appli Android native 1.2.1 : VIP et photo de profil vérifiés.');
 assert.match(await src('ui/Intro'), /fun NoctraIntro/, 'intro animée à l’ouverture, comme sur le site');
 assert.match(await src('MainActivity'), /NoctraIntro \{ intro = false \}/);
 console.log('Appli Android native 1.2.1 : intro vérifiée.');
+
+// 1.3 : moteur du site (Shaka), VIP non prioritaire, variantes VIP, recherche interactive, explorateur, état des séries.
+assert.match(await src('live/LivePlayerScreen'), /ignoreManifestProgramDateTime:true,sequenceMode:true/, 'Shaka réglé comme sur le site');
+assert.match(await src('live/LiveServers'), /if \(server\.vip && server\.kind == LiveServer\.Kind\.resolve\) base \+= 2/, 'VIP plus prioritaire d’office');
+assert.match(await src('live/LiveServers'), /return learned >= 0/, 'moteur web d’abord');
+assert.match(await src('admin/Arr'), /fun ReleaseSearchHubScreen/);
+assert.match(await src('admin/Arr'), /progress=1/);
+assert.match(await src('discover/Discover'), /ReleaseSearchHubScreen\(item\.mediaType/);
+const files13 = await src('admin/FileExplorer');
+for (const route of ['/api/files/roots', '/api/files?root=', '/api/files/rename', '/api/files/trash', '/api/files/mkdir', '/api/files/empty-trash', '/api/files/duplicates/start', '/api/files/completeness/start']) assert.ok(files13.includes(route), `explorateur : ${route}`);
+assert.match(await src('ui/SeriesStatus'), /\/api\/library\/series-status/);
+assert.match(await src('ui/Components'), /SeriesStatusBadge\(item\.id/);
+assert.match(await src('ui/Libraries'), /FileExplorerScreen\(\)/);
+console.log('Appli Android native 1.3 : vérifiée.');

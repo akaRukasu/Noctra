@@ -153,6 +153,8 @@ fun PosterCard(item: BaseItem, width: Dp = 128.dp, modifier: Modifier = Modifier
                 RemoteImage(Session.poster(item), Modifier.fillMaxSize())
                 item.progress?.let { ProgressLine(it, Modifier.align(Alignment.BottomCenter).padding(8.dp)) }
                 if (item.userData?.played == true) PlayedBadge(Modifier.align(Alignment.TopEnd).padding(6.dp))
+                // Série complète, épisodes manquants ou en cours (comme sur le site).
+                if (item.type == "Series") SeriesStatusBadge(item.id, Modifier.align(Alignment.BottomStart).padding(7.dp))
             }
             Text(item.displayTitle, color = Color(0xFFF3F0FF), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(

@@ -147,7 +147,9 @@ enum LiveHealth {
 
     static func prefersWeb(_ server: LiveServer) -> Bool {
         let all = UserDefaults.standard.dictionary(forKey: engineKey) as? [String: Double] ?? [:]
-        return (all[engineID(server)] ?? 0) > 0
+        if let learned = all[engineID(server)], learned != 0 { return learned > 0 }
+        // Comme le site sur iPhone : moteur web (Shaka) d'abord, sauf NorthTV (lecteur d'Apple d'abord).
+        return !server.provider.localizedCaseInsensitiveContains("NorthTV")
     }
 
     static func noteEngine(_ server: LiveServer, web: Bool, ok: Bool) {
@@ -243,7 +245,7 @@ enum LiveHealth {
         return "Jamais essayé"
     }
 
-    /// Classement : VIP et flux directs d'abord, fiabilité, résultat des tests, dernier serveur qui a marché.
+    /// Classement : flux directs d'abord, fiabilité, résultat des tests, dernier serveur qui a marché.
     static func rank(_ servers: [LiveServer], channel: String) -> [LiveServer] {
         let remembered = remembered(channel)
         func value(_ server: LiveServer, _ index: Int) -> Double {
@@ -257,7 +259,9 @@ enum LiveHealth {
             if server.compatPage { base += 3 }
             if server.manualOnly { base += 4 }
             if server.fallback { base += 0.5 }
-            if server.vip { base -= 2.5 }
+            // VIP LiveWatch : plus prioritaire d'office (vérification jusqu'à 1 min 30) ;
+            // il remonte s'il a déjà marché (fiabilité apprise ci-dessous).
+            if server.vip && server.kind == .resolve { base += 2 }
             base -= health.score
             // Le bonus d'un test réussi dépend de la confiance apprise pour ce
             // fournisseur (un test « en ligne » suivi d'un échec de lecture la réduit).
@@ -307,7 +311,14 @@ enum LiveServerFactory {
 
     /// Lecteur d'un site : le lecteur seul (pas la page entière du site).
     private static func framedPage(_ label: String, provider: String, url: URL, vip: Bool, raw: [String: Any], session: Session) -> LiveServer {
-        var server = LiveServer(label: label, provider: provider, kind: .web, pageURL: url, vip: vip)
+        var page = url
+        // Liens Alternative (Haloule) : le serveur redirige vers le site lui-même (?mobile=1)
+        // au lieu de sa page qui le met dans un cadre (cookies bloqués par WebKit).
+        if url.path.contains("/api/tv/alternative/open/"), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "mobile" } + [URLQueryItem(name: "mobile", value: "1")]
+            page = parts.url ?? url
+        }
+        var server = LiveServer(label: label, provider: provider, kind: .web, pageURL: page, vip: vip)
         // Lecteur ouvert seul, directement (pas dans un cadre) : dans un cadre, WebKit bloque
         // les cookies des autres sites et la plupart de ces lecteurs ne lisent plus.
         let external = !session.isNoctraOrigin(url)
@@ -398,19 +409,14 @@ enum LiveServerFactory {
             server.fallback = !list.isEmpty
             server.manualOnly = !list.isEmpty
             list.append(server)
-            list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: [url.absoluteString], session: session).map { variant in
-                var copy = variant
-                copy.manualOnly = server.manualOnly
-                copy.fallback = server.fallback
-                return copy
-            }
-        } else if list.contains(where: { $0.kind == .resolve }) {
-            // VIP : variantes officielles proposées en secours manuel.
-            list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: false, exclude: [], session: session).map { variant in
-                var copy = variant
-                copy.manualOnly = true
-                copy.fallback = true
-                return copy
+            // VIP : chaque variante arrive du résolveur en flux VIP (comme sur PC), pas en page publique.
+            if !(vip && resolver != nil) {
+                list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: [url.absoluteString], session: session).map { variant in
+                    var copy = variant
+                    copy.manualOnly = server.manualOnly
+                    copy.fallback = server.fallback
+                    return copy
+                }
             }
         }
         return list
@@ -440,7 +446,9 @@ enum LiveServerFactory {
                 return nil
             }
             item.compatPage = option["compatPage"] as? Bool == true
-            item.manualOnly = option["manualOnly"] as? Bool == true
+            // Variantes VIP non vérifiées d'avance : la route HLS du serveur les résout à la
+            // lecture ; elles servent de relais automatiques, comme sur PC.
+            item.manualOnly = option["manualOnly"] as? Bool == true && !(item.vip && item.kind == .native)
             item.fallback = option["fallback"] as? Bool == true
             return item
         }

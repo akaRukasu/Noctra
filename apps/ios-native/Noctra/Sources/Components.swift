@@ -86,6 +86,10 @@ struct PosterCard: View {
                                 .padding(6)
                         }
                     }
+                    .overlay(alignment: .bottomLeading) {
+                        // Série complète, épisodes manquants ou en cours (comme sur le site).
+                        if item.type == "Series" { SeriesStatusBadge(id: item.id).padding(7) }
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .auroraCard()
                     .zoomSource(id: item.id, in: zoom)
@@ -122,6 +126,10 @@ struct WideCard: View {
                         if let progress = item.progress {
                             ProgressLine(value: progress).padding(10)
                         }
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        // Série complète, épisodes manquants ou en cours (comme sur le site).
+                        if item.type == "Series" { SeriesStatusBadge(id: item.id).padding(7) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .auroraCard()
@@ -448,6 +456,9 @@ struct AccountSheet: View {
                             }
                             NavigationLink { ArrHubView(kind: .sonarr) } label: {
                                 Label("Sonarr · séries", systemImage: "tv.and.mediabox.fill")
+                            }
+                            NavigationLink { FileExplorerView() } label: {
+                                Label("Explorateur média", systemImage: "folder.fill")
                             }
                         }
                         Button {

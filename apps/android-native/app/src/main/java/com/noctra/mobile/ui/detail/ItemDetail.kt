@@ -107,6 +107,7 @@ import com.noctra.mobile.ui.glass
 import com.noctra.mobile.ui.pressScale
 import com.noctra.mobile.ui.screenModel
 import kotlinx.coroutines.launch
+import com.noctra.mobile.ui.SeriesStatusBadge
 
 class DetailModel(val item: BaseItem) {
     var detail by mutableStateOf<BaseItem?>(null)
@@ -236,6 +237,7 @@ fun ItemDetailScreen(item: BaseItem) {
                             Text(if (shown.type == "Episode") shown.seriesName ?: shown.title else shown.title, style = Theme.display(32).copy(brush = Theme.posterTitleGradient), maxLines = 3)
                         }
                         if (shown.type == "Episode") Text(listOfNotNull(shown.episodeLabel, shown.name).joinToString(" · "), color = Theme.ink, fontWeight = FontWeight.SemiBold)
+                        if (shown.type == "Series") SeriesStatusBadge(shown.id, large = true)
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (shown.subtitleLine.isNotEmpty()) Text(shown.subtitleLine, color = Color.White.copy(alpha = 0.75f), fontSize = 14.sp)
                             shown.communityRating?.let {

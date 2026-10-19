@@ -22,6 +22,8 @@ struct SeerrItem: Identifiable, Hashable {
     let status: Int?
     let jellyfinId: String?
     let reason: String?
+    /// Fiche Radarr/Sonarr déjà créée (demande faite) : recherche interactive possible.
+    let serviceId: Int?
 
     var key: String { "\(mediaType):\(id)" }
     var year: String? { date.flatMap { $0.count >= 4 ? String($0.prefix(4)) : nil } }
@@ -51,6 +53,7 @@ struct SeerrItem: Identifiable, Hashable {
         status = info?["status"] as? Int
         jellyfinId = info?["jellyfinMediaId"] as? String
         reason = json["reason"] as? String
+        serviceId = (json["resolvedServiceId"] as? Int) ?? (info?["externalServiceId"] as? Int)
     }
 }
 
@@ -177,14 +180,20 @@ struct SeerrSheet: View {
                                 .disabled(sending || requested || (item.status ?? 0) >= 2)
                             }
                             if session.isAdmin && (item.status ?? 0) < 5 {
+                                // Comme sur le site : film → releases Radarr ; série → œuvre complète, saison ou épisode.
                                 NavigationLink {
-                                    TrackerSearchView(mediaType: item.mediaType, tmdbId: item.id, title: item.title, year: item.year)
+                                    ReleaseSearchHub(mediaType: item.mediaType, tmdbId: item.id, title: item.title, year: item.year, serviceId: item.serviceId)
                                 } label: {
-                                    Label("Recherche interactive", systemImage: "magnifyingglass").frame(maxWidth: .infinity).padding(.vertical, 6)
+                                    Label(item.mediaType == "tv" ? "Recherche interactive · série" : "Recherche interactive · film", systemImage: "magnifyingglass")
+                                        .frame(maxWidth: .infinity).padding(.vertical, 6)
                                 }
                                 .auroraSecondary()
                             }
                         }
+                    }
+                    if session.isAdmin, (2...4).contains(item.status ?? 0) {
+                        Text("Déjà demandé mais pas encore disponible : lance la recherche interactive pour choisir la release.")
+                            .font(.footnote).foregroundStyle(.orange)
                     }
                     if let note { Text(note).font(.footnote).foregroundStyle(Theme.muted) }
                     if let overview = item.overview, !overview.isEmpty {
@@ -302,7 +311,7 @@ struct RequestsView: View {
     @Environment(Session.self) private var session
     @State private var query = ""
     @State private var results: [SeerrItem] = []
-    @State private var mine: [(title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?)] = []
+    @State private var mine: [(title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?, serviceId: Int?)] = []
     @State private var quota: String?
     @State private var loading = true
     @State private var searching = false
@@ -354,7 +363,7 @@ struct RequestsView: View {
                                 Spacer()
                                 if session.isAdmin, let tmdb = entry.tmdbId, entry.label != "Disponible" {
                                     NavigationLink {
-                                        TrackerSearchView(mediaType: entry.mediaType, tmdbId: tmdb, title: entry.title, year: entry.year)
+                                        ReleaseSearchHub(mediaType: entry.mediaType, tmdbId: tmdb, title: entry.title, year: entry.year, serviceId: entry.serviceId)
                                     } label: {
                                         Image(systemName: "magnifyingglass").padding(12)
                                     }
@@ -395,7 +404,7 @@ struct RequestsView: View {
         defer { loading = false }
         guard let json = try? await session.noctraJSON("/api/jellyseerr/requests") as? [String: Any] else { return }
         let labels = [1: "En attente", 2: "Approuvée", 3: "Refusée"]
-        mine = ((json["results"] as? [[String: Any]]) ?? []).prefix(40).map { request -> (title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?) in
+        mine = ((json["results"] as? [[String: Any]]) ?? []).prefix(40).map { request -> (title: String, poster: URL?, label: String, jellyfinId: String?, mediaType: String, tmdbId: Int?, year: String?, serviceId: Int?) in
             let media = (request["media"] as? [String: Any]) ?? [:]
             let available = (media["status"] as? Int) == 5
             let title = (request["displayTitle"] as? String) ?? (media["title"] as? String) ?? (media["name"] as? String) ?? "Demande"
@@ -404,7 +413,8 @@ struct RequestsView: View {
             let type = (request["mediaType"] as? String) == "tv" ? "tv" : "movie"
             let tmdb = (media["tmdbId"] as? Int) ?? (media["tmdbId"] as? String).flatMap { Int($0) }
             let date = (request["releaseDate"] as? String) ?? ""
-            return (title, poster, label, media["jellyfinMediaId"] as? String, type, tmdb, date.count >= 4 ? String(date.prefix(4)) : nil)
+            let service = (request["resolvedServiceId"] as? Int) ?? (media["externalServiceId"] as? Int)
+            return (title, poster, label, media["jellyfinMediaId"] as? String, type, tmdb, date.count >= 4 ? String(date.prefix(4)) : nil, service)
         }
         if let quota = json["quota"] as? [String: Any], (quota["enforced"] as? Bool) == true, let remaining = quota["remaining"] as? Int {
             self.quota = "\(remaining) demande\(remaining > 1 ? "s" : "") possible\(remaining > 1 ? "s" : "")"

@@ -281,7 +281,7 @@ final class LivePlayerModel {
             }
             web = WebPlayerRequest(title: channel.name, mode: target.mpegts ? .mpegts(url) : .hls(url))
             paused = false
-            try? await Task.sleep(for: .seconds(target.mpegts ? 25 : 30))
+            try? await Task.sleep(for: .seconds(target.mpegts ? 30 : 45))
             guard token == generation, !webPlaying else { return }
             engineFailed(target, web: true, reason: "le moteur web n’a pas démarré la vidéo")
         }
@@ -327,7 +327,7 @@ final class LivePlayerModel {
                     if item.status == .readyToPlay && (self.player.timeControlStatus == .playing || self.paused) {
                         ready = true
                         self.succeeded(server, web: false)
-                    } else if elapsed > (item.status == .readyToPlay ? 25 : (server.vip ? 30 : 12)) {
+                    } else if elapsed > (item.status == .readyToPlay ? 25 : (server.vip ? 30 : 20)) {
                         // Prêt mais sans image (mise en mémoire trop lente) ou rien du tout. VIP : le serveur
                         // va chercher la liste et les segments chez LiveWatch, le premier chargement est plus lent.
                         self.engineFailed(server, web: false, reason: item.status == .readyToPlay ? "mise en mémoire trop lente" : Self.reason(item))

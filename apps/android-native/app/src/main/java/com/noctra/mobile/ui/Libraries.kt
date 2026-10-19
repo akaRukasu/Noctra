@@ -79,6 +79,8 @@ import com.noctra.mobile.offline.OfflineState
 import com.noctra.mobile.offline.OfflineStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.width
+import com.noctra.mobile.admin.FileExplorerScreen
 
 class LibrariesModel {
     var libraries by mutableStateOf<List<BaseItem>>(emptyList())
@@ -105,7 +107,17 @@ fun LibrariesScreen() {
     Box(Modifier.fillMaxSize()) {
         AuroraBackground()
         Column(Modifier.fillMaxSize()) {
-            TopBar("Médiathèques", large = true) { AccountButton() }
+            TopBar("Médiathèques", large = true) {
+                // Explorateur média des administrateurs, comme le bouton « Explorateur » du site.
+                if (Session.isAdmin && Session.hasNoctra) {
+                    val push = rememberPush()
+                    Box(Modifier.size(40.dp).glass(CircleShape).focusRing(CircleShape).clickable(onClickLabel = "Explorateur média") { push { FileExplorerScreen() } }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Folder, contentDescription = "Explorateur média", tint = Theme.ink, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
+                AccountButton()
+            }
             RefreshBox(onRefresh = { model.load() }, modifier = Modifier.weight(1f)) {
                 LazyVerticalGrid(GridCells.Adaptive(300.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     item(span = { GridItemSpan(maxLineSpan) }) { OfflineTile { push { OfflineLibraryScreen() } } }

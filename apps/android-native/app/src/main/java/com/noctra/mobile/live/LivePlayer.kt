@@ -296,7 +296,7 @@ object LivePlayerModel {
             }
             web = WebPlayerRequest(title = channel?.name ?: "", mode = if (target.mpegts) WebPlayerRequest.Mode.mpegts else WebPlayerRequest.Mode.hls, url = url)
             paused = false
-            delay(if (target.mpegts) 25_000 else 30_000)
+            delay(if (target.mpegts) 30_000 else 45_000)
             if (token == generation && !webPlaying) engineFailed(target, true, "le moteur web n’a pas démarré la vidéo")
         }
     }
@@ -365,7 +365,7 @@ object LivePlayerModel {
                     if (exo.playbackState == Player.STATE_READY && (exo.isPlaying || paused)) {
                         ready = true
                         succeeded(target, false)
-                    } else if (System.currentTimeMillis() - started > if (exo.playbackState == Player.STATE_READY) 25_000 else if (target.vip) 30_000 else 15_000) {
+                    } else if (System.currentTimeMillis() - started > if (exo.playbackState == Player.STATE_READY) 25_000 else if (target.vip) 30_000 else 20_000) {
                         // VIP : le serveur va chercher la liste et les segments chez LiveWatch, le premier chargement est plus lent.
                         engineFailed(target, false, if (exo.playbackState == Player.STATE_READY) "mise en mémoire trop lente" else "aucune image reçue")
                         return@launch

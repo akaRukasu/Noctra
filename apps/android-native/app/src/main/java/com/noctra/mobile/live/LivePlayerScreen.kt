@@ -684,30 +684,53 @@ p.attachMediaElement(v);p.load();start();
 p.on(mpegts.Events.ERROR,function(a,b){send('error','flux MPEG-TS interrompu ('+a+(b?' · '+b:'')+')')});
 """
 
+/** Comme le site (moteur par défaut) : Shaka réglé pour les flux IPTV (horodatages ignorés, mode séquence, fenêtre du direct élargie), puis hls.js, puis la vidéo native. */
 private const val hlsScript = """
-if(window.Hls&&Hls.isSupported()){
-var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:3,maxBufferLength:30,backBufferLength:30,
-manifestLoadingTimeOut:20000,manifestLoadingMaxRetry:3,levelLoadingTimeOut:20000,levelLoadingMaxRetry:4,fragLoadingTimeOut:30000,fragLoadingMaxRetry:4,
+function reset(){try{v.pause()}catch(e){}v.removeAttribute('src');try{v.load()}catch(e){}}
+function useNative(){reset();v.src=U;start();v.addEventListener('error',function(){if(!playing)send('error','vidéo illisible')})}
+function useHls(){
+if(!(window.Hls&&Hls.isSupported()))return useNative();
+reset();
+var h=new Hls({lowLatencyMode:false,liveSyncDurationCount:4,liveMaxLatencyDurationCount:9,maxBufferLength:60,backBufferLength:30,
+manifestLoadingTimeOut:20000,manifestLoadingMaxRetry:6,levelLoadingTimeOut:20000,levelLoadingMaxRetry:6,fragLoadingTimeOut:45000,fragLoadingMaxRetry:8,
 xhrSetup:function(x,u){if(K&&same(u))x.setRequestHeader('x-noctra-token',K)}});
 var net=0,media=0;
 h.on(Hls.Events.ERROR,function(e,d){if(!d||!d.fatal)return;
 if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&net++<2){h.startLoad();return}
 if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&media++<2){h.recoverMediaError();return}
+if(!playing){try{h.destroy()}catch(x){}useNative();return}
 send('error','moteur web : '+d.details+(d.response&&d.response.code?' ('+d.response.code+')':''))});
 h.on(Hls.Events.MANIFEST_PARSED,start);
 h.loadSource(U);h.attachMedia(v);
-}else{v.src=U;start();v.addEventListener('error',function(){send('error','vidéo illisible')})}
+}
+function useShaka(){
+if(!(window.shaka&&shaka.Player&&shaka.Player.isBrowserSupported()))return useHls();
+try{shaka.polyfill.installAll()}catch(e){}
+var p=new shaka.Player(),failed=false;
+function fallback(){if(failed||playing)return;failed=true;p.destroy().catch(function(){}).then(useHls)}
+p.getNetworkingEngine().registerRequestFilter(function(t,r){if(K&&r.uris&&r.uris.length&&same(r.uris[0]))r.headers['x-noctra-token']=K});
+p.configure({streaming:{bufferingGoal:45,rebufferingGoal:3,bufferBehind:15,segmentPrefetchLimit:1,lowLatencyMode:false,maxDisabledTime:15,
+retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:1.5,timeout:45000,stallTimeout:15000,connectionTimeout:12000}},
+manifest:{defaultPresentationDelay:30,availabilityWindowOverride:120,hls:{ignoreManifestProgramDateTime:true,sequenceMode:true},
+retryParameters:{maxAttempts:4,baseDelay:500,backoffFactor:1.5,timeout:20000,stallTimeout:8000,connectionTimeout:10000}},
+abr:{enabled:true,defaultBandwidthEstimate:1000000,switchInterval:12,bandwidthUpgradeTarget:0.7,bandwidthDowngradeTarget:0.9}});
+v.addEventListener('playing',function(){try{p.configure({streaming:{segmentPrefetchLimit:2}})}catch(e){}},{once:true});
+p.addEventListener('error',function(e){var d=e.detail;if(!d||d.severity!==2)return;if(!playing){fallback();return}send('error','Shaka : erreur '+(d.code||''))});
+p.attach(v).then(function(){return p.load(U,undefined,'application/x-mpegurl')}).then(start).catch(fallback);
+}
+useShaka();
 """
 
 /** Moteur web : mpegts.js (flux MPEG-TS continu) ou hls.js (liste HLS), servis par Noctra ; jeton Noctra joint aux requêtes vers Noctra seulement. */
 private fun enginePage(url: String, transport: Boolean, token: String): String {
-    val library = if (transport) "mpegts.js" else "hls.min.js"
+    val libraries = if (transport) listOf("mpegts.js") else listOf("shaka-player.compiled.js", "hls.min.js")
+    val tags = libraries.joinToString("") { "<script src=\"vendor/$it\"></script>" }
     val script = if (transport) tsScript else hlsScript
     return """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}video{position:fixed;inset:0;width:100%;height:100%;background:#000;object-fit:contain}</style></head>
 <body><video id="v" playsinline webkit-playsinline autoplay></video>
-<script src="vendor/$library"></script>
+$tags
 <script>
 (function(){
 var v=document.getElementById('v'),U='${literal(url)}',K='${literal(token)}',playing=false,waitSince=0;

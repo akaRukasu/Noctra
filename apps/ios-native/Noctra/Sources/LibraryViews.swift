@@ -43,7 +43,16 @@ struct LibrariesView: View {
         }
         .background(AuroraBackground())
         .navigationTitle("Médiathèques")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { AccountButton() } }
+        .toolbar {
+            // Explorateur média des administrateurs, comme le bouton « Explorateur » du site.
+            if session.isAdmin && session.hasNoctra {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink { FileExplorerView() } label: { Image(systemName: "folder.fill") }
+                        .accessibilityLabel("Explorateur média")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) { AccountButton() }
+        }
         .refreshable { await load() }
         .task { if libraries.isEmpty { await load() } }
     }
