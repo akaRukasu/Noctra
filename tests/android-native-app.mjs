@@ -168,3 +168,6 @@ assert.match(await src('admin/AdminServer'), /\/api\/tv\/livewatch\/diagnostics/
 assert.match(await src('admin/AdminServer'), /"\?ref=" \+ URLEncoder\.encode\(diagnosticRef, "UTF-8"\)/);
 assert.match(await src('admin/AdminServer'), /clipboard\.setText\(AnnotatedString\(Json\.stringify\(result\)\)\)/);
 console.log('Appli Android native 1.7.2 : vérifiée.');
+// 1.7.3 : diagnostic LiveWatch VIP accessible directement depuis le compte (administrateurs).
+assert.match(await src('ui/Account'), /SettingRow\("Diagnostic LiveWatch VIP"/);
+console.log('Appli Android native 1.7.3 : vérifiée.');

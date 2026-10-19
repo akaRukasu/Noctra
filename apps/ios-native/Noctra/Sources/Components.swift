@@ -441,6 +441,12 @@ struct AccountSheet: View {
                 }
                 if session.isAdmin {
                     Section {
+                        // Accès direct, temporaire, le temps de régler le VIP LiveWatch.
+                        if session.hasNoctra {
+                            NavigationLink { LiveAdminView() } label: {
+                                Label("Diagnostic LiveWatch VIP", systemImage: "stethoscope")
+                            }
+                        }
                         NavigationLink { AdminHomeView() } label: {
                             Label("Tableau de bord", systemImage: "gauge.with.dots.needle.67percent")
                         }

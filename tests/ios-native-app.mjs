@@ -323,3 +323,6 @@ function WebVttSeconds(value) {
   assert.match(admin, /UIPasteboard\.general\.string/, 'rapport copiable');
   console.log('Appli iOS native 2.15.2 : vérifiée.');
 }
+// 2.15.3 : diagnostic LiveWatch VIP accessible directement depuis le compte (administrateurs).
+assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /NavigationLink \{ LiveAdminView\(\) \} label: \{\s*Label\("Diagnostic LiveWatch VIP"/);
+console.log('Appli iOS native 2.15.3 : vérifiée.');

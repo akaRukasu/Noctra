@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tv
@@ -121,6 +122,8 @@ fun AccountSheet(dismiss: () -> Unit) {
             }
             if (Session.isAdmin) {
                 SettingGroup("Administration", refreshNote) {
+                    // Accès direct, temporaire, le temps de régler le VIP LiveWatch.
+                    if (Session.hasNoctra) SettingRow("Diagnostic LiveWatch VIP", icon = Icons.Filled.MedicalServices, onClick = { open { com.noctra.mobile.admin.LiveAdminScreen() } })
                     SettingRow("Tableau de bord", icon = Icons.Filled.Speed, onClick = { open { AdminHomeScreen() } })
                     SettingRow("Utilisateurs", icon = Icons.Filled.Group, onClick = { open { UsersAdminScreen() } })
                     if (Session.hasNoctra) {
