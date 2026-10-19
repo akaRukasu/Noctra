@@ -150,6 +150,7 @@ private fun Root() {
         // Lecteurs plein écran au-dessus de tout.
         if (PlaybackManager.presented) PlayerScreen()
         if (LivePlayerModel.presented) LivePlayerScreen()
+        if (com.noctra.mobile.live.MultiviewStore.presented) com.noctra.mobile.live.MultiviewScreen()
         if (!Pip.active) Overlays()
         // Intro du site à chaque ouverture de l'appli, au-dessus de l'accueil qui se charge.
         AnimatedVisibility(intro, enter = EnterTransition.None, exit = fadeOut(tween(600))) {
@@ -244,7 +245,7 @@ private fun Overlays() {
             )
         }
         // Lecture en cours sur un Chromecast : capsule au-dessus des onglets.
-        if (!PlaybackManager.presented && !LivePlayerModel.presented) {
+        if (!PlaybackManager.presented && !LivePlayerModel.presented && !com.noctra.mobile.live.MultiviewStore.presented) {
             Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)) {
                 if (com.noctra.mobile.cast.ChromecastController.isActive) ChromecastMiniPlayer()
                 else com.noctra.mobile.cast.RemoteMiniPlayer()

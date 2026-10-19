@@ -22,7 +22,7 @@
   if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
   document.documentElement.classList.add('web-host', 'host-' + platform);
 
-  var VERSION = '1.1.49';
+  var VERSION = '1.1.50';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
@@ -143,6 +143,7 @@
     else if (action === 'play') Player.open(message);
     else if (action === 'playerCommand') Player.command(message);
     else if (action === 'multiview') Multiview.open(message.items || [], message.catalog || []);
+    else if (action === 'multiviewCommand') Multiview.remote(message);
     else if (action === 'jellyfinPlay') send({ type: 'resumed', jellyfinFailed: message.itemId, positionTicks: message.positionTicks });
     else if (action === 'openSettings') Settings.show();
     else if (action === 'keepScreenOn') keepScreenOn(Boolean(message.data));
@@ -1190,6 +1191,51 @@
         tile.video.muted = tile !== Multiview.audio;
         tile.node.classList.toggle('audio', tile === Multiview.audio);
       });
+      Multiview.publish();
+    },
+    // État envoyé au téléphone qui pilote le multiview : chaînes, son, chaîne mise en avant.
+    publish: function () {
+      send({ type: 'multiviewState', state: {
+        tiles: Multiview.tiles.map(function (tile) { return { title: tile.title, subtitle: tile.subtitle }; }),
+        audio: Multiview.tiles.indexOf(Multiview.audio),
+        featured: Multiview.featured ? Multiview.tiles.indexOf(Multiview.featured) : -1
+      } });
+    },
+    // Commandes du téléphone : add (item {title, subtitle, options}), remove, audio, feature, solo, grid, state.
+    remote: function (message) {
+      var command = message.command;
+      if (command === 'state') { Multiview.publish(); return; }
+      if (!Multiview.node) return;
+      var tile = Multiview.tiles[Number(message.index)];
+      if (command === 'add') {
+        var item = message.item || {};
+        var options = (item.options || []).filter(function (option) { return option && (option.url || option.resolve); });
+        if (!options.length || Multiview.tiles.length >= MULTI_MAX) return;
+        Multiview.add(String(item.title || ''), String(item.subtitle || ''), options);
+        Multiview.zoomed = null;
+      } else if (command === 'close') {
+        Multiview.close();
+        return;
+      } else if (command === 'grid') {
+        Multiview.featured = null;
+        Multiview.zoomed = null;
+      } else if (!tile) {
+        return;
+      } else if (command === 'remove') {
+        Multiview.remove(tile);
+        return;
+      } else if (command === 'audio') {
+        Multiview.audio = tile;
+      } else if (command === 'feature') {
+        Multiview.featured = Multiview.tiles.length > 1 && Multiview.featured !== tile ? tile : null;
+        Multiview.zoomed = null;
+      } else if (command === 'solo') {
+        Multiview.audio = tile;
+        Multiview.featured = Multiview.tiles.length > 1 ? tile : null;
+        Multiview.zoomed = null;
+      }
+      Multiview.arrange();
+      Multiview.labels();
     },
     play: function (tile, index) {
       tile.current = index;
@@ -1302,7 +1348,7 @@
     openMenu: function (tile) {
       var entries = [];
       if (tile !== Multiview.audio) entries.push(['♪  Écouter cette chaîne', function () { Multiview.audio = tile; Multiview.labels(); }]);
-      if (Multiview.tiles.length > 1) entries.push([Multiview.featured === tile ? 'Revenir à la grille' : 'Mettre en avant', function () { Multiview.featured = Multiview.featured === tile ? null : tile; Multiview.arrange(); }]);
+      if (Multiview.tiles.length > 1) entries.push([Multiview.featured === tile ? 'Revenir à la grille' : 'Mettre en avant', function () { Multiview.featured = Multiview.featured === tile ? null : tile; Multiview.arrange(); Multiview.publish(); }]);
       entries.push([Multiview.zoomed === tile ? 'Quitter le plein écran' : 'Plein écran', function () { Multiview.zoomed = Multiview.zoomed === tile ? null : tile; Multiview.arrange(); }]);
       if (tile.options.length > 1 || Object.keys(tile.failed).length) entries.push(['Changer de serveur (' + tile.options.length + ')', function () { Multiview.servers(tile); }]);
       if (Multiview.tiles.length < MULTI_MAX && Multiview.catalog.length) entries.push(['＋  Ajouter une chaîne (' + Multiview.tiles.length + '/' + MULTI_MAX + ')', function () { Multiview.addChannel(); }]);
@@ -1419,6 +1465,7 @@
       Multiview.zoomed = null;
       if (Multiview.node) Multiview.node.remove();
       Multiview.node = null;
+      Multiview.publish();
       keepScreenOn(false);
     }
   };

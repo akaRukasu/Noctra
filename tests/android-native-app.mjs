@@ -143,3 +143,16 @@ assert.match(await src('live/LiveServers'), /lecteur officiel VIP/);
 assert.match(await src('live/LiveServers'), /"\/api\/tv\/livewatch\/prepare\/"/);
 assert.match(await src('live/LiveServers'), /server\.vip && page\.toHttpUrlOrNull\(\)\?\.let \{ isLiveWatchHost\(it\.host\) \} == true -> return@mapIndexedNotNull null/);
 console.log('Appli Android native 1.6.1 : vérifiée.');
+// 1.7 : multiview de toutes les sources, diffusé et piloté sur Noctra TV.
+{
+  const multiview = await src('live/Multiview');
+  for (const name of ['object MultiviewStore', 'class MultiviewTile', 'fun MultiviewScreen', 'fun MultiviewAddSheet', 'fun MultiviewCastSheet', 'fun MultiviewBar']) assert.ok(multiview.includes(name), name);
+  assert.match(multiview, /fun solo\(tile: MultiviewTile\)/);
+  assert.match(multiview, /it\.setVolume\(if \(it\.id == audio\) 1f else 0f\)/, 'une seule chaîne écoutée');
+  assert.match(multiview, /C\.AUDIO_CONTENT_TYPE_MOVIE\)\.build\(\), false\)/, 'vignettes sans prise du focus audio');
+  const remote = await src('cast/RemotePlayback');
+  for (const action of ['playMultiview', 'multiAdd', 'multiAudio', 'multiSolo', 'multiRemove', 'multiGrid']) assert.ok(remote.includes(`"${action}"`), action);
+  assert.match(await src('live/LiveScreens'), /if \(MultiviewStore\.selecting\) MultiviewStore\.toggle\(channel\) else LiveLauncher\.open\(channel, context\)/);
+  assert.match(await read('apps/android-native/app/src/main/java/com/noctra/mobile/MainActivity.kt'), /MultiviewScreen\(\)/);
+  console.log('Appli Android native 1.7 : vérifiée.');
+}

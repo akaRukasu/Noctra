@@ -538,8 +538,17 @@ struct LiveTVHome: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Chaîne")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { countryMenu }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation(Theme.spring) { MultiviewStore.shared.selecting.toggle() }
+                } label: {
+                    Image(systemName: MultiviewStore.shared.selecting ? "square.grid.2x2.fill" : "square.grid.2x2")
+                }
+                .accessibilityLabel("Multiview : choisir plusieurs chaînes")
+            }
             ToolbarItem(placement: .topBarTrailing) { AccountButton() }
         }
+        .safeAreaInset(edge: .bottom) { MultiviewBar() }
         .refreshable { await store.loadAll(session, force: true) }
         .task { await store.loadAll(session) }
         .sensoryFeedback(.selection, trigger: tab)
@@ -663,11 +672,13 @@ struct EventList: View {
     @Environment(Session.self) private var session
     let events: [LiveChannel]
     private var launcher: LiveLauncher { .shared }
+    private var multiview: MultiviewStore { .shared }
 
     var body: some View {
         LazyVStack(spacing: 10) {
             ForEach(events) { event in
                 Button {
+                    if multiview.selecting { withAnimation(Theme.spring) { multiview.toggle(event) }; return }
                     Task { await launcher.open(event, context: events, session: session) }
                 } label: {
                     HStack(spacing: 12) {
@@ -698,6 +709,7 @@ struct EventList: View {
                             if let score = event.score { Text(score).font(.headline.monospacedDigit()) }
                             Text("\(event.entries.count) serveur\(event.entries.count > 1 ? "s" : "")").font(.caption2).foregroundStyle(Theme.muted)
                             if launcher.opening == event.id { ProgressView() }
+                            if multiview.contains(event) { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.teal) }
                         }
                     }
                     .padding(12)
@@ -711,6 +723,11 @@ struct EventList: View {
                         LiveStore.shared.toggleFavorite(event)
                     } label: {
                         Label(LiveStore.shared.favorites.contains(event.id) ? "Retirer des favoris" : "Ajouter aux favoris", systemImage: "star")
+                    }
+                    Button {
+                        withAnimation(Theme.spring) { multiview.toggle(event) }
+                    } label: {
+                        Label(multiview.contains(event) ? "Retirer du multiview" : "Ajouter au multiview", systemImage: "square.grid.2x2")
                     }
                 }
             }
@@ -735,12 +752,15 @@ struct ChannelGrid: View {
     @State private var taps = 0
     private var launcher: LiveLauncher { .shared }
     private var store: LiveStore { .shared }
+    private var multiview: MultiviewStore { .shared }
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 12)], spacing: 12) {
             ForEach(channels) { channel in
                 Button {
                     taps += 1
+                    // Choix du multiview : la chaîne est ajoutée ou retirée, pas lancée.
+                    if multiview.selecting { withAnimation(Theme.spring) { multiview.toggle(channel) }; return }
                     Task { await launcher.open(channel, context: channels, session: session) }
                 } label: {
                     VStack(spacing: 8) {
@@ -759,7 +779,9 @@ struct ChannelGrid: View {
                             }
                             .frame(height: 72)
                             .frame(maxWidth: .infinity)
-                            if store.favorites.contains(channel.id) {
+                            if multiview.contains(channel) {
+                                Image(systemName: "checkmark.circle.fill").font(.callout).foregroundStyle(Theme.teal).padding(6)
+                            } else if store.favorites.contains(channel.id) {
                                 Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow).padding(8)
                             }
                         }
@@ -796,6 +818,11 @@ struct ChannelGrid: View {
                     } label: {
                         Label(store.favorites.contains(channel.id) ? "Retirer des favoris" : "Ajouter aux favoris",
                               systemImage: store.favorites.contains(channel.id) ? "star.slash" : "star")
+                    }
+                    Button {
+                        withAnimation(Theme.spring) { multiview.toggle(channel) }
+                    } label: {
+                        Label(multiview.contains(channel) ? "Retirer du multiview" : "Ajouter au multiview", systemImage: "square.grid.2x2")
                     }
                 }
             }
@@ -850,6 +877,17 @@ struct LiveChannelsView: View {
         .background(AuroraBackground(palette: .tv))
         .navigationTitle(route.name)
         .searchable(text: $query, prompt: bouquets.isEmpty ? "Chaîne" : "Bouquet ou chaîne")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation(Theme.spring) { MultiviewStore.shared.selecting.toggle() }
+                } label: {
+                    Image(systemName: MultiviewStore.shared.selecting ? "square.grid.2x2.fill" : "square.grid.2x2")
+                }
+                .accessibilityLabel("Multiview : choisir plusieurs chaînes")
+            }
+        }
+        .safeAreaInset(edge: .bottom) { MultiviewBar() }
         .task { if channels.isEmpty && bouquets.isEmpty { await load() } }
     }
 

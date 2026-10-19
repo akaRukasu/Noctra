@@ -178,6 +178,7 @@
       else if (data.type === 'webPlayerClosed') webPlayerClosed(data);
       else if (data.type === 'remote') remoteCommand(data);
       else if (data.type === 'playerEvent') playerEvent(data);
+      else if (data.type === 'multiviewState') multiviewRemoteState = data.state && Array.isArray(data.state.tiles) ? data.state : { tiles: [] };
       else if (data.type === 'nativeError') toast('Action impossible : ' + data.message, true);
     };
     native('hello');
@@ -1518,21 +1519,72 @@
     }
   }
   var mobileRemoteState = { playing: true, positionMs: 0, volume: 100 };
+  // Multiview ouvert (vignettes, son, chaîne mise en avant), tenu à jour par le lecteur natif.
+  var multiviewRemoteState = { tiles: [] };
+  // Chaîne envoyée par le téléphone (chaîne réunie de toutes les sources, avec ses serveurs).
+  function remoteChannel(text) {
+    var channel;
+    try { channel = JSON.parse(String(text || '')); } catch (error) { return null; }
+    if (!channel || typeof channel.name !== 'string' || !Array.isArray(channel._entries) || channel._entries.length > 200) return null;
+    if (!channel._entries.every(function (entry) { return entry && entry.channel && entry.source && typeof entry.source.name === 'string'; })) return null;
+    return channel;
+  }
+  // Multiview piloté depuis le téléphone : chaînes de toutes les sources, comme sur la TV.
+  function remoteMultiview(args) {
+    // « Arrêter » depuis le téléphone pendant un multiview : il se ferme.
+    var action = args.action === 'stop' && multiviewRemoteState.tiles.length ? 'multiClose' : args.action;
+    var command = { multiRemove: 'remove', multiAudio: 'audio', multiFeature: 'feature', multiSolo: 'solo', multiGrid: 'grid', multiClose: 'close' }[action];
+    if (command) {
+      var index = Number(args.value);
+      var global = command === 'grid' || command === 'close';
+      if (!global && (!isFinite(index) || index < 0 || index >= MULTI_MAX)) return true;
+      native('multiviewCommand', { command: command, index: global ? -1 : Math.floor(index) });
+      return true;
+    }
+    if (args.action === 'playMultiview') {
+      var list;
+      try { list = JSON.parse(String(args.channels || '')); } catch (error) { return true; }
+      if (!Array.isArray(list)) return true;
+      var channels = list.slice(0, MULTI_MAX).map(function (entry) { return remoteChannel(JSON.stringify(entry)); }).filter(Boolean);
+      if (!channels.length) return true;
+      if (playback || vodPlayback) native('playerCommand', { command: 'stop' });
+      playback = null;
+      launchMultiItems(channels.map(function (channel) { return { key: channelKey(channel, ALL_SOURCE), channel: channel, source: ALL_SOURCE }; }));
+      return true;
+    }
+    if (args.action === 'multiAdd') {
+      var channel = remoteChannel(args.channel);
+      if (!channel) return true;
+      if (!multiviewRemoteState.tiles.length) {
+        launchMultiItems([{ key: channelKey(channel, ALL_SOURCE), channel: channel, source: ALL_SOURCE }]);
+        return true;
+      }
+      if (multiviewRemoteState.tiles.length >= MULTI_MAX) { toast(MULTI_MAX + ' chaînes au maximum dans le multiview.', true); return true; }
+      serverList(channel, ALL_SOURCE, channelKey(channel, ALL_SOURCE)).then(function (options) {
+        var found = multiviewOptions(options, channel);
+        if (!found.length) { toast(channel.name + ' : aucun flux direct pour le multiview.', true); return; }
+        native('multiviewCommand', { command: 'add', item: { title: channel.name, subtitle: channel.provider || '', options: found } });
+      }, function () { toast(channel.name + ' : serveurs introuvables.', true); });
+      return true;
+    }
+    return false;
+  }
   function mobileRemoteCommand(args) {
     if (args.action === 'state') {
       if (!/^[a-f0-9]{32}$/i.test(String(args.replyTo || '')) || !/^[a-f0-9]{32}$/i.test(String(args.targetId || ''))) return;
       native('playerCommand', { command: 'remoteState' });
+      native('multiviewCommand', { command: 'state' });
       setTimeout(function () {
-        var state = { live: Boolean(playback), title: playback ? playback.channel.name : '', playing: Boolean(mobileRemoteState.playing), position: (mobileRemoteState.positionMs || 0) / 1000, volume: mobileRemoteState.volume };
+        var multiview = multiviewRemoteState.tiles.length ? multiviewRemoteState : null;
+        var state = { live: Boolean(playback || multiview), title: multiview ? 'Multiview · ' + multiview.tiles.length + ' chaîne' + (multiview.tiles.length > 1 ? 's' : '') : (playback ? playback.channel.name : ''), playing: Boolean(mobileRemoteState.playing), position: (mobileRemoteState.positionMs || 0) / 1000, volume: mobileRemoteState.volume, multiview: multiview };
         jfJson('POST', '/Sessions/' + args.replyTo + '/Command', { Name: 'PlayMediaSource', Arguments: { NoctraRemoteState: '1', sessionId: args.targetId, state: JSON.stringify(state) } }).catch(function () { /* téléphone déconnecté */ });
       }, 200);
       return;
     }
+    if (remoteMultiview(args)) return;
     if (args.action === 'playLive') {
-      var channel;
-      try { channel = JSON.parse(String(args.channel || '')); } catch (error) { return; }
-      if (!channel || typeof channel.name !== 'string' || !Array.isArray(channel._entries) || channel._entries.length > 200) return;
-      if (!channel._entries.every(function (entry) { return entry && entry.channel && entry.source && typeof entry.source.name === 'string'; })) return;
+      var channel = remoteChannel(args.channel);
+      if (!channel) return;
       if (playback || vodPlayback) native('playerCommand', { command: 'stop' });
       playback = null;
       mobileRemoteState = { playing: true, positionMs: 0, volume: mobileRemoteState.volume };
@@ -4814,8 +4866,10 @@
   }
   function launchMulti() {
     if (!multi.items.length) return;
+    launchMultiItems(multi.items.slice());
+  }
+  function launchMultiItems(picked) {
     toast('Préparation du multiview…');
-    var picked = multi.items.slice();
     Promise.all(picked.map(function (item) {
       // Serveurs classés par fiabilité (le multiview commence par le plus stable).
       return serverList(item.channel, item.source, item.key).then(function (options) {

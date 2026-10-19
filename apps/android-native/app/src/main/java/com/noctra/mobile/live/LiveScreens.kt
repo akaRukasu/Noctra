@@ -35,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ChildCare
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.HighQuality
@@ -158,6 +160,7 @@ fun LiveTVHome() {
         Column(Modifier.fillMaxSize()) {
             TopBar("TV en direct", large = true) {
                 CountryMenu { state.category = null }
+                MultiviewToggle()
                 AccountButton()
             }
             if (!Session.hasNoctra) {
@@ -216,7 +219,16 @@ fun LiveTVHome() {
                     }
                 }
             }
+            MultiviewBar(Modifier.padding(bottom = 76.dp))
         }
+    }
+}
+
+/** Bouton du multiview : choisir plusieurs chaînes, de n'importe quelle source. */
+@Composable
+fun MultiviewToggle() {
+    androidx.compose.material3.IconButton(onClick = { MultiviewStore.selecting = !MultiviewStore.selecting }) {
+        Icon(Icons.Filled.GridView, "Multiview : choisir plusieurs chaînes", tint = if (MultiviewStore.selecting) Theme.teal else Theme.ink)
     }
 }
 
@@ -361,7 +373,10 @@ private fun EventRow(event: LiveChannel, context: List<LiveChannel>) {
     Row(
         Modifier.fillMaxWidth().pressScale(interaction, 0.98f).clip(shape).background(Color(0xD10E1326))
             .border(1.dp, if (event.isLive) Color(0x73EF4444) else Theme.teal.copy(alpha = 0.2f), shape).focusRing(shape)
-            .combinedClickable(interactionSource = interaction, indication = null, onClick = { LiveLauncher.open(event, context) }, onLongClick = {
+            .combinedClickable(interactionSource = interaction, indication = null, onClick = {
+                // Choix du multiview : la chaîne est ajoutée ou retirée, pas lancée.
+                if (MultiviewStore.selecting) MultiviewStore.toggle(event) else LiveLauncher.open(event, context)
+            }, onLongClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 toggleFavorite(event)
             })
@@ -395,6 +410,7 @@ private fun EventRow(event: LiveChannel, context: List<LiveChannel>) {
             event.score?.let { Text(it, color = Theme.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) }
             Text("${event.entries.size} serveur${if (event.entries.size > 1) "s" else ""}", color = Theme.muted, fontSize = 11.sp)
             if (event.id in LiveStore.favorites) Icon(Icons.Filled.Star, contentDescription = "Favori", tint = Theme.gold, modifier = Modifier.size(14.dp))
+            if (MultiviewStore.contains(event)) Icon(Icons.Filled.CheckCircle, contentDescription = "Dans le multiview", tint = Theme.teal, modifier = Modifier.size(16.dp))
             if (LiveLauncher.opening == event.id) CircularProgressIndicator(color = Theme.teal, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
         }
     }
@@ -424,7 +440,8 @@ fun ChannelTile(channel: LiveChannel, context: List<LiveChannel>) {
     Column(
         Modifier.fillMaxWidth().pressScale(interaction).combinedClickable(interactionSource = interaction, indication = null, onClick = {
             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            LiveLauncher.open(channel, context)
+            // Choix du multiview : la chaîne est ajoutée ou retirée, pas lancée.
+            if (MultiviewStore.selecting) MultiviewStore.toggle(channel) else LiveLauncher.open(channel, context)
         }, onLongClick = {
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             toggleFavorite(channel)
@@ -448,7 +465,8 @@ fun ChannelTile(channel: LiveChannel, context: List<LiveChannel>) {
                 if (channel.number > 0 && LiveStore.country == "fr") Text("${channel.number}", color = Theme.teal, fontSize = 11.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
                 if (channel.vip) Icon(Icons.Filled.Star, contentDescription = "VIP", tint = Theme.gold, modifier = Modifier.size(10.dp))
             }
-            if (channel.id in LiveStore.favorites) Icon(Icons.Filled.Star, contentDescription = "Favori", tint = Color(0xFFFACC15), modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(12.dp))
+            if (MultiviewStore.contains(channel)) Icon(Icons.Filled.CheckCircle, contentDescription = "Dans le multiview", tint = Theme.teal, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp))
+            else if (channel.id in LiveStore.favorites) Icon(Icons.Filled.Star, contentDescription = "Favori", tint = Color(0xFFFACC15), modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(12.dp))
         }
         Text(channel.name, color = Theme.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         if (channel.entries.size > 1) Text("${channel.entries.size} serveurs", color = Theme.muted, fontSize = 11.sp)
@@ -503,9 +521,9 @@ fun LiveChannelsScreen(route: TVSourceRoute) {
     Box(Modifier.fillMaxSize()) {
         AuroraBackground(AuroraPalette.tv)
         Column(Modifier.fillMaxSize()) {
-            TopBar(route.name)
+            TopBar(route.name) { MultiviewToggle() }
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(104.dp), modifier = Modifier.fillMaxSize(),
+                columns = GridCells.Adaptive(104.dp), modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 30.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -522,6 +540,7 @@ fun LiveChannelsScreen(route: TVSourceRoute) {
                     MessageView(Icons.Filled.Tv, "Aucune chaîne dans cette source.") { scope.launch { model.load() } }
                 }
             }
+            MultiviewBar(Modifier.padding(bottom = 76.dp))
         }
     }
 }

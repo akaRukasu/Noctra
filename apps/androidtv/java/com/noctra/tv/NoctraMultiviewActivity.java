@@ -54,6 +54,13 @@ public class NoctraMultiviewActivity extends Activity {
      */
     static volatile String catalog;
 
+    /** Multiview ouvert (commandes du téléphone : ajouter, retirer, mettre en avant, son). */
+    static volatile NoctraMultiviewActivity active;
+    /** État envoyé au téléphone : {tiles:[{title, subtitle}], audio, featured} ; vide hors multiview. */
+    static volatile String state = "{\"tiles\":[]}";
+    /** Prévenu à chaque changement (l'accueil le transmet au téléphone). */
+    static volatile Runnable onChange;
+
     private static final int ACCENT = Color.rgb(112, 217, 194);
     private static final int GAP = 6;
 
@@ -206,6 +213,90 @@ public class NoctraMultiviewActivity extends Activity {
         }
         refreshLabels();
         tiles.get(0).frame.requestFocus();
+        active = this;
+        publish();
+    }
+
+    // ── Commandes du téléphone (Noctra mobile) ─────────────────────────────
+    /**
+     * {command: add|remove|feature|audio|solo|grid|close, index, item:{title, subtitle, options}}.
+     * « solo » met la chaîne en avant et n'écoute qu'elle.
+     */
+    static void remote(final JSONObject message) {
+        final NoctraMultiviewActivity activity = active;
+        if (activity == null) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (activity.isFinishing() || active != activity) return;
+                activity.command(message);
+            }
+        });
+    }
+
+    private void command(JSONObject message) {
+        String command = message.optString("command");
+        int index = message.optInt("index", -1);
+        Tile tile = index >= 0 && index < tiles.size() ? tiles.get(index) : null;
+        if (command.equals("add")) {
+            JSONObject item = message.optJSONObject("item");
+            if (item == null || tiles.size() >= MAX_TILES) return;
+            Tile added = createTile(item.optString("title"), item.optString("subtitle"));
+            JSONArray options = item.optJSONArray("options");
+            for (int j = 0; options != null && j < options.length(); j++) {
+                JSONObject source = options.optJSONObject(j);
+                if (source == null) continue;
+                Option option = new Option();
+                option.label = source.optString("label", "Serveur " + (j + 1));
+                option.url = source.optString("url", "");
+                option.resolve = source.optString("resolve", "");
+                option.mime = source.optString("mime", "");
+                if (!option.url.isEmpty() || !option.resolve.isEmpty()) added.options.add(option);
+            }
+            if (added.options.isEmpty()) return;
+            tiles.add(added);
+            root.addView(added.frame);
+            zoomed = null;
+            arrange();
+            play(added, 0);
+            added.frame.requestFocus();
+        } else if (command.equals("close")) {
+            finish();
+            return;
+        } else if (tile == null) {
+            if (command.equals("grid")) { featured = null; zoomed = null; arrange(); }
+        } else if (command.equals("remove")) {
+            removeTile(tile);
+            return;
+        } else if (command.equals("audio")) {
+            audio = tile;
+        } else if (command.equals("feature")) {
+            featured = tiles.size() > 1 && featured != tile ? tile : null;
+            zoomed = null;
+            arrange();
+        } else if (command.equals("solo")) {
+            audio = tile;
+            featured = tiles.size() > 1 ? tile : null;
+            zoomed = null;
+            arrange();
+            tile.frame.requestFocus();
+        }
+        refreshLabels();
+    }
+
+    private void publish() {
+        try {
+            JSONObject value = new JSONObject();
+            JSONArray list = new JSONArray();
+            for (Tile tile : tiles) list.put(new JSONObject().put("title", tile.title).put("subtitle", tile.subtitle));
+            value.put("tiles", list);
+            value.put("audio", tiles.indexOf(audio));
+            value.put("featured", featured == null ? -1 : tiles.indexOf(featured));
+            state = value.toString();
+        } catch (Exception ignored) {
+        }
+        Runnable listener = onChange;
+        if (listener != null) listener.run();
     }
 
     // ── Vignettes ──────────────────────────────────────────────────────────
@@ -281,6 +372,7 @@ public class NoctraMultiviewActivity extends Activity {
             tile.label.setText((tile == audio ? "♪  " : "") + tile.title + (tile.subtitle.isEmpty() ? "" : "  ·  " + tile.subtitle) + server);
             if (tile.stream != null) tile.stream.setVolume(tile == audio ? 1f : 0f);
         }
+        if (active == this) publish();
     }
 
     // ── Disposition : grille, écran mis en avant, plein écran ──────────────
@@ -359,7 +451,7 @@ public class NoctraMultiviewActivity extends Activity {
         }
         if (tiles.size() > 1) {
             labels.add(featured == tile ? "Revenir à la grille" : "Mettre en avant");
-            actions.add(new Runnable() { @Override public void run() { featured = featured == tile ? null : tile; arrange(); tile.frame.requestFocus(); } });
+            actions.add(new Runnable() { @Override public void run() { featured = featured == tile ? null : tile; arrange(); publish(); tile.frame.requestFocus(); } });
         }
         labels.add(zoomed == tile ? "Quitter le plein écran" : "Plein écran");
         actions.add(new Runnable() { @Override public void run() { zoomed = zoomed == tile ? null : tile; arrange(); tile.frame.requestFocus(); } });
@@ -732,6 +824,12 @@ public class NoctraMultiviewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (active == this) {
+            active = null;
+            state = "{\"tiles\":[]}";
+            Runnable listener = onChange;
+            if (listener != null) listener.run();
+        }
         handler.removeCallbacksAndMessages(null);
         for (Tile tile : tiles) {
             tile.generation++;

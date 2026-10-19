@@ -12,6 +12,10 @@ struct RemoteDevice: Identifiable {
     var live: Bool
     let custom: Bool
     var volume: Double?
+    /// Multiview affiché par Noctra TV : chaînes, chaîne écoutée, chaîne mise en avant (-1 : grille).
+    var multiview: [String] = []
+    var multiviewAudio = -1
+    var multiviewFeatured = -1
 }
 
 /// Consultation des sessions du même compte et commandes adressées à l'écran choisi.
@@ -60,6 +64,10 @@ final class RemotePlayback {
         value.position = state["position"] as? Double ?? 0
         value.duration = 0
         value.volume = (state["volume"] as? NSNumber)?.doubleValue
+        let multiview = state["multiview"] as? [String: Any]
+        value.multiview = (multiview?["tiles"] as? [[String: Any]] ?? []).map { $0["title"] as? String ?? "Chaîne" }
+        value.multiviewAudio = (multiview?["audio"] as? NSNumber)?.intValue ?? -1
+        value.multiviewFeatured = (multiview?["featured"] as? NSNumber)?.intValue ?? -1
         return value
     }
     private func chooseActive() {
@@ -115,15 +123,39 @@ final class RemotePlayback {
             } catch { problem = error.localizedDescription }
         }
     }
-    func castLive(_ channel: LiveChannel, to target: RemoteDevice) async throws {
-        let entries: [[String: Any]] = channel.entries.map { ["channel": $0.raw, "source": ["id": $0.sourceId, "name": $0.source]] }
+    /// Chaîne telle que Noctra TV la réunit : ses entrées de toutes les sources.
+    private func payload(_ channel: LiveChannel, limit: Int = 200) -> [String: Any] {
+        let entries: [[String: Any]] = channel.entries.prefix(limit).map { ["channel": $0.raw, "source": ["id": $0.sourceId, "name": $0.source]] }
         var payload = channel.entries.first?.raw ?? [:]
         payload["name"] = channel.name; payload["country"] = channel.country; payload["_entries"] = entries; payload["_sources"] = Array(Set(channel.entries.map { $0.source }))
-        let data = try JSONSerialization.data(withJSONObject: payload)
+        return payload
+    }
+    private func text(_ value: Any) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: value)
         guard let text = String(data: data, encoding: .utf8) else { throw NoctraError.empty }
-        try await custom(target.id, ["action": "playLive", "channel": text])
+        return text
+    }
+    func castLive(_ channel: LiveChannel, to target: RemoteDevice) async throws {
+        try await custom(target.id, ["action": "playLive", "channel": try text(payload(channel))])
         select(target.id)
     }
+    /// Multiview lancé sur Noctra TV (12 serveurs au plus par chaîne pour garder la commande légère).
+    func castMultiview(_ channels: [LiveChannel], to target: RemoteDevice) async throws {
+        guard !channels.isEmpty else { return }
+        try await custom(target.id, ["action": "playMultiview", "channels": try text(channels.prefix(12).map { payload($0, limit: 12) })])
+        select(target.id)
+        try? await Task.sleep(for: .seconds(2))
+        await refresh()
+    }
+    /// Chaîne ajoutée au multiview du téléviseur (ou multiview ouvert avec elle).
+    func addToMultiview(_ channel: LiveChannel, on target: RemoteDevice) async throws {
+        try await custom(target.id, ["action": "multiAdd", "channel": try text(payload(channel, limit: 12))])
+        select(target.id)
+        try? await Task.sleep(for: .seconds(2))
+        await refresh()
+    }
+    /// Multiview du téléviseur : multiAudio, multiSolo, multiFeature, multiRemove (index), multiGrid.
+    func multiview(_ action: String, index: Int = -1) { command(action, value: Double(index)) }
 }
 
 struct RemoteDevicesSection: View {
@@ -163,6 +195,7 @@ struct RemoteMiniPlayer: View {
 
 struct RemotePanel: View {
     private var remote: RemotePlayback { .shared }
+    @State private var addingChannel = false
     @State private var volume = 100.0
     @State private var seek: Double = 0
     @State private var seeking = false
@@ -187,12 +220,43 @@ struct RemotePanel: View {
                         Slider(value: $volume, in: 0...100) { editing in if !editing { remote.command("volume", value: volume) } }.accessibilityLabel("Volume du téléviseur")
                         Button("Arrêter la lecture", role: .destructive) { remote.command("stop") }
                     }
+                    if !device.multiview.isEmpty {
+                        Section("Multiview du téléviseur") {
+                            ForEach(Array(device.multiview.enumerated()), id: \.offset) { index, title in
+                                HStack(spacing: 6) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(title).lineLimit(1)
+                                        if index == device.multiviewAudio || index == device.multiviewFeatured {
+                                            Text([index == device.multiviewAudio ? "son" : nil, index == device.multiviewFeatured ? "en avant" : nil].compactMap { $0 }.joined(separator: " · "))
+                                                .font(.caption2).foregroundStyle(Theme.teal)
+                                        }
+                                    }
+                                    Spacer()
+                                    Button { remote.multiview("multiAudio", index: index) } label: {
+                                        Image(systemName: index == device.multiviewAudio ? "speaker.wave.2.fill" : "speaker.wave.2").frame(width: 36, height: 36)
+                                    }.accessibilityLabel("Écouter \(title)")
+                                    Button { remote.multiview("multiSolo", index: index) } label: {
+                                        Image(systemName: index == device.multiviewFeatured ? "star.fill" : "star").frame(width: 36, height: 36)
+                                    }.accessibilityLabel("Mettre \(title) en avant avec le son")
+                                    Button(role: .destructive) { remote.multiview("multiRemove", index: index) } label: {
+                                        Image(systemName: "xmark.circle").frame(width: 36, height: 36)
+                                    }.accessibilityLabel("Retirer \(title)")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            if device.multiviewFeatured >= 0 { Button("Revenir à la grille") { remote.multiview("multiGrid") } }
+                            if device.multiview.count < 12 { Button("Ajouter une chaîne") { addingChannel = true } }
+                        }
+                    }
                     if let problem = remote.problem { Text(problem).foregroundStyle(Color.orange) }
                     if remote.devices.count > 1 {
                         Section("Changer d’écran") { ForEach(remote.devices) { other in Button(other.name) { remote.select(other.id) } } }
                     }
                 }
                 .navigationTitle(device.name).navigationBarTitleDisplayMode(.inline)
+                .sheet(isPresented: $addingChannel) {
+                    MultiviewAddSheet { channel in Task { try? await remote.addToMultiview(channel, on: device) } }
+                }
                 .onAppear { volume = device.volume ?? 100; seek = device.position }
                 .onChange(of: device.id) { _, _ in volume = device.volume ?? 100; seek = device.position }
                 .onChange(of: device.position) { _, position in if !seeking { seek = position } }
@@ -221,7 +285,12 @@ struct LiveCastSheet: View {
                 Section("Noctra TV") {
                     let targets = remote.devices.filter { $0.custom }
                     if targets.isEmpty { Text("Ouvrez la version à jour de Noctra TV avec le même compte.").foregroundStyle(Theme.muted) }
-                    ForEach(targets) { target in Button(target.name) { send { try await remote.castLive(channel, to: target) } } }
+                    ForEach(targets) { target in
+                        Button(target.name) { send { try await remote.castLive(channel, to: target) } }
+                        if !target.multiview.isEmpty {
+                            Button("Ajouter au multiview de \(target.name)") { send { try await remote.addToMultiview(channel, on: target) } }
+                        }
+                    }
                 }
                 Section { HStack { Label("AirPlay", systemImage: "airplayvideo"); Spacer(); AirPlayButton().frame(width: 44, height: 44) } }
                 if busy { ProgressView("Préparation de la diffusion…") }

@@ -7073,6 +7073,58 @@ function liveWatchStreamUrlFromPayload(payload) {
   return visit(payload);
 }
 
+// LiveWatch peut refuser (401/403) un appel qui ne ressemble pas à son lecteur. Le serveur
+// alterne alors avec les en-têtes d'un navigateur sur le lecteur officiel (origine, langue,
+// cookies de la page du lecteur) et garde le mode qui fonctionne.
+const liveWatchBrowserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
+let liveWatchClientMode = { browser: false, changedAt: 0 };
+
+function switchLiveWatchClientMode() {
+  // Plusieurs requêtes échouent souvent ensemble : une seule bascule à la fois.
+  if (Date.now() - liveWatchClientMode.changedAt < 15_000) return false;
+  liveWatchClientMode = { browser: !liveWatchClientMode.browser, changedAt: Date.now() };
+  return true;
+}
+
+function liveWatchClientHeaders(playerPath, browser = liveWatchClientMode.browser) {
+  return browser
+    ? { 'user-agent': liveWatchBrowserAgent, origin: liveWatchOrigin, referer: `${liveWatchOrigin}${playerPath}`, 'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6' }
+    : { 'user-agent': 'Noctra-Media-Client/87', referer: `${liveWatchOrigin}${playerPath}` };
+}
+
+/** En-têtes d'une requête vers LiveWatch repris d'une référence de flux (mode navigateur compris). */
+function liveWatchForwardHeaders(headers = {}) {
+  return {
+    'user-agent': headers['user-agent'] || 'Noctra-Media-Client/87',
+    ...(headers.referer ? { referer: headers.referer } : {}),
+    ...(headers.origin ? { origin: headers.origin } : {}),
+    ...(headers['accept-language'] ? { 'accept-language': headers['accept-language'] } : {}),
+    ...(headers.authorization ? { authorization: headers.authorization } : {}),
+    ...(headers.cookie ? { cookie: headers.cookie } : {})
+  };
+}
+
+/** Cookies posés par la page du lecteur officiel (comme dans un navigateur), gardés avec ceux du pont VIP. */
+async function liveWatchPlayerCookies(kind, id, playerPath, session) {
+  const key = `${kind}:${id}`;
+  const known = liveWatchBridgeCookies.get(key);
+  if (known?.value && Date.now() - Number(known.updatedAt || 0) < 10 * 60_000) return known.value;
+  try {
+    const response = await fetchTvRemote(`${liveWatchOrigin}${playerPath}`, {
+      headers: { ...liveWatchClientHeaders(playerPath, true), accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8', authorization: `Bearer ${session.accessToken}` },
+      signal: AbortSignal.timeout(6_000)
+    });
+    const received = tvResponseCookieHeader(response);
+    try { await response.body?.cancel?.(); } catch {}
+    if (received) {
+      const value = mergeTvCookieHeaders(known?.value || '', received);
+      liveWatchBridgeCookies.set(key, { value, updatedAt: Date.now() });
+      return value;
+    }
+  } catch {}
+  return known?.value || '';
+}
+
 async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, signal = null) {
   const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
   if (kind === 'page') throw new HttpError(422, 'Ce wrapper LiveWatch utilise le lecteur Premium officiel plutôt qu’une route HLS directe.');
@@ -7081,18 +7133,25 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
   if (cached && cached.expiresAt > Date.now() && tvReferences.has(String(cached.token || ''))) return cached.token;
   const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
   const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
-  const requestStream = async (session, retry = true) => {
+  const requestStream = async (session, attempt = 0) => {
     const endpointUrl = `${liveWatchOrigin}${apiPath}?vip=1&embed=1`;
+    const client = liveWatchClientHeaders(playerPath);
+    const playerCookie = liveWatchClientMode.browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
     const response = await fetchTvRemote(endpointUrl, {
       headers: {
         accept: 'application/json, application/vnd.apple.mpegurl, application/x-mpegURL, text/plain;q=0.8, */*;q=0.5',
         authorization: `Bearer ${session.accessToken}`,
-        referer: `${liveWatchOrigin}${playerPath}`,
-        'user-agent': 'Noctra-Media-Client/87'
+        ...client,
+        ...(playerCookie ? { cookie: playerCookie } : {})
       },
       signal: AbortSignal.any([AbortSignal.timeout(Math.max(3_500, Number(timeoutMs) || 8_500)), ...(signal ? [signal] : [])])
     });
-    if (retry && [401, 403].includes(response.status)) return requestStream(await liveWatchAccessSession(true), false);
+    if ([401, 403].includes(response.status) && attempt < 2) {
+      try { await response.body?.cancel?.(); } catch {}
+      // 1 : jeton VIP renouvelé ; 2 : autre manière de se présenter (lecteur dans un navigateur).
+      if (attempt === 1) liveWatchClientMode = { browser: !liveWatchClientMode.browser, changedAt: Date.now() };
+      return requestStream(attempt === 0 ? await liveWatchAccessSession(true) : session, attempt + 1);
+    }
     if (!response.ok) throw new HttpError(response.status, `LiveWatch VIP n’a pas pu ouvrir cette chaîne (${response.status}).`);
     const text = await response.text();
     if (text.length > 512 * 1024) throw new HttpError(413, 'La réponse LiveWatch est trop volumineuse.');
@@ -7120,13 +7179,13 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     const officialProxy = liveWatchHost && /^\/api\/(?:hls\b|proxy\b|stream\b|(?:daddy|north|frame)\/(?:proxy|stream)\b)/i.test(streamUrl.pathname);
     const publicHls = streamUrl.protocol === 'https:' && /\.m3u8?(?:$|[?#/])/i.test(streamUrl.toString());
     if (!officialProxy && !publicHls) throw new HttpError(502, 'LiveWatch a renvoyé une adresse de flux inattendue.');
-    const cookie = tvResponseCookieHeader(response);
+    const received = tvResponseCookieHeader(response);
+    const cookie = playerCookie && received ? mergeTvCookieHeaders(playerCookie, received) : (received || playerCookie);
     const inlinePlaylist = /^\s*#EXTM3U/i.test(text) || /mpegurl/i.test(contentType);
     const token = issueTvReference(streamUrl.toString(), {
       ...(liveWatchHost ? { authorization: `Bearer ${session.accessToken}` } : {}),
       ...(cookie && liveWatchHost ? { cookie } : {}),
-      referer: `${liveWatchOrigin}${playerPath}`,
-      'user-agent': 'Noctra-Media-Client/87'
+      ...client
     }, inlinePlaylist ? { kind: 'livewatch-vip', provider: 'LiveWatch', forceHls: true } : { kind: 'livewatch-vip', provider: 'LiveWatch' });
     liveWatchVipDirectCache.set(cacheKey, { token, expiresAt: Date.now() + 45_000 });
     return token;
@@ -7332,10 +7391,7 @@ async function proxyLiveWatchVipHlsMediaResource(kindValue, idValue, selectorVal
   const open = async value => {
     const headers = {
       accept: '*/*',
-      'user-agent': value.headers?.['user-agent'] || 'Noctra-Media-Client/87',
-      ...(value.headers?.referer ? { referer: value.headers.referer } : {}),
-      ...(value.headers?.authorization ? { authorization: value.headers.authorization } : {}),
-      ...(value.headers?.cookie ? { cookie: value.headers.cookie } : {}),
+      ...liveWatchForwardHeaders(value.headers || {}),
       ...(req?.headers?.range ? { range: req.headers.range } : {})
     };
     return fetchTvRemoteUntilHeaders(value.url, { headers }, 18_000);
@@ -7428,10 +7484,7 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
     const url = safeTvRemoteUrl(currentUrl);
     const headers = {
       accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/*,audio/*,*/*;q=0.7',
-      'user-agent': currentHeaders['user-agent'] || 'Noctra-Media-Client/87',
-      ...(currentHeaders.referer ? { referer: currentHeaders.referer } : {}),
-      ...(currentHeaders.authorization ? { authorization: currentHeaders.authorization } : {}),
-      ...(currentHeaders.cookie ? { cookie: currentHeaders.cookie } : {}),
+      ...liveWatchForwardHeaders(currentHeaders),
       ...(depth === chain.length && req?.headers?.range ? { range: req.headers.range } : {})
     };
     const response = await fetchTvRemoteUntilHeaders(url, { headers }, 18_000);
@@ -7489,6 +7542,8 @@ async function proxyLiveWatchVipHls(kind, id, selector, req, res) {
     const refreshable = [401, 403, 404, 410, 415, 429, 502, 503, 504].includes(status);
     if (!refreshable) throw error;
     liveWatchVipDirectCache.delete(cacheKey);
+    // Liste refusée alors que l'API a répondu : se présenter autrement pour la suivante.
+    if ([401, 403].includes(status)) switchLiveWatchClientMode();
     resource = await open();
   }
 
@@ -7533,13 +7588,7 @@ async function proxyLiveWatchVipStream(kind, id, req, res) {
 }
 
 function liveWatchProbeHeaders(reference, accept = '*/*') {
-  return {
-    accept,
-    'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87',
-    ...(reference.headers.referer ? { referer: reference.headers.referer } : {}),
-    ...(reference.headers.authorization ? { authorization: reference.headers.authorization } : {}),
-    ...(reference.headers.cookie ? { cookie: reference.headers.cookie } : {})
-  };
+  return { accept, ...liveWatchForwardHeaders(reference.headers || {}) };
 }
 
 function liveWatchFirstPlaylistUri(textValue, baseUrl) {
@@ -7938,7 +7987,17 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     const contentType = String(response.headers.get('content-type') || '');
     try { await response.body?.cancel?.(); } catch {}
     if (!response.ok || !/html/i.test(contentType)) throw new HttpError(response.status || 502, `Lecteur LiveWatch officiel inaccessible (${response.status || 0}).`);
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType };
+    // Flux VIP direct (celui des applis et du lecteur natif), jusqu'au premier segment.
+    let stream;
+    try {
+      liveWatchVipDirectCache.delete(`main:${ref.id}`);
+      const token = await liveWatchStreamReference('main', ref.id, 10_000);
+      await validateLiveWatchStreamReference(token, 12_000);
+      stream = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
+    } catch (error) {
+      stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
+    }
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }

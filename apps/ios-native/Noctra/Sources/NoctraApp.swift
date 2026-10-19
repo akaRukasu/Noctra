@@ -101,6 +101,12 @@ struct MainTabView: View {
         .fullScreenCover(isPresented: Binding(get: { LivePlayerModel.shared.presented }, set: { if !$0 { LivePlayerModel.shared.close() } })) {
             LivePlayerView()
         }
+        // Multiview : plusieurs chaînes de toutes les sources à l'écran.
+        .background {
+            Color.clear.fullScreenCover(isPresented: Binding(get: { MultiviewStore.shared.presented }, set: { if !$0 { MultiviewStore.shared.close() } })) {
+                MultiviewView()
+            }
+        }
         // Choix du serveur d'une chaîne (meilleur serveur lancé tout seul).
         .sheet(item: Binding(get: { launcher.pick }, set: { launcher.pick = $0 })) { pick in
             LiveServerSheet(pick: pick)

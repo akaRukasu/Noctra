@@ -87,6 +87,16 @@ public class NoctraHomeActivity extends Activity {
         }
         appBase = NoctraConfig.NOCTRA_URL + "/tv-app/";
         server = Uri.parse(NoctraConfig.NOCTRA_URL);
+        // État du multiview transmis à la page (puis au téléphone qui le pilote).
+        NoctraMultiviewActivity.onChange = new Runnable() {
+            @Override
+            public void run() {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() { sendMultiviewState(); }
+                });
+            }
+        };
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(9, 10, 15));
@@ -308,6 +318,16 @@ public class NoctraHomeActivity extends Activity {
         }
     }
 
+    private void sendMultiviewState() {
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", "multiviewState");
+            message.put("state", new JSONObject(NoctraMultiviewActivity.state));
+            send(message);
+        } catch (Exception ignored) {
+        }
+    }
+
     private void sendSession() {
         try {
             JSONObject message = new JSONObject();
@@ -396,6 +416,10 @@ public class NoctraHomeActivity extends Activity {
             JSONArray catalog = message.optJSONArray("catalog");
             NoctraMultiviewActivity.catalog = catalog == null ? null : catalog.toString();
             openMultiview(message.optJSONArray("items"));
+        } else if (action.equals("multiviewCommand")) {
+            // Multiview piloté depuis le téléphone (ajouter, retirer, mettre en avant, son).
+            if ("state".equals(message.optString("command"))) sendMultiviewState();
+            else NoctraMultiviewActivity.remote(message);
         } else if (action.equals("jellyfinPlay")) {
             // Film ou épisode du serveur : lecteur Jellyfin (pistes, sous-titres…).
             java.util.UUID id = NoctraPlayback.uuid(message.optString("itemId"));
@@ -780,6 +804,7 @@ public class NoctraHomeActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (NoctraPlayerBus.listener != null) NoctraPlayerBus.listener = null;
+        NoctraMultiviewActivity.onChange = null;
         if (hostPort != null) {
             try { hostPort.close(); } catch (Exception ignored) { }
         }

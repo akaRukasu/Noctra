@@ -41,3 +41,10 @@ console.log('Déplacements et stockage vérifiés.');
 assert.match(server, /path\.startsWith\('\/api\/tv\/livewatch\/variants\/'\)/);
 assert.ok(server.indexOf("'/api/tv/livewatch/variants/'") < server.indexOf("path.startsWith('/api/tv/livewatch/resolve/')"), 'route des variantes avant le résolveur');
 console.log('Variantes LiveWatch vérifiées.');
+
+// LiveWatch VIP : en-têtes du lecteur dans un navigateur quand l'API refuse (401/403).
+assert.match(server, /function switchLiveWatchClientMode\(\)/);
+assert.match(server, /if \(attempt === 1\) liveWatchClientMode = \{ browser: !liveWatchClientMode\.browser/);
+assert.match(server, /if \(\[401, 403\]\.includes\(status\)\) switchLiveWatchClientMode\(\);/);
+assert.match(server, /stream = \{ ok: true, client:/, 'diagnostic : flux VIP direct testé');
+console.log('LiveWatch VIP : repli navigateur vérifié.');

@@ -291,3 +291,18 @@ function WebVttSeconds(value) {
   assert.match(servers, /if server\.vip, isLiveWatchURL\(url\) \{ return nil \}/, 'page publique LiveWatch (pubs) écartée en VIP');
   console.log('Appli iOS native 2.14.1 : vérifiée.');
 }
+// 2.15 : multiview de toutes les sources, diffusé et piloté sur Noctra TV.
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  const multiview = await src('Multiview');
+  for (const name of ['final class MultiviewStore', 'final class MultiviewTile', 'struct MultiviewView', 'struct MultiviewAddSheet', 'struct MultiviewCastSheet', 'struct MultiviewBar']) assert.ok(multiview.includes(name), name);
+  assert.match(multiview, /func solo\(_ tile: MultiviewTile\)/, 'chaîne mise en avant avec le son seul');
+  assert.match(multiview, /tile\.player\.isMuted = tile\.id != audio/, 'une seule chaîne écoutée');
+  assert.match(multiview, /LiveLauncher\.shared\.prepare\(channel, session: session\)/, 'serveurs de toutes les sources');
+  const remote = await src('RemotePlayback');
+  for (const action of ['playMultiview', 'multiAdd']) assert.ok(remote.includes(`"${action}"`), action);
+  for (const action of ['multiAudio', 'multiSolo', 'multiRemove', 'multiGrid']) assert.ok(remote.includes(`"${action}"`), action);
+  assert.match(await src('LiveTVViews'), /if multiview\.selecting \{ withAnimation\(Theme\.spring\) \{ multiview\.toggle\(channel\) \}; return \}/);
+  assert.match(await src('NoctraApp'), /MultiviewView\(\)/);
+  console.log('Appli iOS native 2.15 : vérifiée.');
+}
