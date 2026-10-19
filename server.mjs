@@ -7997,25 +7997,89 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     } catch (error) {
       stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
     }
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream };
+    const api = await liveWatchStreamApiProbe('main', ref.id).catch(() => []);
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, api };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }
 }
 
-async function liveWatchVipDiagnostics() {
+/**
+ * Réponse brute de l'API de flux LiveWatch pour une chaîne, avec chaque manière de se présenter
+ * (client Noctra, lecteur dans un navigateur) : code HTTP et nature de la réponse, jetons masqués.
+ */
+async function liveWatchStreamApiProbe(kindValue, idValue) {
+  const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
+  if (kind === 'page') return [];
+  const session = await liveWatchAccessSession();
+  const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
+  const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
+  const results = [];
+  for (const browser of [false, true]) {
+    const client = browser ? 'navigateur' : 'Noctra';
+    try {
+      const cookie = browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
+      const response = await fetchTvRemote(`${liveWatchOrigin}${apiPath}?vip=1&embed=1`, {
+        headers: {
+          accept: 'application/json, application/vnd.apple.mpegurl, text/plain;q=0.8, */*;q=0.5',
+          authorization: `Bearer ${session.accessToken}`,
+          ...liveWatchClientHeaders(playerPath, browser),
+          ...(cookie ? { cookie } : {})
+        },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const text = (await response.text()).slice(0, 8_000);
+      let detail;
+      if (!response.ok) {
+        detail = text.replace(/<[^>]+>/g, ' ').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[jeton]').replace(/\s+/g, ' ').trim().slice(0, 220) || 'réponse vide';
+      } else if (/^\s*#EXTM3U/i.test(text)) {
+        detail = 'liste HLS reçue';
+      } else {
+        try { detail = liveWatchStreamUrlFromPayload(JSON.parse(text)) ? 'adresse de flux reçue' : 'réponse sans flux'; }
+        catch { detail = 'réponse illisible'; }
+      }
+      results.push({ client, status: response.status, ok: response.ok, detail, cookies: Boolean(cookie) });
+    } catch (error) {
+      results.push({ client, status: 0, ok: false, detail: cleanError(error) });
+    }
+  }
+  return results;
+}
+
+/** Chaîne choisie dans l'appli : flux VIP direct jusqu'au premier segment, puis réponse brute de l'API. */
+async function liveWatchChannelDiagnostic(referenceValue) {
+  const [kindValue, ...rest] = String(referenceValue || '').split('/');
+  const { kind, id } = validLiveWatchChannelReference(kindValue, decodeURIComponent(rest.join('/')));
+  const startedAt = Date.now();
+  let stream;
+  try {
+    liveWatchVipDirectCache.delete(`${kind}:${id}`);
+    const token = await liveWatchStreamReference(kind, id, 10_000);
+    await validateLiveWatchStreamReference(token, 12_000);
+    stream = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
+  } catch (error) {
+    stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', status: Number(error?.status || 0), message: cleanError(error) };
+  }
+  return { kind, id, stream, api: await liveWatchStreamApiProbe(kind, id).catch(error => [{ client: '?', status: 0, ok: false, detail: cleanError(error) }]), durationMs: Date.now() - startedAt };
+}
+
+async function liveWatchVipDiagnostics(reference = '') {
   const startedAt = Date.now();
   const session = await liveWatchAccessSession();
   const profile = await liveWatchProfile(session.accessToken, session.userId).catch(() => null);
   const profileVip = Boolean(profile?.is_vip || profile?.role === 'vip' || profile?.role === 'admin' || session.isVip);
   const checks = [await liveWatchVipDiagnosticCheck('LiveWatch', liveWatchChannelCatalogUrls[0][1])];
   const reachable = checks.filter(item => item.ok).length;
+  const channel = reference ? await liveWatchChannelDiagnostic(reference).catch(error => ({ error: cleanError(error) })) : null;
   return {
     ok: profileVip && reachable === checks.length,
     authenticated: true,
     isVip: profileVip,
     account: maskedLiveWatchEmail(session.email),
+    sessionExpiresIn: Math.max(0, Number(session.expiresAt || 0) - Math.floor(Date.now() / 1000)),
+    clientMode: liveWatchClientMode.browser ? 'navigateur' : 'Noctra',
     checks,
+    channel,
     durationMs: Date.now() - startedAt,
     message: profileVip
       ? (reachable ? 'VIP Premium confirmé · lecteur officiel LiveWatch accessible.' : 'VIP Premium confirmé, mais le lecteur officiel LiveWatch est actuellement inaccessible depuis le serveur.')
@@ -13158,7 +13222,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/api/tv/livewatch/diagnostics' && req.method === 'GET') {
-      return json(res, 200, await liveWatchVipDiagnostics());
+      return json(res, 200, await liveWatchVipDiagnostics(requestUrl.searchParams.get('ref') || ''));
     }
 
     if (path.startsWith('/api/tv/livewatch/prepare/') && req.method === 'GET') {

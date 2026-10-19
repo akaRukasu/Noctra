@@ -162,3 +162,9 @@ assert.match(await src('live/Multiview'), /fun zoom\(tile: MultiviewTile\)/);
 assert.match(await src('live/Multiview'), /onDoubleTap = \{ MultiviewStore\.zoom\(tile\) \}/);
 assert.match(await src('live/Multiview'), /ImmersiveEffect\(\)/);
 console.log('Appli Android native 1.7.1 : vérifiée.');
+// 1.7.2 : diagnostic LiveWatch VIP dans l'appli (administrateurs).
+assert.match(await src('admin/AdminServer'), /section\("Diagnostic VIP"/);
+assert.match(await src('admin/AdminServer'), /\/api\/tv\/livewatch\/diagnostics/);
+assert.match(await src('admin/AdminServer'), /"\?ref=" \+ URLEncoder\.encode\(diagnosticRef, "UTF-8"\)/);
+assert.match(await src('admin/AdminServer'), /clipboard\.setText\(AnnotatedString\(Json\.stringify\(result\)\)\)/);
+console.log('Appli Android native 1.7.2 : vérifiée.');

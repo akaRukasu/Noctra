@@ -39,6 +39,9 @@ import com.noctra.mobile.core.Session
 import com.noctra.mobile.core.asMap
 import com.noctra.mobile.core.asMaps
 import com.noctra.mobile.core.flag
+import com.noctra.mobile.core.map
+import com.noctra.mobile.core.int
+import com.noctra.mobile.core.Json
 import com.noctra.mobile.core.maps
 import com.noctra.mobile.core.str
 import com.noctra.mobile.live.LiveStore
@@ -283,6 +286,34 @@ fun LogFileScreen(name: String) {
 
 // MARK: TV en direct (Noctra)
 
+/** Chaînes VIP LiveWatch connues de l'appli (famille/identifiant de leur résolveur) pour le diagnostic. */
+private fun liveWatchVipChannels(): List<Pair<String, String>> {
+    val pattern = Regex("/api/tv/livewatch/resolve/((?:main|daddy|north|frame)/[^?]+)")
+    val seen = HashSet<String>()
+    return LiveStore.channels.filter { it.vip }.mapNotNull { channel ->
+        channel.entries.firstNotNullOfOrNull { entry -> entry.raw.str("resolverUrl")?.let { pattern.find(it)?.groupValues?.get(1) } }
+            ?.takeIf { seen.add(it) }?.let { it to channel.name }
+    }.sortedBy { it.second.lowercase() }.take(300)
+}
+
+/** Résultat du diagnostic pour une chaîne : flux VIP direct, puis réponse brute de l'API LiveWatch. */
+@Composable
+private fun DiagnosticRows(title: String, stream: JsonMap?, api: List<JsonMap>, failure: String?) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, color = Theme.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        failure?.let { Text(it, color = Theme.orange, fontSize = 13.sp) }
+        stream?.let {
+            val ok = it.flag("ok")
+            Text(if (ok) "✓ Flux VIP direct : lu (${it.str("client") ?: ""})" else "✕ Flux VIP direct : échec · ${it.str("message") ?: ""}", color = if (ok) Theme.teal else Theme.orange, fontSize = 13.sp)
+        }
+        api.forEach { item ->
+            val code = item.int("status") ?: 0
+            Text("API LiveWatch · ${item.str("client") ?: "?"} : ${if (code == 0) "sans réponse" else "HTTP $code"} · ${item.str("detail") ?: ""}",
+                color = if (item.flag("ok")) Theme.teal else Theme.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
 /** Accès VIP LiveWatch, clés Movix / Northlive et sources TV du serveur Noctra. */
 @Composable
 fun LiveAdminScreen() {
@@ -296,7 +327,14 @@ fun LiveAdminScreen() {
     var addingSource by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    var diagnosticRef by remember { mutableStateOf("") }
+    var diagnosing by remember { mutableStateOf(false) }
+    var report by remember { mutableStateOf<JsonMap?>(null) }
+    var reportError by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
     suspend fun load() {
+        // Chaînes VIP proposées au diagnostic, même si l'onglet TV n'a pas encore été ouvert.
+        if (LiveStore.channels.isEmpty()) scope.launch { runCatching { LiveStore.loadAll() } }
         runCatching { Session.noctraJSON("/api/tv/livewatch/session", 20.0).asMap() }.getOrNull()?.let { status = it }
         runCatching { Session.noctraJSON("/api/tv/provider-keys", 20.0).asMap() }.getOrNull()?.let { json -> keys = json.mapNotNull { (k, v) -> (v as? Boolean)?.let { k to it } }.toMap() }
         runCatching { Session.noctraJSON("/api/tv/sources").asMap() }.getOrNull()?.let { sources = it.maps("sources") }
@@ -330,6 +368,39 @@ fun LiveAdminScreen() {
                             if (status.flag("active")) "Compte VIP connecté : ses chaînes sont proposées en premier." else "Compte connecté, mais le VIP Premium n’est pas actif."
                         } finally { working = false; scope.launch { runCatching { LiveStore.loadAll(force = true) } } }
                     }
+                }
+            }
+        }
+        if (status.flag("configured")) section("Diagnostic VIP", "Teste depuis le serveur Noctra la session VIP, le lecteur officiel et le flux VIP direct, avec la réponse exacte de LiveWatch pour chaque manière de se présenter.") {
+            ChoiceLine("Chaîne à tester", listOf("" to "Chaîne test automatique") + liveWatchVipChannels(), diagnosticRef) { diagnosticRef = it }
+            RowDivider()
+            ActionLine(if (diagnosing) "Diagnostic en cours…" else "Lancer le diagnostic", busy = diagnosing, enabled = !diagnosing) {
+                diagnosing = true
+                reportError = null
+                scope.launch {
+                    val path = "/api/tv/livewatch/diagnostics" + if (diagnosticRef.isEmpty()) "" else "?ref=" + URLEncoder.encode(diagnosticRef, "UTF-8")
+                    runCatching { Session.noctraJSON(path, 150.0).asMap() }
+                        .onSuccess { report = it }
+                        .onFailure { report = null; reportError = it.message ?: "Diagnostic impossible." }
+                    diagnosing = false
+                }
+            }
+            reportError?.let { NoteLine(it, Theme.orange) }
+            report?.let { result ->
+                NoteLine(result.str("message") ?: "", if (result.flag("ok")) Theme.teal else Theme.orange)
+                AdminRow("VIP confirmé", trailing = { Text(if (result.flag("isVip")) "Oui" else "Non", color = Theme.muted, fontSize = 14.sp) })
+                result.int("sessionExpiresIn")?.let { seconds -> AdminRow("Session LiveWatch", trailing = { Text(if (seconds > 0) "valable ${seconds / 60} min" else "à renouveler", color = Theme.muted, fontSize = 14.sp) }) }
+                result.str("clientMode")?.let { mode -> AdminRow("Méthode retenue", trailing = { Text(mode, color = Theme.muted, fontSize = 14.sp) }) }
+                result.maps("checks").firstOrNull()?.let { check ->
+                    DiagnosticRows(check.str("channel") ?: "Chaîne test", check.map("stream"), check.maps("api"), if (check.flag("ok")) null else check.str("message"))
+                }
+                result.map("channel")?.let { channel ->
+                    val name = liveWatchVipChannels().firstOrNull { it.first == diagnosticRef }?.second ?: "Chaîne choisie"
+                    DiagnosticRows(name, channel.map("stream"), channel.maps("api"), channel.str("error"))
+                }
+                ActionLine("Copier le rapport") {
+                    clipboard.setText(AnnotatedString(Json.stringify(result)))
+                    Notices.announce("Rapport copié : collez-le dans la conversation.")
                 }
             }
         }

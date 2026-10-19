@@ -314,3 +314,12 @@ function WebVttSeconds(value) {
   assert.match(await src('Multiview'), /\.onTapGesture\(count: 2\) \{ store\.zoom\(tile\) \}/);
   console.log('Appli iOS native 2.15.1 : vérifiée.');
 }
+// 2.15.2 : diagnostic LiveWatch VIP dans l'appli (administrateurs).
+{
+  const admin = await read('apps/ios-native/Noctra/Sources/AdminServerViews.swift');
+  assert.match(admin, /private var diagnosticSection: some View/);
+  assert.match(admin, /\/api\/tv\/livewatch\/diagnostics/);
+  assert.match(admin, /URLQueryItem\(name: "ref", value: diagnosticRef\)/, 'chaîne choisie testée');
+  assert.match(admin, /UIPasteboard\.general\.string/, 'rapport copiable');
+  console.log('Appli iOS native 2.15.2 : vérifiée.');
+}

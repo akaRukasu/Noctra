@@ -48,3 +48,10 @@ assert.match(server, /if \(attempt === 1\) liveWatchClientMode = \{ browser: !li
 assert.match(server, /if \(\[401, 403\]\.includes\(status\)\) switchLiveWatchClientMode\(\);/);
 assert.match(server, /stream = \{ ok: true, client:/, 'diagnostic : flux VIP direct testé');
 console.log('LiveWatch VIP : repli navigateur vérifié.');
+
+// Diagnostic VIP : chaîne choisie et réponse brute de l'API LiveWatch, jetons masqués.
+assert.match(server, /async function liveWatchStreamApiProbe\(kindValue, idValue\)/);
+assert.match(server, /async function liveWatchChannelDiagnostic\(referenceValue\)/);
+assert.match(server, /liveWatchVipDiagnostics\(requestUrl\.searchParams\.get\('ref'\) \|\| ''\)/);
+assert.match(server, /'\[jeton\]'/);
+console.log('Diagnostic LiveWatch VIP vérifié.');

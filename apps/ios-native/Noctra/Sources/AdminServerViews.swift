@@ -1222,6 +1222,10 @@ struct LiveAdminView: View {
     @State private var sourceURL = ""
     @State private var working = false
     @State private var note: String?
+    @State private var diagnosticRef = ""
+    @State private var diagnosing = false
+    @State private var report: [String: Any]?
+    @State private var reportError: String?
 
     var body: some View {
         Form {
@@ -1241,6 +1245,7 @@ struct LiveAdminView: View {
             } footer: {
                 Text("Le compte est gardé sur le serveur Noctra : ses chaînes VIP sont proposées en premier sur tous vos appareils.")
             }
+            if status["configured"] as? Bool == true { diagnosticSection }
             Section("Fournisseurs à clé") {
                 ForEach(["movix", "northlive"], id: \.self) { provider in
                     HStack {
@@ -1291,7 +1296,109 @@ struct LiveAdminView: View {
         .task { await load() }
     }
 
+    /// Chaînes VIP LiveWatch connues de l'appli (famille/identifiant de leur résolveur) pour le diagnostic.
+    private struct VipChannelRef: Hashable { let name: String; let ref: String }
+
+    private var vipChannels: [VipChannelRef] {
+        var seen: Set<String> = []
+        var list: [VipChannelRef] = []
+        for channel in LiveStore.shared.channels where channel.vip {
+            for entry in channel.entries {
+                guard let resolver = entry.raw["resolverUrl"] as? String,
+                      let range = resolver.range(of: "/api/tv/livewatch/resolve/(main|daddy|north|frame)/[^?]+", options: .regularExpression) else { continue }
+                let ref = String(resolver[range].dropFirst("/api/tv/livewatch/resolve/".count))
+                if seen.insert(ref).inserted { list.append(VipChannelRef(name: channel.name, ref: ref)) }
+                break
+            }
+        }
+        return Array(list.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }.prefix(300))
+    }
+
+    /// Diagnostic VIP : session, lecteur officiel, flux VIP direct et réponse brute de LiveWatch.
+    private var diagnosticSection: some View {
+        Section {
+            Picker("Chaîne à tester", selection: $diagnosticRef) {
+                Text("Chaîne test automatique").tag("")
+                ForEach(vipChannels, id: \.ref) { item in Text(item.name).tag(item.ref) }
+            }
+            Button {
+                Task { await diagnose() }
+            } label: {
+                HStack {
+                    Label(diagnosing ? "Diagnostic en cours…" : "Lancer le diagnostic", systemImage: "stethoscope")
+                    if diagnosing { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(diagnosing)
+            if let reportError { Text(reportError).foregroundStyle(.orange) }
+            if let report {
+                Text(report["message"] as? String ?? "").font(.subheadline.weight(.semibold))
+                    .foregroundStyle(report["ok"] as? Bool == true ? Theme.teal : .orange)
+                LabeledContent("VIP confirmé", value: report["isVip"] as? Bool == true ? "Oui" : "Non")
+                if let seconds = (report["sessionExpiresIn"] as? NSNumber)?.intValue { LabeledContent("Session LiveWatch", value: seconds > 0 ? "valable \(seconds / 60) min" : "à renouveler") }
+                if let mode = report["clientMode"] as? String { LabeledContent("Méthode retenue", value: mode) }
+                if let check = (report["checks"] as? [[String: Any]])?.first {
+                    diagnosticRows(title: check["channel"] as? String ?? "Chaîne test", stream: check["stream"] as? [String: Any], api: check["api"] as? [[String: Any]],
+                                   failure: check["ok"] as? Bool == false ? check["message"] as? String : nil)
+                }
+                if let channel = report["channel"] as? [String: Any] {
+                    let name = vipChannels.first { $0.ref == diagnosticRef }?.name ?? "Chaîne choisie"
+                    diagnosticRows(title: name, stream: channel["stream"] as? [String: Any], api: channel["api"] as? [[String: Any]], failure: channel["error"] as? String)
+                }
+                Button("Copier le rapport", systemImage: "doc.on.doc") {
+                    if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                        UIPasteboard.general.string = String(data: data, encoding: .utf8)
+                        note = "Rapport copié : collez-le dans la conversation."
+                    }
+                }
+            }
+        } header: {
+            Text("Diagnostic VIP")
+        } footer: {
+            Text("Teste depuis le serveur Noctra la session VIP, le lecteur officiel et le flux VIP direct, avec la réponse exacte de LiveWatch pour chaque manière de se présenter.")
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticRows(title: String, stream: [String: Any]?, api: [[String: Any]]?, failure: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.subheadline.weight(.bold))
+            if let failure { Text(failure).font(.caption).foregroundStyle(.orange) }
+            if let stream {
+                let ok = stream["ok"] as? Bool == true
+                Label(ok ? "Flux VIP direct : lu (\(stream["client"] as? String ?? ""))" : "Flux VIP direct : échec · " + (stream["message"] as? String ?? ""),
+                      systemImage: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    .font(.caption).foregroundStyle(ok ? Theme.teal : .orange)
+            }
+            ForEach(Array((api ?? []).enumerated()), id: \.offset) { _, item in
+                let code = (item["status"] as? NSNumber)?.intValue ?? 0
+                Text("API LiveWatch · \(item["client"] as? String ?? "?") : \(code == 0 ? "sans réponse" : "HTTP \(code)") · \(item["detail"] as? String ?? "")")
+                    .font(.caption.monospaced()).foregroundStyle(item["ok"] as? Bool == true ? Theme.teal : Theme.muted)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func diagnose() async {
+        diagnosing = true
+        reportError = nil
+        defer { diagnosing = false }
+        var path = "/api/tv/livewatch/diagnostics"
+        if !diagnosticRef.isEmpty, var parts = URLComponents(string: path) {
+            parts.queryItems = [URLQueryItem(name: "ref", value: diagnosticRef)]
+            path = parts.string ?? path
+        }
+        do {
+            report = try await session.noctraJSON(path, timeout: 150) as? [String: Any]
+        } catch {
+            report = nil
+            reportError = error.localizedDescription
+        }
+    }
+
     private func load() async {
+        // Chaînes VIP proposées au diagnostic, même si l'onglet TV n'a pas encore été ouvert.
+        if LiveStore.shared.channels.isEmpty { Task { await LiveStore.shared.loadAll(session) } }
         if let json = try? await session.noctraJSON("/api/tv/livewatch/session", timeout: 20) as? [String: Any] { status = json }
         if let json = try? await session.noctraJSON("/api/tv/provider-keys", timeout: 20) as? [String: Any] { keys = json.compactMapValues { $0 as? Bool } }
         if let json = try? await session.noctraJSON("/api/tv/sources") as? [String: Any] { sources = json["sources"] as? [[String: Any]] ?? [] }
