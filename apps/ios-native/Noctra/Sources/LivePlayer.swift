@@ -248,7 +248,7 @@ final class LivePlayerModel {
     /// Page d'un site (lecteur externe) : lecture et erreurs signalées par la page.
     private func openPage(_ server: LiveServer, token: Int) {
         guard let url = server.pageURL, let channel else { fail(server); return }
-        web = WebPlayerRequest(title: channel.name, mode: .page(url))
+        web = WebPlayerRequest(title: channel.name, mode: .page(url), framed: server.framed, sandbox: server.sandbox)
         loading = false
         status = "Lecteur du site : touchez Lecture dans la page si la vidéo ne démarre pas."
         watch = Task {

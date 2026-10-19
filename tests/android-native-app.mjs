@@ -40,7 +40,7 @@ assert.match(main, /NavigationRail/, 'rail latéral sur tablette, Chromebook et 
 assert.match(main, /NavigationBar\(/, 'barre du bas sur téléphone');
 assert.match(main, /UI_MODE_TYPE_TELEVISION/);
 assert.match(main, /enterPictureInPictureMode/);
-for (const tab of ['Accueil', 'Médiathèques', 'TV', 'Découvrir', 'Recherche']) assert.ok(main.includes(`"${tab}"`), `onglet ${tab}`);
+for (const tab of ['Accueil', 'Médias', 'TV', 'Découvrir', 'Recherche']) assert.ok(main.includes(`"${tab}"`), `onglet ${tab}`);
 
 const theme = await src('ui/Theme');
 const aurora = await read('public/noctra-aurora.css');
@@ -82,3 +82,15 @@ assert.match(workflow, /assembleRelease/);
 assert.ok(!/noctra-release\.p12/.test(workflow), 'la clé n’est jamais dans le dépôt');
 
 console.log('Appli Android native : structure vérifiée.');
+
+// 1.1 : lecteur des sites seul dans un cadre, variantes LiveWatch, langue audio, fiche fiable.
+const factory11 = await src('live/LiveServers');
+assert.match(factory11, /listOf\(raw\["embedUrl"\], raw\["vipFallbackUrl"\], raw\["externalUrl"\], raw\["url"\]\)/, 'lecteur seul avant la page du site');
+assert.match(factory11, /raw\["liveWatchVariants"\]/, 'toutes les variantes LiveWatch');
+assert.match(await src('live/LivePlayerScreen'), /request\.framed/);
+const playback11 = await src('play/Playback');
+assert.match(playback11, /body\["EnableDirectPlay"\] = false/, 'autre langue : flux préparé avec cette piste');
+assert.match(playback11, /fun switchStream\(audio: Int\?, subtitle: Int\)/);
+assert.match(await src('play/PlayerScreen'), /LANGUE AUDIO/);
+assert.match(await src('ui/detail/ItemDetail'), /Fiche incomplète : toucher pour recharger/);
+console.log('Appli Android native 1.1 : corrections vérifiées.');

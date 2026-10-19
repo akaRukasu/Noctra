@@ -20,6 +20,10 @@ struct ItemDetailView: View {
     @State private var showFullOverview = false
     @State private var showCast = false
     @State private var choosingSeasonQuality = false
+    @State private var loadFailed = false
+    @State private var loading = false
+    /// Hauteur de la barre d'état et de la barre du haut : l'image commence dessous.
+    @State private var topInset: CGFloat = 0
     private var sync: SyncPlayManager { .shared }
 
     private var shown: BaseItem { detail ?? item }
@@ -29,6 +33,20 @@ struct ItemDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if loadFailed {
+                    Button {
+                        Task { await load() }
+                    } label: {
+                        Label("Fiche incomplète : toucher pour recharger", systemImage: "arrow.clockwise")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .glassEffect(.regular.tint(Color.orange.opacity(0.3)).interactive(), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                }
                 actions
                     .padding(.horizontal, 20)
                 if let overview = shown.overview, !overview.isEmpty {
@@ -50,6 +68,13 @@ struct ItemDetailView: View {
             .padding(.bottom, 40)
         }
         .ignoresSafeArea(edges: .top)
+        .background {
+            // Mesure de la barre du haut (zone sûre de la page, barre de navigation comprise).
+            GeometryReader { proxy in
+                Color.clear.onAppear { topInset = proxy.safeAreaInsets.top }
+                    .onChange(of: proxy.safeAreaInsets.top) { _, value in topInset = value }
+            }
+        }
         .background(Theme.background)
         .navigationTitle(shown.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -99,11 +124,19 @@ struct ItemDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image en 16:9 sur toute la largeur, qui s'étire quand on tire vers le bas.
-            Color.clear
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .overlay { RemoteImage(url: headerImage) }
-                .clipped()
+            // Image en 16:9 entière sous la barre du haut (la même image floutée remplit
+            // la bande de la barre), qui s'étire quand on tire vers le bas.
+            VStack(spacing: 0) {
+                RemoteImage(url: headerImage, alignment: .top)
+                    .frame(height: max(topInset, 44))
+                    .blur(radius: 22)
+                    .overlay(Theme.background.opacity(0.45))
+                    .clipped()
+                Color.clear
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay { RemoteImage(url: headerImage) }
+                    .clipped()
+            }
                 .visualEffect { content, proxy in
                     let pull = max(0, proxy.frame(in: .scrollView).minY)
                     return content
@@ -374,9 +407,29 @@ struct ItemDetailView: View {
 
     // MARK: Données
 
+    /// Fiche complète : nouvel essai en cas d'échec (réseau lent, page ouverte pendant une transition).
+    private func fetchDetail() async -> BaseItem? {
+        for attempt in 0..<3 {
+            if let full = try? await session.get(BaseItem.self, paths: ["/Items/\(item.id)", "/Users/{userId}/Items/\(item.id)"],
+                                                 ["userId": session.userId, "fields": Fields.detail]) { return full }
+            if Task.isCancelled { return nil }
+            try? await Task.sleep(for: .milliseconds(700 * (attempt + 1)))
+        }
+        return nil
+    }
+
     private func load() async {
-        let full = try? await session.get(BaseItem.self, paths: ["/Items/\(item.id)", "/Users/{userId}/Items/\(item.id)"],
-                                          ["userId": session.userId, "fields": Fields.detail])
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        let needSimilar = similar.isEmpty
+        let itemId = item.id
+        async let similarList: ItemsResponse? = needSimilar
+            ? (try? await session.get(ItemsResponse.self, "/Items/\(itemId)/Similar", ["userId": session.userId, "limit": "16", "fields": Fields.card]))
+            : nil
+        let full = await fetchDetail()
+        if Task.isCancelled { return }
+        withAnimation(Theme.spring) { loadFailed = full == nil }
         if let full {
             detail = full
             favorite = full.userData?.isFavorite ?? false
@@ -387,11 +440,12 @@ struct ItemDetailView: View {
         }
         let current = full ?? item
         if current.isSeries {
-            let list = try? await session.get(ItemsResponse.self, "/Shows/\(current.id)/Seasons", ["userId": session.userId, "fields": Fields.card])
-            seasons = list?.items ?? []
-            let next = try? await session.get(ItemsResponse.self, "/Shows/NextUp", ["userId": session.userId, "seriesId": current.id, "fields": Fields.card, "limit": "1"])
+            async let seasonList = try? await session.get(ItemsResponse.self, "/Shows/\(current.id)/Seasons", ["userId": session.userId, "fields": Fields.card])
+            async let nextList = try? await session.get(ItemsResponse.self, "/Shows/NextUp", ["userId": session.userId, "seriesId": current.id, "fields": Fields.card, "limit": "1"])
+            let (list, next) = await (seasonList, nextList)
+            if let items = list?.items { seasons = items } else if seasons.isEmpty { loadFailed = true }
             nextEpisode = next?.items?.first
-            let preferred = nextEpisode?.seasonId ?? season ?? seasons.first?.id
+            let preferred = season ?? nextEpisode?.seasonId ?? seasons.first?.id
             if let preferred {
                 season = preferred
                 await loadEpisodes(preferred)
@@ -400,17 +454,20 @@ struct ItemDetailView: View {
             season = current.id
             await loadEpisodes(current.id)
         }
-        if similar.isEmpty {
-            let list = try? await session.get(ItemsResponse.self, "/Items/\(item.id)/Similar", ["userId": session.userId, "limit": "16", "fields": Fields.card])
-            similar = list?.items ?? []
-        }
+        if let list = await similarList, let items = list.items { similar = items }
     }
 
     private func loadEpisodes(_ seasonId: String) async {
         let seriesId = shown.isSeries ? shown.id : (shown.seriesId ?? shown.id)
-        let list = try? await session.get(ItemsResponse.self, "/Shows/\(seriesId)/Episodes",
+        var list: ItemsResponse?
+        for attempt in 0..<3 where list == nil {
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(600 * attempt)) }
+            list = try? await session.get(ItemsResponse.self, "/Shows/\(seriesId)/Episodes",
                                           ["userId": session.userId, "seasonId": seasonId, "fields": Fields.card + ",MediaSources"])
-        withAnimation(Theme.spring) { episodes = list?.items ?? [] }
+            if Task.isCancelled { return }
+        }
+        guard season == seasonId else { return }
+        withAnimation(Theme.spring) { episodes = list?.items ?? episodes }
     }
 
     private func play(_ target: BaseItem, fromStart: Bool) async {

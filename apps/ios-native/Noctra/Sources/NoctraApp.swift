@@ -68,7 +68,7 @@ struct MainTabView: View {
             Tab("Accueil", systemImage: "house.fill", value: AppTab.home) {
                 NoctraStack { HomeView() }
             }
-            Tab("Médiathèques", systemImage: "square.stack.fill", value: AppTab.libraries) {
+            Tab("Médias", systemImage: "square.stack.fill", value: AppTab.libraries) {
                 NoctraStack { LibrariesView() }
             }
             Tab("TV", systemImage: "dot.radiowaves.left.and.right", value: AppTab.live) {

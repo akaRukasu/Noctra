@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.noctra.mobile.NoctraApplication
 import com.noctra.mobile.core.BaseItem
 import com.noctra.mobile.core.Json
+import com.noctra.mobile.core.JsonMap
 import com.noctra.mobile.core.MediaStream
 import com.noctra.mobile.core.Net
 import com.noctra.mobile.core.NoctraException
@@ -109,11 +110,25 @@ object PlaybackManager {
             SyncPlayManager.setQueue(item.id, startSeconds)
             return
         }
-        val query = mutableMapOf<String, String?>("userId" to Session.userId, "isPlayback" to "true", "autoOpenLiveStream" to "true", "maxStreamingBitrate" to "120000000")
-        audioIndex?.let { query["audioStreamIndex"] = it.toString() }
-        subtitleIndex?.let { query["subtitleStreamIndex"] = it.toString() }
-        val info = Json.parseMap(Session.data("POST", "/Items/${item.id}/PlaybackInfo", query, mapOf("DeviceProfile" to DeviceProfile.streaming))) ?: throw NoctraException.empty
-        val source = info.maps("MediaSources").firstOrNull()?.let { JellyfinSource(it) } ?: throw NoctraException.empty
+        suspend fun fetchInfo(directPlay: Boolean): JsonMap {
+            val query = mutableMapOf<String, String?>("userId" to Session.userId, "isPlayback" to "true", "autoOpenLiveStream" to "true", "maxStreamingBitrate" to "120000000")
+            audioIndex?.let { query["audioStreamIndex"] = it.toString() }
+            subtitleIndex?.let { query["subtitleStreamIndex"] = it.toString() }
+            val body = mutableMapOf<String, Any?>("DeviceProfile" to DeviceProfile.streaming)
+            if (!directPlay) { body["EnableDirectPlay"] = false; body["AllowVideoStreamCopy"] = true; body["AllowAudioStreamCopy"] = true }
+            return Json.parseMap(Session.data("POST", "/Items/${item.id}/PlaybackInfo", query, body)) ?: throw NoctraException.empty
+        }
+        var info = fetchInfo(true)
+        var source = info.maps("MediaSources").firstOrNull()?.let { JellyfinSource(it) } ?: throw NoctraException.empty
+        // Lecture directe : le fichier joue sa piste audio par défaut. Autre langue choisie :
+        // flux préparé par le serveur avec cette piste (vidéo recopiée).
+        val audios = source.mediaStreams.filter { it.type == "Audio" }
+        val fileDefault = (audios.firstOrNull { it.isDefault } ?: audios.firstOrNull())?.index
+        if (source.supportsDirectPlay && audioIndex != null && audios.size > 1 && audioIndex != fileDefault) {
+            runCatching { fetchInfo(false) }.getOrNull()?.let { retry ->
+                retry.maps("MediaSources").firstOrNull()?.let { JellyfinSource(it) }?.takeIf { it.transcodingUrl != null }?.let { info = retry; source = it }
+            }
+        }
         val playSession = info.str("PlaySessionId") ?: UUID.randomUUID().toString()
         val url: String
         val method: String
@@ -137,8 +152,46 @@ object PlaybackManager {
         lastMediaIsDirect = method == "DirectPlay"
         present(Uri.parse(url), heading, startSeconds, PlaybackReport(item.id, source.id, playSession, method), sync, Session.authHeaders, if (method == "DirectPlay") null else "application/x-mpegURL")
         currentItemId = item.id
+        currentItem = item
+        audioTracks = source.mediaStreams.filter { it.type == "Audio" }.map { it.index to it.label }
+        this.audioIndex = audioIndex ?: source.defaultAudioStreamIndex ?: fileDefault
+        burnedSubtitles = source.mediaStreams.filter { it.type == "Subtitle" && !(it.deliveryMethod != "Encode" && it.isTextSubtitleStream) }.map { it.index to it.label + " (incrustés)" }
+        val burned = source.mediaStreams.firstOrNull { it.index == chosen && it.type == "Subtitle" }?.deliveryMethod == "Encode"
         subtitles = choices
-        selectSubtitle(chosen)
+        if (burned) { this.subtitleIndex = chosen; burnedIndex = chosen; subtitleJob?.cancel(); cues = emptyList(); subtitleText = "" } else { burnedIndex = -1; selectSubtitle(chosen) }
+    }
+
+    /** Pistes du titre en cours : langues, sous-titres incrustés par le serveur (image). */
+    var audioTracks by mutableStateOf<List<Pair<Int, String>>>(emptyList())
+        private set
+    var audioIndex by mutableStateOf<Int?>(null)
+        private set
+    var burnedSubtitles by mutableStateOf<List<Pair<Int, String>>>(emptyList())
+        private set
+    private var burnedIndex = -1
+    private var currentItem: BaseItem? = null
+    var switching by mutableStateOf(false)
+        private set
+
+    /** Autre langue (ou sous-titres incrustés) pendant la lecture : nouveau flux repris au même moment. */
+    fun switchStream(audio: Int?, subtitle: Int) {
+        val item = currentItem ?: return
+        val position = positionSeconds
+        switching = true
+        Session.scope.launch {
+            try {
+                play(item, audio, subtitle, maxOf(position, 6.0), sync = syncMode)
+            } catch (failure: Exception) {
+                Notices.announce("Cette piste n’est pas disponible : ${failure.message}")
+            } finally {
+                switching = false
+            }
+        }
+    }
+
+    /** Sous-titres choisis dans le lecteur : texte changé sur place, incrustés par un nouveau flux. */
+    fun chooseSubtitle(index: Int) {
+        if (index >= 0 && burnedSubtitles.any { it.first == index } || burnedIndex >= 0) switchStream(audioIndex, index) else selectSubtitle(index)
     }
 
     private fun textSubtitles(itemId: String, source: JellyfinSource): List<SubtitleChoice> =

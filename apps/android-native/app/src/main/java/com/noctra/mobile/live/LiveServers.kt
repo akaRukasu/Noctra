@@ -48,6 +48,10 @@ data class LiveServer(
     var renewURL: String? = null,
     /** Relais officiel à préparer par le serveur Noctra avant l'ouverture (NorthTV). */
     var relayPrepare: String? = null,
+    /** Lecteur d'un site ouvert dans un cadre, comme sur PC (et non sa page entière). */
+    var framed: Boolean = false,
+    /** Restrictions du cadre (null : aucune, pour les lecteurs qui les refusent). */
+    var sandbox: String? = LiveServerFactory.defaultSandbox,
     var format: Format = Format.unknown,
     var probe: Probe = Probe.untested,
     var probeMs: Double = 0.0,
@@ -260,6 +264,30 @@ object LiveHealth {
 // MARK: Serveurs d'une chaîne
 
 object LiveServerFactory {
+    /** Cadre des lecteurs des sites, réglé comme sur PC. */
+    const val defaultSandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
+    /** Lecteurs publiés qui refusent toute restriction de cadre (comme sur PC). */
+    private val openFrameProviders = setOf("BrigitteTV", "DLStreams", "DaddyLive", "Streamed", "Volkamax", "FCTV33", "RénéVéo", "BowdTV", "Xtemus", "Alternative")
+
+    /** Lecteur d'un site dans un cadre (comme sur PC), sans restriction pour les fournisseurs qui les refusent. */
+    private fun framedPage(label: String, provider: String, url: String, vip: Boolean, raw: JsonMap): LiveServer {
+        val open = (!Session.isNoctraOrigin(url) && provider in openFrameProviders) || raw.flag("noSandbox") || provider == "Alternative"
+        return LiveServer(label = label, provider = provider, kind = LiveServer.Kind.web, pageURL = url, vip = vip, framed = true, sandbox = if (open) null else defaultSandbox)
+    }
+
+    /** Serveurs LiveWatch de la même chaîne (« Serveur 2 », « SAT »…) publiés par le serveur Noctra. */
+    private fun liveWatchVariants(raw: JsonMap, prefix: String, provider: String, vip: Boolean, exclude: Set<String>): List<LiveServer> {
+        val variants = raw["liveWatchVariants"].asMaps()
+        if (variants.size < 2) return emptyList()
+        val used = exclude.toMutableSet()
+        return variants.take(12).mapIndexedNotNull { index, variant ->
+            val page = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstOrNull() ?: return@mapIndexedNotNull null
+            val url = Session.noctraURL(page) ?: return@mapIndexedNotNull null
+            if (!used.add(url)) return@mapIndexedNotNull null
+            LiveServer(label = "$prefix · " + (variant.str("label") ?: "serveur ${index + 1}"), provider = provider, kind = LiveServer.Kind.web, pageURL = url, vip = vip)
+        }
+    }
+
     /** Sources LiveWatch à lecteur officiel (comme sur PC et Noctra TV). */
     private val liveWatchOfficial = setOf("livewatch-north", "livewatch-frame", "livewatch-sports", "livewatch-football", "livewatch-bosstv", "livewatch-jacktv", "livewatch-daily")
     private val variantSuffix = Regex("\\.([A-Za-z0-9]{1,3})\\s*$")
@@ -303,6 +331,7 @@ object LiveServerFactory {
                 }
             }
             result += LiveServer(label = "$prefix · lecteur officiel", provider = provider, kind = LiveServer.Kind.web, pageURL = embed)
+            result += liveWatchVariants(raw, prefix, provider, false, setOf(embed))
             return result
         }
         val list = mutableListOf<LiveServer>()
@@ -316,13 +345,19 @@ object LiveServerFactory {
         } else if (stream != null) {
             list += LiveServer(label = "$prefix · flux direct", provider = provider, kind = LiveServer.Kind.native, streamURL = stream, headers = headers, mpegts = tsTransport, vip = vip)
         }
-        // Page du site en plus du flux : proposée en secours manuel (souvent avec publicités).
+        // Lecteur du site en plus du flux : le lecteur seul (embedUrl), comme sur PC, plutôt que la page
+        // entière du site (externalUrl, avec ses publicités) ; proposé en secours manuel à côté d'un flux.
         val used = list.mapNotNull { it.streamURL }.toSet()
-        val page = if (list.isEmpty()) pages.firstOrNull() ?: raw.str("url") else pages.firstOrNull { it.lowercase().startsWith("http") || it.startsWith("/") }
-        val pageUrl = page?.let { Session.noctraURL(it) }
+        val players = listOf(raw["embedUrl"], raw["vipFallbackUrl"], raw["externalUrl"], raw["url"]).mapNotNull { it as? String }
+            .filter { it.lowercase().startsWith("http") || it.startsWith("/") }
+        val pageUrl = players.firstOrNull()?.let { Session.noctraURL(it) }
         if (pageUrl != null && pageUrl !in used) {
-            list += LiveServer(label = prefix + if (list.isEmpty()) " · lecteur web" else " · lecteur du site", provider = provider, kind = LiveServer.Kind.web,
-                pageURL = pageUrl, fallback = list.isNotEmpty(), manualOnly = list.isNotEmpty())
+            val manual = list.isNotEmpty()
+            list += framedPage(prefix + if (manual) " · lecteur du site" else " · lecteur web", provider, pageUrl, vip, raw).copy(fallback = manual, manualOnly = manual)
+            list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
+        } else if (list.any { it.kind == LiveServer.Kind.resolve }) {
+            // VIP : variantes officielles proposées en secours manuel.
+            list += liveWatchVariants(raw, prefix, provider, false, emptySet()).map { it.copy(fallback = true, manualOnly = true) }
         }
         return list
     }
@@ -347,7 +382,7 @@ object LiveServerFactory {
                 stream != null -> LiveServer(label = name, provider = server.provider, kind = LiveServer.Kind.native, streamURL = stream, headers = headers,
                     mpegts = transport in setOf("ts", "mpegts", "mpeg-ts") || (option["streamKind"] as? String)?.lowercase() == "mpeg-ts", vip = vip, renewURL = server.resolveURL)
                 next != null && option["url"] == null -> LiveServer(label = name, provider = server.provider, kind = LiveServer.Kind.resolve, resolveURL = next, vip = vip)
-                page != null -> LiveServer(label = name, provider = server.provider, kind = LiveServer.Kind.web, pageURL = page, vip = vip)
+                page != null -> framedPage(name, server.provider, page, vip, option)
                 else -> return@mapIndexedNotNull null
             }
             item.copy(compatPage = option.flag("compatPage"), manualOnly = option.flag("manualOnly"), fallback = option.flag("fallback"))

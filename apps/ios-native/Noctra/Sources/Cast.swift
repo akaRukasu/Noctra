@@ -210,7 +210,8 @@ struct CastButton: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(cast.isActive ? Theme.accent : .white)
                 .symbolEffect(.pulse, isActive: cast.isActive && cast.isPlaying)
-                .frame(width: 30, height: 30)
+                .frame(width: 34, height: 30)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel("Diffuser sur un autre écran")
         .sheet(isPresented: $showing) {

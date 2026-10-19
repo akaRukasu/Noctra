@@ -618,6 +618,9 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
                     if (local && framedBridge(request.url)) {
                         // Pont VIP LiveWatch / OHA du serveur : dans un cadre isolé, exactement comme sur PC.
                         view.loadDataWithBaseURL(base, framePage(request.url), "text/html", "utf-8", null)
+                    } else if (request.framed) {
+                        // Lecteur d'un site : seul, dans un cadre réglé comme sur PC.
+                        view.loadDataWithBaseURL(base, framePage(request.url, request.sandbox), "text/html", "utf-8", null)
                     } else view.loadUrl(request.url)
                 }
                 WebPlayerRequest.Mode.mpegts -> view.loadDataWithBaseURL(base, enginePage(request.url, true, token), "text/html", "utf-8", null)
@@ -666,10 +669,10 @@ private fun escaped(value: String) = value.replace("&", "&amp;").replace("\"", "
 private fun literal(value: String) = value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")
 
 /** Cadre du lecteur, réglé comme sur PC : scripts, formulaires et plein écran permis, sans même origine. */
-private fun framePage(url: String) = """
+private fun framePage(url: String, sandbox: String? = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation") = """
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#000}</style></head>
-<body><iframe src="${escaped(url)}" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
+<body><iframe src="${escaped(url)}"${sandbox?.let { " sandbox=\"$it\"" } ?: ""}
 referrerpolicy="strict-origin-when-cross-origin" allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen></iframe>
 <script>$bridgeScript</script></body></html>
 """

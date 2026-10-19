@@ -33,6 +33,10 @@ struct LiveServer: Identifiable {
     var renewURL: String?
     /// Relais officiel à préparer par le serveur Noctra avant l'ouverture (NorthTV).
     var relayPrepare: String?
+    /// Lecteur d'un site ouvert dans un cadre, comme sur PC (et non sa page entière).
+    var framed = false
+    /// Restrictions du cadre (nil : aucune, pour les lecteurs qui les refusent).
+    var sandbox: String? = LiveServerFactory.defaultSandbox
     var format: Format = .unknown
     var probe: Probe = .untested
     var probeMs: Double = 0
@@ -296,6 +300,35 @@ enum LiveHealth {
 
 @MainActor
 enum LiveServerFactory {
+    /// Cadre des lecteurs des sites, réglé comme sur PC.
+    nonisolated static let defaultSandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
+    /// Lecteurs publiés qui refusent toute restriction de cadre (comme sur PC).
+    private static let openFrameProviders: Set<String> = ["BrigitteTV", "DLStreams", "DaddyLive", "Streamed", "Volkamax", "FCTV33", "RénéVéo", "BowdTV", "Xtemus", "Alternative"]
+
+    /// Lecteur d'un site dans un cadre (comme sur PC), sans restriction pour les fournisseurs qui les refusent.
+    private static func framedPage(_ label: String, provider: String, url: URL, vip: Bool, raw: [String: Any], session: Session) -> LiveServer {
+        var server = LiveServer(label: label, provider: provider, kind: .web, pageURL: url, vip: vip)
+        server.framed = true
+        let external = !session.isNoctraOrigin(url)
+        if (external && openFrameProviders.contains(provider)) || raw["noSandbox"] as? Bool == true || provider == "Alternative" { server.sandbox = nil }
+        return server
+    }
+
+    /// Serveurs LiveWatch de la même chaîne (« Serveur 2 », « SAT »…) publiés par le serveur Noctra.
+    private static func liveWatchVariants(_ raw: [String: Any], prefix: String, provider: String, vip: Bool, exclude: Set<String>, session: Session) -> [LiveServer] {
+        guard let variants = raw["liveWatchVariants"] as? [[String: Any]], variants.count > 1 else { return [] }
+        var used = exclude
+        var list: [LiveServer] = []
+        for (index, variant) in variants.prefix(12).enumerated() {
+            guard let page = [variant["embedUrl"], variant["externalUrl"]].compactMap({ $0 as? String }).first(where: { !$0.isEmpty }),
+                  let url = session.noctraURL(page), !used.contains(url.absoluteString) else { continue }
+            used.insert(url.absoluteString)
+            let name = (variant["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "serveur \(index + 1)"
+            list.append(LiveServer(label: prefix + " · " + name, provider: provider, kind: .web, pageURL: url, vip: vip))
+        }
+        return list
+    }
+
     /// Sources LiveWatch à lecteur officiel (comme sur PC et Noctra TV).
     private static let liveWatchOfficial: Set<String> = ["livewatch-north", "livewatch-frame", "livewatch-sports", "livewatch-football", "livewatch-bosstv", "livewatch-jacktv", "livewatch-daily"]
 
@@ -340,6 +373,7 @@ enum LiveServerFactory {
                 list.append(relay)
             }
             list.append(LiveServer(label: prefix + " · lecteur officiel", provider: provider, kind: .web, pageURL: url))
+            list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: false, exclude: [url.absoluteString], session: session)
             return list
         }
         var list: [LiveServer] = []
@@ -351,15 +385,31 @@ enum LiveServerFactory {
         } else if let stream = raw["streamUrl"] as? String, let url = session.noctraURL(stream) {
             list.append(LiveServer(label: prefix + " · flux direct", provider: provider, kind: .native, streamURL: url, headers: headers, mpegts: tsTransport, vip: vip))
         }
-        // Page du site en plus du flux : proposée en secours (lecteur externe).
+        // Lecteur du site en plus du flux : le lecteur seul (embedUrl), comme sur PC, plutôt
+        // que la page entière du site (externalUrl, avec ses publicités) ; proposé en secours.
         let used = Set(list.compactMap { $0.streamURL?.absoluteString })
-        if let page = list.isEmpty ? (pages.first ?? raw["url"] as? String) : pages.first(where: { $0.lowercased().hasPrefix("http") || $0.hasPrefix("/") }),
-           let url = session.noctraURL(page), !used.contains(url.absoluteString) {
-            var server = LiveServer(label: prefix + (list.isEmpty ? " · lecteur web" : " · lecteur du site"), provider: provider, kind: .web, pageURL: url)
-            // Page publique du site (souvent avec publicités) : proposée, jamais lancée d'office.
+        let players = [raw["embedUrl"], raw["vipFallbackUrl"], raw["externalUrl"], raw["url"]].compactMap { $0 as? String }
+            .filter { $0.lowercased().hasPrefix("http") || $0.hasPrefix("/") }
+        if let page = players.first, let url = session.noctraURL(page), !used.contains(url.absoluteString) {
+            var server = framedPage(prefix + (list.isEmpty ? " · lecteur web" : " · lecteur du site"), provider: provider, url: url, vip: vip, raw: raw, session: session)
+            // Lecteur public du site (souvent avec publicités) : proposé, jamais lancé d'office à côté d'un flux.
             server.fallback = !list.isEmpty
             server.manualOnly = !list.isEmpty
             list.append(server)
+            list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: [url.absoluteString], session: session).map { variant in
+                var copy = variant
+                copy.manualOnly = server.manualOnly
+                copy.fallback = server.fallback
+                return copy
+            }
+        } else if list.contains(where: { $0.kind == .resolve }) {
+            // VIP : variantes officielles proposées en secours manuel.
+            list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: false, exclude: [], session: session).map { variant in
+                var copy = variant
+                copy.manualOnly = true
+                copy.fallback = true
+                return copy
+            }
         }
         return list
     }
@@ -383,7 +433,7 @@ enum LiveServerFactory {
             } else if let next = option["resolveUrl"] as? String, option["url"] == nil {
                 item = LiveServer(label: name, provider: server.provider, kind: .resolve, resolveURL: next, vip: vip)
             } else if let page = option["url"] as? String, let url = session.noctraURL(page) {
-                item = LiveServer(label: name, provider: server.provider, kind: .web, pageURL: url, vip: vip)
+                item = framedPage(name, provider: server.provider, url: url, vip: vip, raw: option, session: session)
             } else {
                 return nil
             }

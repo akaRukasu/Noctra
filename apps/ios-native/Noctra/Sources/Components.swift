@@ -324,10 +324,12 @@ struct AccountButton: View {
     @State private var showing = false
 
     var body: some View {
-        HStack(spacing: 14) {
+        // Marges intérieures : les icônes ne touchent pas le bord de la capsule de la barre.
+        HStack(spacing: 12) {
             CastButton()
             account
         }
+        .padding(.horizontal, 6)
     }
 
     private var account: some View {

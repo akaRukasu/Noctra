@@ -167,6 +167,11 @@ final class SubtitleOverlay {
         let text = lines.joined(separator: "\n")
         guard text != shown else { return }
         shown = text
+        // Le lecteur d'Apple peut poser ses propres vues par-dessus après la présentation.
+        if let host = label.superview, host.subviews.last !== label {
+            host.bringSubviewToFront(label)
+            host.bringSubviewToFront(status)
+        }
         let size = SubtitleSize.current.points
         label.attributedText = NSAttributedString(string: text, attributes: [
             .font: UIFont.systemFont(ofSize: size, weight: .semibold),
@@ -174,5 +179,105 @@ final class SubtitleOverlay {
             .strokeColor: UIColor.black.withAlphaComponent(0.85),
             .strokeWidth: -2.5
         ])
+    }
+}
+
+/// Bouton « Audio et sous-titres » posé sur le lecteur d'Apple : menu des pistes
+/// du titre (langues, sous-titres texte ou incrustés). Il apparaît avec les
+/// commandes (toucher l'image) et s'efface tout seul.
+@MainActor
+final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
+    private let button = UIButton(type: .system)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private var tap: UITapGestureRecognizer?
+    private weak var host: UIView?
+    private var hideTask: Task<Void, Never>?
+
+    func attach(to controller: AVPlayerViewController) {
+        controller.loadViewIfNeeded()
+        guard let host = controller.view else { return }
+        self.host = host
+        var config = UIButton.Configuration.glass()
+        config.image = UIImage(systemName: "captions.bubble.fill")
+        config.title = "Audio et sous-titres"
+        config.imagePadding = 7
+        config.cornerStyle = .capsule
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var updated = attributes
+            updated.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+            return updated
+        }
+        button.configuration = config
+        button.tintColor = .white
+        button.showsMenuAsPrimaryAction = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = "Langue audio et sous-titres"
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(button)
+        host.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            button.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 10),
+            spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            spinner.leadingAnchor.constraint(equalTo: button.trailingAnchor, constant: 8)
+        ])
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        host.addGestureRecognizer(tap)
+        self.tap = tap
+        show()
+    }
+
+    func setMenu(_ menu: UIMenu) { button.menu = menu }
+
+    func setBusy(_ busy: Bool) {
+        if busy { spinner.startAnimating(); show(keep: true) } else { spinner.stopAnimating(); show() }
+    }
+
+    func bringToFront() {
+        guard let host else { return }
+        host.bringSubviewToFront(button)
+        host.bringSubviewToFront(spinner)
+    }
+
+    func detach() {
+        hideTask?.cancel()
+        if let tap { host?.removeGestureRecognizer(tap) }
+        button.removeFromSuperview()
+        spinner.removeFromSuperview()
+    }
+
+    @objc private func tapped() {
+        if button.alpha < 0.5 { show() } else { hide() }
+    }
+
+    private func show(keep: Bool = false) {
+        bringToFront()
+        UIView.animate(withDuration: 0.2) { self.button.alpha = 1 }
+        button.isUserInteractionEnabled = true
+        hideTask?.cancel()
+        guard !keep else { return }
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            self?.hide()
+        }
+    }
+
+    private func hide() {
+        hideTask?.cancel()
+        UIView.animate(withDuration: 0.25) { self.button.alpha = 0 }
+        button.isUserInteractionEnabled = false
+    }
+
+    nonisolated func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+    nonisolated func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // Les touchers sur le bouton lui-même ouvrent le menu.
+        MainActor.assumeIsolated { touch.view !== button && touch.view?.isDescendant(of: button) != true }
     }
 }

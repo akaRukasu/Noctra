@@ -33,7 +33,11 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 /** Lecteur web : moteur web de l'appli (flux MPEG-TS ou HLS) ou page d'un site. */
-data class WebPlayerRequest(val id: String = UUID.randomUUID().toString(), val title: String, val mode: Mode, val url: String) {
+data class WebPlayerRequest(
+    val id: String = UUID.randomUUID().toString(), val title: String, val mode: Mode, val url: String,
+    /** Lecteur du site dans un cadre (comme sur PC) plutôt que chargé seul ; restrictions du cadre (null : aucune). */
+    val framed: Boolean = false, val sandbox: String? = LiveServerFactory.defaultSandbox
+) {
     enum class Mode { mpegts, hls, page }
     val isEngine: Boolean get() = mode != Mode.page
 }
@@ -266,7 +270,7 @@ object LivePlayerModel {
     /** Page d'un site (lecteur externe) : lecture et erreurs signalées par la page. */
     private fun openPage(server: LiveServer, token: Int) {
         val url = server.pageURL ?: run { fail(server); return }
-        web = WebPlayerRequest(title = channel?.name ?: "", mode = WebPlayerRequest.Mode.page, url = url)
+        web = WebPlayerRequest(title = channel?.name ?: "", mode = WebPlayerRequest.Mode.page, url = url, framed = server.framed, sandbox = server.sandbox)
         loading = false
         status = "Lecteur du site : touchez Lecture dans la page si la vidéo ne démarre pas."
         watch = Session.scope.launch {

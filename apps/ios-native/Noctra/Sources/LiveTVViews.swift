@@ -336,6 +336,10 @@ struct WebPlayerRequest: Identifiable {
     let id = UUID()
     let title: String
     let mode: Mode
+    /// Lecteur du site dans un cadre (comme sur PC) plutôt que chargé seul.
+    var framed = false
+    /// Restrictions du cadre (nil : aucune).
+    var sandbox: String? = LiveServerFactory.defaultSandbox
 
     var isEngine: Bool {
         if case .page = mode { return false }
@@ -1037,6 +1041,9 @@ struct LiveWebView: UIViewRepresentable {
                 if local, Self.framedBridge(url) {
                     // Pont VIP LiveWatch / OHA du serveur : dans un cadre isolé, exactement comme sur PC.
                     view.loadHTMLString(Self.framePage(url), baseURL: base)
+                } else if request.framed {
+                    // Lecteur d'un site : seul, dans un cadre réglé comme sur PC.
+                    view.loadHTMLString(Self.framePage(url, sandbox: request.sandbox), baseURL: base)
                 } else {
                     // Sans référent, comme les lecteurs officiels l'attendent.
                     view.load(URLRequest(url: url))
@@ -1084,11 +1091,12 @@ struct LiveWebView: UIViewRepresentable {
 
     /// Cadre du lecteur, réglé comme sur PC : scripts, formulaires et plein écran
     /// permis, sans même origine ; les fenêtres surgissantes restent bloquées.
-    private static func framePage(_ url: URL) -> String {
-        """
+    private static func framePage(_ url: URL, sandbox: String? = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation") -> String {
+        let restrictions = sandbox.map { " sandbox=\"\($0)\"" } ?? ""
+        return """
         <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:#000}</style></head>
-        <body><iframe src="\(escaped(url.absoluteString))" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
+        <body><iframe src="\(escaped(url.absoluteString))"\(restrictions)
         referrerpolicy="strict-origin-when-cross-origin" allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen></iframe></body></html>
         """
     }

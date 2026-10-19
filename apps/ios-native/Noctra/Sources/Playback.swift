@@ -53,16 +53,77 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
             try await SyncPlayManager.shared.setQueue(item.id, startSeconds: startSeconds)
             return
         }
-        var query: [String: String?] = [
-            "userId": session.userId, "isPlayback": "true", "autoOpenLiveStream": "true",
-            "maxStreamingBitrate": "120000000"
-        ]
-        if let audioIndex { query["audioStreamIndex"] = String(audioIndex) }
-        if let subtitleIndex { query["subtitleStreamIndex"] = String(subtitleIndex) }
-        let data = try await session.data("POST", "/Items/\(item.id)/PlaybackInfo", query, json: ["DeviceProfile": Self.deviceProfile])
-        let info = try JSONDecoder.jellyfin.decode(PlaybackInfoResponse.self, from: data)
-        guard let source = info.mediaSources?.first else { throw NoctraError.empty }
-        let playSession = info.playSessionId ?? UUID().uuidString
+        let resolved = try await resolve(item, session: session, audioIndex: audioIndex, subtitleIndex: subtitleIndex)
+        let report = Report(session: session, itemId: item.id, mediaSourceId: resolved.source.id, playSessionId: resolved.playSession, playMethod: resolved.method)
+        let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
+        lastMediaURL = resolved.url
+        lastMediaIsDirect = resolved.method == "DirectPlay"
+        lastSubtitleURL = resolved.subtitles
+        present(urls: [(resolved.url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync, live: false)
+        current = Current(item: item, session: session, title: title, sourceId: resolved.source.id,
+                          streams: resolved.source.mediaStreams ?? [], audioIndex: resolved.audioIndex,
+                          subtitleIndex: resolved.chosenSubtitle, burned: resolved.burned)
+        showSubtitles(resolved.subtitles, alternate: resolved.alternate)
+        attachTrackMenu()
+    }
+
+    /// Flux choisi par le serveur pour les pistes demandées.
+    private struct Resolved {
+        let url: URL
+        let method: String
+        let source: MediaSource
+        let playSession: String
+        let audioIndex: Int?
+        let chosenSubtitle: Int
+        let subtitles: URL?
+        let alternate: URL?
+        let burned: Bool
+    }
+
+    /// Titre en cours : pistes audio et sous-titres proposées dans le lecteur.
+    private struct Current {
+        let item: BaseItem
+        let session: Session
+        let title: String
+        var sourceId: String
+        var streams: [MediaStream]
+        var audioIndex: Int?
+        var subtitleIndex: Int
+        var burned: Bool
+    }
+    private var current: Current?
+    private var trackMenu: TrackMenuButton?
+
+    private func resolve(_ item: BaseItem, session: Session, audioIndex: Int?, subtitleIndex: Int?) async throws -> Resolved {
+        func info(directPlay: Bool) async throws -> PlaybackInfoResponse {
+            var query: [String: String?] = [
+                "userId": session.userId, "isPlayback": "true", "autoOpenLiveStream": "true",
+                "maxStreamingBitrate": "120000000"
+            ]
+            if let audioIndex { query["audioStreamIndex"] = String(audioIndex) }
+            if let subtitleIndex { query["subtitleStreamIndex"] = String(subtitleIndex) }
+            var body: [String: Any] = ["DeviceProfile": Self.deviceProfile]
+            if !directPlay {
+                body["EnableDirectPlay"] = false
+                body["AllowVideoStreamCopy"] = true
+                body["AllowAudioStreamCopy"] = true
+            }
+            let data = try await session.data("POST", "/Items/\(item.id)/PlaybackInfo", query, json: body)
+            return try JSONDecoder.jellyfin.decode(PlaybackInfoResponse.self, from: data)
+        }
+        var response = try await info(directPlay: true)
+        guard var source = response.mediaSources?.first else { throw NoctraError.empty }
+        // Lecture directe : le fichier joue sa piste audio par défaut. Autre langue
+        // choisie : flux préparé par le serveur avec cette piste (vidéo recopiée).
+        let audios = (source.mediaStreams ?? []).filter { $0.type == "Audio" }
+        let fileDefault = audios.first { $0.isDefault == true }?.index ?? audios.first?.index
+        if source.supportsDirectPlay == true, let audioIndex, audios.count > 1, audioIndex != fileDefault {
+            if let retry = try? await info(directPlay: false), let other = retry.mediaSources?.first, other.transcodingUrl != nil {
+                response = retry
+                source = other
+            }
+        }
+        let playSession = response.playSessionId ?? UUID().uuidString
 
         let url: URL?
         let method: String
@@ -83,26 +144,124 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         // Sous-titres texte : fichier WebVTT lu par l'appli. Sous-titres image
         // (PGS, VobSub) : incrustés par le serveur dans le flux (« Encode »).
         let chosen = subtitleIndex ?? source.defaultSubtitleStreamIndex ?? -1
+        let stream = source.mediaStreams?.first { $0.index == chosen && $0.type == "Subtitle" }
         var subtitles: URL?
-        if chosen >= 0, let stream = source.mediaStreams?.first(where: { $0.index == chosen && $0.type == "Subtitle" }),
-           stream.deliveryMethod != "Encode", stream.isTextSubtitleStream != false {
+        var alternate: URL?
+        if chosen >= 0, let stream, stream.deliveryMethod != "Encode", stream.isTextSubtitleStream != false {
             subtitles = session.url("/Videos/\(item.id)/\(source.id)/Subtitles/\(chosen)/0/Stream.vtt", ["api_key": session.token])
+            alternate = session.url("/Videos/\(item.id)/\(source.id)/Subtitles/\(chosen)/Stream.vtt", ["api_key": session.token])
         }
-        lastSubtitleURL = subtitles
-        let sourceId = source.id
-        let chosenSubtitle = chosen
+        let chosenAudio = audioIndex ?? source.defaultAudioStreamIndex ?? fileDefault
+        return Resolved(url: url, method: method, source: source, playSession: playSession, audioIndex: chosenAudio,
+                        chosenSubtitle: stream == nil ? -1 : chosen, subtitles: subtitles, alternate: alternate,
+                        burned: stream?.deliveryMethod == "Encode")
+    }
 
-        let report = Report(session: session, itemId: item.id, mediaSourceId: source.id, playSessionId: playSession, playMethod: method)
-        let title = item.type == "Episode" ? [item.seriesName, item.episodeLabel, item.name].compactMap { $0 }.joined(separator: " · ") : item.title
-        lastMediaURL = url
-        lastMediaIsDirect = method == "DirectPlay"
-        present(urls: [(url, session.authHeaders)], title: title, startSeconds: startSeconds, report: report, sync: sync, live: false)
-        if let subtitles, let controller, let player {
-            let overlay = SubtitleOverlay()
-            overlay.attach(to: controller, player: player)
-            subtitleOverlay = overlay
-            let alternate = session.url("/Videos/\(item.id)/\(sourceId)/Subtitles/\(chosenSubtitle)/Stream.vtt", ["api_key": session.token])
-            Task { await overlay.load(subtitles, headers: session.authHeaders, alternates: alternate.map { [$0] } ?? []) }
+    private func showSubtitles(_ url: URL?, alternate: URL?) {
+        subtitleOverlay?.detach()
+        subtitleOverlay = nil
+        guard let url, let controller, let player, let session = current?.session else { return }
+        let overlay = SubtitleOverlay()
+        overlay.attach(to: controller, player: player)
+        subtitleOverlay = overlay
+        Task { await overlay.load(url, headers: session.authHeaders, alternates: alternate.map { [$0] } ?? []) }
+        trackMenu?.bringToFront()
+    }
+
+    // MARK: Pistes dans le lecteur
+
+    /// Bouton « Audio et sous-titres » posé sur le lecteur d'Apple (ses menus ne
+    /// connaissent pas les pistes préparées par le serveur).
+    private func attachTrackMenu() {
+        trackMenu?.detach()
+        trackMenu = nil
+        guard let controller, let current else { return }
+        let hasChoice = current.streams.filter { $0.type == "Audio" }.count > 1 || current.streams.contains { $0.type == "Subtitle" }
+        guard hasChoice else { return }
+        let button = TrackMenuButton()
+        button.attach(to: controller)
+        trackMenu = button
+        refreshTrackMenu()
+    }
+
+    private func refreshTrackMenu() {
+        guard let current else { return }
+        let audios = current.streams.filter { $0.type == "Audio" }
+        let subtitles = current.streams.filter { $0.type == "Subtitle" }
+        var sections: [UIMenuElement] = []
+        if audios.count > 1 {
+            let actions = audios.map { stream in
+                UIAction(title: stream.label, image: UIImage(systemName: "waveform"), state: stream.index == current.audioIndex ? .on : .off) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.switchTracks(audio: stream.index, subtitle: current.subtitleIndex) }
+                }
+            }
+            sections.append(UIMenu(title: "Langue audio", image: UIImage(systemName: "speaker.wave.2"), children: actions))
+        }
+        if !subtitles.isEmpty {
+            var actions = [UIAction(title: "Aucun", state: current.subtitleIndex < 0 ? .on : .off) { [weak self] _ in
+                MainActor.assumeIsolated { self?.switchTracks(audio: current.audioIndex, subtitle: -1) }
+            }]
+            actions += subtitles.map { stream in
+                UIAction(title: stream.label, subtitle: stream.isTextSubtitleStream == false ? "Incrustés par le serveur" : nil,
+                         state: stream.index == current.subtitleIndex ? .on : .off) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.switchTracks(audio: current.audioIndex, subtitle: stream.index) }
+                }
+            }
+            sections.append(UIMenu(title: "Sous-titres", image: UIImage(systemName: "captions.bubble"), children: actions))
+        }
+        trackMenu?.setMenu(UIMenu(title: "", children: sections))
+    }
+
+    /// Autre piste choisie pendant la lecture : sous-titres texte changés sur place,
+    /// sinon nouveau flux du serveur repris au même moment.
+    func switchTracks(audio: Int?, subtitle: Int) {
+        guard var current, player != nil else { return }
+        let target = current.streams.first { $0.index == subtitle && $0.type == "Subtitle" }
+        let textOnly = audio == current.audioIndex && !current.burned && (subtitle < 0 || target?.isTextSubtitleStream != false)
+        if textOnly {
+            current.subtitleIndex = target == nil ? -1 : subtitle
+            self.current = current
+            if target != nil {
+                let session = current.session
+                let url = session.url("/Videos/\(current.item.id)/\(current.sourceId)/Subtitles/\(subtitle)/0/Stream.vtt", ["api_key": session.token])
+                let alternate = session.url("/Videos/\(current.item.id)/\(current.sourceId)/Subtitles/\(subtitle)/Stream.vtt", ["api_key": session.token])
+                lastSubtitleURL = url
+                showSubtitles(url, alternate: alternate)
+            } else {
+                lastSubtitleURL = nil
+                showSubtitles(nil, alternate: nil)
+            }
+            refreshTrackMenu()
+            return
+        }
+        let position = positionSeconds
+        let previous = report
+        trackMenu?.setBusy(true)
+        Task {
+            defer { self.trackMenu?.setBusy(false) }
+            guard let resolved = try? await resolve(current.item, session: current.session, audioIndex: audio, subtitleIndex: subtitle) else {
+                SyncPlayManager.shared.announce("Cette piste n’est pas disponible pour le moment.")
+                return
+            }
+            guard !self.closed, self.current?.item.id == current.item.id else { return }
+            if let previous {
+                await self.send("/Sessions/Playing/Stopped", previous, position: position, paused: false)
+                if previous.playMethod != "DirectPlay" {
+                    _ = try? await previous.session.data("DELETE", "/Videos/ActiveEncodings", ["deviceId": previous.session.deviceId, "playSessionId": previous.playSessionId])
+                }
+            }
+            let report = Report(session: current.session, itemId: current.item.id, mediaSourceId: resolved.source.id, playSessionId: resolved.playSession, playMethod: resolved.method)
+            self.report = report
+            self.lastMediaURL = resolved.url
+            self.lastMediaIsDirect = resolved.method == "DirectPlay"
+            self.lastSubtitleURL = resolved.subtitles
+            self.current = Current(item: current.item, session: current.session, title: current.title, sourceId: resolved.source.id,
+                                   streams: resolved.source.mediaStreams ?? current.streams, audioIndex: resolved.audioIndex,
+                                   subtitleIndex: resolved.chosenSubtitle, burned: resolved.burned)
+            self.load([(resolved.url, current.session.authHeaders)], index: 0, title: current.title, startSeconds: max(position, 6))
+            await self.send("/Sessions/Playing", report, position: position, paused: false)
+            self.showSubtitles(resolved.subtitles, alternate: resolved.alternate)
+            self.refreshTrackMenu()
         }
     }
 
@@ -326,6 +485,9 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         rateObservation = nil
         subtitleOverlay?.detach()
         subtitleOverlay = nil
+        trackMenu?.detach()
+        trackMenu = nil
+        current = nil
         if isLive { finishLiveMeasure() }
         liveResult = nil
         liveSmooth = nil

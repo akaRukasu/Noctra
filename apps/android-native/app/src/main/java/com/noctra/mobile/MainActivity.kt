@@ -149,7 +149,7 @@ private fun Root() {
 
 private enum class AppTab(val label: String, val icon: ImageVector) {
     Home("Accueil", Icons.Filled.Home),
-    Libraries("Médiathèques", Icons.Filled.VideoLibrary),
+    Libraries("Médias", Icons.Filled.VideoLibrary),
     Live("TV", Icons.Filled.LiveTv),
     Discover("Découvrir", Icons.Filled.AutoAwesome),
     Search("Recherche", Icons.Filled.Search)

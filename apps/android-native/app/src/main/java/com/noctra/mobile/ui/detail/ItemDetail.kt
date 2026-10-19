@@ -1,5 +1,15 @@
 package com.noctra.mobile.ui.detail
 
+import androidx.compose.material.icons.filled.Refresh
+
+import androidx.compose.ui.draw.clipToBounds
+
+import androidx.compose.foundation.layout.asPaddingValues
+
+import androidx.compose.foundation.layout.statusBars
+
+import androidx.compose.foundation.layout.WindowInsets
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -120,8 +130,17 @@ class DetailModel(val item: BaseItem) {
             else -> shown
         }
 
+    var failed by mutableStateOf(false)
+
     suspend fun load() {
-        val full = runCatching { BaseItem.from(Session.json(listOf("/Items/${item.id}", "/Users/{userId}/Items/${item.id}"), mapOf("userId" to Session.userId, "fields" to Fields.detail))) }.getOrNull()
+        // Nouvel essai en cas d'échec (réseau lent, page ouverte pendant une transition).
+        var full: BaseItem? = null
+        for (attempt in 0 until 3) {
+            full = runCatching { BaseItem.from(Session.json(listOf("/Items/${item.id}", "/Users/{userId}/Items/${item.id}"), mapOf("userId" to Session.userId, "fields" to Fields.detail))) }.getOrNull()
+            if (full != null) break
+            kotlinx.coroutines.delay(700L * (attempt + 1))
+        }
+        failed = full == null
         if (full != null) {
             detail = full
             favorite = full.userData?.isFavorite == true
@@ -196,7 +215,13 @@ fun ItemDetailScreen(item: BaseItem) {
         LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             item {
                 Column {
-                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                    // Bande sous la barre d'état et la barre du haut : même image floutée ; l'image reste entière dessous.
+                    val band = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp
+                    Box(Modifier.fillMaxWidth().height(band).clipToBounds()) {
+                        RemoteImage(headerImage, Modifier.fillMaxSize().blur(22.dp), alignment = Alignment.TopCenter, placeholder = false)
+                        Box(Modifier.fillMaxSize().background(Theme.background.copy(alpha = 0.5f)))
+                    }
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clipToBounds()) {
                         RemoteImage(headerImage, Modifier.fillMaxSize().graphicsLayer {
                             // Léger parallaxe au défilement.
                             if (list.firstVisibleItemIndex == 0) translationY = list.firstVisibleItemScrollOffset * 0.5f
@@ -220,6 +245,16 @@ fun ItemDetailScreen(item: BaseItem) {
                         }
                         if (shown.genres.isNotEmpty()) Text(shown.genres.take(3).joinToString(" · "), color = Theme.muted, fontSize = 13.sp)
                     }
+                }
+            }
+            if (model.failed) item {
+                Row(
+                    Modifier.padding(horizontal = 20.dp).clip(CircleShape).background(Theme.orange.copy(alpha = 0.25f)).focusRing(CircleShape)
+                        .clickable { scope.launch { model.load() } }.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Text("Fiche incomplète : toucher pour recharger", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             item { Actions(model, onCast = { showCast = true }) }

@@ -159,7 +159,21 @@ assert.match(livePlayer, /private func engineFailed\(/, 'repli lecteur d’Apple
 assert.match(livePlayer, /timeout: server\.vip \? 70 : 45/, 'VIP LiveWatch : délai de vérification suffisant');
 assert.match(livePlayer, /func webEvent\(/);
 assert.match(live, /configuration\.userContentController\.add\(context\.coordinator, name: "noctra"\)/, 'pages du lecteur reliées à l’appli');
-assert.match(live, /sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"/, 'pont VIP dans un cadre comme sur PC');
+assert.match(live, /sandbox: String\? = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"/, 'pont VIP dans un cadre comme sur PC');
+// 2.10 : lecteurs des sites seuls (embedUrl) dans un cadre comme sur PC, toutes les variantes LiveWatch.
+const factory = await src('LiveServers');
+assert.match(factory, /\[raw\["embedUrl"\], raw\["vipFallbackUrl"\], raw\["externalUrl"\], raw\["url"\]\]/, 'lecteur seul avant la page du site');
+assert.match(factory, /raw\["liveWatchVariants"\]/, 'toutes les variantes LiveWatch');
+assert.match(factory, /"DLStreams"/, 'cadre sans restriction pour les lecteurs qui les refusent');
+assert.match(live, /request\.framed/);
+// 2.10 : langue audio respectée, menu des pistes dans le lecteur, fiche fiable.
+const playback210 = await src('Playback');
+assert.match(playback210, /body\["EnableDirectPlay"\] = false/, 'autre langue : flux préparé avec cette piste');
+assert.match(playback210, /func switchTracks\(audio: Int\?, subtitle: Int\)/);
+assert.match(await src('Subtitles'), /final class TrackMenuButton/);
+const detail210 = await src('ItemDetailView');
+assert.match(detail210, /private func fetchDetail\(\) async -> BaseItem\?/, 'nouvel essai du chargement de la fiche');
+assert.match(detail210, /frame\(height: max\(topInset, 44\)\)/, 'image entière sous la barre du haut');
 assert.match(live, /struct BouquetCard/);
 assert.match(await src('ItemDetailView'), /\.frame\(height: 72\)/, 'logo du titre à sa taille');
 assert.match(syncplay, /private var openGroups: some View/);

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -153,15 +155,28 @@ fun PlayerScreen() {
                     Icon(Icons.Filled.Close, contentDescription = "Fermer", tint = Color.White)
                 }
                 Text(PlaybackManager.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (PlaybackManager.subtitles.isNotEmpty()) {
+                val hasTracks = PlaybackManager.audioTracks.size > 1 || PlaybackManager.subtitles.isNotEmpty() || PlaybackManager.burnedSubtitles.isNotEmpty()
+                if (PlaybackManager.switching) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                if (hasTracks) {
                     Box {
                         IconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(46.dp).glass(CircleShape, Color(0x99000000)).focusRing(CircleShape)) {
-                            Icon(Icons.Filled.Subtitles, contentDescription = "Sous-titres", tint = if (PlaybackManager.subtitleIndex >= 0) Theme.accent else Color.White)
+                            Icon(Icons.Filled.Subtitles, contentDescription = "Langue audio et sous-titres", tint = if (PlaybackManager.subtitleIndex >= 0) Theme.accent else Color.White)
                         }
-                        DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
-                            DropdownMenuItem(text = { Text((if (PlaybackManager.subtitleIndex < 0) "✓ " else "") + "Aucun") }, onClick = { subtitleMenu = false; PlaybackManager.selectSubtitle(-1) })
-                            PlaybackManager.subtitles.forEach { choice ->
-                                DropdownMenuItem(text = { Text((if (choice.index == PlaybackManager.subtitleIndex) "✓ " else "") + choice.label) }, onClick = { subtitleMenu = false; PlaybackManager.selectSubtitle(choice.index) })
+                        DropdownMenu(expanded = subtitleMenu, onDismissRequest = { subtitleMenu = false }, modifier = Modifier.background(Color(0xFF151932))) {
+                            if (PlaybackManager.audioTracks.size > 1) {
+                                Text("LANGUE AUDIO", color = Theme.muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                                PlaybackManager.audioTracks.forEach { (index, label) ->
+                                    DropdownMenuItem(text = { Text((if (index == PlaybackManager.audioIndex) "✓ " else "") + label, color = Theme.ink) }, onClick = {
+                                        subtitleMenu = false
+                                        if (index != PlaybackManager.audioIndex) PlaybackManager.switchStream(index, PlaybackManager.subtitleIndex)
+                                    })
+                                }
+                                HorizontalDivider(color = Theme.line)
+                            }
+                            Text("SOUS-TITRES", color = Theme.muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                            DropdownMenuItem(text = { Text((if (PlaybackManager.subtitleIndex < 0) "✓ " else "") + "Aucun", color = Theme.ink) }, onClick = { subtitleMenu = false; PlaybackManager.chooseSubtitle(-1) })
+                            (PlaybackManager.subtitles.map { it.index to it.label } + PlaybackManager.burnedSubtitles).forEach { (index, label) ->
+                                DropdownMenuItem(text = { Text((if (index == PlaybackManager.subtitleIndex) "✓ " else "") + label, color = Theme.ink) }, onClick = { subtitleMenu = false; PlaybackManager.chooseSubtitle(index) })
                             }
                         }
                     }
