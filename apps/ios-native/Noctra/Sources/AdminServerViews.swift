@@ -1302,7 +1302,8 @@ struct LiveAdminView: View {
     private var vipChannels: [VipChannelRef] {
         var seen: Set<String> = []
         var list: [VipChannelRef] = []
-        for channel in LiveStore.shared.channels where channel.vip {
+        // Chaînes françaises seulement.
+        for channel in LiveStore.shared.channels where channel.vip && channel.country == "fr" {
             for entry in channel.entries {
                 guard let resolver = entry.raw["resolverUrl"] as? String,
                       let range = resolver.range(of: "/api/tv/livewatch/resolve/(main|daddy|north|frame)/[^?]+", options: .regularExpression) else { continue }

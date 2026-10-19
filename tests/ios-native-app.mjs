@@ -330,3 +330,6 @@ console.log('Appli iOS native 2.15.3 : vérifiée.');
 assert.match(await read('apps/ios-native/Noctra/Sources/RemotePlayback.swift'), /guard Session\.sameUser\(raw\["UserId"\] as\? String, session\.userId\)/);
 assert.match(await read('apps/ios-native/Noctra/Sources/Cast.swift'), /guard Session\.sameUser\(entry\["UserId"\] as\? String, session\.userId\)/);
 console.log('Appli iOS native 2.15.6 : vérifiée.');
+// 2.15.7 : diagnostic VIP limité aux chaînes françaises.
+assert.match(await read('apps/ios-native/Noctra/Sources/AdminServerViews.swift'), /where channel\.vip && channel\.country == "fr"/);
+console.log('Appli iOS native 2.15.7 : vérifiée.');

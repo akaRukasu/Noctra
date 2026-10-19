@@ -175,3 +175,6 @@ console.log('Appli Android native 1.7.3 : vérifiée.');
 assert.match(await src('cast/RemotePlayback'), /if \(!Session\.sameUser\(raw\.str\("UserId"\), Session\.userId\)\) return@mapNotNull null/);
 assert.match(await src('cast/Cast'), /if \(!Session\.sameUser\(entry\.str\("UserId"\), Session\.userId\)\) return@mapNotNull null/);
 console.log('Appli Android native 1.7.6 : vérifiée.');
+// 1.7.7 : diagnostic VIP limité aux chaînes françaises.
+assert.match(await src('admin/AdminServer'), /filter \{ it\.vip && it\.country == "fr" \}/);
+console.log('Appli Android native 1.7.7 : vérifiée.');

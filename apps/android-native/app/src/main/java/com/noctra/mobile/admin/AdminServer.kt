@@ -290,7 +290,8 @@ fun LogFileScreen(name: String) {
 private fun liveWatchVipChannels(): List<Pair<String, String>> {
     val pattern = Regex("/api/tv/livewatch/resolve/((?:main|daddy|north|frame)/[^?]+)")
     val seen = HashSet<String>()
-    return LiveStore.channels.filter { it.vip }.mapNotNull { channel ->
+    // Chaînes françaises seulement.
+    return LiveStore.channels.filter { it.vip && it.country == "fr" }.mapNotNull { channel ->
         channel.entries.firstNotNullOfOrNull { entry -> entry.raw.str("resolverUrl")?.let { pattern.find(it)?.groupValues?.get(1) } }
             ?.takeIf { seen.add(it) }?.let { it to channel.name }
     }.sortedBy { it.second.lowercase() }.take(300)
