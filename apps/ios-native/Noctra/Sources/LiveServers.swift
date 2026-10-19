@@ -327,6 +327,13 @@ enum LiveServerFactory {
         return server
     }
 
+    /// Préparation du lecteur officiel VIP (/api/tv/livewatch/prepare/<famille>/<id>) d'un résolveur LiveWatch.
+    private static func liveWatchPreparePath(_ resolver: String) -> String? {
+        guard resolver.contains("/api/tv/livewatch/resolve/") else { return nil }
+        let path = String(resolver.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        return path.replacingOccurrences(of: "/api/tv/livewatch/resolve/", with: "/api/tv/livewatch/prepare/")
+    }
+
     /// Domaine actuel et ancien domaine, sans accepter les domaines homonymes.
     private static func isLiveWatchURL(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let host = url.host?.lowercased() else { return false }
@@ -436,7 +443,15 @@ enum LiveServerFactory {
         let used = Set(list.compactMap { $0.streamURL?.absoluteString })
         let players = [raw["embedUrl"], raw["vipFallbackUrl"], raw["externalUrl"], raw["url"]].compactMap { $0 as? String }
             .filter { $0.lowercased().hasPrefix("http") || $0.hasPrefix("/") }
-        if let page = players.first, let url = session.noctraURL(page), !used.contains(url.absoluteString) {
+        if vip, let resolver, let prepare = liveWatchPreparePath(resolver) {
+            // Compte VIP : lecteur officiel LiveWatch ouvert avec la session VIP du serveur, sans pub
+            // à regarder ; jamais sa page publique. Relais automatique après les flux VIP.
+            var relay = LiveServer(label: prefix + " · lecteur officiel VIP", provider: provider, kind: .web, vip: true)
+            relay.relayPrepare = prepare
+            relay.compatPage = true
+            relay.fallback = true
+            list.append(relay)
+        } else if let page = players.first, let url = session.noctraURL(page), !used.contains(url.absoluteString) {
             var server = framedPage(prefix + (list.isEmpty ? " · lecteur web" : " · lecteur du site"), provider: provider, url: url, vip: vip, raw: raw, session: session)
             // Lecteur public du site (souvent avec publicités) : proposé, jamais lancé d'office à côté d'un flux.
             server.fallback = !list.isEmpty
@@ -494,6 +509,8 @@ enum LiveServerFactory {
             } else if let next = option["resolveUrl"] as? String, option["url"] == nil {
                 item = LiveServer(label: name, provider: server.provider, kind: .resolve, resolveURL: next, vip: vip)
             } else if let page = option["url"] as? String, let url = session.noctraURL(page) {
+                // Compte VIP : jamais la page publique LiveWatch (pubs à regarder avant le direct).
+                if server.vip, isLiveWatchURL(url) { return nil }
                 item = framedPage(name, provider: server.provider, url: url, vip: vip, raw: option, session: session)
             } else {
                 return nil

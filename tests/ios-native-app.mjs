@@ -283,3 +283,11 @@ function WebVttSeconds(value) {
   assert.match(await src('Subtitles'), /button\.topAnchor\.constraint\(equalTo: host\.safeAreaLayoutGuide\.topAnchor, constant: 68\)/, 'bouton pistes sous le bouton volume');
   console.log('Appli iOS native 2.14 : vérifiée.');
 }
+// 2.14.1 : compte VIP LiveWatch, jamais de pub à regarder.
+{
+  const servers = await read('apps/ios-native/Noctra/Sources/LiveServers.swift');
+  assert.match(servers, /lecteur officiel VIP/, 'lecteur officiel ouvert avec la session VIP du serveur');
+  assert.match(servers, /"\/api\/tv\/livewatch\/prepare\/"/);
+  assert.match(servers, /if server\.vip, isLiveWatchURL\(url\) \{ return nil \}/, 'page publique LiveWatch (pubs) écartée en VIP');
+  console.log('Appli iOS native 2.14.1 : vérifiée.');
+}

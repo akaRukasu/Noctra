@@ -138,3 +138,8 @@ assert.match(await src('live/LiveServers'), /suspend fun liveWatchVariantsOf\(se
 assert.match(await src('live/LiveServers'), /\/api\/tv\/livewatch\/variants\//);
 assert.match(await src('live/LiveStore'), /LiveServerFactory\.liveWatchVariantsOf\(server\)/);
 console.log('Appli Android native 1.6 : vérifiée.');
+// 1.6.1 : compte VIP LiveWatch, jamais de pub à regarder.
+assert.match(await src('live/LiveServers'), /lecteur officiel VIP/);
+assert.match(await src('live/LiveServers'), /"\/api\/tv\/livewatch\/prepare\/"/);
+assert.match(await src('live/LiveServers'), /server\.vip && page\.toHttpUrlOrNull\(\)\?\.let \{ isLiveWatchHost\(it\.host\) \} == true -> return@mapIndexedNotNull null/);
+console.log('Appli Android native 1.6.1 : vérifiée.');

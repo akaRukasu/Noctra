@@ -276,6 +276,10 @@ object LiveServerFactory {
     private val openFrameProviders = setOf("BrigitteTV", "DLStreams", "DaddyLive", "Streamed", "Volkamax", "FCTV33", "RénéVéo", "BowdTV", "Xtemus", "Alternative")
 
     /** Lecteur d'un site dans un cadre (comme sur PC), sans restriction pour les fournisseurs qui les refusent. */
+    /** Préparation du lecteur officiel VIP (/api/tv/livewatch/prepare/<famille>/<id>) d'un résolveur LiveWatch. */
+    private fun liveWatchPreparePath(resolver: String): String? =
+        if ("/api/tv/livewatch/resolve/" in resolver) resolver.substringBefore('?').replace("/api/tv/livewatch/resolve/", "/api/tv/livewatch/prepare/") else null
+
     private fun framedPage(label: String, provider: String, url: String, vip: Boolean, raw: JsonMap): LiveServer {
         val open = (!Session.isNoctraOrigin(url) && provider in openFrameProviders) || raw.flag("noSandbox") || provider == "Alternative"
         return LiveServer(label = label, provider = provider, kind = LiveServer.Kind.web, pageURL = url, vip = vip, framed = true, sandbox = if (open) null else defaultSandbox)
@@ -393,7 +397,13 @@ object LiveServerFactory {
         val players = listOf(raw["embedUrl"], raw["vipFallbackUrl"], raw["externalUrl"], raw["url"]).mapNotNull { it as? String }
             .filter { it.lowercase().startsWith("http") || it.startsWith("/") }
         val pageUrl = players.firstOrNull()?.let { Session.noctraURL(it) }
-        if (pageUrl != null && pageUrl !in used) {
+        val prepare = if (vip) resolver?.let { liveWatchPreparePath(it) } else null
+        if (prepare != null) {
+            // Compte VIP : lecteur officiel LiveWatch ouvert avec la session VIP du serveur, sans pub
+            // à regarder ; jamais sa page publique. Relais automatique après les flux VIP.
+            list += LiveServer(label = "$prefix · lecteur officiel VIP", provider = provider, kind = LiveServer.Kind.web, vip = true,
+                relayPrepare = prepare, compatPage = true, fallback = true)
+        } else if (pageUrl != null && pageUrl !in used) {
             val manual = list.isNotEmpty()
             list += framedPage(prefix + if (manual) " · lecteur du site" else " · lecteur web", provider, pageUrl, vip, raw).copy(fallback = manual, manualOnly = manual)
         }
@@ -424,6 +434,8 @@ object LiveServerFactory {
                 stream != null -> LiveServer(label = name, provider = server.provider, kind = LiveServer.Kind.native, streamURL = stream, headers = headers,
                     mpegts = transport in setOf("ts", "mpegts", "mpeg-ts") || (option["streamKind"] as? String)?.lowercase() == "mpeg-ts", vip = vip, renewURL = server.resolveURL)
                 next != null && option["url"] == null -> LiveServer(label = name, provider = server.provider, kind = LiveServer.Kind.resolve, resolveURL = next, vip = vip)
+                // Compte VIP : jamais la page publique LiveWatch (pubs à regarder avant le direct).
+                page != null && server.vip && page.toHttpUrlOrNull()?.let { isLiveWatchHost(it.host) } == true -> return@mapIndexedNotNull null
                 page != null -> framedPage(name, server.provider, page, vip, option)
                 else -> return@mapIndexedNotNull null
             }
