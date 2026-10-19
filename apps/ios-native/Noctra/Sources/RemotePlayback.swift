@@ -187,7 +187,7 @@ struct RemotePanel: View {
                         Slider(value: $volume, in: 0...100) { editing in if !editing { remote.command("volume", value: volume) } }.accessibilityLabel("Volume du téléviseur")
                         Button("Arrêter la lecture", role: .destructive) { remote.command("stop") }
                     }
-                    if let problem = remote.problem { Text(problem).foregroundStyle(Theme.orange) }
+                    if let problem = remote.problem { Text(problem).foregroundStyle(Color.orange) }
                     if remote.devices.count > 1 {
                         Section("Changer d’écran") { ForEach(remote.devices) { other in Button(other.name) { remote.select(other.id) } } }
                     }
@@ -225,7 +225,7 @@ struct LiveCastSheet: View {
                 }
                 Section { HStack { Label("AirPlay", systemImage: "airplayvideo"); Spacer(); AirPlayButton().frame(width: 44, height: 44) } }
                 if busy { ProgressView("Préparation de la diffusion…") }
-                if let error { Text(error).foregroundStyle(Theme.orange) }
+                if let error { Text(error).foregroundStyle(Color.orange) }
             }
             .disabled(busy)
             .navigationTitle(channel.name).navigationBarTitleDisplayMode(.inline)
