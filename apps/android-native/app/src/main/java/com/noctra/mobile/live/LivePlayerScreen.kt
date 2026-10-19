@@ -52,6 +52,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -143,6 +144,7 @@ fun LivePlayerScreen() {
     var hideTick by remember { mutableIntStateOf(0) }
     var showChannels by remember { mutableStateOf(false) }
     var showServers by remember { mutableStateOf(false) }
+    var showCast by remember { mutableStateOf(false) }
     var drag by remember { mutableFloatStateOf(0f) }
     val haptics = LocalHapticFeedback.current
     val focus = remember { FocusRequester() }
@@ -256,7 +258,7 @@ fun LivePlayerScreen() {
         }
         if (!Pip.active) {
             AnimatedVisibility(controls, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
-                Controls(pageMode, ::scheduleHide, ::zap, collapse = { controls = false }, channels = { showChannels = true }, servers = { showServers = true })
+                Controls(pageMode, ::scheduleHide, ::zap, collapse = { controls = false }, channels = { showChannels = true }, servers = { showServers = true }, cast = { showCast = true })
             }
             if (!controls && pageMode) {
                 // Commandes repliées au-dessus d'une page : un bouton pour les rouvrir.
@@ -268,6 +270,7 @@ fun LivePlayerScreen() {
         }
     }
 
+    if (showCast) model.channel?.let { channel -> com.noctra.mobile.cast.LiveCastSheet(channel) { showCast = false } }
     if (showChannels) {
         LiveChannelSheet(onDismiss = { showChannels = false }) { channel ->
             showChannels = false
@@ -283,7 +286,7 @@ fun LivePlayerScreen() {
 }
 
 @Composable
-private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, collapse: () -> Unit, channels: () -> Unit, servers: () -> Unit) {
+private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, collapse: () -> Unit, channels: () -> Unit, servers: () -> Unit, cast: () -> Unit) {
     val model = LivePlayerModel
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent, Color.Transparent, Color(0x99000000)))).safeDrawingPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -302,6 +305,7 @@ private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, co
                     Text((if (server.vip) "VIP · " else "") + server.label + if (model.engineMode) " · moteur web" else "", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
+            CircleButton(androidx.compose.material.icons.Icons.Filled.Cast, "Diffuser cette chaîne") { cast(); poke() }
             if (!pageMode) CircleButton(Icons.Filled.PictureInPictureAlt, "Image dans l’image") { MainActivity.current?.enterPip() }
             if (pageMode) CircleButton(Icons.Filled.ExpandLess, "Replier les commandes") { collapse() }
         }

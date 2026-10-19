@@ -409,6 +409,41 @@ object ChromecastController {
         }
     }
 
+    /** Les chaînes utilisent un accès TV temporaire ; le jeton du compte reste sur le téléphone. */
+    suspend fun castLive(live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
+        val model = com.noctra.mobile.live.LivePlayerModel
+        var choices = if (model.channel?.id == live.id) model.servers else com.noctra.mobile.live.LiveServerFactory.servers(live)
+        val current = model.current?.takeIf { model.channel?.id == live.id }
+        if (current != null) choices = listOf(current) + choices.filter { it.id != current.id }
+        var selected = choices.firstOrNull { it.kind == com.noctra.mobile.live.LiveServer.Kind.native && it.streamURL != null && !it.mpegts }
+        if (selected == null) {
+            for (candidate in choices.filter { it.kind == com.noctra.mobile.live.LiveServer.Kind.resolve }.take(3)) {
+                selected = com.noctra.mobile.live.LiveServerFactory.resolve(candidate, 90.0).firstOrNull { it.kind == com.noctra.mobile.live.LiveServer.Kind.native && it.streamURL != null && !it.mpegts }
+                if (selected != null) break
+            }
+        }
+        val server = selected ?: error("Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur.")
+        val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to server.streamURL, "headers" to server.headers)).asMap() }
+            .getOrElse { throw IllegalStateException("La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version.", it) }
+        val address = access?.str("url")?.let { Session.noctraURL(it) } ?: error("Le serveur ne fournit pas de lien de diffusion.")
+        val image = live.logo?.let { Session.noctraURL(it) }
+        val load = mapOf("type" to "LOAD", "autoplay" to true, "media" to mapOf(
+            "contentId" to address, "contentUrl" to address, "contentType" to "application/x-mpegURL", "streamType" to "LIVE",
+            "metadata" to mapOf("metadataType" to 0, "title" to live.name, "subtitle" to "TV en direct", "images" to (image?.let { listOf(mapOf("url" to it)) } ?: emptyList<Any>()))))
+        finishReport()
+        title = live.name; subtitle = "TV en direct"; artwork = image
+        duration = 0.0; position = 0.0; playerState = "BUFFERING"; problem = null; mediaSessionId = null
+        val transport = transportId
+        if (device?.id == target.id && channel != null && transport != null) send(load, mediaNS, transport)
+        else { pendingLoad = load; connect(target) }
+        kotlinx.coroutines.withTimeout(30000) {
+            while (mediaSessionId == null || playerState != "PLAYING") {
+                problem?.let { throw IllegalStateException(it) }
+                kotlinx.coroutines.delay(200)
+            }
+        }
+    }
+
     // MARK: Télécommande
 
     fun togglePlay() {

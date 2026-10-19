@@ -145,16 +145,22 @@ fun PlayerScreen() {
                     requestFocus()
                 }
             },
-            update = { view -> if (view.player !== exo) view.player = exo; view.useController = !Pip.active },
+            update = { view ->
+                if (view.player !== exo) view.player = exo
+                view.useController = !Pip.active
+                view.controllerShowTimeoutMs = if (subtitleMenu) 0 else 4000
+                if (subtitleMenu) view.showController()
+            },
             modifier = Modifier.fillMaxSize()
         )
         SubtitleLayer(PlaybackManager.subtitleText, PlaybackManager.subtitleStatus)
-        AnimatedVisibility(controls && !Pip.active, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
-            Row(Modifier.fillMaxWidth().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        AnimatedVisibility((controls || subtitleMenu) && !Pip.active, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
+            Column(Modifier.fillMaxWidth().safeDrawingPadding().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent))).padding(horizontal = 16.dp, vertical = 10.dp)) {
+              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButton(onClick = { PlaybackManager.close() }, modifier = Modifier.size(46.dp).glass(CircleShape, Color(0x99000000)).focusRing(CircleShape)) {
                     Icon(Icons.Filled.Close, contentDescription = "Fermer", tint = Color.White)
                 }
-                Text(PlaybackManager.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                 val hasTracks = PlaybackManager.audioTracks.size > 1 || PlaybackManager.subtitles.isNotEmpty() || PlaybackManager.burnedSubtitles.isNotEmpty()
                 if (PlaybackManager.switching) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
                 if (hasTracks) {
@@ -184,6 +190,8 @@ fun PlayerScreen() {
                 IconButton(onClick = { MainActivity.current?.enterPip() }, modifier = Modifier.size(46.dp).glass(CircleShape, Color(0x99000000)).focusRing(CircleShape)) {
                     Icon(Icons.Filled.PictureInPictureAlt, contentDescription = "Image dans l’image", tint = Color.White)
                 }
+              }
+              Text(PlaybackManager.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp))
             }
         }
     }

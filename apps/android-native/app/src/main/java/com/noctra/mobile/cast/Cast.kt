@@ -93,7 +93,7 @@ data class CastTarget(val id: String, val name: String, val client: String, val 
 @Composable
 fun CastButton() {
     var showing by remember { mutableStateOf(false) }
-    val active = ChromecastController.isActive
+    val active = ChromecastController.isActive || RemotePlayback.active != null
     Box(Modifier.size(40.dp).glass(CircleShape).focusRing(CircleShape).clickable(onClickLabel = "Diffuser sur un autre écran") { showing = true }, contentAlignment = Alignment.Center) {
         Icon(if (active) Icons.Filled.CastConnected else Icons.Filled.Cast, contentDescription = "Diffuser sur un autre écran", tint = if (active) Theme.accent else Color.White, modifier = Modifier.size(20.dp))
     }
@@ -103,6 +103,14 @@ fun CastButton() {
 /** Diffusion depuis la barre du haut : télécommande, sinon dernier titre commencé à envoyer. */
 @Composable
 fun CastHubSheet(onDismiss: () -> Unit) {
+    if (!ChromecastController.isActive && RemotePlayback.active != null) {
+        NoctraSheet(onDismiss) { RemotePanel() }
+        return
+    }
+    if (!ChromecastController.isActive && RemotePlayback.devices.any { it.title.isNotEmpty() }) {
+        NoctraSheet(onDismiss) { SheetColumn("Vos écrans") { RemoteDevicesSection() } }
+        return
+    }
     var resume by remember { mutableStateOf<BaseItem?>(null) }
     var loading by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
@@ -121,6 +129,7 @@ fun CastHubSheet(onDismiss: () -> Unit) {
             ChromecastController.isActive -> ChromecastRemoteContent(onDismiss)
             item != null -> CastContent(item, item.resumeSeconds, null, null, showItem = true, onDismiss = onDismiss)
             else -> SheetColumn("Diffuser") {
+                RemoteDevicesSection()
                 SettingGroup {
                     if (loading) SettingRow("Recherche du titre en cours…", trailing = { CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp)) })
                     else SettingRow("Ouvrez un film ou un épisode, puis touchez son bouton de diffusion pour le lire sur un autre écran.", icon = Icons.Filled.TouchApp)
@@ -205,6 +214,7 @@ private fun CastContent(item: BaseItem, startSeconds: Double, audioIndex: Int?, 
             }
         }
         ScreenMirroring()
+        RemoteDevicesSection()
         SettingGroup("Appareils Noctra et Jellyfin") {
             if (loading) SettingRow("Recherche…", trailing = { CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp)) })
             if (!loading && targets.isEmpty()) SettingRow("Aucun autre appareil connecté. Ouvrez Noctra TV ou Noctra sur un autre écran.")
@@ -213,6 +223,7 @@ private fun CastContent(item: BaseItem, startSeconds: Double, audioIndex: Int?, 
                     scope.launch {
                         try {
                             Session.data("POST", "/Sessions/${target.id}/Playing", mapOf("playCommand" to "PlayNow", "itemIds" to item.id, "startPositionTicks" to (startSeconds * 10_000_000).toLong().toString()))
+                            RemotePlayback.select(target.id)
                             sent = target.id
                             delay(700)
                             onDismiss()
@@ -306,9 +317,9 @@ private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                RemoteControl(Icons.Filled.Replay10, "Reculer de 10 s") { cast.skip(-10.0) }
+                if (cast.duration > 0) RemoteControl(Icons.Filled.Replay10, "Reculer de 10 s") { cast.skip(-10.0) }
                 RemoteControl(if (cast.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (cast.isPlaying) "Pause" else "Lecture", large = true) { cast.togglePlay() }
-                RemoteControl(Icons.Filled.Forward30, "Avancer de 30 s") { cast.skip(30.0) }
+                if (cast.duration > 0) RemoteControl(Icons.Filled.Forward30, "Avancer de 30 s") { cast.skip(30.0) }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(40.dp).clip(CircleShape).focusRing(CircleShape).clickable { cast.toggleMute() }, contentAlignment = Alignment.Center) {

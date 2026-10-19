@@ -1466,7 +1466,7 @@
     return chain.then(function () { if (best) { sync.offset = best.offset; sync.rtt = Math.max(0, best.rtt); } }).catch(function () { /* horloge locale */ });
   }
   function reportCapabilities() {
-    jfJson('POST', '/Sessions/Capabilities/Full', { PlayableMediaTypes: ['Video'], SupportedCommands: ['DisplayMessage'], SupportsMediaControl: true, SupportsPersistentIdentifier: true }).catch(function () { /* facultatif */ });
+    jfJson('POST', '/Sessions/Capabilities/Full', { PlayableMediaTypes: ['Video'], SupportedCommands: ['DisplayMessage', 'PlayMediaSource'], SupportsMediaControl: true, SupportsPersistentIdentifier: true }).catch(function () { /* facultatif */ });
   }
   function connectSocket() {
     if (!S.jf || !S.token || !window.WebSocket) return;
@@ -1511,10 +1511,52 @@
         if (data && !sync.group) remotePlaystate(data);
         break;
       case 'GeneralCommand':
+        if (data && data.Name === 'PlayMediaSource' && data.Arguments && data.Arguments.NoctraCommand === '1') { mobileRemoteCommand(data.Arguments); break; }
         if (data && data.Name === 'DisplayMessage' && data.Arguments) toast([data.Arguments.Header, data.Arguments.Text].filter(Boolean).join(' · '));
         break;
       default: break;
     }
+  }
+  var mobileRemoteState = { playing: true, positionMs: 0, volume: 100 };
+  function mobileRemoteCommand(args) {
+    if (args.action === 'state') {
+      if (!/^[a-f0-9]{32}$/i.test(String(args.replyTo || '')) || !/^[a-f0-9]{32}$/i.test(String(args.targetId || ''))) return;
+      native('playerCommand', { command: 'remoteState' });
+      setTimeout(function () {
+        var state = { live: Boolean(playback), title: playback ? playback.channel.name : '', playing: Boolean(mobileRemoteState.playing), position: (mobileRemoteState.positionMs || 0) / 1000, volume: mobileRemoteState.volume };
+        jfJson('POST', '/Sessions/' + args.replyTo + '/Command', { Name: 'PlayMediaSource', Arguments: { NoctraRemoteState: '1', sessionId: args.targetId, state: JSON.stringify(state) } }).catch(function () { /* téléphone déconnecté */ });
+      }, 200);
+      return;
+    }
+    if (args.action === 'playLive') {
+      var channel;
+      try { channel = JSON.parse(String(args.channel || '')); } catch (error) { return; }
+      if (!channel || typeof channel.name !== 'string' || !Array.isArray(channel._entries) || channel._entries.length > 200) return;
+      if (!channel._entries.every(function (entry) { return entry && entry.channel && entry.source && typeof entry.source.name === 'string'; })) return;
+      if (playback || vodPlayback) native('playerCommand', { command: 'stop' });
+      playback = null;
+      mobileRemoteState = { playing: true, positionMs: 0, volume: mobileRemoteState.volume };
+      launchChannel(channel, { id: 'all', name: 'Toutes les chaînes' }, [channel]);
+      // Le guide de la TV fournit le zapping même si le téléphone n'a envoyé qu'une chaîne.
+      loadUnified().then(function (data) {
+        if (!playback || playback.channel !== channel || !data || !data.channels) return;
+        var list = data.channels.filter(function (entry) { return !channel.country || entry.country === channel.country; });
+        var index = list.findIndex(function (entry) { return unifiedName(entry.name) === unifiedName(channel.name); });
+        if (index >= 0) list[index] = channel; else list.unshift(channel);
+        playback.list = list;
+        native('playerCommand', { command: 'guide', epg: epgPayload(playback) });
+      }).catch(function () { /* la chaîne reçue reste disponible */ });
+      return;
+    }
+    if (!playback) return;
+    if (args.action === 'next' || args.action === 'previous') { zap(args.action === 'next' ? 1 : -1); return; }
+    if (args.action === 'volume') {
+      var volume = Number(args.value);
+      if (isFinite(volume)) native('playerCommand', { command: 'volume', value: Math.max(0, Math.min(100, volume)) });
+      return;
+    }
+    var action = { toggle: 'playpause', pause: 'pause', play: 'unpause', stop: 'stop' }[args.action];
+    if (action) { native('playerCommand', { command: action }); if (action === 'stop') playback = null; }
   }
   function remotePlaystate(data) {
     var map = { Pause: 'pause', Unpause: 'unpause', PlayPause: 'playpause', Stop: 'stop', Seek: 'seek' };
@@ -1637,6 +1679,7 @@
   }
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
+    if (event.event === 'remoteState') { mobileRemoteState = event; return; }
     // Générique d'épisode passé à la main (avance rapide) : appris pour la série.
     if (event.event === 'introSkip') { learnIntro(event.seriesId, Number(event.startMs), Number(event.endMs)); return; }
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
@@ -5164,3 +5207,4 @@
     else setTimeout(function () { if (alive()) focus(field.input); }, 0);
   };
 })();
+

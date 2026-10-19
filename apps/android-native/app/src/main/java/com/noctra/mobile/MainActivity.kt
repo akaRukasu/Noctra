@@ -136,11 +136,12 @@ class MainActivity : ComponentActivity() {
 private fun Root() {
     var intro by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(Session.isSignedIn) {
-        if (!Session.isSignedIn) { SyncPlayManager.stopAll(); return@LaunchedEffect }
+        if (!Session.isSignedIn) { SyncPlayManager.stopAll(); com.noctra.mobile.cast.RemotePlayback.stop(); return@LaunchedEffect }
         OfflineStore.schedule()
         // Cookie de session Noctra (TV, images) et canal temps réel (SyncPlay, « Lire sur… »).
         Session.establishNoctraSession()
         SyncPlayManager.start()
+        com.noctra.mobile.cast.RemotePlayback.start()
     }
     Box(Modifier.fillMaxSize().background(Theme.background)) {
         Crossfade(Session.isSignedIn, label = "root") { signedIn ->
@@ -244,7 +245,10 @@ private fun Overlays() {
         }
         // Lecture en cours sur un Chromecast : capsule au-dessus des onglets.
         if (!PlaybackManager.presented && !LivePlayerModel.presented) {
-            Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)) { ChromecastMiniPlayer() }
+            Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)) {
+                if (com.noctra.mobile.cast.ChromecastController.isActive) ChromecastMiniPlayer()
+                else com.noctra.mobile.cast.RemoteMiniPlayer()
+            }
         }
     }
 }

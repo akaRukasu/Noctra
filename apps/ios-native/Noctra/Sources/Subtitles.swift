@@ -199,10 +199,10 @@ final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
         self.host = host
         var config = UIButton.Configuration.glass()
         config.image = UIImage(systemName: "captions.bubble.fill")
-        config.title = "Audio et sous-titres"
+        config.title = nil
         config.imagePadding = 7
         config.cornerStyle = .capsule
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var updated = attributes
             updated.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
@@ -213,16 +213,20 @@ final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
         button.showsMenuAsPrimaryAction = true
         button.translatesAutoresizingMaskIntoConstraints = false
         button.accessibilityLabel = "Langue audio et sous-titres"
+        button.accessibilityHint = "Choisir une langue audio ou une piste de sous-titres"
+        button.toolTip = "Audio et sous-titres"
         spinner.color = .white
         spinner.hidesWhenStopped = true
         spinner.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(button)
         host.addSubview(spinner)
         NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: host.centerXAnchor),
-            button.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 10),
+            button.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            button.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 68),
+            button.widthAnchor.constraint(equalToConstant: 48),
+            button.heightAnchor.constraint(equalToConstant: 48),
             spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            spinner.leadingAnchor.constraint(equalTo: button.trailingAnchor, constant: 8)
+            spinner.centerXAnchor.constraint(equalTo: button.centerXAnchor)
         ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.cancelsTouchesInView = false
@@ -235,7 +239,9 @@ final class TrackMenuButton: NSObject, UIGestureRecognizerDelegate {
     func setMenu(_ menu: UIMenu) { button.menu = menu }
 
     func setBusy(_ busy: Bool) {
-        if busy { spinner.startAnimating(); show(keep: true) } else { spinner.stopAnimating(); show() }
+        button.isEnabled = !busy
+        button.configuration?.showsActivityIndicator = busy
+        if busy { show(keep: true) } else { show() }
     }
 
     func bringToFront() {

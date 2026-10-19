@@ -535,6 +535,7 @@ struct LivePlayerView: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var showChannels = false
     @State private var showServers = false
+    @State private var showCast = false
     @State private var drag: CGFloat = 0
     @State private var zaps = 0
     private var model: LivePlayerModel { .shared }
@@ -614,6 +615,9 @@ struct LivePlayerView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showCast) {
+            if let channel = model.channel { LiveCastSheet(channel: channel) }
+        }
         .onChange(of: model.askServer) { _, ask in
             if ask { controls = true; showServers = true }
         }
@@ -677,6 +681,8 @@ struct LivePlayerView: View {
                 }
                 pill("list.bullet", "Chaînes") { showChannels = true }
                 pill("server.rack", "Serveurs · \(model.servers.count)", busy: model.expanding > 0 || model.probing > 0) { showServers = true }
+                circleButton("tv.badge.wifi") { showCast = true }
+                    .accessibilityLabel("Diffuser cette chaîne")
                 if pageMode {
                     circleButton("forward.end.fill") { zap(1) }
                 }

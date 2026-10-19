@@ -5,6 +5,7 @@ import { additionalTvSources, createAdditionalTvProviders } from './lib/tv-addit
 import { rouletteFilters, drawRoulette } from './lib/roulette.mjs';
 import { createTvSegmentCache } from './lib/tv-segment-cache.mjs';
 import { createServer } from 'node:http';
+import { createTvCastAccess } from './lib/tv-cast.mjs';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline, Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
@@ -88,6 +89,7 @@ const normalizedBasePath = value => {
 };
 const basePath = normalizedBasePath(process.env.BASE_URL || '');
 const publicPath = value => `${basePath}${String(value || '').startsWith('/') ? value : `/${value}`}`;
+const tvCastAccess = createTvCastAccess({ basePath });
 const cookiePath = basePath || '/';
 const withoutSlash = value => String(value || '').replace(/\/+$/, '');
 const jellyfinUrl = withoutSlash(process.env.JELLYFIN_URL);
@@ -207,7 +209,7 @@ function publicUser(user) {
 }
 
 async function authenticateRequest(req) {
-  const suppliedToken = directRequestToken(req);
+  const suppliedToken = directRequestToken(req) || tvCastAccess.tokenForRequest(req);
   const suppliedCookie = requestCookie(req, 'noctra_session');
   const cookieEntry = /^[a-f0-9]{64}$/i.test(suppliedCookie) ? sessionCache.get(suppliedCookie) : null;
   const token = suppliedToken || (
@@ -12831,6 +12833,8 @@ const additionalTv = createAdditionalTvProviders({ request: fetchTvRemote, issue
   validateStream: (url, headers) => validateWiTvHlsStream(url, headers, 8_000, null, true) });
 
 const server = createServer(async (req, res) => {
+  const castRequest = tvCastAccess.wrapResponse(req, res);
+  if (castRequest && req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
   const incomingPath = requestUrl.pathname;
   const path = basePath && (incomingPath === basePath || incomingPath.startsWith(`${basePath}/`))
@@ -12912,6 +12916,26 @@ const server = createServer(async (req, res) => {
         }
         if (administratorRoute(path, req.method || 'GET')) requireAdministrator(session);
       }
+    }
+
+    if (path === '/api/tv/cast' && req.method === 'POST') {
+      const body = await readJsonBody(req, 16 * 1024);
+      const address = String(body.url || '');
+      const requestOrigin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+      const target = new URL(address, requestOrigin);
+      let media;
+      if (target.host === new URL(requestOrigin).host && tvCastAccess.mediaPath(target.pathname)) {
+        media = target.pathname + target.search;
+      } else {
+        // Le relais habituel valide les adresses publiques et réécrit les segments HLS.
+        const safe = safeTvRemoteUrl(target.href);
+        const headers = {};
+        for (const [name, value] of Object.entries(body.headers || {})) {
+          if (/^(referer|origin|user-agent)$/i.test(name) && typeof value === 'string') headers[name] = value;
+        }
+        media = tvPublicStreamUrl(issueTvReference(safe.toString(), headers, { kind: 'stream' }));
+      }
+      return json(res, 200, tvCastAccess.issue({ token: session.token, path: media, origin: requestOrigin }));
     }
 
     if (path === '/api/tv/provider-keys') {
@@ -14154,3 +14178,4 @@ server.listen(port, host, async () => {
   setTimeout(() => void tvCatalogFromLiveWatchCurated().catch(() => undefined), 250);
   setTimeout(() => void tvEpg(defaultTvEpgUrl).catch(() => undefined), 500);
 });
+

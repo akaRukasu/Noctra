@@ -124,7 +124,7 @@ object SyncPlayManager {
         runCatching {
             Session.data("POST", "/Sessions/Capabilities/Full", json = mapOf(
                 "PlayableMediaTypes" to listOf("Video", "Audio"),
-                "SupportedCommands" to listOf("DisplayMessage", "Play", "Playstate"),
+                "SupportedCommands" to listOf("DisplayMessage", "Play", "PlayState", "PlayMediaSource"),
                 "SupportsMediaControl" to true,
                 "SupportsPersistentIdentifier" to true
             ))
@@ -207,6 +207,7 @@ object SyncPlayManager {
             }
             "GeneralCommand" -> {
                 val command = data.asMap() ?: return
+                if (com.noctra.mobile.cast.RemotePlayback.receive(command)) return
                 if (command.str("Name") != "DisplayMessage") return
                 val arguments = command["Arguments"].asMap() ?: return
                 val text = listOfNotNull(arguments.str("Header"), arguments.str("Text")).joinToString(" · ")

@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 68;
+const noctraRevision = 69;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -416,3 +416,4 @@ if (!manifestTree.includes('com.noctra.tv.NoctraHomeActivity') || !entries.inclu
 }
 const { size } = await stat(output);
 console.log(`${relative(process.cwd(), output)} (${(size / 1048576).toFixed(1)} Mo) — ${packageName} ${versionName}, Android ${minSdk}+, Jellyfin ${serverUrl}, Noctra ${noctraUrl}`);
+

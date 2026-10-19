@@ -186,6 +186,7 @@ struct CastSheet: View {
             _ = try await session.data("POST", "/Sessions/\(target.id)/Playing", [
                 "playCommand": "PlayNow", "itemIds": item.id, "startPositionTicks": String(Int64(startSeconds * 10_000_000))
             ])
+            RemotePlayback.shared.select(target.id)
             withAnimation(Theme.spring) { sent = target.id }
             try? await Task.sleep(for: .milliseconds(700))
             dismiss()
@@ -206,7 +207,7 @@ struct CastButton: View {
         Button {
             showing = true
         } label: {
-            Image(systemName: cast.isActive ? "tv.badge.wifi.fill" : "tv.badge.wifi")
+            Image(systemName: cast.isActive || RemotePlayback.shared.active != nil ? "tv.badge.wifi.fill" : "tv.badge.wifi")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(cast.isActive ? Theme.accent : .white)
                 .symbolEffect(.pulse, isActive: cast.isActive && cast.isPlaying)
@@ -231,11 +232,16 @@ struct CastHubSheet: View {
         Group {
             if cast.isActive {
                 ChromecastRemote()
+            } else if RemotePlayback.shared.active != nil {
+                RemotePanel()
+            } else if RemotePlayback.shared.devices.contains(where: { !$0.title.isEmpty }) {
+                NavigationStack { List { RemoteDevicesSection() }.navigationTitle("Vos écrans").navigationBarTitleDisplayMode(.inline) }
             } else if let resume {
                 CastSheet(item: resume, startSeconds: resume.resumeSeconds, showItem: true)
             } else {
                 NavigationStack {
                     List {
+                        RemoteDevicesSection()
                         Section {
                             if loading {
                                 HStack(spacing: 10) { ProgressView(); Text("Recherche du titre en cours…").foregroundStyle(Theme.muted) }

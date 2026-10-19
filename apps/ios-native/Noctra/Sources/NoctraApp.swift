@@ -56,12 +56,13 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.55, dampingFraction: 0.86), value: session.isSignedIn)
         .task(id: session.isSignedIn) {
-            guard session.isSignedIn else { SyncPlayManager.shared.stopAll(); return }
+            guard session.isSignedIn else { SyncPlayManager.shared.stopAll(); RemotePlayback.shared.stop(); return }
             OfflineStore.shared.session = session
             OfflineStore.shared.schedule()
             // Cookie de session Noctra (TV, images) et canal temps réel (SyncPlay, « Lire sur… »).
             await session.establishNoctraSession()
             SyncPlayManager.shared.start(session)
+            RemotePlayback.shared.start(session)
         }
     }
 }
@@ -131,8 +132,10 @@ struct MainTabView: View {
         .animation(Theme.spring, value: sync.notice)
         // Lecture en cours sur un Chromecast : capsule au-dessus des onglets.
         .overlay(alignment: .bottom) {
-            ChromecastMiniPlayer()
-                .padding(.bottom, 74)
+            Group {
+                if ChromecastController.shared.isActive { ChromecastMiniPlayer() }
+                else { RemoteMiniPlayer() }
+            }.padding(.bottom, 74)
         }
         .animation(Theme.spring, value: ChromecastController.shared.isActive)
         .alert("Chromecast", isPresented: Binding(get: { ChromecastController.shared.problem != nil && !ChromecastController.shared.isActive },

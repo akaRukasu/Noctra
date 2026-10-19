@@ -51,7 +51,7 @@ final class SyncPlayManager {
     private func reportCapabilities() async {
         _ = try? await session?.data("POST", "/Sessions/Capabilities/Full", json: [
             "PlayableMediaTypes": ["Video", "Audio"],
-            "SupportedCommands": ["DisplayMessage", "Play", "Playstate"],
+            "SupportedCommands": ["DisplayMessage", "Play", "PlayState", "PlayMediaSource"],
             "SupportsMediaControl": true,
             "SupportsPersistentIdentifier": true
         ])
@@ -139,6 +139,7 @@ final class SyncPlayManager {
             default: break
             }
         case "GeneralCommand":
+            if let command = data as? [String: Any], RemotePlayback.shared.receive(command) { return }
             if let command = data as? [String: Any], command["Name"] as? String == "DisplayMessage",
                let arguments = command["Arguments"] as? [String: Any] {
                 notice = [arguments["Header"] as? String, arguments["Text"] as? String].compactMap { $0 }.joined(separator: " · ")

@@ -281,12 +281,15 @@ object LiveServerFactory {
         return LiveServer(label = label, provider = provider, kind = LiveServer.Kind.web, pageURL = url, vip = vip, framed = true, sandbox = if (open) null else defaultSandbox)
     }
 
+    private fun isLiveWatchHost(host: String): Boolean =
+        listOf("livewatch.icu", "livewatch.top").any { host.equals(it, true) || host.lowercase().endsWith(".$it") }
+
     /** Serveurs LiveWatch de la même chaîne (« Serveur 2 », « SAT »…) publiés par le serveur Noctra. */
     private fun liveWatchVariants(raw: JsonMap, prefix: String, provider: String, vip: Boolean, exclude: Set<String>): List<LiveServer> {
         val variants = raw["liveWatchVariants"].asMaps()
-        if (variants.size < 2) return emptyList()
+        if (variants.isEmpty()) return emptyList()
         val used = exclude.toMutableSet()
-        return variants.take(12).mapIndexedNotNull { index, variant ->
+        return variants.mapIndexedNotNull { index, variant ->
             val page = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstOrNull() ?: return@mapIndexedNotNull null
             val url = Session.noctraURL(page) ?: return@mapIndexedNotNull null
             if (!used.add(url)) return@mapIndexedNotNull null
@@ -301,10 +304,10 @@ object LiveServerFactory {
         // Lecteur de la chaîne elle-même en plus de ses variantes publiées.
         val variants = raw["liveWatchVariants"].asMaps() + listOf(mapOf("embedUrl" to raw.str("vipFallbackUrl"), "label" to "direct"))
         val used = mutableSetOf<String>()
-        return variants.take(13).mapIndexedNotNull { index, variant ->
+        return variants.mapIndexedNotNull { index, variant ->
             val page = listOfNotNull(variant.str("embedUrl"), variant.str("externalUrl")).firstOrNull() ?: return@mapIndexedNotNull null
             val url = page.toHttpUrlOrNull() ?: return@mapIndexedNotNull null
-            if (!url.host.lowercase().endsWith("livewatch.top")) return@mapIndexedNotNull null
+            if (!isLiveWatchHost(url.host)) return@mapIndexedNotNull null
             val match = liveWatchEmbedPath.find(url.encodedPath) ?: return@mapIndexedNotNull null
             val kind = match.groupValues[1].lowercase().ifEmpty { "main" }
             val id = match.groupValues[2]
@@ -323,7 +326,7 @@ object LiveServerFactory {
         val list = mutableListOf<LiveServer>()
         val perSource = channel.entries.groupingBy { it.source }.eachCount()
         val seen = mutableMapOf<String, Int>()
-        for (entry in channel.entries.take(80)) {
+        for (entry in channel.entries) {
             var prefix = entry.source
             if ((perSource[entry.source] ?: 0) > 1) {
                 seen[entry.source] = (seen[entry.source] ?: 0) + 1
@@ -350,7 +353,7 @@ object LiveServerFactory {
         if (sourceId in liveWatchOfficial && !(raw["playbackType"] == "resolver" && resolver != null) && embed != null) {
             val result = mutableListOf<LiveServer>()
             val url = embed.toHttpUrlOrNull()
-            if (sourceId == "livewatch-north" && raw.flag("liveWatchSameOriginBridge") && url != null && url.host.lowercase().endsWith("livewatch.top")) {
+            if (sourceId == "livewatch-north" && raw.flag("liveWatchSameOriginBridge") && url != null && isLiveWatchHost(url.host)) {
                 northPath.find(url.encodedPath)?.let { match ->
                     result += LiveServer(label = "$prefix · relais officiel", provider = provider, kind = LiveServer.Kind.web, vip = vip,
                         relayPrepare = "/api/tv/livewatch/prepare/north/" + match.groupValues[1], compatPage = true)
@@ -380,10 +383,11 @@ object LiveServerFactory {
         if (pageUrl != null && pageUrl !in used) {
             val manual = list.isNotEmpty()
             list += framedPage(prefix + if (manual) " · lecteur du site" else " · lecteur web", provider, pageUrl, vip, raw).copy(fallback = manual, manualOnly = manual)
-            // VIP : chaque variante en flux VIP du serveur (comme sur PC), pas en page publique.
-            if (vip && resolver != null) list += liveWatchVipVariants(raw, prefix, provider, resolver)
-            else list += liveWatchVariants(raw, prefix, provider, vip, setOf(pageUrl)).map { it.copy(fallback = manual, manualOnly = manual) }
         }
+        // Une page principale manquante ne doit pas masquer les variantes publiées.
+        val manual = list.isNotEmpty()
+        if (vip && resolver != null) list += liveWatchVipVariants(raw, prefix, provider, resolver)
+        else list += liveWatchVariants(raw, prefix, provider, vip, list.mapNotNull { it.pageURL }.toSet()).map { it.copy(fallback = manual, manualOnly = manual) }
         return list
     }
 
@@ -395,9 +399,9 @@ object LiveServerFactory {
         val vipActive = json.flag("vipActive")
         val list = json["options"].asMaps().ifEmpty { if (json["streamUrl"] != null || json["url"] != null) listOf(json) else emptyList() }
         val base = server.label.replace(" · automatique", "").replace(" · VIP", "")
-        return list.take(24).mapIndexedNotNull { index, option ->
+        return list.mapIndexedNotNull { index, option ->
             val name = option.str("label")?.let { "$base · $it" } ?: "$base · serveur ${index + 1}"
-            val vip = server.vip || (vipActive && (option["vip"] as? Boolean ?: true))
+            val vip = (option["vip"] as? Boolean) ?: (server.vip || vipActive)
             val headers = (option["headers"] as? Map<String, Any?>)?.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }?.toMap() ?: emptyMap()
             val transport = (option["transport"] as? String)?.lowercase() ?: ""
             val stream = option.str("streamUrl")?.let { Session.noctraURL(it) }

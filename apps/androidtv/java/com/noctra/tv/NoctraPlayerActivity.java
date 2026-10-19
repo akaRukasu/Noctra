@@ -2,6 +2,7 @@ package com.noctra.tv;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -841,6 +842,24 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     public void onCommand(JSONObject command) {
         if (stream == null || finished) return;
         String action = command.optString("command");
+        if (action.equals("remoteState") || action.equals("volume")) {
+            AudioManager audio = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (audio != null && action.equals("volume")) {
+                int maximum = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int level = (int) Math.round(Math.max(0, Math.min(100, command.optDouble("value", 100))) * maximum / 100.0);
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0);
+            }
+            try {
+                JSONObject state = new JSONObject();
+                state.put("type", "playerEvent");
+                state.put("event", "remoteState");
+                state.put("positionMs", stream.positionMs());
+                state.put("playing", stream.wantsToPlay());
+                state.put("volume", audio == null ? 100 : 100 * audio.getStreamVolume(AudioManager.STREAM_MUSIC) / Math.max(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)));
+                NoctraPlayerBus.fromPlayer(state);
+            } catch (Exception ignored) { }
+            return;
+        }
         long position = command.has("positionMs") ? command.optLong("positionMs") : -1;
         if (action.equals("pause")) {
             stream.pause();
@@ -1139,3 +1158,4 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         super.onDestroy();
     }
 }
+

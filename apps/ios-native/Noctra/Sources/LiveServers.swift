@@ -327,12 +327,18 @@ enum LiveServerFactory {
         return server
     }
 
+    /// Domaine actuel et ancien domaine, sans accepter les domaines homonymes.
+    private static func isLiveWatchURL(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let host = url.host?.lowercased() else { return false }
+        return ["livewatch.icu", "livewatch.top"].contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
     /// Serveurs LiveWatch de la même chaîne (« Serveur 2 », « SAT »…) publiés par le serveur Noctra.
     private static func liveWatchVariants(_ raw: [String: Any], prefix: String, provider: String, vip: Bool, exclude: Set<String>, session: Session) -> [LiveServer] {
-        guard let variants = raw["liveWatchVariants"] as? [[String: Any]], variants.count > 1 else { return [] }
+        guard let variants = raw["liveWatchVariants"] as? [[String: Any]], !variants.isEmpty else { return [] }
         var used = exclude
         var list: [LiveServer] = []
-        for (index, variant) in variants.prefix(12).enumerated() {
+        for (index, variant) in variants.enumerated() {
             guard let page = [variant["embedUrl"], variant["externalUrl"]].compactMap({ $0 as? String }).first(where: { !$0.isEmpty }),
                   let url = session.noctraURL(page), !used.contains(url.absoluteString) else { continue }
             used.insert(url.absoluteString)
@@ -349,9 +355,9 @@ enum LiveServerFactory {
         let variants = ((raw["liveWatchVariants"] as? [[String: Any]]) ?? []) + [["embedUrl": raw["vipFallbackUrl"] ?? "", "label": "direct"]]
         var used: Set<String> = []
         var list: [LiveServer] = []
-        for (index, variant) in variants.prefix(12).enumerated() {
+        for (index, variant) in variants.enumerated() {
             guard let page = [variant["embedUrl"], variant["externalUrl"]].compactMap({ $0 as? String }).first(where: { !$0.isEmpty }),
-                  let url = URL(string: page), url.host?.lowercased().hasSuffix("livewatch.top") == true,
+                  let url = URL(string: page), isLiveWatchURL(url),
                   let match = url.path.range(of: "^/embed/((daddy|north|frame)/)?[A-Za-z0-9._:-]+/?$", options: .regularExpression) else { continue }
             let parts = url.path[match].split(separator: "/").map(String.init)
             let kind = parts.count == 3 ? parts[1].lowercased() : "main"
@@ -374,7 +380,7 @@ enum LiveServerFactory {
         var perSource: [String: Int] = [:]
         for entry in channel.entries { perSource[entry.source, default: 0] += 1 }
         var seen: [String: Int] = [:]
-        for entry in channel.entries.prefix(80) {
+        for entry in channel.entries {
             var prefix = entry.source
             if (perSource[entry.source] ?? 0) > 1 {
                 seen[entry.source, default: 0] += 1
@@ -402,7 +408,7 @@ enum LiveServerFactory {
         if liveWatchOfficial.contains(sourceId), !(raw["playbackType"] as? String == "resolver" && resolver != nil), let embed, let url = URL(string: embed) {
             var list: [LiveServer] = []
             if sourceId == "livewatch-north", raw["liveWatchSameOriginBridge"] as? Bool == true,
-               let range = url.path.range(of: "^/embed/north/([^/]+)/?$", options: .regularExpression), url.host?.lowercased().hasSuffix("livewatch.top") == true {
+               let range = url.path.range(of: "^/embed/north/([^/]+)/?$", options: .regularExpression), isLiveWatchURL(url) {
                 let id = url.path[range].replacingOccurrences(of: "/embed/north/", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 var relay = LiveServer(label: prefix + " · relais officiel", provider: provider, kind: .web, vip: vip)
                 relay.relayPrepare = "/api/tv/livewatch/prepare/north/" + (id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)
@@ -433,18 +439,20 @@ enum LiveServerFactory {
             server.fallback = !list.isEmpty
             server.manualOnly = !list.isEmpty
             list.append(server)
-            // VIP : chaque variante en flux VIP du serveur (comme sur PC), pas en page publique.
-            if vip, let resolver {
+        }
+        // Les variantes existent aussi lorsque le catalogue ne fournit aucune page principale.
+        let excluded = Set(list.compactMap { $0.pageURL?.absoluteString })
+        let manual = !list.isEmpty
+        if vip, let resolver {
                 list += liveWatchVipVariants(raw, prefix: prefix, provider: provider, resolver: resolver, session: session)
             } else {
-                list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: [url.absoluteString], session: session).map { variant in
+                list += liveWatchVariants(raw, prefix: prefix, provider: provider, vip: vip, exclude: excluded, session: session).map { variant in
                     var copy = variant
-                    copy.manualOnly = server.manualOnly
-                    copy.fallback = server.fallback
+                    copy.manualOnly = manual
+                    copy.fallback = manual
                     return copy
                 }
             }
-        }
         return list
     }
 
@@ -453,10 +461,10 @@ enum LiveServerFactory {
         guard let path = server.resolveURL, let json = try? await session.noctraJSON(path, timeout: timeout) as? [String: Any] else { return [] }
         let vipActive = json["vipActive"] as? Bool == true
         let list = (json["options"] as? [[String: Any]]) ?? ((json["streamUrl"] != nil || json["url"] != nil) ? [json] : [])
-        return list.prefix(24).enumerated().compactMap { index, option -> LiveServer? in
+        return list.enumerated().compactMap { index, option -> LiveServer? in
             let base = server.label.replacingOccurrences(of: " · automatique", with: "").replacingOccurrences(of: " · VIP", with: "")
             let name = (option["label"] as? String).map { base + " · " + $0 } ?? base + " · serveur \(index + 1)"
-            let vip = server.vip || vipActive && (option["vip"] as? Bool ?? true)
+            let vip = option["vip"] as? Bool ?? (server.vip || vipActive)
             let headers = (option["headers"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
             let transport = (option["transport"] as? String)?.lowercased() ?? ""
             var item: LiveServer

@@ -365,6 +365,44 @@ final class ChromecastController {
         }
     }
 
+    /// Droit média temporaire pour le Chromecast, sans transmettre le jeton du compte.
+    func castLive(_ live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
+        let model = LivePlayerModel.shared
+        var choices = model.channel?.id == live.id ? model.servers : LiveServerFactory.servers(for: live, session: session)
+        if model.channel?.id == live.id, let current = model.current { choices = [current] + choices.filter { $0.id != current.id } }
+        var selected = choices.first { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }
+        if selected == nil {
+            for candidate in choices.filter({ $0.kind == .resolve }).prefix(3) {
+                selected = await LiveServerFactory.resolve(candidate, session: session, timeout: 90).first { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }
+                if selected != nil { break }
+            }
+        }
+        guard let server = selected, let stream = server.streamURL else {
+            throw NSError(domain: "NoctraCast", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur."])
+        }
+        let access: [String: Any]?
+        do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": stream.absoluteString, "headers": server.headers]) as? [String: Any] }
+        catch { throw NSError(domain: "NoctraCast", code: 2, userInfo: [NSLocalizedDescriptionKey: "La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version."]) }
+        guard let path = access?["url"] as? String, let address = session.noctraURL(path) else { throw NoctraError.empty }
+        let image = live.logo.flatMap { session.noctraURL($0) }
+        let media: [String: Any] = ["contentId": address.absoluteString, "contentUrl": address.absoluteString,
+            "contentType": "application/x-mpegURL", "streamType": "LIVE",
+            "metadata": ["metadataType": 0, "title": live.name, "subtitle": "TV en direct", "images": image.map { [["url": $0.absoluteString]] } ?? []] as [String: Any]]
+        let load: [String: Any] = ["type": "LOAD", "autoplay": true, "media": media]
+        finishReport()
+        title = live.name; subtitle = "TV en direct"; artwork = image
+        duration = 0; position = 0; playerState = "BUFFERING"; problem = nil; mediaSessionId = nil
+        if device?.id == target.id, channel != nil, let transportId { send(load, namespace: Self.mediaNS, to: transportId) }
+        else { pendingLoad = load; connect(target) }
+        let deadline = Date().addingTimeInterval(30)
+        while mediaSessionId == nil || playerState != "PLAYING" {
+            try Task.checkCancellation()
+            if let problem { throw NSError(domain: "NoctraCast", code: 3, userInfo: [NSLocalizedDescriptionKey: problem]) }
+            guard Date() < deadline else { throw NoctraError.unreachable }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
     // MARK: Télécommande
 
     func togglePlay() {
@@ -653,9 +691,9 @@ struct ChromecastRemote: View {
                     }
                     GlassEffectContainer(spacing: 18) {
                         HStack(spacing: 18) {
-                            control("gobackward.10") { cast.skip(-10) }
+                            if cast.duration > 0 { control("gobackward.10") { cast.skip(-10) } }
                             control(cast.isPlaying ? "pause.fill" : "play.fill", large: true) { cast.togglePlay() }
-                            control("goforward.30") { cast.skip(30) }
+                            if cast.duration > 0 { control("goforward.30") { cast.skip(30) } }
                         }
                     }
                     HStack(spacing: 12) {
