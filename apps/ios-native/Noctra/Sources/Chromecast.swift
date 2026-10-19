@@ -368,18 +368,39 @@ final class ChromecastController {
     /// Droit média temporaire pour le Chromecast, sans transmettre le jeton du compte.
     func castLive(_ live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
         let model = LivePlayerModel.shared
-        var choices = model.channel?.id == live.id ? model.servers : LiveServerFactory.servers(for: live, session: session)
+        var choices = model.channel?.id == live.id ? model.servers : await LiveLauncher.shared.prepare(live, session: session)
+        // Serveurs de toutes les sources de la chaîne, le plus fiable d'abord ; celui qui lit déjà en tête.
+        choices = LiveHealth.rank(choices, channel: live.id)
         if model.channel?.id == live.id, let current = model.current { choices = [current] + choices.filter { $0.id != current.id } }
-        var selected = choices.first { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }
-        if selected == nil {
-            for candidate in choices.filter({ $0.kind == .resolve }).prefix(3) {
-                selected = await LiveServerFactory.resolve(candidate, session: session, timeout: 90).first { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }
-                if selected != nil { break }
+        let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
+        var lastError: Error?
+        var attempts = 0
+        for candidate in choices where attempts < 5 && !failing.contains(candidate.probe) {
+            var streams: [LiveServer] = []
+            if candidate.kind == .native, candidate.streamURL != nil, !candidate.mpegts { streams = [candidate] }
+            else if candidate.kind == .resolve {
+                streams = Array(await LiveServerFactory.resolve(candidate, session: session, timeout: 45).filter { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }.prefix(2))
+            }
+            for server in streams where attempts < 5 {
+                // Test rapide avant l'envoi : un flux refusé (LiveWatch VIP sans autorisation…) passe au suivant.
+                let probe = await LiveServerFactory.probe(server, session: session)
+                if failing.contains(probe.state) { continue }
+                attempts += 1
+                do {
+                    try await castLiveStream(server, live: live, session: session, to: target)
+                    return
+                } catch {
+                    lastError = error
+                }
             }
         }
-        guard let server = selected, let stream = server.streamURL else {
-            throw NSError(domain: "NoctraCast", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur."])
-        }
+        if let lastError { throw lastError }
+        throw NSError(domain: "NoctraCast", code: 1, userInfo: [NSLocalizedDescriptionKey: "Aucun serveur de cette chaîne n’est lisible par le Chromecast pour le moment. Essayez Noctra TV ou un autre serveur."])
+    }
+
+    /// Envoi d'un flux de chaîne au Chromecast (droit temporaire du serveur Noctra), jusqu'à la lecture.
+    private func castLiveStream(_ server: LiveServer, live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
+        guard let stream = server.streamURL else { throw NoctraError.empty }
         let access: [String: Any]?
         let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
         let encodedQuery = parts?.percentEncodedQuery

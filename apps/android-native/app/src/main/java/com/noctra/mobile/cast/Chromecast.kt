@@ -412,17 +412,45 @@ object ChromecastController {
     /** Les chaînes utilisent un accès TV temporaire ; le jeton du compte reste sur le téléphone. */
     suspend fun castLive(live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
         val model = com.noctra.mobile.live.LivePlayerModel
-        var choices = if (model.channel?.id == live.id) model.servers else com.noctra.mobile.live.LiveServerFactory.servers(live)
+        val native = com.noctra.mobile.live.LiveServer.Kind.native
+        val failing = setOf(com.noctra.mobile.live.LiveServer.Probe.down, com.noctra.mobile.live.LiveServer.Probe.noVideo, com.noctra.mobile.live.LiveServer.Probe.stale)
+        // Serveurs de toutes les sources de la chaîne, le plus fiable d'abord ; celui qui lit déjà en tête.
+        var choices = com.noctra.mobile.live.LiveHealth.rank(if (model.channel?.id == live.id) model.servers else com.noctra.mobile.live.LiveLauncher.prepare(live), live.id)
         val current = model.current?.takeIf { model.channel?.id == live.id }
         if (current != null) choices = listOf(current) + choices.filter { it.id != current.id }
-        var selected = choices.firstOrNull { it.kind == com.noctra.mobile.live.LiveServer.Kind.native && it.streamURL != null && !it.mpegts }
-        if (selected == null) {
-            for (candidate in choices.filter { it.kind == com.noctra.mobile.live.LiveServer.Kind.resolve }.take(3)) {
-                selected = com.noctra.mobile.live.LiveServerFactory.resolve(candidate, 90.0).firstOrNull { it.kind == com.noctra.mobile.live.LiveServer.Kind.native && it.streamURL != null && !it.mpegts }
-                if (selected != null) break
+        var lastError: Throwable? = null
+        var attempts = 0
+        for (candidate in choices) {
+            if (attempts >= 5) break
+            if (candidate.probe in failing) continue
+            val streams = when {
+                candidate.kind == native && candidate.streamURL != null && !candidate.mpegts -> listOf(candidate)
+                candidate.kind == com.noctra.mobile.live.LiveServer.Kind.resolve ->
+                    com.noctra.mobile.live.LiveServerFactory.resolve(candidate, 45.0).filter { it.kind == native && it.streamURL != null && !it.mpegts }.take(2)
+                else -> emptyList()
+            }
+            for (server in streams) {
+                if (attempts >= 5) break
+                // Test rapide avant l'envoi : un flux refusé (LiveWatch VIP sans autorisation…) passe au suivant.
+                if (com.noctra.mobile.live.LiveServerFactory.probe(server).state in failing) continue
+                attempts += 1
+                try {
+                    castLiveStream(server, live, target)
+                    return
+                } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+                    lastError = IllegalStateException("Le Chromecast n’a pas démarré la lecture.")
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    lastError = error
+                }
             }
         }
-        val server = selected ?: error("Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur.")
+        throw lastError ?: IllegalStateException("Aucun serveur de cette chaîne n’est lisible par le Chromecast pour le moment. Essayez Noctra TV ou un autre serveur.")
+    }
+
+    /** Envoi d'un flux de chaîne au Chromecast (droit temporaire du serveur Noctra), jusqu'à la lecture. */
+    private suspend fun castLiveStream(server: com.noctra.mobile.live.LiveServer, live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
         val uri = java.net.URI(server.streamURL!!)
         val addressToShare = if (Session.isNoctraOrigin(server.streamURL!!)) uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: "") else server.streamURL
         val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to addressToShare, "headers" to server.headers)).asMap() }

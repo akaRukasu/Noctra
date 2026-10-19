@@ -188,3 +188,7 @@ console.log('Appli Android native 1.8 : vérifiée.');
 // 1.8.1 : lecteur « mon compte » déduit du résolveur VIP quand la fiche n'a pas l'adresse du lecteur.
 assert.match(await src('live/LiveWatchDevice'), /fun resolverEmbed\(resolver: String\?\): String\?/);
 console.log('Appli Android native 1.8.1 : vérifiée.');
+// 1.8.2 : Chromecast — flux testé avant l'envoi, serveur suivant si le Chromecast ne lit pas.
+assert.match(await src('cast/Chromecast'), /private suspend fun castLiveStream\(/);
+assert.match(await src('cast/Chromecast'), /LiveServerFactory\.probe\(server\)\.state in failing/);
+console.log('Appli Android native 1.8.2 : vérifiée.');

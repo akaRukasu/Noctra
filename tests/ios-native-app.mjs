@@ -347,3 +347,7 @@ console.log('Appli iOS native 2.15.7 : vérifiée.');
 // 2.16.1 : lecteur « mon compte » déduit du résolveur VIP quand la fiche n'a pas l'adresse du lecteur.
 assert.match(await read('apps/ios-native/Noctra/Sources/LiveWatchDevice.swift'), /static func resolverEmbed\(_ resolver: String\?\) -> URL\?/);
 console.log('Appli iOS native 2.16.1 : vérifiée.');
+// 2.16.2 : Chromecast — flux testé avant l'envoi, serveur suivant si le Chromecast ne lit pas.
+assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /private func castLiveStream\(/);
+assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /let probe = await LiveServerFactory\.probe\(server, session: session\)/);
+console.log('Appli iOS native 2.16.2 : vérifiée.');
