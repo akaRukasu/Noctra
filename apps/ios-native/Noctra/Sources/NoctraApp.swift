@@ -31,8 +31,20 @@ struct NoctraApp: App {
 
 struct RootView: View {
     @Environment(Session.self) private var session
+    @State private var intro = true
 
     var body: some View {
+        content
+            .overlay {
+                // Intro du site à chaque ouverture de l'appli, au-dessus de l'accueil qui se charge.
+                if intro {
+                    NoctraIntro { withAnimation(.easeOut(duration: 0.6)) { intro = false } }
+                        .transition(.opacity)
+                }
+            }
+    }
+
+    private var content: some View {
         ZStack {
             if session.isSignedIn {
                 MainTabView()

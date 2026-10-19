@@ -53,7 +53,7 @@ assert.match(theme, /fun Modifier\.focusRing/, 'sélection à la télécommande'
 const live = await src('live/LivePlayer');
 assert.match(live, /FLAG_ALLOW_NON_IDR_KEYFRAMES/, 'MPEG-TS continu lu par ExoPlayer');
 assert.match(live, /MimeTypes\.APPLICATION_M3U8/);
-assert.match(live, /if \(server\.vip\) 70\.0 else 45\.0/, 'VIP LiveWatch : jusqu’à une minute');
+assert.match(live, /if \(server\.vip\) 110\.0 else 45\.0/, 'VIP LiveWatch : délai de vérification comme sur PC (90 s et plus)');
 assert.match(live, /fun engineFailed/, 'passage d’un moteur à l’autre');
 assert.match(live, /renewURL/, 'nouveau lien du même serveur après une coupure');
 const servers = await src('live/LiveServers');
@@ -94,3 +94,14 @@ assert.match(playback11, /fun switchStream\(audio: Int\?, subtitle: Int\)/);
 assert.match(await src('play/PlayerScreen'), /LANGUE AUDIO/);
 assert.match(await src('ui/detail/ItemDetail'), /Fiche incomplète : toucher pour recharger/);
 console.log('Appli Android native 1.1 : corrections vérifiées.');
+
+// 1.2.1 : VIP LiveWatch préparé une seule fois et lu comme sur PC ; photo de profil.
+assert.match(await src('live/LiveStore'), /server\.kind != LiveServer\.Kind\.resolve \|\| server\.vip/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
+assert.match(await src('live/LivePlayer'), /if \(target\.vip\) 30_000 else 15_000/);
+assert.match(await src('live/LivePlayer'), /Lecteur VIP sans image : lecture directe du flux repéré/);
+assert.match(await src('core/Session'), /fun avatarURL/);
+assert.match(await src('ui/Account'), /UserAvatar\(34, 16/, 'photo en haut à droite à la place de l’initiale');
+console.log('Appli Android native 1.2.1 : VIP et photo de profil vérifiés.');
+assert.match(await src('ui/Intro'), /fun NoctraIntro/, 'intro animée à l’ouverture, comme sur le site');
+assert.match(await src('MainActivity'), /NoctraIntro \{ intro = false \}/);
+console.log('Appli Android native 1.2.1 : intro vérifiée.');

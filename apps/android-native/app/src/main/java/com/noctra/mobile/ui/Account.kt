@@ -60,14 +60,18 @@ fun AccountButton() {
     var showing by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         CastButton()
-        Box(
-            Modifier.size(34.dp).clip(CircleShape).background(Theme.gradient).focusRing(CircleShape).clickable { showing = true },
-            contentAlignment = Alignment.Center
-        ) {
-            Text((Session.userName ?: "?").take(1).uppercase(), color = Theme.onAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
+        UserAvatar(34, 16, Modifier.focusRing(CircleShape).clickable { showing = true })
     }
     if (showing) AccountSheet { showing = false }
+}
+
+/** Photo de profil Jellyfin dans un rond ; initiale du nom tant qu'elle charge ou sans photo. */
+@Composable
+fun UserAvatar(size: Int, letterSize: Int, modifier: Modifier = Modifier) {
+    Box(modifier.size(size.dp).clip(CircleShape).background(Theme.gradient), contentAlignment = Alignment.Center) {
+        Text((Session.userName ?: "?").take(1).uppercase(), color = Theme.onAccent, fontWeight = FontWeight.Bold, fontSize = letterSize.sp)
+        RemoteImage(Session.avatarURL(size * 3), Modifier.matchParentSize(), placeholder = false)
+    }
 }
 
 @Composable
@@ -84,9 +88,7 @@ fun AccountSheet(dismiss: () -> Unit) {
     NoctraSheet(dismiss) {
         SheetColumn("Compte") {
             Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(Modifier.size(52.dp).clip(CircleShape).background(Theme.gradient), contentAlignment = Alignment.Center) {
-                    Text((Session.userName ?: "?").take(1).uppercase(), color = Theme.onAccent, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-                }
+                UserAvatar(52, 22)
                 Column {
                     Text(Session.userName ?: "—", style = Theme.display(20), color = Theme.ink)
                     Text(if (Session.isAdmin) "Administrateur" else "Utilisateur", color = Theme.muted, fontSize = 12.sp)

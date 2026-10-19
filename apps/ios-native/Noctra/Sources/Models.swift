@@ -21,7 +21,7 @@ extension JSONDecoder {
 }
 
 struct AuthResult: Decodable {
-    struct User: Decodable { let id: String; let name: String? }
+    struct User: Decodable { let id: String; let name: String?; let primaryImageTag: String? }
     let user: User
     let accessToken: String
 }

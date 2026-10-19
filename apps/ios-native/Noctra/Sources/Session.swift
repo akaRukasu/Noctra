@@ -33,6 +33,8 @@ final class Session {
     private(set) var token: String?
     private(set) var userId: String?
     private(set) var userName: String?
+    /// Photo de profil Jellyfin (étiquette de l'image) : affichée à la place de l'initiale.
+    private(set) var avatarTag: String?
     private(set) var hasNoctra: Bool
     let deviceId: String
     private let deviceName: String
@@ -45,6 +47,7 @@ final class Session {
         noctraBase = defaults.string(forKey: "noctra.noctra") ?? ""
         userId = defaults.string(forKey: "noctra.userId")
         userName = defaults.string(forKey: "noctra.userName")
+        avatarTag = defaults.string(forKey: "noctra.avatarTag")
         hasNoctra = defaults.bool(forKey: "noctra.hasNoctra")
         if let saved = defaults.string(forKey: "noctra.deviceId") {
             deviceId = saved
@@ -101,12 +104,14 @@ final class Session {
         defaults.set(noctra, forKey: "noctra.noctra")
         defaults.set(auth.user.id, forKey: "noctra.userId")
         defaults.set(auth.user.name, forKey: "noctra.userName")
+        defaults.set(auth.user.primaryImageTag, forKey: "noctra.avatarTag")
         defaults.set(noctraOK, forKey: "noctra.hasNoctra")
         defaults.set(text, forKey: "noctra.server")
         jellyfinBase = jellyfin
         noctraBase = noctra
         hasNoctra = noctraOK
         userName = auth.user.name
+        avatarTag = auth.user.primaryImageTag
         userId = auth.user.id
         token = auth.accessToken
     }
@@ -122,7 +127,9 @@ final class Session {
         }
         Keychain.delete("noctra.token")
         UserDefaults.standard.removeObject(forKey: "noctra.userId")
+        UserDefaults.standard.removeObject(forKey: "noctra.avatarTag")
         token = nil
+        avatarTag = nil
         userId = nil
     }
 
@@ -149,7 +156,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.10.0\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.10.1\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }
@@ -332,13 +339,29 @@ final class Session {
             hasNoctra = true
             UserDefaults.standard.set(true, forKey: "noctra.hasNoctra")
             isAdmin = (json["isAdmin"] as? Bool) ?? false
+            if let user = json["user"] as? [String: Any] { setAvatar(user["primaryImageTag"] as? String) }
             return
         }
         // Sans serveur Noctra : droits lus sur le compte Jellyfin.
         if let raw = try? await data("GET", "/Users/Me"),
            let json = try? JSONSerialization.jsonObject(with: raw) as? [String: Any] {
             isAdmin = ((json["Policy"] as? [String: Any])?["IsAdministrator"] as? Bool) ?? false
+            setAvatar(json["PrimaryImageTag"] as? String)
         }
+    }
+
+    /// Photo de profil changée depuis Jellyfin ou le site : nouvelle étiquette, nouvelle image.
+    private func setAvatar(_ tag: String?) {
+        let value = tag.flatMap { $0.isEmpty ? nil : $0 }
+        guard value != avatarTag else { return }
+        avatarTag = value
+        UserDefaults.standard.set(value, forKey: "noctra.avatarTag")
+    }
+
+    /// Photo de profil de l'utilisateur connecté (nil : initiale du nom).
+    func avatarURL(size: Int = 160) -> URL? {
+        guard let userId, let avatarTag else { return nil }
+        return url("/Users/\(userId)/Images/Primary", ["tag": avatarTag, "maxWidth": String(size), "quality": "90"])
     }
 
     private(set) var isAdmin = false

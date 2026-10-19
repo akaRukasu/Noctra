@@ -127,7 +127,7 @@ final class LivePlayerModel {
         for server in servers.filter({ $0.kind == .resolve && $0.id != current?.id }).prefix(16) {
             expanding += 1
             Task {
-                let found = await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 70 : 45)
+                let found = await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 110 : 45)
                 guard self.channel?.id == token else { return }
                 expanding = max(0, expanding - 1)
                 guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
@@ -206,10 +206,13 @@ final class LivePlayerModel {
             stopVideo()
             web = nil
             if note == nil {
-                status = server.vip ? "Préparation de l’accès VIP (vérification des flux, jusqu’à une minute)…" : "Recherche des serveurs de \(server.label)…"
+                status = server.vip ? "Préparation de l’accès VIP (vérification des flux, jusqu’à 1 min 30)…" : "Recherche des serveurs de \(server.label)…"
             }
             watch = Task {
-                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 70 : 45), channel: channel.id)
+                // VIP : cookie de session Noctra renouvelé pour le lecteur d'Apple et le moteur web.
+                if server.vip { _ = try? await session.noctraJSON("/api/session", timeout: 10) }
+                guard token == generation else { return }
+                let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 110 : 45), channel: channel.id)
                 guard token == generation else { return }
                 if let index = servers.firstIndex(where: { $0.id == server.id }) { servers.replaceSubrange(index...index, with: found) }
                 probeAll()
@@ -324,8 +327,9 @@ final class LivePlayerModel {
                     if item.status == .readyToPlay && (self.player.timeControlStatus == .playing || self.paused) {
                         ready = true
                         self.succeeded(server, web: false)
-                    } else if elapsed > (item.status == .readyToPlay ? 25 : 12) {
-                        // Prêt mais sans image (mise en mémoire trop lente) ou rien du tout.
+                    } else if elapsed > (item.status == .readyToPlay ? 25 : (server.vip ? 30 : 12)) {
+                        // Prêt mais sans image (mise en mémoire trop lente) ou rien du tout. VIP : le serveur
+                        // va chercher la liste et les segments chez LiveWatch, le premier chargement est plus lent.
                         self.engineFailed(server, web: false, reason: item.status == .readyToPlay ? "mise en mémoire trop lente" : Self.reason(item))
                         return
                     }
@@ -397,7 +401,7 @@ final class LivePlayerModel {
             status = "Reconnexion au serveur…"
             watch = Task {
                 let parent = LiveServer(label: server.label, provider: server.provider, kind: .resolve, resolveURL: renew, vip: server.vip)
-                let fresh = await LiveServerFactory.resolve(parent, session: session, timeout: server.vip ? 70 : 45)
+                let fresh = await LiveServerFactory.resolve(parent, session: session, timeout: server.vip ? 110 : 45)
                 guard token == generation else { return }
                 guard var replacement = fresh.first(where: { $0.kind == .native }) ?? fresh.first else {
                     fail(server, message: message)
@@ -450,6 +454,14 @@ final class LivePlayerModel {
             let index = (servers.firstIndex { $0.id == server.id } ?? servers.count - 1) + 1
             servers.insert(direct, at: min(index, servers.count))
             probeAll()
+            // Pont VIP sans image après 10 s : flux repéré lu par l'appli, comme sur PC (mobile).
+            guard server.vip, !web.isEngine else { return }
+            let token = generation, handoff = direct
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, token == self.generation, !self.webPlaying else { return }
+                self.play(handoff, note: "Lecteur VIP sans image : lecture directe du flux repéré…")
+            }
         case "error", "stalled", "vip-missed":
             let text = message.isEmpty ? (state == "vip-missed" ? "le VIP n’a pas été accepté par le site" : "le lecteur a signalé une erreur") : message
             if web.isEngine && !webPlaying {

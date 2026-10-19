@@ -38,6 +38,9 @@ object Session {
         private set
     var userName by mutableStateOf<String?>(null)
         private set
+    /** Photo de profil Jellyfin (étiquette de l'image) : affichée à la place de l'initiale. */
+    var avatarTag by mutableStateOf<String?>(null)
+        private set
     var hasNoctra by mutableStateOf(false)
         private set
     var isAdmin by mutableStateOf(false)
@@ -54,6 +57,7 @@ object Session {
         noctraBase = Prefs.string("noctra.noctra") ?: ""
         userId = Prefs.string("noctra.userId")
         userName = Prefs.string("noctra.userName")
+        avatarTag = Prefs.string("noctra.avatarTag")
         hasNoctra = Prefs.bool("noctra.hasNoctra")
         deviceId = Prefs.string("noctra.deviceId") ?: ("noctra-android-" + UUID.randomUUID().toString().lowercase()).also { Prefs.set("noctra.deviceId", it) }
         val model = listOfNotNull(Build.MANUFACTURER?.replaceFirstChar { it.uppercase() }, Build.MODEL).distinct().joinToString(" ")
@@ -92,12 +96,14 @@ object Session {
         Prefs.set("noctra.noctra", noctra)
         Prefs.set("noctra.userId", user.string("Id"))
         Prefs.set("noctra.userName", user.str("Name"))
+        Prefs.set("noctra.avatarTag", user.str("PrimaryImageTag"))
         Prefs.set("noctra.hasNoctra", noctraOK)
         Prefs.set("noctra.server", text)
         jellyfinBase = jellyfin
         noctraBase = noctra
         hasNoctra = noctraOK
         userName = user.str("Name")
+        avatarTag = user.str("PrimaryImageTag")
         userId = user.string("Id")
         token = accessToken
     }
@@ -111,9 +117,11 @@ object Session {
         }
         Prefs.secure.edit().remove("noctra.token").apply()
         Prefs.set("noctra.userId", null)
+        Prefs.set("noctra.avatarTag", null)
         Net.cookies.clear()
         token = null
         userId = null
+        avatarTag = null
         isAdmin = false
     }
 
@@ -289,12 +297,29 @@ object Session {
                 hasNoctra = true
                 Prefs.set("noctra.hasNoctra", true)
                 isAdmin = json.flag("isAdmin")
+                json.map("user")?.let { changeAvatar(it.str("primaryImageTag")) }
                 return
             }
         }
         // Sans serveur Noctra : droits lus sur le compte Jellyfin.
         val me = runCatching { json("/Users/Me") }.getOrNull().asMap()
         isAdmin = me?.map("Policy")?.flag("IsAdministrator") == true
+        if (me != null) changeAvatar(me.str("PrimaryImageTag"))
+    }
+
+    /** Photo de profil changée depuis Jellyfin ou le site : nouvelle étiquette, nouvelle image. */
+    private fun changeAvatar(tag: String?) {
+        val value = tag?.takeIf { it.isNotBlank() }
+        if (value == avatarTag) return
+        avatarTag = value
+        Prefs.set("noctra.avatarTag", value)
+    }
+
+    /** Photo de profil de l'utilisateur connecté (null : initiale du nom). */
+    fun avatarURL(size: Int = 160): String? {
+        val id = userId ?: return null
+        val tag = avatarTag ?: return null
+        return urlString("/Users/$id/Images/Primary", mapOf("tag" to tag, "maxWidth" to size.toString(), "quality" to "90"))
     }
 
     /** En-têtes d'une requête vers une adresse Noctra (jeton et cookies), pour les lecteurs. */

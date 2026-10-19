@@ -158,7 +158,7 @@ object LivePlayerModel {
         for (server in servers.filter { it.kind == LiveServer.Kind.resolve && it.id != current?.id }.take(16)) {
             expanding += 1
             Session.scope.launch {
-                val found = LiveServerFactory.resolve(server, if (server.vip) 70.0 else 45.0)
+                val found = LiveServerFactory.resolve(server, if (server.vip) 110.0 else 45.0)
                 if (channel?.id != token) return@launch
                 expanding = maxOf(0, expanding - 1)
                 val index = servers.indexOfFirst { it.id == server.id }
@@ -230,9 +230,9 @@ object LivePlayerModel {
             LiveServer.Kind.resolve -> {
                 stopVideo()
                 this.web = null
-                if (note == null) status = if (server.vip) "Préparation de l’accès VIP (vérification des flux, jusqu’à une minute)…" else "Recherche des serveurs de ${server.label}…"
+                if (note == null) status = if (server.vip) "Préparation de l’accès VIP (vérification des flux, jusqu’à 1 min 30)…" else "Recherche des serveurs de ${server.label}…"
                 watch = Session.scope.launch {
-                    val found = LiveHealth.rank(LiveServerFactory.resolve(server, if (server.vip) 70.0 else 45.0), channel.id)
+                    val found = LiveHealth.rank(LiveServerFactory.resolve(server, if (server.vip) 110.0 else 45.0), channel.id)
                     if (token != generation) return@launch
                     val index = servers.indexOfFirst { it.id == server.id }
                     if (index >= 0) servers = servers.toMutableList().apply { removeAt(index); addAll(index, found) }
@@ -365,7 +365,8 @@ object LivePlayerModel {
                     if (exo.playbackState == Player.STATE_READY && (exo.isPlaying || paused)) {
                         ready = true
                         succeeded(target, false)
-                    } else if (System.currentTimeMillis() - started > if (exo.playbackState == Player.STATE_READY) 25_000 else 15_000) {
+                    } else if (System.currentTimeMillis() - started > if (exo.playbackState == Player.STATE_READY) 25_000 else if (target.vip) 30_000 else 15_000) {
+                        // VIP : le serveur va chercher la liste et les segments chez LiveWatch, le premier chargement est plus lent.
                         engineFailed(target, false, if (exo.playbackState == Player.STATE_READY) "mise en mémoire trop lente" else "aucune image reçue")
                         return@launch
                     }
@@ -423,7 +424,7 @@ object LivePlayerModel {
             status = "Reconnexion au serveur…"
             watch = Session.scope.launch {
                 val parent = LiveServer(label = server.label, provider = server.provider, kind = LiveServer.Kind.resolve, resolveURL = renew, vip = server.vip)
-                val fresh = LiveServerFactory.resolve(parent, if (server.vip) 70.0 else 45.0)
+                val fresh = LiveServerFactory.resolve(parent, if (server.vip) 110.0 else 45.0)
                 if (token != generation) return@launch
                 val replacement = (fresh.firstOrNull { it.kind == LiveServer.Kind.native } ?: fresh.firstOrNull())?.copy(label = server.label, renewURL = renew)
                 if (replacement == null) { fail(server.copy(renewURL = null), message); return@launch }
@@ -473,6 +474,13 @@ object LivePlayerModel {
                 val index = (servers.indexOfFirst { it.id == server.id }.takeIf { it >= 0 } ?: (servers.size - 1)) + 1
                 servers = servers.toMutableList().apply { add(minOf(index, size), direct) }
                 probeAll()
+                // Pont VIP sans image après 10 s : flux repéré lu par l'appli, comme sur PC (mobile).
+                if (!server.vip || web.isEngine) return
+                val token = generation
+                Session.scope.launch {
+                    delay(10_000)
+                    if (token == generation && !webPlaying) play(direct, note = "Lecteur VIP sans image : lecture directe du flux repéré…")
+                }
             }
             "error", "stalled", "vip-missed" -> {
                 val text = message.ifEmpty { if (state == "vip-missed") "le VIP n’a pas été accepté par le site" else "le lecteur a signalé une erreur" }

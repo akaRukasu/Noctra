@@ -156,7 +156,7 @@ assert.match(servers, /if result\.format == \.ts \{ mpegts = true \}/, 'flux MPE
 assert.match(servers, /static func prefersWeb\(/, 'moteur mémorisé par fournisseur');
 assert.match(servers, /"\/api\/tv\/livewatch\/prepare\/north\/"/, 'relais officiel NorthTV');
 assert.match(livePlayer, /private func engineFailed\(/, 'repli lecteur d’Apple / moteur web');
-assert.match(livePlayer, /timeout: server\.vip \? 70 : 45/, 'VIP LiveWatch : délai de vérification suffisant');
+assert.match(livePlayer, /timeout: server\.vip \? 110 : 45/, 'VIP LiveWatch : délai de vérification suffisant (PC : 90 s)');
 assert.match(livePlayer, /func webEvent\(/);
 assert.match(live, /configuration\.userContentController\.add\(context\.coordinator, name: "noctra"\)/, 'pages du lecteur reliées à l’appli');
 assert.match(live, /sandbox: String\? = "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"/, 'pont VIP dans un cadre comme sur PC');
@@ -193,4 +193,28 @@ console.log('Appli iOS 26 native : OK');
 // Même lecture des horodatages que WebVTT.seconds (Subtitles.swift).
 function WebVttSeconds(value) {
   return value.replace(',', '.').split(':').reduce((total, field) => total * 60 + Number(field), 0);
+}
+
+// 2.10.1 : VIP LiveWatch préparé une seule fois et lu comme sur PC ; photo de profil.
+{
+  const livePlayer = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
+  const liveViews = await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift');
+  assert.match(liveViews, /guard server\.kind == \.resolve, !server\.vip else/, 'VIP jamais demandé avec 4 s de délai à l’ouverture');
+  assert.match(livePlayer, /server\.vip \? 30 : 12/, 'VIP : premier chargement du flux plus long');
+  assert.match(livePlayer, /Lecteur VIP sans image : lecture directe du flux repéré/, 'flux repéré par le pont VIP lu par l’appli');
+  assert.match(livePlayer, /noctraJSON\("\/api\/session", timeout: 10\)/, 'cookie de session renouvelé avant le VIP');
+  const session = await read('apps/ios-native/Noctra/Sources/Session.swift');
+  assert.match(session, /func avatarURL/, 'photo de profil');
+  assert.match(session, /\/Users\/\\\(userId\)\/Images\/Primary/);
+  const components = await read('apps/ios-native/Noctra/Sources/Components.swift');
+  assert.match(components, /struct UserAvatar/);
+  assert.match(components, /UserAvatar\(size: 30/, 'photo en haut à droite à la place de l’initiale');
+  console.log('Appli iOS native 2.10.1 : VIP et photo de profil vérifiés.');
+}
+{
+  const intro = await read('apps/ios-native/Noctra/Sources/Intro.swift');
+  assert.match(intro, /struct NoctraIntro/, 'intro animée à l’ouverture, comme sur le site');
+  assert.match(intro, /Text\("NOCTRA"\)/);
+  assert.match(await read('apps/ios-native/Noctra/Sources/NoctraApp.swift'), /NoctraIntro \{/);
+  console.log('Appli iOS native 2.10.1 : intro vérifiée.');
 }

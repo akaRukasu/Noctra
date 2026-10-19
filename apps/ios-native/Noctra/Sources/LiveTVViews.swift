@@ -364,14 +364,15 @@ final class LiveLauncher {
         didSet { UserDefaults.standard.set(showPicker, forKey: "noctra.tv.picker") }
     }
 
-    /// Serveurs de toutes les sources ; les automatiques (VIP compris) demandés tout de suite, 4 s au plus.
+    /// Serveurs de toutes les sources ; les automatiques demandés tout de suite, 4 s au plus.
+    /// Le VIP LiveWatch (jusqu'à 1 min 30 de vérification) est préparé une seule fois, au lancement.
     func prepare(_ channel: LiveChannel, session: Session) async -> [LiveServer] {
         let initial = LiveServerFactory.servers(for: channel, session: session)
         var expanded: [LiveServer] = []
         await withTaskGroup(of: (Int, [LiveServer]).self) { group in
             for (index, server) in initial.enumerated() {
                 group.addTask {
-                    guard server.kind == .resolve else { return (index, [server]) }
+                    guard server.kind == .resolve, !server.vip else { return (index, [server]) }
                     let found = await LiveServerFactory.resolve(server, session: session, timeout: 4)
                     return (index, found.isEmpty ? [server] : found)
                 }

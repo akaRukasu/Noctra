@@ -336,16 +336,48 @@ struct AccountButton: View {
         Button {
             showing = true
         } label: {
-            Text(String((session.userName ?? "?").prefix(1)).uppercased())
-                .font(.headline)
-                .frame(width: 30, height: 30)
-                .background(Theme.gradient, in: Circle())
-                .foregroundStyle(Theme.onAccent)
+            UserAvatar(size: 30, font: .headline)
                 .shadow(color: Theme.violet.opacity(0.7), radius: 8)
         }
         .sheet(isPresented: $showing) {
             AccountSheet()
                 .presentationDetents([.large])
+        }
+    }
+}
+
+/// Photo de profil Jellyfin dans un rond ; initiale du nom tant qu'elle charge ou sans photo.
+struct UserAvatar: View {
+    @Environment(Session.self) private var session
+    let size: CGFloat
+    var font: Font = .headline
+    @State private var photo: (url: URL, image: UIImage)?
+
+    var body: some View {
+        let url = session.avatarURL(size: Int(size * 3))
+        ZStack {
+            Text(String((session.userName ?? "?").prefix(1)).uppercased())
+                .font(font)
+                .foregroundStyle(Theme.onAccent)
+            if let photo, photo.url == url {
+                Image(uiImage: photo.image)
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Theme.gradient)
+        .clipShape(Circle())
+        .accessibilityLabel(session.userName ?? "Compte")
+        .task(id: url) {
+            guard let url else { photo = nil; return }
+            if let hit = ImagePipeline.shared.cached(url) {
+                photo = (url, hit)
+                return
+            }
+            guard let image = await ImagePipeline.shared.image(for: url, maxPixels: size * 3) else { return }
+            withAnimation(.easeOut(duration: 0.2)) { photo = (url, image) }
         }
     }
 }
@@ -361,11 +393,7 @@ struct AccountSheet: View {
             List {
                 Section {
                     HStack(spacing: 14) {
-                        Text(String((session.userName ?? "?").prefix(1)).uppercased())
-                            .font(.title2.weight(.bold))
-                            .frame(width: 52, height: 52)
-                            .background(Theme.gradient, in: Circle())
-                            .foregroundStyle(Theme.onAccent)
+                        UserAvatar(size: 52, font: .title2.weight(.bold))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.userName ?? "—").font(.display(20, .bold, relativeTo: .headline))
                             Text(session.isAdmin ? "Administrateur" : "Utilisateur").font(.caption).foregroundStyle(Theme.muted)

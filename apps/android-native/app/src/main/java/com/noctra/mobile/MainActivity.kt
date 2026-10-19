@@ -10,6 +10,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -48,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +79,7 @@ import com.noctra.mobile.ui.LibrariesScreen
 import com.noctra.mobile.ui.LoginScreen
 import com.noctra.mobile.ui.Navigator
 import com.noctra.mobile.ui.NavigatorHost
+import com.noctra.mobile.ui.NoctraIntro
 import com.noctra.mobile.ui.NoctraTheme
 import com.noctra.mobile.ui.Notices
 import com.noctra.mobile.ui.Screen
@@ -130,6 +134,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Root() {
+    var intro by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(Session.isSignedIn) {
         if (!Session.isSignedIn) { SyncPlayManager.stopAll(); return@LaunchedEffect }
         OfflineStore.schedule()
@@ -145,6 +150,10 @@ private fun Root() {
         if (PlaybackManager.presented) PlayerScreen()
         if (LivePlayerModel.presented) LivePlayerScreen()
         if (!Pip.active) Overlays()
+        // Intro du site à chaque ouverture de l'appli, au-dessus de l'accueil qui se charge.
+        AnimatedVisibility(intro, enter = EnterTransition.None, exit = fadeOut(tween(600))) {
+            NoctraIntro { intro = false }
+        }
     }
 }
 

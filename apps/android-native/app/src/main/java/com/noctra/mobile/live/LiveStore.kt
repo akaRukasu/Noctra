@@ -323,12 +323,15 @@ object LiveLauncher {
         pick = null
     }
 
-    /** Serveurs de toutes les sources ; les automatiques (VIP compris) demandés tout de suite, 4 s au plus. */
+    /**
+     * Serveurs de toutes les sources ; les automatiques demandés tout de suite, 4 s au plus.
+     * Le VIP LiveWatch (jusqu'à 1 min 30 de vérification) est préparé une seule fois, au lancement.
+     */
     suspend fun prepare(channel: LiveChannel): List<LiveServer> = coroutineScope {
         val initial = LiveServerFactory.servers(channel)
         val expanded = initial.map { server ->
             async {
-                if (server.kind != LiveServer.Kind.resolve) listOf(server)
+                if (server.kind != LiveServer.Kind.resolve || server.vip) listOf(server)
                 else LiveServerFactory.resolve(server, 4.0).ifEmpty { listOf(server) }
             }
         }.awaitAll().flatten()
