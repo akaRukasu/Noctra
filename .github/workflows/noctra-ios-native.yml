@@ -1,5 +1,5 @@
 # Noctra pour iPhone et iPad : appli native SwiftUI pour iOS 26 (Liquid Glass).
-# IPA non signée (Sideloadly, AltStore…) dans l'onglet Actions › Artifacts.
+# IPA non signée et variante à resigner dans E-Sign dans Actions › Artifacts.
 name: Noctra iOS 26
 
 on:
@@ -51,12 +51,29 @@ jobs:
         run: |
           mkdir -p Payload ../../dist/apps
           cp -R build/Release-iphoneos/Noctra.app Payload/
-          zip -qry ../../dist/apps/Noctra-ios26-unsigned.ipa Payload
+          plutil -lint Payload/Noctra.app/Info.plist
+          chmod 755 Payload/Noctra.app/Noctra
+          zip -qryX ../../dist/apps/Noctra-ios26-unsigned.ipa Payload
+      - name: IPA à resigner avec E-Sign
+        working-directory: apps/ios-native
+        run: |
+          # Garder les exports utilisés par dyld et retirer les symboles locaux
+          # inutiles à l'exécution avant de reconstruire une signature standard.
+          xcrun strip -S -x Payload/Noctra.app/Noctra
+          codesign --force --sign - --timestamp=none Payload/Noctra.app
+          codesign --verify --deep --strict --verbose=2 Payload/Noctra.app
+          codesign --display --verbose=2 Payload/Noctra.app 2>&1
+          # Signature ad hoc locale, sans certificat Apple : E-Sign doit signer
+          # à nouveau l'application avec le certificat de l'utilisateur.
+          zip -qryX ../../dist/apps/Noctra-ios26-ESign.ipa Payload
+          unzip -tq ../../dist/apps/Noctra-ios26-ESign.ipa
           ls -la ../../dist/apps
       - uses: actions/upload-artifact@v4
         with:
           name: noctra-ios26
-          path: dist/apps/Noctra-ios26-unsigned.ipa
+          path: |
+            dist/apps/Noctra-ios26-unsigned.ipa
+            dist/apps/Noctra-ios26-ESign.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
