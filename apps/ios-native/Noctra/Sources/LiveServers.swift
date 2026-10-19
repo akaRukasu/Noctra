@@ -37,6 +37,8 @@ struct LiveServer: Identifiable {
     var framed = false
     /// Restrictions du cadre (nil : aucune, pour les lecteurs qui les refusent).
     var sandbox: String? = LiveServerFactory.defaultSandbox
+    /// Lecteur officiel LiveWatch avec le compte connecté sur cet appareil (prioritaire).
+    var device = false
     var format: Format = .unknown
     var probe: Probe = .untested
     var probeMs: Double = 0
@@ -262,6 +264,8 @@ enum LiveHealth {
             // VIP LiveWatch : plus prioritaire d'office (vérification jusqu'à 1 min 30) ;
             // il remonte s'il a déjà marché (fiabilité apprise ci-dessous).
             if server.vip && server.kind == .resolve { base += 2 }
+            // Compte LiveWatch de l'appareil : lecteur officiel VIP, lu par l'appareil lui-même.
+            if server.device { base -= 5 }
             base -= health.score
             // Le bonus d'un test réussi dépend de la confiance apprise pour ce
             // fournisseur (un test « en ligne » suivi d'un échec de lecture la réduit).
@@ -400,7 +404,9 @@ enum LiveServerFactory {
                     prefix += " · \(seen[entry.source] ?? 0)"
                 }
             }
-            list.append(contentsOf: options(entry.raw, sourceId: entry.sourceId, prefix: prefix, provider: (entry.raw["provider"] as? String) ?? entry.source, session: session))
+            let provider = (entry.raw["provider"] as? String) ?? entry.source
+            list.append(contentsOf: LiveWatchDevice.servers(entry.raw, prefix: prefix, provider: provider))
+            list.append(contentsOf: options(entry.raw, sourceId: entry.sourceId, prefix: prefix, provider: provider, session: session))
         }
         return list
     }

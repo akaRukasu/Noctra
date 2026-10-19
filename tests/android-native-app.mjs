@@ -178,3 +178,10 @@ console.log('Appli Android native 1.7.6 : vérifiée.');
 // 1.7.7 : diagnostic VIP limité aux chaînes françaises.
 assert.match(await src('admin/AdminServer'), /filter \{ it\.vip && it\.country == "fr" \}/);
 console.log('Appli Android native 1.7.7 : vérifiée.');
+// 1.8 : compte LiveWatch connecté sur l'appareil (lecteur officiel VIP lu par le téléphone, sans le serveur).
+assert.match(await src('live/LiveWatchDevice'), /object LiveWatchDevice/);
+assert.match(await src('live/LiveWatchDevice'), /device = true\)/);
+assert.match(await src('live/LiveServers'), /list \+= LiveWatchDevice\.servers\(entry\.raw, prefix, provider\)/);
+assert.match(await src('live/LiveServers'), /if \(server\.device\) base -= 5/);
+assert.match(await src('ui/Account'), /LiveWatchDeviceScreen\(\)/);
+console.log('Appli Android native 1.8 : vérifiée.');

@@ -333,3 +333,14 @@ console.log('Appli iOS native 2.15.6 : vérifiée.');
 // 2.15.7 : diagnostic VIP limité aux chaînes françaises.
 assert.match(await read('apps/ios-native/Noctra/Sources/AdminServerViews.swift'), /where channel\.vip && channel\.country == "fr"/);
 console.log('Appli iOS native 2.15.7 : vérifiée.');
+// 2.16 : compte LiveWatch connecté sur l'appareil (lecteur officiel VIP lu par l'iPhone, sans le serveur).
+{
+  const device = await read('apps/ios-native/Noctra/Sources/LiveWatchDevice.swift');
+  assert.match(device, /enum LiveWatchDevice/);
+  assert.match(device, /struct LiveWatchLoginSheet/);
+  assert.match(device, /server\.device = true/);
+  assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /LiveWatchDevice\.servers\(entry\.raw, prefix: prefix, provider: provider\)/);
+  assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /if server\.device \{ base -= 5 \}/);
+  assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /LiveWatchDeviceView\(\)/);
+  console.log('Appli iOS native 2.16 : vérifiée.');
+}

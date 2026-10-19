@@ -52,6 +52,8 @@ data class LiveServer(
     var framed: Boolean = false,
     /** Restrictions du cadre (null : aucune, pour les lecteurs qui les refusent). */
     var sandbox: String? = LiveServerFactory.defaultSandbox,
+    /** Lecteur officiel LiveWatch avec le compte connecté sur cet appareil (prioritaire). */
+    val device: Boolean = false,
     var format: Format = Format.unknown,
     var probe: Probe = Probe.untested,
     var probeMs: Double = 0.0,
@@ -251,6 +253,8 @@ object LiveHealth {
             // VIP LiveWatch : plus prioritaire d'office (vérification jusqu'à 1 min 30) ;
             // il remonte s'il a déjà marché (fiabilité apprise ci-dessous).
             if (server.vip && server.kind == LiveServer.Kind.resolve) base += 2
+            // Compte LiveWatch de l'appareil : lecteur officiel VIP, lu par l'appareil lui-même.
+            if (server.device) base -= 5
             base -= health
             val trust = probeTrust(server)
             when (server.probe) {
@@ -352,7 +356,9 @@ object LiveServerFactory {
                 if (variant != null) prefix += " · variante " + variant.groupValues[1].lowercase()
                 else if ((seen[entry.source] ?: 0) > 1) prefix += " · ${seen[entry.source]}"
             }
-            list += options(entry.raw, entry.sourceId, prefix, entry.raw.str("provider") ?: entry.source)
+            val provider = entry.raw.str("provider") ?: entry.source
+            list += LiveWatchDevice.servers(entry.raw, prefix, provider)
+            list += options(entry.raw, entry.sourceId, prefix, provider)
         }
         return list
     }

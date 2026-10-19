@@ -111,6 +111,8 @@ fun AccountSheet(dismiss: () -> Unit) {
             }
             SettingGroup("TV en direct", "Les serveurs sont classés par fiabilité et testés ; le meilleur se lance tout seul après quelques secondes. Désactivé : il se lance directement.") {
                 ToggleRow("Choisir le serveur à chaque chaîne", picker) { picker = it; LiveLauncher.showPicker = it }
+                SettingRow("LiveWatch sur cet appareil", value = if (com.noctra.mobile.live.LiveWatchDevice.enabled) "Connecté" else "Non connecté",
+                    onClick = { open { com.noctra.mobile.live.LiveWatchDeviceScreen() } })
             }
             SettingGroup("Téléchargements hors ligne", "Les téléchargements continuent appli fermée. Avec « Wi-Fi uniquement », ils attendent un réseau Wi-Fi.") {
                 SettingRow("Sur cet appareil", value = AdminFormat.bytes(OfflineStore.usedBytes.toDouble()), icon = Icons.Filled.DownloadForOffline, onClick = { open { OfflineLibraryScreen() } })

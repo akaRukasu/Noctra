@@ -417,6 +417,9 @@ struct AccountSheet: View {
                 }
                 Section {
                     Toggle("Choisir le serveur à chaque chaîne", isOn: Binding(get: { LiveLauncher.shared.showPicker }, set: { LiveLauncher.shared.showPicker = $0 }))
+                    NavigationLink { LiveWatchDeviceView() } label: {
+                        LabeledContent("LiveWatch sur cet appareil", value: LiveWatchDevice.enabled ? "Connecté" : "Non connecté")
+                    }
                 } header: {
                     Text("TV en direct")
                 } footer: {
