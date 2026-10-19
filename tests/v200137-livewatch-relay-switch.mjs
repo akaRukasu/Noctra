@@ -84,9 +84,11 @@ assert.match(shell, /const TV_UNIFIED_START_TIMEOUT_MS = 45_000;\s*const TV_UNIF
 assert.match(shell, /if \(span > lastSpan \+ \.25 && Date\.now\(\) - startedAt < TV_UNIFIED_START_MAX_MS\) \{[\s\S]{0,300}run\.watchdog = window\.setTimeout\(checkStart, TV_UNIFIED_START_EXTEND_MS\);/);
 assert.match(shell, /run\.watchdog = window\.setTimeout\(checkStart, TV_UNIFIED_START_TIMEOUT_MS\);/);
 
-assert.match(pkg, /"version": "200\.0\.137"/);
-assert.match(shell, /const NOCTRA_BUILD_VERSION = '200\.0\.137';/);
-assert.equal((server.match(/'200\.0\.137'/g) || []).length, 2);
+// Versions suivantes (200.0.140 : serveur des applications) : même numéro partout.
+const version = (pkg.match(/"version": "(200\.0\.\d+)"/) || [])[1];
+assert.ok(version);
+assert.ok(shell.includes(`const NOCTRA_BUILD_VERSION = '${version}';`));
+assert.equal((server.match(new RegExp(`'${version.replace(/\./g, '\\.')}'`, 'g')) || []).length, 2);
 assert.ok(!html.includes('v=200.136') && html.includes('noctra-shell.js?v=200.137'));
 
 console.log('v200.0.137 : LiveWatch relayé (comptes, requêtes refusées, diagnostic) et bascule de serveur patiente : OK');

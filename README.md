@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
+# Version actuelle : 200.0.140 — serveur des applications
+
+`production` 200.0.137 et les fonctions serveur des applications iPhone, Android et Noctra TV réunies : stockage de la seedbox, déplacements, destinations des demandes, variantes et diagnostic LiveWatch VIP, multiview piloté. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
+
+# Historique : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
 
 Serveur de comptes LiveWatch détecté même sur un domaine personnalisé et vérifié ; le lecteur relayé signale les requêtes refusées et « Chaîne introuvable » ; « Tester LiveWatch » dans Accès TV ; changement de serveur plus patient sur un chargement long. Détails : [MISE-A-JOUR-V200137.md](MISE-A-JOUR-V200137.md). Validation : `npm run test:v200137`.
 
