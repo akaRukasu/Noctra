@@ -25,6 +25,10 @@ import java.util.UUID
  */
 object Session {
     const val defaultServer = "https://akarukasu.merlion.usbx.me"
+
+    /** Même compte Jellyfin (identifiants avec ou sans tirets, sans tenir compte de la casse). */
+    fun sameUser(a: String?, b: String?): Boolean =
+        !a.isNullOrEmpty() && b != null && a.replace("-", "").equals(b.replace("-", ""), ignoreCase = true)
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 

@@ -386,7 +386,12 @@ fun LiveAdminScreen() {
                 scope.launch {
                     val path = "/api/tv/livewatch/diagnostics" + if (diagnosticRef.isEmpty()) "" else "?ref=" + URLEncoder.encode(diagnosticRef, "UTF-8")
                     runCatching { Session.noctraJSON(path, 150.0).asMap() }
-                        .onSuccess { report = it }
+                        .onSuccess {
+                            report = it
+                            // Diagnostic de l'ancienne version du serveur : sans la réponse exacte de LiveWatch.
+                            if (it != null && it["clientMode"] == null && it.flag("authenticated"))
+                                reportError = "Serveur Noctra pas à jour : ce diagnostic ne montre pas la réponse exacte de LiveWatch. Fais tourner le serveur sur la version des applications (branche claude/hopeful-mccarthy-mihj1n)."
+                        }
                         .onFailure { report = null; reportError = it.message ?: "Diagnostic impossible." }
                     diagnosing = false
                 }

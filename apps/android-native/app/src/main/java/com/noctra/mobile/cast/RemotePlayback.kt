@@ -65,6 +65,8 @@ object RemotePlayback {
         devices = list.mapNotNull { raw ->
             val id = raw.str("Id") ?: return@mapNotNull null
             if (raw.str("DeviceId") == Session.deviceId) return@mapNotNull null
+            // Administrateur : Jellyfin renvoie aussi les sessions des autres comptes ; seuls les écrans de ce compte.
+            if (!Session.sameUser(raw.str("UserId"), Session.userId)) return@mapNotNull null
             val caps = raw["Capabilities"].asMap().orEmpty()
             if (raw["SupportsRemoteControl"] != true && caps["SupportsMediaControl"] != true) return@mapNotNull null
             val item = raw["NowPlayingItem"].asMap().orEmpty()

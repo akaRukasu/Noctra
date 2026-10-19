@@ -1396,6 +1396,10 @@ struct LiveAdminView: View {
         }
         do {
             report = try await session.noctraJSON(path, timeout: 150) as? [String: Any]
+            // Diagnostic de l'ancienne version du serveur : sans la réponse exacte de LiveWatch.
+            if let report, report["clientMode"] == nil, report["authenticated"] as? Bool == true {
+                reportError = "Serveur Noctra pas à jour : ce diagnostic ne montre pas la réponse exacte de LiveWatch. Fais tourner le serveur sur la version des applications (branche claude/hopeful-mccarthy-mihj1n)."
+            }
         } catch {
             report = nil
             reportError = error.localizedDescription

@@ -159,6 +159,8 @@ struct CastSheet: View {
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
         targets = list.compactMap { entry in
             guard let id = entry["Id"] as? String, (entry["DeviceId"] as? String) != session.deviceId else { return nil }
+            // Administrateur : jamais les appareils d'un autre compte.
+            guard Session.sameUser(entry["UserId"] as? String, session.userId) else { return nil }
             let capabilities = entry["Capabilities"] as? [String: Any]
             let remote = (entry["SupportsRemoteControl"] as? Bool) ?? (capabilities?["SupportsMediaControl"] as? Bool) ?? false
             guard remote else { return nil }

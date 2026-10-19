@@ -82,6 +82,8 @@ final class RemotePlayback {
         ownSession = list.first { $0["DeviceId"] as? String == session.deviceId }?["Id"] as? String
         devices = list.compactMap { raw in
             guard let id = raw["Id"] as? String, raw["DeviceId"] as? String != session.deviceId else { return nil }
+            // Administrateur : Jellyfin renvoie aussi les sessions des autres comptes ; seuls les écrans de ce compte.
+            guard Session.sameUser(raw["UserId"] as? String, session.userId) else { return nil }
             let caps = raw["Capabilities"] as? [String: Any] ?? [:]
             guard raw["SupportsRemoteControl"] as? Bool == true || caps["SupportsMediaControl"] as? Bool == true else { return nil }
             let item = raw["NowPlayingItem"] as? [String: Any] ?? [:]

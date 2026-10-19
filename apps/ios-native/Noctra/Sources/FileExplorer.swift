@@ -798,7 +798,8 @@ struct StorageView: View {
             data = try await session.noctraJSON("/api/files/storage\(refresh ? "?refresh=1" : "")", timeout: 30) as? [String: Any] ?? [:]
             failed = nil
         } catch {
-            failed = error.localizedDescription
+            // 404 : route absente, le serveur n'a pas la version des applications.
+            failed = error.localizedDescription.contains("(404)") ? "Ton serveur Noctra n’a pas encore cette fonction : il doit tourner sur la version des applications (branche claude/hopeful-mccarthy-mihj1n)." : error.localizedDescription
         }
         loaded = true
     }

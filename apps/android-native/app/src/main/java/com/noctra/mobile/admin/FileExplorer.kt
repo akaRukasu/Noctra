@@ -526,7 +526,8 @@ fun StorageScreen() {
         } catch (failure: kotlinx.coroutines.CancellationException) {
             throw failure
         } catch (failure: Exception) {
-            failed = failure.message
+            // 404 : route absente, le serveur n'a pas la version des applications.
+            failed = if (failure.message?.contains("(404)") == true) "Ton serveur Noctra n’a pas encore cette fonction : il doit tourner sur la version des applications (branche claude/hopeful-mccarthy-mihj1n)." else failure.message
         }
         loaded = true
     }

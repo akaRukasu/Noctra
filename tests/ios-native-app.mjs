@@ -326,3 +326,7 @@ function WebVttSeconds(value) {
 // 2.15.3 : diagnostic LiveWatch VIP accessible directement depuis le compte (administrateurs).
 assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /NavigationLink \{ LiveAdminView\(\) \} label: \{\s*Label\("Diagnostic LiveWatch VIP"/);
 console.log('Appli iOS native 2.15.3 : vérifiée.');
+// 2.15.6 : télécommande et « Lire sur… » limitées aux appareils du compte (même en administrateur).
+assert.match(await read('apps/ios-native/Noctra/Sources/RemotePlayback.swift'), /guard Session\.sameUser\(raw\["UserId"\] as\? String, session\.userId\)/);
+assert.match(await read('apps/ios-native/Noctra/Sources/Cast.swift'), /guard Session\.sameUser\(entry\["UserId"\] as\? String, session\.userId\)/);
+console.log('Appli iOS native 2.15.6 : vérifiée.');

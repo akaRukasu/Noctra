@@ -171,3 +171,7 @@ console.log('Appli Android native 1.7.2 : vérifiée.');
 // 1.7.3 : diagnostic LiveWatch VIP accessible directement depuis le compte (administrateurs).
 assert.match(await src('ui/Account'), /SettingRow\("Diagnostic LiveWatch VIP"/);
 console.log('Appli Android native 1.7.3 : vérifiée.');
+// 1.7.6 : télécommande et « Lire sur… » limitées aux appareils du compte (même en administrateur).
+assert.match(await src('cast/RemotePlayback'), /if \(!Session\.sameUser\(raw\.str\("UserId"\), Session\.userId\)\) return@mapNotNull null/);
+assert.match(await src('cast/Cast'), /if \(!Session\.sameUser\(entry\.str\("UserId"\), Session\.userId\)\) return@mapNotNull null/);
+console.log('Appli Android native 1.7.6 : vérifiée.');

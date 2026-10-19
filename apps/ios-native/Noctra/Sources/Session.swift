@@ -28,6 +28,12 @@ enum NoctraError: LocalizedError {
 final class Session {
     static let defaultServer = "https://akarukasu.merlion.usbx.me"
 
+    /// Même compte Jellyfin (identifiants avec ou sans tirets, sans tenir compte de la casse).
+    nonisolated static func sameUser(_ a: String?, _ b: String?) -> Bool {
+        guard let a, let b, !a.isEmpty else { return false }
+        return a.replacingOccurrences(of: "-", with: "").lowercased() == b.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
     private(set) var jellyfinBase: String
     private(set) var noctraBase: String
     private(set) var token: String?
@@ -156,7 +162,7 @@ final class Session {
     // MARK: Requêtes Jellyfin
 
     func authorization(token: String?) -> String {
-        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.15.5\""
+        var value = "MediaBrowser Client=\"Noctra iOS\", Device=\"\(deviceName)\", DeviceId=\"\(deviceId)\", Version=\"2.15.6\""
         if let token { value += ", Token=\"\(token)\"" }
         return value
     }

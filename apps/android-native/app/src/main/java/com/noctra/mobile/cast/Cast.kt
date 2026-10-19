@@ -165,6 +165,8 @@ private fun CastContent(item: BaseItem, startSeconds: Double, audioIndex: Int?, 
         targets = list.mapNotNull { entry ->
             val id = entry.str("Id") ?: return@mapNotNull null
             if (entry.str("DeviceId") == Session.deviceId) return@mapNotNull null
+            // Administrateur : jamais les appareils d'un autre compte.
+            if (!Session.sameUser(entry.str("UserId"), Session.userId)) return@mapNotNull null
             val remote = (entry["SupportsRemoteControl"] as? Boolean) ?: (entry["Capabilities"].asMap()?.get("SupportsMediaControl") as? Boolean) ?: false
             if (!remote) return@mapNotNull null
             CastTarget(id, entry.str("DeviceName") ?: "Appareil", entry.str("Client") ?: "", entry["NowPlayingItem"].asMap()?.str("Name"))
