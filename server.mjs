@@ -7222,7 +7222,8 @@ function liveWatchStreamUrlFromPayload(payload) {
 // alterne alors avec les en-têtes d'un navigateur sur le lecteur officiel (origine, langue,
 // cookies de la page du lecteur) et garde le mode qui fonctionne.
 const liveWatchBrowserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
-let liveWatchClientMode = { browser: false, changedAt: 0 };
+// 200.0.143 : l'autorisation de lecture est liée au navigateur qui l'a obtenue : mode navigateur par défaut.
+let liveWatchClientMode = { browser: true, changedAt: 0 };
 
 function switchLiveWatchClientMode() {
   // Plusieurs requêtes échouent souvent ensemble : une seule bascule à la fois.
@@ -7339,9 +7340,11 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
   const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
   const requestStream = async (session, attempt = 0, grantRetried = false) => {
     const endpointUrl = `${liveWatchOrigin}${apiPath}?vip=1&embed=1`;
-    const client = liveWatchClientHeaders(playerPath);
-    const playerCookie = liveWatchClientMode.browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
     const grant = await liveWatchPlayGrant(session, grantRetried).catch(() => '');
+    // Autorisation obtenue en navigateur : LiveWatch la refuse (grant_required) avec une autre identité.
+    const browser = Boolean(grant) || liveWatchClientMode.browser;
+    const client = liveWatchClientHeaders(playerPath, browser);
+    const playerCookie = browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
     const response = await fetchTvRemote(endpointUrl, {
       headers: {
         accept: 'application/json, application/vnd.apple.mpegurl, application/x-mpegURL, text/plain;q=0.8, */*;q=0.5',
@@ -8398,6 +8401,7 @@ async function liveWatchDiagnosticStream(ref) {
   });
   const text = response.ok ? (await response.text()).slice(0, 4096) : '';
   if (!response.ok) { try { await response.body?.cancel?.(); } catch {} }
+  const playlist = /^\s*#EXTM3U/.test(text);
   return {
     ok: response.ok && /^\s*#EXTM3U/.test(text),
     host: target.hostname,
@@ -8406,7 +8410,12 @@ async function liveWatchDiagnosticStream(ref) {
     sessionSent: Boolean(reference.headers?.authorization),
     status: response.status,
     finalHost: (() => { try { return new URL(response.url || reference.url).hostname; } catch { return ''; } })(),
-    playlist: /^\s*#EXTM3U/.test(text) ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide')
+    playlist: playlist ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide'),
+    // 200.0.143 : début d'une réponse qui n'est pas une playlist (jetons masqués), pour en trouver la cause.
+    ...(!playlist && text ? {
+      contentType: String(response.headers.get('content-type') || ''),
+      excerpt: text.slice(0, 300).replace(/[A-Za-z0-9_\-.]{32,}/g, '…').replace(/\s+/g, ' ').trim()
+    } : {})
   };
 }
 
@@ -13406,12 +13415,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.142', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.143', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.142',
+        version: '200.0.143',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

@@ -12,7 +12,7 @@ const calls = [];
 let grantCalls = 0;
 const fetchTvRemote = async (url, options = {}) => {
   const headers = options.headers || {};
-  calls.push({ url: String(url), method: options.method || 'GET', grant: headers['x-play-grant'] || '' });
+  calls.push({ url: String(url), method: options.method || 'GET', grant: headers['x-play-grant'] || '', agent: headers['user-agent'] || '' });
   if (String(url).endsWith('/api/play/grant')) {
     grantCalls += 1;
     assert.equal(headers.authorization, 'Bearer jeton-vip');
@@ -26,7 +26,7 @@ class HttpError extends Error { constructor(status, message) { super(message); t
 const references = new Map();
 const factory = new Function('fetchTvRemote', 'HttpError', 'tvReferences', 'liveWatchVipDirectCache', 'liveWatchOrigin', 'liveWatchBrowserAgent', `
   let liveWatchClientMode = { browser: false, changedAt: 0 };
-  const liveWatchClientHeaders = () => ({ 'user-agent': 'test' });
+  const liveWatchClientHeaders = (path, browser = liveWatchClientMode.browser) => ({ 'user-agent': browser ? 'navigateur' : 'Noctra' });
   const liveWatchPlayerCookies = async () => '';
   const liveWatchAccessSession = async () => ({ accessToken: 'jeton-vip', userId: 'u1' });
   const validLiveWatchChannelReference = (kind, id) => ({ kind, id });
@@ -49,10 +49,15 @@ assert.equal(reference.headers['x-play-grant'], 'grant-2', 'autorisation jointe 
 assert.deepEqual(api.liveWatchPlayGrantInfo({ userId: 'u1' }).tier, 'vip');
 const streamCall = calls.find(call => call.url.includes('/api/stream/'));
 assert.equal(streamCall.grant, 'grant-2', 'X-Play-Grant envoyé à /api/stream');
+// 200.0.143 : autorisation jointe = identité du navigateur qui l'a obtenue, même en mode Noctra.
+assert.equal(streamCall.agent, 'navigateur');
+assert.equal(reference.headers['user-agent'], 'navigateur');
+assert.match(server, /let liveWatchClientMode = \{ browser: true, changedAt: 0 \};/, 'mode navigateur par défaut');
+assert.match(server, /excerpt: text\.slice\(0, 300\)/, 'diagnostic : début d’une réponse qui n’est pas une playlist');
 // Autorisation gardée en mémoire : pas de nouvelle demande pour la chaîne suivante.
 cache.clear();
 await api.liveWatchStreamReference('daddy', 'bein2');
 assert.equal(grantCalls, 2);
 assert.match(server, /\.\.\.\(trustedLiveWatchRedirect \? \[\] : \['x-play-grant'\]\)/, 'autorisation retirée lors d’une redirection hors LiveWatch');
 assert.match(server, /lower\.startsWith\('x-play-'\)/, 'lecteur officiel relayé : en-tête X-Play-Grant transmis');
-console.log('v200.0.142 : autorisation de lecture LiveWatch (play/grant, X-Play-Grant, 425) : OK');
+console.log('v200.0.142/143 : autorisation de lecture LiveWatch (play/grant, X-Play-Grant, 425, identité navigateur) : OK');

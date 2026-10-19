@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.142 — autorisation de lecture LiveWatch VIP
+# Version actuelle : 200.0.143 — LiveWatch VIP lu avec l'identité du navigateur
+
+L'autorisation de lecture LiveWatch est liée au navigateur qui l'a obtenue : le serveur présente désormais toujours cette identité (navigateur) avec l'autorisation, au lieu d'essayer d'abord en « Noctra » (refusé en `grant_required`). Le diagnostic montre le début d'une réponse `/api/hls` qui n'est pas une playlist. Validation : `npm run test:v200143`.
+
+# Historique : 200.0.142 — autorisation de lecture LiveWatch VIP
 
 LiveWatch demande maintenant une autorisation de lecture avant chaque flux (`grant_required`). Le serveur l'obtient comme le lecteur officiel (`POST /api/play/grant` avec la session VIP) et la joint aux demandes de flux (`X-Play-Grant`) : les flux VIP directs LiveWatch fonctionnent de nouveau. Validation : `npm run test:v200142`.
 

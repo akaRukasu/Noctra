@@ -22,3 +22,6 @@ LiveWatch répond `403 {"code":"grant_required"}` : une autorisation de lecture 
 
 ## 200.0.142
 Autorisation de lecture LiveWatch : `POST https://livewatch.icu/api/play/grant` avec la session VIP (réponse `grant`, `tier`, `expires_in`), gardée en mémoire jusqu'à 2 minutes avant son expiration, puis en-tête `X-Play-Grant` sur les demandes de flux et sur la liste HLS. `425` : nouvel essai après `retry_after`. `403 grant_required` : nouvelle autorisation puis un seul nouvel essai. Le lecteur officiel relayé transmet aussi son en-tête `X-Play-Grant`. Le diagnostic affiche l'autorisation (palier, durée).
+
+## 200.0.143
+Le diagnostic 200.0.142 l'a montré : l'autorisation (`palier vip`) fonctionne et le flux est rendu en mode navigateur, mais la même demande avec l'identité « Noctra » reste refusée (`403 grant_required`). L'autorisation est obtenue avec l'identité du navigateur (agent, origine, langue) : les demandes de flux qui la portent utilisent maintenant toujours cette identité, et le mode navigateur est celui par défaut. Le contrôle de playlist du diagnostic ajoute le type et le début (300 caractères, jetons masqués) d'une réponse qui n'est pas une playlist (« autre contenu »).
