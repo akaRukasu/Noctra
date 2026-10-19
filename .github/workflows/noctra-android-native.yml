@@ -74,6 +74,10 @@ jobs:
             echo "NOCTRA_KEY_ALIAS=noctra"
             echo "NOCTRA_KEY_PASSWORD=$(cat "$dir/password")"
           } >> "$GITHUB_ENV"
+      - name: Vérification du cast et de la télécommande TV
+        run: |
+          node tests/mobile-tv-cast.mjs
+          node tests/mobile-tv-remote.mjs
       - name: APK
         working-directory: apps/android-native
         run: |
@@ -94,9 +98,19 @@ jobs:
           name: noctra-android-native
           path: dist/Noctra-android-native.apk
           if-no-files-found: error
+      - name: APK Noctra TV avec réception du cast et télécommande
+        run: |
+          node apps/scripts/build-androidtv.mjs > noctra-tv-build.log 2>&1 || { tail -120 noctra-tv-build.log; exit 1; }
+          tail -8 noctra-tv-build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-androidtv
+          path: dist/apps/Noctra-androidtv.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: noctra-android-native-build-log
           path: apps/android-native/build.log
           if-no-files-found: ignore
+

@@ -381,7 +381,9 @@ final class ChromecastController {
             throw NSError(domain: "NoctraCast", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur."])
         }
         let access: [String: Any]?
-        do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": stream.absoluteString, "headers": server.headers]) as? [String: Any] }
+        let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
+        let addressToShare = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (parts?.percentEncodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+        do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": addressToShare, "headers": server.headers]) as? [String: Any] }
         catch { throw NSError(domain: "NoctraCast", code: 2, userInfo: [NSLocalizedDescriptionKey: "La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version."]) }
         guard let path = access?["url"] as? String, let address = session.noctraURL(path) else { throw NoctraError.empty }
         let image = live.logo.flatMap { session.noctraURL($0) }

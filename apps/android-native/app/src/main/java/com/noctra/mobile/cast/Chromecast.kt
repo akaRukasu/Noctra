@@ -423,7 +423,9 @@ object ChromecastController {
             }
         }
         val server = selected ?: error("Cette chaîne ne fournit pas de flux compatible Chromecast. Essayez Noctra TV ou un autre serveur.")
-        val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to server.streamURL, "headers" to server.headers)).asMap() }
+        val uri = java.net.URI(server.streamURL!!)
+        val addressToShare = if (Session.isNoctraOrigin(server.streamURL!!)) uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: "") else server.streamURL
+        val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to addressToShare, "headers" to server.headers)).asMap() }
             .getOrElse { throw IllegalStateException("La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version.", it) }
         val address = access?.str("url")?.let { Session.noctraURL(it) } ?: error("Le serveur ne fournit pas de lien de diffusion.")
         val image = live.logo?.let { Session.noctraURL(it) }
