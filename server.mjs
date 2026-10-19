@@ -8,7 +8,8 @@ import { createServer } from 'node:http';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline, Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
-import { chmod, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile, unlink } from 'node:fs/promises';
+import { chmod, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, statfs, symlink, writeFile, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lookup } from 'node:dns/promises';
@@ -1949,6 +1950,98 @@ async function renameMediaEntry(rootId, relativePath, newName) {
   if (await stat(target).catch(() => null)) throw new HttpError(409, 'Un élément porte déjà ce nom.');
   await rename(source.absolute, target);
   return { ok: true, path: relativeMediaPath(source.rootReal, target) };
+}
+
+/** Déplace un fichier ou un dossier vers un autre dossier (même médiathèque ou une autre). */
+async function moveMediaEntry(rootId, relativePath, targetRootId, targetPath = '') {
+  const source = await existingMediaPath(rootId, relativePath);
+  if (!source.clean) throw new HttpError(400, 'La racine ne peut pas être déplacée.');
+  const destination = await existingMediaPath(targetRootId, targetPath);
+  const destinationInfo = await lstat(destination.absolute);
+  if (!destinationInfo.isDirectory()) throw new HttpError(400, 'La destination doit être un dossier.');
+  if (pathIsInside(source.absolute, destination.absolute)) throw new HttpError(400, 'Un dossier ne peut pas être déplacé dans lui-même.');
+  const target = join(destination.absolute, basename(source.absolute));
+  if (!pathIsInside(destination.rootReal, target)) throw new HttpError(400, 'Destination invalide.');
+  if (target === source.absolute) throw new HttpError(400, 'L’élément est déjà dans ce dossier.');
+  if (await stat(target).catch(() => null)) throw new HttpError(409, 'Un élément porte déjà ce nom dans la destination.');
+  try {
+    await rename(source.absolute, target);
+  } catch (error) {
+    // Médiathèques sur des disques différents : copie puis suppression de l'original.
+    if (error?.code !== 'EXDEV') throw error;
+    await cp(source.absolute, target, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false });
+    await rm(source.absolute, { recursive: true, force: true });
+  }
+  return { ok: true, root: destination.root.id, path: relativeMediaPath(destination.rootReal, target), message: `« ${basename(source.absolute)} » déplacé.` };
+}
+
+// MARK: Stockage de la seedbox (administrateurs)
+
+function runCommand(command, args, timeoutMs) {
+  return new Promise((resolveCommand, rejectCommand) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } }, (error, stdout) => {
+      if (error && !stdout) rejectCommand(error);
+      else resolveCommand(String(stdout || ''));
+    });
+  });
+}
+
+/** Quota du compte (seedbox mutualisée) : « quota -w -p », blocs de 1 Kio. */
+function parseQuotaOutput(text) {
+  for (const line of String(text || '').split('\n')) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 4 || !/^\d+\*?$/.test(fields[1] || '')) continue;
+    const used = Number(fields[1].replace('*', '')) * 1024;
+    const soft = Number(fields[2]) * 1024;
+    const hard = Number(fields[3]) * 1024;
+    const limit = soft || hard;
+    if (limit > 0) return { used, limit, free: Math.max(0, limit - used), filesystem: fields[0] };
+  }
+  return null;
+}
+
+const mediaRootSizeCache = { sizes: [], updatedAt: 0, running: null };
+
+/** Taille de chaque médiathèque (du), recalculée en arrière-plan au plus toutes les 10 minutes. */
+function refreshMediaRootSizes() {
+  if (mediaRootSizeCache.running) return mediaRootSizeCache.running;
+  mediaRootSizeCache.running = (async () => {
+    const sizes = [];
+    for (const root of mediaRoots) {
+      const real = await realpath(root.path).catch(() => null);
+      if (!real) continue;
+      const output = await runCommand('du', ['-s', '--block-size=1', real], 300_000).catch(() => '');
+      const bytes = Number(output.trim().split(/\s+/)[0]);
+      if (Number.isFinite(bytes)) sizes.push({ id: root.id, label: root.label, bytes });
+    }
+    mediaRootSizeCache.sizes = sizes;
+    mediaRootSizeCache.updatedAt = Date.now();
+  })().finally(() => { mediaRootSizeCache.running = null; });
+  return mediaRootSizeCache.running;
+}
+
+async function seedboxStorage(force = false) {
+  const home = process.env.HOME || '/';
+  const [quotaText, disk] = await Promise.all([
+    runCommand('quota', ['-w', '-p'], 8_000).catch(() => ''),
+    statfs(home).catch(() => null)
+  ]);
+  const quota = parseQuotaOutput(quotaText);
+  const total = disk ? Number(disk.blocks) * Number(disk.bsize) : 0;
+  const free = disk ? Number(disk.bavail) * Number(disk.bsize) : 0;
+  const filesystem = disk ? { total, free, used: Math.max(0, total - Number(disk.bfree) * Number(disk.bsize)) } : null;
+  if (force || Date.now() - mediaRootSizeCache.updatedAt > 10 * 60_000) void refreshMediaRootSizes().catch(() => undefined);
+  const capacity = quota ? { source: 'quota', used: quota.used, total: quota.limit, free: quota.free }
+    : filesystem ? { source: 'disk', used: filesystem.used, total: filesystem.total, free: filesystem.free } : null;
+  return {
+    capacity,
+    quota,
+    disk: filesystem,
+    libraries: mediaRootSizeCache.sizes,
+    librariesUpdatedAt: mediaRootSizeCache.updatedAt || null,
+    librariesComputing: Boolean(mediaRootSizeCache.running),
+    checkedAt: Date.now()
+  };
 }
 
 async function trashMediaEntry(rootId, relativePath) {
@@ -4746,6 +4839,24 @@ async function setArrMonitored(type, id, monitored) {
     `/api/v3/${service.isSonarr ? 'series' : 'movie'}/${id}`, { method: 'PUT', body: JSON.stringify(item) });
   arrCatalogCache.delete(type);
   return result;
+}
+
+/** Change le dossier racine d'un film ou d'une série : Radarr/Sonarr déplacent les fichiers. */
+async function moveArrItem(type, id, rootFolder) {
+  const service = arrService(type);
+  const folders = (await arrSettings(type)).rootFolders.map(folder => folder.path);
+  const targetRoot = String(rootFolder || '').trim();
+  if (!folders.includes(targetRoot)) throw new HttpError(400, 'Dossier racine inconnu de ' + (service.isSonarr ? 'Sonarr.' : 'Radarr.'));
+  const kind = service.isSonarr ? 'series' : 'movie';
+  const item = await arr(service.url, service.apiKey, `/api/v3/${kind}/${id}`);
+  const folderName = String(item?.path || '').split('/').filter(Boolean).at(-1) || item?.folder || item?.title;
+  if (!folderName) throw new HttpError(409, 'Dossier actuel introuvable.');
+  const nextPath = `${targetRoot.replace(/\/+$/, '')}/${folderName}`;
+  if (nextPath === item.path) return { ok: true, path: nextPath, message: 'Déjà dans ce dossier.' };
+  const updated = { ...item, path: nextPath, rootFolderPath: targetRoot };
+  await arrRequest(service.url, service.apiKey, `/api/v3/${kind}/${id}?moveFiles=true`, { method: 'PUT', body: JSON.stringify(updated) });
+  arrCatalogCache.delete(type);
+  return { ok: true, path: nextPath, message: `Déplacement vers ${targetRoot} lancé par ${service.isSonarr ? 'Sonarr' : 'Radarr'}.` };
 }
 
 async function runArrCommand(type, body) {
@@ -12911,6 +13022,15 @@ const server = createServer(async (req, res) => {
       return json(res, 200, await renameMediaEntry(body.root, body.path, body.name));
     }
 
+    if (path === '/api/files/move' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      return json(res, 200, await moveMediaEntry(body.root, body.path, body.targetRoot || body.root, body.targetPath || ''));
+    }
+
+    if (path === '/api/files/storage' && req.method === 'GET') {
+      return json(res, 200, await seedboxStorage(requestUrl.searchParams.get('refresh') === '1'));
+    }
+
     if (path === '/api/files/trash' && req.method === 'POST') {
       const body = await readJsonBody(req);
       return json(res, 200, await trashMediaEntry(body.root, body.path));
@@ -13740,6 +13860,19 @@ const server = createServer(async (req, res) => {
     if (path === '/api/servarr/add' && req.method === 'POST') {
       const body = await readJsonBody(req);
       return json(res, 200, await addArrItem(body.type, body));
+    }
+
+    if (path === '/api/servarr/rootfolders' && req.method === 'GET') {
+      const type = requestUrl.searchParams.get('type');
+      if (!['sonarr', 'radarr'].includes(type)) return json(res, 400, { error: 'Service invalide.' });
+      return json(res, 200, { type, rootFolders: (await arrSettings(type)).rootFolders });
+    }
+
+    if (path === '/api/servarr/move' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const id = positiveInteger(body.id);
+      if (!id || !['sonarr', 'radarr'].includes(body.type)) return json(res, 400, { error: 'Élément Arr invalide.' });
+      return json(res, 200, await moveArrItem(body.type, id, body.rootFolder));
     }
 
     if (path === '/api/servarr/monitor' && req.method === 'POST') {

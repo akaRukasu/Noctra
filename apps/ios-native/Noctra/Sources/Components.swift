@@ -460,6 +460,9 @@ struct AccountSheet: View {
                             NavigationLink { FileExplorerView() } label: {
                                 Label("Explorateur média", systemImage: "folder.fill")
                             }
+                            NavigationLink { StorageView() } label: {
+                                Label("Stockage de la seedbox", systemImage: "internaldrive")
+                            }
                         }
                         Button {
                             Task { await refreshLibraries() }

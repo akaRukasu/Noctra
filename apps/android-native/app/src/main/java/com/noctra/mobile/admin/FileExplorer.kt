@@ -45,6 +45,10 @@ import java.net.URLEncoder
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.material.icons.filled.Storage
+import com.noctra.mobile.ui.LocalNavigator
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.noctra.mobile.ui.Notices
 
 // Explorateur média des administrateurs, comme sur le site : racines autorisées (dont
 // Trash), dossiers, renommage, corbeille, nouveau dossier, doublons, sagas et séries.
@@ -58,8 +62,9 @@ fun FileExplorerScreen() {
     val scope = rememberCoroutineScope()
     val push = rememberPush()
     var roots by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
-    var root by remember { mutableStateOf("") }
-    var path by remember { mutableStateOf("") }
+    // Dossier en cours gardé en revenant d'un autre écran (doublons, déplacement…).
+    var root by rememberSaveable { mutableStateOf("") }
+    var path by rememberSaveable { mutableStateOf("") }
     var parent by remember { mutableStateOf<String?>(null) }
     var items by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
     var truncated by remember { mutableStateOf(false) }
@@ -110,7 +115,7 @@ fun FileExplorerScreen() {
             if (first == null) {
                 failed = "Aucun dossier média configuré ou accessible."
                 loading = false
-            } else open(first, "")
+            } else if (root.isNotEmpty() && roots.any { it.str("id") == root }) open(root, path) else open(first, "")
         } catch (failure: Exception) {
             failed = failure.message
             loading = false
@@ -121,6 +126,8 @@ fun FileExplorerScreen() {
         BarButton(Icons.Filled.CreateNewFolder, "Nouveau dossier") { if (root.isNotEmpty()) creating = true }
     }) {
         section(footer = "Navigation limitée aux racines autorisées, dont Trash. Les suppressions vont dans .noctra-trash.") {
+            ActionLine("Stockage de la seedbox", Icons.Filled.Storage) { push { StorageScreen() } }
+            RowDivider()
             ActionLine("Détecter les doublons", Icons.Filled.Verified) { push { DuplicatesScreen() } }
             RowDivider()
             ActionLine("Sagas de films", Icons.Filled.Movie) { push { CompletenessScreen("movie") } }
@@ -161,7 +168,30 @@ fun FileExplorerScreen() {
                     entry.str("name") ?: "", detail = fileDetail(entry), icon = if (directory) Icons.Filled.Folder else Icons.Filled.Description,
                     tint = if (directory) Theme.accent else Theme.muted,
                     onClick = onOpen,
-                    menu = if (manageable) listOf("Renommer" to { renaming = entry }, "Supprimer · mettre à la corbeille" to { trashing = entry }) else emptyList()
+                    menu = if (manageable) listOf(
+                        "Renommer" to { renaming = entry },
+                        "Déplacer vers…" to {
+                            val name = entry.str("name") ?: ""
+                            val source = entry.str("path") ?: ""
+                            val from = root
+                            push {
+                                val navigator = LocalNavigator.current
+                                FolderPickerScreen(roots, from, path, "Déplacer « $name »") { targetRoot, targetPath ->
+                                    Session.scope.launch {
+                                        val message = try {
+                                            Session.noctraSend("POST", "/api/files/move", mapOf("root" to from, "path" to source, "targetRoot" to targetRoot, "targetPath" to targetPath), 120.0)
+                                            "« $name » déplacé."
+                                        } catch (failure: Exception) {
+                                            failure.message ?: "Déplacement impossible."
+                                        }
+                                        Notices.announce(message)
+                                        navigator?.pop()
+                                    }
+                                }
+                            }
+                        },
+                        "Supprimer · mettre à la corbeille" to { trashing = entry }
+                    ) else emptyList()
                 )
             }
             if (!loading && items.isEmpty() && failed == null) NoteLine("Ce dossier est vide.", Theme.muted)
@@ -415,5 +445,133 @@ fun CompletenessScreen(kind: String) {
             }
         }
         if (!running && shown.isEmpty() && status.str("phase") == "complete") item { NoteLine("Aucun résultat pour ces filtres.", Theme.muted) }
+    }
+}
+
+// MARK: Choix d'un dossier de destination
+
+/** Parcours des dossiers (racines autorisées) pour choisir où déplacer un élément. */
+@Composable
+fun FolderPickerScreen(roots: List<JsonMap>, startRoot: String, startPath: String, title: String, onPick: (String, String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var root by remember { mutableStateOf(startRoot) }
+    var path by remember { mutableStateOf(startPath) }
+    var parent by remember { mutableStateOf<String?>(null) }
+    var folders by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    suspend fun open(target: String, at: String) {
+        loading = true
+        try {
+            val json = Session.noctraJSON("/api/files?root=${encode(target)}&path=${encode(at)}", 30.0).asMap()
+            root = target
+            path = json?.str("path") ?: at
+            parent = json?.get("parent") as? String
+            folders = json?.maps("items")?.filter { it.str("type") == "directory" } ?: emptyList()
+            failed = null
+        } catch (failure: kotlinx.coroutines.CancellationException) {
+            throw failure
+        } catch (failure: Exception) {
+            failed = failure.message
+        } finally {
+            loading = false
+        }
+    }
+    LaunchedEffect(Unit) { open(startRoot, startPath) }
+    AdminScaffold(title, AuroraPalette.requests, actions = {
+        androidx.compose.material3.TextButton(onClick = { onPick(root, path) }) { Text("Déplacer ici", color = Theme.accent) }
+    }) {
+        if (roots.size > 1) item {
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                roots.forEach { entry ->
+                    val id = entry.str("id") ?: ""
+                    androidx.compose.material3.TextButton(onClick = { scope.launch { open(id, "") } }, enabled = entry.flag("available")) {
+                        Text(entry.str("label") ?: id, color = if (id == root) Theme.accent else Theme.muted)
+                    }
+                }
+            }
+        }
+        section {
+            Text("/$path", color = Theme.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+            parent?.let { up ->
+                RowDivider()
+                ActionLine("Dossier parent", Icons.Filled.ArrowUpward) { scope.launch { open(root, up) } }
+            }
+            if (loading) LoadingLine()
+            failed?.let { NoteLine(it, Theme.orange) }
+        }
+        section("Dossiers") {
+            folders.forEachIndexed { index, folder ->
+                if (index > 0) RowDivider()
+                AdminRow(folder.str("name") ?: "", icon = Icons.Filled.Folder, onClick = { scope.launch { open(root, folder.str("path") ?: "") } })
+            }
+            if (!loading && folders.isEmpty()) NoteLine("Aucun sous-dossier.", Theme.muted)
+        }
+    }
+}
+
+// MARK: Stockage de la seedbox
+
+/** Stockage de la seedbox en temps réel (administrateurs) : espace utilisé et libre, quota du compte, taille de chaque médiathèque ; actualisé toutes les 10 s. */
+@Composable
+fun StorageScreen() {
+    val scope = rememberCoroutineScope()
+    var data by remember { mutableStateOf<JsonMap>(emptyMap()) }
+    var loaded by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    suspend fun load(refresh: Boolean) {
+        try {
+            data = Session.noctraJSON("/api/files/storage${if (refresh) "?refresh=1" else ""}", 30.0).asMap() ?: emptyMap()
+            failed = null
+        } catch (failure: kotlinx.coroutines.CancellationException) {
+            throw failure
+        } catch (failure: Exception) {
+            failed = failure.message
+        }
+        loaded = true
+    }
+    LaunchedEffect(Unit) {
+        var first = true
+        while (true) {
+            load(first)
+            first = false
+            delay(10_000)
+        }
+    }
+    val capacity = data["capacity"] as? Map<*, *>
+    AdminScaffold("Stockage", AuroraPalette.requests, actions = { BarButton(Icons.Filled.Refresh, "Actualiser") { scope.launch { load(true) } } }) {
+        section(footer = "Actualisé toutes les 10 secondes.") {
+            if (capacity != null) {
+                val used = AdminFormat.number(capacity["used"])
+                val total = AdminFormat.number(capacity["total"])
+                val ratio = if (total > 0) (used / total).coerceIn(0.0, 1.0) else 0.0
+                androidx.compose.foundation.layout.Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(AdminFormat.bytes(used), color = Theme.ink, style = Theme.display(28))
+                        Text("sur ${AdminFormat.bytes(total)}", color = Theme.muted, modifier = Modifier.weight(1f))
+                        Text("${(ratio * 100).toInt()} %", color = if (ratio > 0.9) Theme.orange else Theme.accent, fontSize = 16.sp)
+                    }
+                    Progress(ratio)
+                    Text("${AdminFormat.bytes(AdminFormat.number(capacity["free"]))} libres · ${if (capacity["source"] == "quota") "quota du compte" else "disque"}", color = Theme.muted, fontSize = 12.sp)
+                }
+            } else if (!loaded) LoadingLine()
+            else NoteLine("Stockage indisponible sur ce serveur.", Theme.muted)
+            failed?.let { NoteLine(it, Theme.orange) }
+        }
+        val disk = data["disk"] as? Map<*, *>
+        if (disk != null && data["quota"] is Map<*, *>) section("Disque de la seedbox") {
+            AdminRow("Utilisé", trailing = { Text(AdminFormat.bytes(AdminFormat.number(disk["used"])), color = Theme.accent) })
+            AdminRow("Libre", trailing = { Text(AdminFormat.bytes(AdminFormat.number(disk["free"])), color = Theme.accent) })
+            AdminRow("Total", trailing = { Text(AdminFormat.bytes(AdminFormat.number(disk["total"])), color = Theme.accent) })
+        }
+        val libraries = data.maps("libraries")
+        val computing = data.flag("librariesComputing")
+        section("Médiathèques", footer = if (computing) "Recalcul des tailles en cours (quelques minutes pour de grosses médiathèques)." else null) {
+            libraries.forEachIndexed { index, library ->
+                if (index > 0) RowDivider()
+                AdminRow(library.str("label") ?: "", trailing = { Text(AdminFormat.bytes(AdminFormat.number(library["bytes"])), color = Theme.accent) })
+            }
+            if (libraries.isEmpty()) NoteLine(if (computing) "Calcul en cours…" else "Tailles non disponibles.", Theme.muted)
+        }
     }
 }

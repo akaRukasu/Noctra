@@ -126,3 +126,10 @@ assert.match(await src('ui/Libraries'), /noctra\.sort\./);
 assert.match(await src('discover/Discover'), /fun RequestDestinationDialog/);
 assert.match(await src('discover/Discover'), /if \(approve\) "approve" else "decline"/);
 console.log('Appli Android native 1.4 : vérifiée.');
+// 1.5 : déplacer un dossier, changer le dossier d'un film/série, stockage de la seedbox.
+assert.match(await src('admin/FileExplorer'), /\/api\/files\/move/);
+assert.match(await src('admin/FileExplorer'), /fun StorageScreen/);
+assert.match(await src('admin/FileExplorer'), /fun FolderPickerScreen/);
+assert.match(await src('admin/Arr'), /fun ArrMoveScreen/);
+assert.match(await src('ui/Account'), /StorageScreen\(\)/);
+console.log('Appli Android native 1.5 : vérifiée.');

@@ -256,6 +256,11 @@ struct ArrItemView: View {
                     Button { Task { await command(kind == .radarr ? "MoviesSearch" : "SeriesSearch") } } label: { Label("Recherche automatique", systemImage: "magnifyingglass") }
                     Button { Task { await command(kind == .radarr ? "RefreshMovie" : "RefreshSeries") } } label: { Label("Actualiser les informations", systemImage: "arrow.clockwise") }
                     Button { Task { await command(kind == .radarr ? "RescanMovie" : "RescanSeries") } } label: { Label("Analyser le dossier", systemImage: "folder.badge.gearshape") }
+                    NavigationLink {
+                        ArrMoveView(kind: kind, id: id, title: item["title"] as? String ?? "", currentPath: item["path"] as? String ?? "")
+                    } label: {
+                        Label("Changer de dossier", systemImage: "folder.badge.arrow.forward")
+                    }
                 }
                 if let note { Text(note).font(.footnote).foregroundStyle(Theme.accent) }
             }
@@ -925,6 +930,76 @@ struct ReleaseSearchHub: View {
            let json = try? await session.noctraJSON("/api/servarr/episodes?seriesId=\(id)", timeout: 30) as? [String: Any] {
             seasons = json["seasons"] as? [Int] ?? []
             episodes = json["episodes"] as? [[String: Any]] ?? []
+        }
+    }
+}
+
+// MARK: Dossier d'un film ou d'une série
+
+/// Déplace un film ou une série vers un autre dossier racine : Radarr/Sonarr déplacent les fichiers
+/// et gardent leur suivi (sagas, animés, films d'animation rangés à part).
+struct ArrMoveView: View {
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let kind: ArrKind
+    let id: Int
+    let title: String
+    let currentPath: String
+    @State private var folders: [[String: Any]] = []
+    @State private var loading = true
+    @State private var moving: String?
+    @State private var note: String?
+    @State private var confirm: String?
+
+    var body: some View {
+        List {
+            Section {
+                Text(title).font(.headline)
+                if !currentPath.isEmpty { Text(currentPath).font(.system(.caption2, design: .monospaced)).foregroundStyle(Theme.muted) }
+                if loading { ProgressView() }
+                if let note { Text(note).font(.footnote).foregroundStyle(Theme.accent) }
+            }
+            Section("Dossiers \(kind.label)") {
+                ForEach(folders.indices, id: \.self) { index in
+                    let path = folders[index]["path"] as? String ?? ""
+                    let current = currentPath.hasPrefix(path.hasSuffix("/") ? path : path + "/")
+                    Button { confirm = path } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(path.split(separator: "/").last.map(String.init) ?? path)
+                                Text("\(AdminFormat.bytes(ReleaseSort.number(folders[index]["freeSpace"]))) libres").font(.caption).foregroundStyle(Theme.muted)
+                            }
+                            Spacer()
+                            if moving == path { ProgressView() } else if current { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .disabled(current || moving != nil)
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(AuroraBackground(palette: .requests))
+        .navigationTitle("Changer de dossier")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Déplacer vers ce dossier ? \(kind.label) déplace les fichiers.", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible, presenting: confirm) { path in
+            Button("Déplacer vers \(path.split(separator: "/").last.map(String.init) ?? path)") { Task { await move(to: path) } }
+        }
+        .task {
+            defer { loading = false }
+            let json = try? await session.noctraJSON("/api/servarr/rootfolders?type=\(kind.rawValue)", timeout: 30) as? [String: Any]
+            folders = json?["rootFolders"] as? [[String: Any]] ?? []
+        }
+    }
+
+    private func move(to path: String) async {
+        moving = path
+        defer { moving = nil }
+        do {
+            let json = try await session.noctraSend("POST", "/api/servarr/move", json: ["type": kind.rawValue, "id": id, "rootFolder": path], timeout: 60) as? [String: Any]
+            note = json?["message"] as? String ?? "Déplacement lancé."
+        } catch {
+            note = error.localizedDescription
         }
     }
 }

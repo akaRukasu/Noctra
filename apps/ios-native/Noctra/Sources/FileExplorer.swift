@@ -18,6 +18,7 @@ struct FileExplorerView: View {
     @State private var renaming: Entry?
     @State private var newName = ""
     @State private var trashing: Entry?
+    @State private var moving: Entry?
     @State private var creating = false
     @State private var folderName = ""
     @State private var emptying = false
@@ -30,6 +31,7 @@ struct FileExplorerView: View {
     var body: some View {
         List {
             Section {
+                NavigationLink { StorageView() } label: { Label("Stockage de la seedbox", systemImage: "internaldrive") }
                 NavigationLink { DuplicatesView() } label: { Label("Détecter les doublons", systemImage: "checkmark.seal") }
                 NavigationLink { CompletenessView(kind: "movie") } label: { Label("Sagas de films", systemImage: "film.stack") }
                 NavigationLink { CompletenessView(kind: "series") } label: { Label("Séries", systemImage: "tv") }
@@ -92,6 +94,14 @@ struct FileExplorerView: View {
         .confirmationDialog("Mettre à la corbeille ?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } }), titleVisibility: .visible, presenting: trashing) { entry in
             Button("Mettre « \(entry.name) » à la corbeille", role: .destructive) { Task { await trash(entry) } }
         }
+        .sheet(item: $moving) { entry in
+            NavigationStack {
+                FolderPickerView(roots: roots, root: root, path: path, title: "Déplacer « \(entry.name) »") { targetRoot, targetPath in
+                    moving = nil
+                    Task { await act("/api/files/move", ["root": root, "path": entry.id, "targetRoot": targetRoot, "targetPath": targetPath], done: "« \(entry.name) » déplacé.") }
+                }
+            }
+        }
         .confirmationDialog("Vider Trash définitivement ?", isPresented: $emptying, titleVisibility: .visible) {
             Button("Vider Trash", role: .destructive) { Task { await emptyTrash() } }
         }
@@ -124,11 +134,14 @@ struct FileExplorerView: View {
                 Button(role: .destructive) { trashing = entry } label: { Label("Corbeille", systemImage: "trash") }
                 Button { newName = name; renaming = entry } label: { Label("Renommer", systemImage: "pencil") }
                     .tint(.indigo)
+                Button { moving = entry } label: { Label("Déplacer", systemImage: "folder.badge.arrow.forward") }
+                    .tint(.teal)
             }
         }
         .contextMenu {
             if item["manageable"] as? Bool == true {
                 Button { newName = name; renaming = entry } label: { Label("Renommer", systemImage: "pencil") }
+                Button { moving = entry } label: { Label("Déplacer vers…", systemImage: "folder.badge.arrow.forward") }
                 Button(role: .destructive) { trashing = entry } label: { Label("Mettre à la corbeille", systemImage: "trash") }
             }
         }
@@ -628,5 +641,165 @@ struct SeriesStatusBadge: View {
             }
         }
         .task(id: id) { SeriesStatusStore.shared.request(id, session: session) }
+    }
+}
+
+// MARK: Choix d'un dossier de destination
+
+/// Parcours des dossiers (racines autorisées) pour choisir où déplacer un élément.
+struct FolderPickerView: View {
+    @Environment(Session.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    let roots: [[String: Any]]
+    @State var root: String
+    @State var path: String
+    let title: String
+    let onPick: (String, String) -> Void
+    @State private var folders: [[String: Any]] = []
+    @State private var parent: String?
+    @State private var loading = false
+    @State private var failed: String?
+
+    var body: some View {
+        List {
+            Section {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(roots.indices, id: \.self) { index in
+                            let id = roots[index]["id"] as? String ?? ""
+                            Button(roots[index]["label"] as? String ?? id) { Task { await open(id, "") } }
+                                .buttonStyle(.bordered)
+                                .tint(id == root ? Theme.accent : .gray)
+                                .disabled(roots[index]["available"] as? Bool == false)
+                        }
+                    }
+                }
+                .listRowBackground(Color.clear)
+                Text("/" + path).font(.system(.caption, design: .monospaced)).foregroundStyle(Theme.muted)
+                if let parent {
+                    Button { Task { await open(root, parent) } } label: { Label("Dossier parent", systemImage: "arrow.turn.left.up") }
+                }
+                if loading { ProgressView() }
+                if let failed { Text(failed).foregroundStyle(.orange) }
+            }
+            Section("Dossiers") {
+                ForEach(folders.indices, id: \.self) { index in
+                    let folder = folders[index]
+                    Button { Task { await open(root, folder["path"] as? String ?? "") } } label: {
+                        Label(folder["name"] as? String ?? "", systemImage: "folder.fill")
+                    }
+                    .foregroundStyle(.white)
+                }
+                if !loading && folders.isEmpty { Text("Aucun sous-dossier.").foregroundStyle(Theme.muted) }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) { Button("Déplacer ici") { onPick(root, path) } }
+        }
+        .task { await open(root, path) }
+    }
+
+    private func open(_ target: String, _ at: String) async {
+        loading = true
+        defer { loading = false }
+        let encode = { (value: String) in value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value }
+        do {
+            let json = try await session.noctraJSON("/api/files?root=\(encode(target))&path=\(encode(at))", timeout: 30) as? [String: Any]
+            root = target
+            path = json?["path"] as? String ?? at
+            parent = json?["parent"] as? String
+            folders = (json?["items"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "directory" }
+            failed = nil
+        } catch {
+            failed = error.localizedDescription
+        }
+    }
+}
+
+// MARK: Stockage de la seedbox
+
+/// Stockage de la seedbox en temps réel (administrateurs) : espace utilisé et libre,
+/// quota du compte, taille de chaque médiathèque ; actualisé toutes les 10 s.
+struct StorageView: View {
+    @Environment(Session.self) private var session
+    @State private var data: [String: Any] = [:]
+    @State private var failed: String?
+    @State private var loaded = false
+
+    private var capacity: [String: Any]? { data["capacity"] as? [String: Any] }
+
+    var body: some View {
+        List {
+            Section {
+                if let capacity {
+                    let used = ReleaseSort.number(capacity["used"])
+                    let total = ReleaseSort.number(capacity["total"])
+                    let ratio = total > 0 ? min(1, used / total) : 0
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(AdminFormat.bytes(used)).font(.display(28, .bold, relativeTo: .title))
+                            Text("sur \(AdminFormat.bytes(total))").foregroundStyle(Theme.muted)
+                            Spacer()
+                            Text("\(Int(ratio * 100)) %").font(.headline).foregroundStyle(ratio > 0.9 ? .orange : Theme.accent)
+                        }
+                        ProgressView(value: ratio).tint(ratio > 0.9 ? .orange : Theme.accent)
+                        Text("\(AdminFormat.bytes(ReleaseSort.number(capacity["free"]))) libres · \(capacity["source"] as? String == "quota" ? "quota du compte" : "disque")")
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                    .padding(.vertical, 6)
+                } else if !loaded {
+                    ProgressView()
+                } else {
+                    Text("Stockage indisponible sur ce serveur.").foregroundStyle(Theme.muted)
+                }
+                if let failed { Text(failed).foregroundStyle(.orange) }
+            } footer: {
+                Text("Actualisé toutes les 10 secondes.")
+            }
+            if let disk = data["disk"] as? [String: Any], data["quota"] is [String: Any] {
+                Section("Disque de la seedbox") {
+                    LabeledContent("Utilisé", value: AdminFormat.bytes(ReleaseSort.number(disk["used"])))
+                    LabeledContent("Libre", value: AdminFormat.bytes(ReleaseSort.number(disk["free"])))
+                    LabeledContent("Total", value: AdminFormat.bytes(ReleaseSort.number(disk["total"])))
+                }
+            }
+            let libraries = data["libraries"] as? [[String: Any]] ?? []
+            Section {
+                ForEach(libraries.indices, id: \.self) { index in
+                    LabeledContent(libraries[index]["label"] as? String ?? "", value: AdminFormat.bytes(ReleaseSort.number(libraries[index]["bytes"])))
+                }
+                if libraries.isEmpty { Text(data["librariesComputing"] as? Bool == true ? "Calcul en cours…" : "Tailles non disponibles.").foregroundStyle(Theme.muted) }
+            } header: {
+                Text("Médiathèques")
+            } footer: {
+                if data["librariesComputing"] as? Bool == true { Text("Recalcul des tailles en cours (quelques minutes pour de grosses médiathèques).") }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(AuroraBackground(palette: .requests))
+        .navigationTitle("Stockage")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load(refresh: true) }
+        .task {
+            var first = true
+            while !Task.isCancelled {
+                await load(refresh: first)
+                first = false
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+    }
+
+    private func load(refresh: Bool) async {
+        do {
+            data = try await session.noctraJSON("/api/files/storage\(refresh ? "?refresh=1" : "")", timeout: 30) as? [String: Any] ?? [:]
+            failed = nil
+        } catch {
+            failed = error.localizedDescription
+        }
+        loaded = true
     }
 }

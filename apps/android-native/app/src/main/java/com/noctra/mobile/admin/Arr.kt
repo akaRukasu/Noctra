@@ -296,6 +296,7 @@ fun ArrItemScreen(kind: ArrKind, item: JsonMap) {
                 ActionLine("Recherche automatique", Icons.Filled.Search) { command(if (kind == ArrKind.Radarr) "MoviesSearch" else "SeriesSearch") }
                 ActionLine("Actualiser les informations", Icons.Filled.Refresh) { command(if (kind == ArrKind.Radarr) "RefreshMovie" else "RefreshSeries") }
                 ActionLine("Analyser le dossier", Icons.Filled.Folder) { command(if (kind == ArrKind.Radarr) "RescanMovie" else "RescanSeries") }
+                ActionLine("Changer de dossier", Icons.Filled.Folder) { push { ArrMoveScreen(kind, id, title, item.str("path") ?: "") } }
             }
             note?.let { NoteLine(it) }
         }
@@ -721,6 +722,61 @@ fun ReleaseSearchHubScreen(mediaType: String, tmdbId: Int, title: String, year: 
         }
         section {
             ActionLine("Torrents disponibles sur les trackers", Icons.Filled.RssFeed) { push { TrackerSearchScreen(mediaType, tmdbId, title, year) } }
+        }
+    }
+}
+
+// MARK: Dossier d'un film ou d'une série
+
+/** Déplace un film ou une série vers un autre dossier racine : Radarr/Sonarr déplacent les fichiers et gardent leur suivi. */
+@Composable
+fun ArrMoveScreen(kind: ArrKind, id: Int, title: String, currentPath: String) {
+    val scope = rememberCoroutineScope()
+    var folders by remember { mutableStateOf<List<JsonMap>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var moving by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var confirm by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(kind) {
+        folders = runCatching { Session.noctraJSON("/api/servarr/rootfolders?type=${kind.key}", 30.0).asMap() }.getOrNull()?.maps("rootFolders") ?: emptyList()
+        loading = false
+    }
+    AdminScaffold("Changer de dossier", AuroraPalette.requests) {
+        section {
+            AdminRow(title, detail = currentPath.ifEmpty { null })
+            if (loading) LoadingLine()
+            note?.let { NoteLine(it) }
+        }
+        section("Dossiers ${kind.label}") {
+            folders.forEachIndexed { index, folder ->
+                if (index > 0) RowDivider()
+                val path = folder.str("path") ?: ""
+                val current = currentPath.startsWith(if (path.endsWith("/")) path else "$path/")
+                AdminRow(
+                    path.split('/').lastOrNull { it.isNotEmpty() } ?: path,
+                    detail = "${AdminFormat.bytes(AdminFormat.number(folder["freeSpace"]))} libres",
+                    icon = Icons.Filled.Folder,
+                    onClick = if (current || moving != null) null else ({ confirm = path }),
+                    trailing = {
+                        if (moving == path) CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        else if (current) Icon(Icons.Filled.CheckCircle, contentDescription = "Dossier actuel", tint = Theme.accent, modifier = Modifier.size(20.dp))
+                    }
+                )
+            }
+        }
+    }
+    confirm?.let { path ->
+        Confirm("Déplacer vers ce dossier ?", "${kind.label} déplace les fichiers vers $path.", "Déplacer", destructive = false, onDismiss = { confirm = null }) {
+            moving = path
+            scope.launch {
+                note = try {
+                    Session.noctraSend("POST", "/api/servarr/move", mapOf("type" to kind.key, "id" to id, "rootFolder" to path), 60.0).asMap()?.str("message") ?: "Déplacement lancé."
+                } catch (failure: Exception) {
+                    failure.message
+                } finally {
+                    moving = null
+                }
+            }
         }
     }
 }

@@ -55,6 +55,8 @@ import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import androidx.compose.material.icons.filled.Folder
 import com.noctra.mobile.admin.FileExplorerScreen
+import androidx.compose.material.icons.filled.Storage
+import com.noctra.mobile.admin.StorageScreen
 
 /** Boutons de la barre du haut : diffusion et compte. */
 @Composable
@@ -126,6 +128,7 @@ fun AccountSheet(dismiss: () -> Unit) {
                         SettingRow("Radarr · films", icon = Icons.Filled.Movie, onClick = { open { ArrHubScreen(ArrKind.Radarr) } })
                         SettingRow("Sonarr · séries", icon = Icons.Filled.Tv, onClick = { open { ArrHubScreen(ArrKind.Sonarr) } })
                         SettingRow("Explorateur média", icon = Icons.Filled.Folder, onClick = { open { FileExplorerScreen() } })
+                        SettingRow("Stockage de la seedbox", icon = Icons.Filled.Storage, onClick = { open { StorageScreen() } })
                     }
                     SettingRow("Actualiser les médiathèques", icon = Icons.Filled.Sync, onClick = {
                         scope.launch {

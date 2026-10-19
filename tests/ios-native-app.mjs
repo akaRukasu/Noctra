@@ -261,3 +261,16 @@ function WebVttSeconds(value) {
   assert.match(await src('DiscoverViews'), /\/approve" : "decline"|approve \? "approve" : "decline"/);
   console.log('Appli iOS native 2.12 : vérifiée.');
 }
+// 2.13 : déplacer un dossier, changer le dossier d'un film/série, stockage de la seedbox.
+{
+  const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
+  const files = await src('FileExplorer');
+  assert.match(files, /\/api\/files\/move/, 'déplacer un fichier ou un dossier');
+  assert.match(files, /struct FolderPickerView/);
+  assert.match(files, /struct StorageView/);
+  assert.match(files, /\/api\/files\/storage/);
+  assert.match(await src('ArrViews'), /struct ArrMoveView/);
+  assert.match(await src('ArrViews'), /\/api\/servarr\/move/);
+  assert.match(await src('Components'), /StorageView\(\)/, 'stockage dans le compte (administrateurs)');
+  console.log('Appli iOS native 2.13 : vérifiée.');
+}
