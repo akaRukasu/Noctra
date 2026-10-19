@@ -298,7 +298,7 @@ private fun liveWatchVipChannels(): List<Pair<String, String>> {
 
 /** Résultat du diagnostic pour une chaîne : flux VIP direct, puis réponse brute de l'API LiveWatch. */
 @Composable
-private fun DiagnosticRows(title: String, stream: JsonMap?, api: List<JsonMap>, failure: String?) {
+private fun DiagnosticRows(title: String, stream: JsonMap?, api: List<JsonMap>, failure: String?, player: JsonMap? = null) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, color = Theme.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         failure?.let { Text(it, color = Theme.orange, fontSize = 13.sp) }
@@ -308,8 +308,14 @@ private fun DiagnosticRows(title: String, stream: JsonMap?, api: List<JsonMap>, 
         }
         api.forEach { item ->
             val code = item.int("status") ?: 0
-            Text("API LiveWatch · ${item.str("client") ?: "?"} : ${if (code == 0) "sans réponse" else "HTTP $code"} · ${item.str("detail") ?: ""}",
+            val headers = item.map("headers").orEmpty().filterKeys { it != "content-type" }.entries.sortedBy { it.key }.joinToString(", ") { "${it.key}: ${it.value}" }
+            Text("API LiveWatch · ${item.str("client") ?: "?"} : ${if (code == 0) "sans réponse" else "HTTP $code"} · ${item.str("detail") ?: ""}" + if (headers.isEmpty()) "" else " · $headers",
                 color = if (item.flag("ok")) Theme.teal else Theme.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        }
+        player?.let {
+            val endpoints = it.maps("endpoints").mapNotNull { entry -> entry.str("value") }
+            Text("Code du lecteur : ${endpoints.size} adresse${if (endpoints.size > 1) "s" else ""} d’API" + if (endpoints.isEmpty()) "" else " · " + endpoints.take(4).joinToString(" · "),
+                color = Theme.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         }
     }
 }
@@ -392,11 +398,11 @@ fun LiveAdminScreen() {
                 result.int("sessionExpiresIn")?.let { seconds -> AdminRow("Session LiveWatch", trailing = { Text(if (seconds > 0) "valable ${seconds / 60} min" else "à renouveler", color = Theme.muted, fontSize = 14.sp) }) }
                 result.str("clientMode")?.let { mode -> AdminRow("Méthode retenue", trailing = { Text(mode, color = Theme.muted, fontSize = 14.sp) }) }
                 result.maps("checks").firstOrNull()?.let { check ->
-                    DiagnosticRows(check.str("channel") ?: "Chaîne test", check.map("vip") ?: check.map("stream"), check.maps("api"), if (check.flag("ok")) null else check.str("message"))
+                    DiagnosticRows(check.str("channel") ?: "Chaîne test", check.map("vip") ?: check.map("stream"), check.maps("api"), if (check.flag("ok")) null else check.str("message"), check.map("player"))
                 }
                 result.map("channel")?.let { channel ->
                     val name = liveWatchVipChannels().firstOrNull { it.first == diagnosticRef }?.second ?: "Chaîne choisie"
-                    DiagnosticRows(name, channel.map("stream"), channel.maps("api"), channel.str("error"))
+                    DiagnosticRows(name, channel.map("stream"), channel.maps("api"), channel.str("error"), channel.map("player"))
                 }
                 ActionLine("Copier le rapport") {
                     clipboard.setText(AnnotatedString(Json.stringify(result)))

@@ -1339,11 +1339,11 @@ struct LiveAdminView: View {
                 if let mode = report["clientMode"] as? String { LabeledContent("Méthode retenue", value: mode) }
                 if let check = (report["checks"] as? [[String: Any]])?.first {
                     diagnosticRows(title: check["channel"] as? String ?? "Chaîne test", stream: (check["vip"] ?? check["stream"]) as? [String: Any], api: check["api"] as? [[String: Any]],
-                                   failure: check["ok"] as? Bool == false ? check["message"] as? String : nil)
+                                   failure: check["ok"] as? Bool == false ? check["message"] as? String : nil, player: check["player"] as? [String: Any])
                 }
                 if let channel = report["channel"] as? [String: Any] {
                     let name = vipChannels.first { $0.ref == diagnosticRef }?.name ?? "Chaîne choisie"
-                    diagnosticRows(title: name, stream: channel["stream"] as? [String: Any], api: channel["api"] as? [[String: Any]], failure: channel["error"] as? String)
+                    diagnosticRows(title: name, stream: channel["stream"] as? [String: Any], api: channel["api"] as? [[String: Any]], failure: channel["error"] as? String, player: channel["player"] as? [String: Any])
                 }
                 Button("Copier le rapport", systemImage: "doc.on.doc") {
                     if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
@@ -1360,7 +1360,7 @@ struct LiveAdminView: View {
     }
 
     @ViewBuilder
-    private func diagnosticRows(title: String, stream: [String: Any]?, api: [[String: Any]]?, failure: String?) -> some View {
+    private func diagnosticRows(title: String, stream: [String: Any]?, api: [[String: Any]]?, failure: String?, player: [String: Any]? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.subheadline.weight(.bold))
             if let failure { Text(failure).font(.caption).foregroundStyle(.orange) }
@@ -1372,8 +1372,14 @@ struct LiveAdminView: View {
             }
             ForEach(Array((api ?? []).enumerated()), id: \.offset) { _, item in
                 let code = (item["status"] as? NSNumber)?.intValue ?? 0
-                Text("API LiveWatch · \(item["client"] as? String ?? "?") : \(code == 0 ? "sans réponse" : "HTTP \(code)") · \(item["detail"] as? String ?? "")")
+                let headers = (item["headers"] as? [String: Any] ?? [:]).filter { $0.key != "content-type" }.map { "\($0.key): \($0.value)" }.sorted().joined(separator: ", ")
+                Text("API LiveWatch · \(item["client"] as? String ?? "?") : \(code == 0 ? "sans réponse" : "HTTP \(code)") · \(item["detail"] as? String ?? "")" + (headers.isEmpty ? "" : " · " + headers))
                     .font(.caption.monospaced()).foregroundStyle(item["ok"] as? Bool == true ? Theme.teal : Theme.muted)
+            }
+            if let player {
+                let endpoints = (player["endpoints"] as? [[String: Any]] ?? []).compactMap { $0["value"] as? String }
+                Text("Code du lecteur : \(endpoints.count) adresse\(endpoints.count > 1 ? "s" : "") d’API" + (endpoints.isEmpty ? "" : " · " + endpoints.prefix(4).joined(separator: " · ")))
+                    .font(.caption.monospaced()).foregroundStyle(Theme.muted)
             }
         }
         .padding(.vertical, 4)

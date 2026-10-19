@@ -55,3 +55,8 @@ assert.match(server, /async function liveWatchChannelDiagnostic\(referenceValue\
 assert.match(server, /liveWatchVipDiagnostics\(requestUrl\.searchParams\.get\('ref'\) \|\| ''\)/);
 assert.match(server, /'\[jeton\]'/);
 console.log('Diagnostic LiveWatch VIP vérifié.');
+
+// Diagnostic VIP : en-têtes du refus et adresses d'API du lecteur officiel.
+assert.match(server, /async function liveWatchPlayerApiHints\(kindValue, idValue\)/);
+assert.match(server, /'cf-mitigated', 'www-authenticate'/);
+console.log('Diagnostic LiveWatch VIP détaillé vérifié.');

@@ -8142,10 +8142,13 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     } catch (error) {
       vip = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
     }
-    const api = await liveWatchStreamApiProbe('main', ref.id).catch(() => []);
+    const [api, player] = await Promise.all([
+      liveWatchStreamApiProbe('main', ref.id).catch(() => []),
+      liveWatchPlayerApiHints('main', ref.id).catch(error => ({ errors: [cleanError(error)] }))
+    ]);
     // 200.0.134 : flux direct de la même chaîne (hôte et réponse de la playlist).
     const stream = await liveWatchDiagnosticStream(ref).catch(error => ({ ok: false, message: cleanError(error) }));
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, vip, api };
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, vip, api, player };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }
@@ -8185,12 +8188,70 @@ async function liveWatchStreamApiProbe(kindValue, idValue) {
         try { detail = liveWatchStreamUrlFromPayload(JSON.parse(text)) ? 'adresse de flux reçue' : 'réponse sans flux'; }
         catch { detail = 'réponse illisible'; }
       }
-      results.push({ client, status: response.status, ok: response.ok, detail, cookies: Boolean(cookie) });
+      // En-têtes utiles pour comprendre un refus (blocage Cloudflare, authentification demandée).
+      const headers = {};
+      for (const name of ['content-type', 'server', 'cf-mitigated', 'www-authenticate', 'x-error', 'location']) {
+        const value = response.headers.get(name);
+        if (value) headers[name] = String(value).slice(0, 120);
+      }
+      if (response.headers.get('cf-ray')) headers['cf-ray'] = 'présent';
+      results.push({ client, status: response.status, ok: response.ok, detail, cookies: Boolean(cookie), headers, url: `${new URL(liveWatchOrigin).hostname}${apiPath}?vip=1&embed=1` });
     } catch (error) {
       results.push({ client, status: 0, ok: false, detail: cleanError(error) });
     }
   }
   return results;
+}
+
+/**
+ * Adresses d'API présentes dans le code du lecteur officiel d'une chaîne (ex. /api/stream/…,
+ * fonctions Supabase) : montre si LiveWatch a changé la manière de demander un flux VIP.
+ */
+async function liveWatchPlayerApiHints(kindValue, idValue) {
+  const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
+  const playerUrl = liveWatchOfficialPlayerUrl(kind, id);
+  const found = new Map();
+  const errors = [];
+  const note = (value, where) => {
+    const key = String(value || '').slice(0, 160);
+    if (!key) return;
+    if (!found.has(key)) found.set(key, new Set());
+    found.get(key).add(where);
+  };
+  const scan = (text, where) => {
+    for (const match of String(text).matchAll(/["'`](\/api\/[A-Za-z0-9_\-/${}.:]{2,120})["'`]/g)) note(match[1], where);
+    for (const match of String(text).matchAll(/functions\/v1\/[A-Za-z0-9_-]{2,60}/g)) note(match[0], where);
+    for (const match of String(text).matchAll(/["'`](x-[a-z0-9-]{3,40})["'`]\s*:/gi)) note('en-tête ' + match[1].toLowerCase(), where);
+    for (const match of String(text).matchAll(/https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_\-/]*(?:stream|hls|m3u8|proxy)[A-Za-z0-9_\-/.]*/gi)) note(match[0], where);
+  };
+  const read = async (url, accept) => {
+    const response = await fetchTvRemote(url, { signal: AbortSignal.timeout(15_000), headers: { accept, 'user-agent': liveWatchBrowserAgent, referer: `${liveWatchOrigin}/` } });
+    return { response, text: response.ok ? (await response.text()).slice(0, 6 * 1024 * 1024) : '' };
+  };
+  const scripts = [];
+  try {
+    const { response, text } = await read(playerUrl, 'text/html,*/*;q=0.5');
+    if (!response.ok) errors.push(`lecteur : HTTP ${response.status}`);
+    scan(text, 'page');
+    for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+      try { const url = new URL(match[1], response.url || playerUrl); if (isLiveWatchFamilyHost(url.hostname)) scripts.push(url.toString()); } catch {}
+    }
+    for (const match of text.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.js)["']/gi)) {
+      try { const url = new URL(match[1], response.url || playerUrl); if (isLiveWatchFamilyHost(url.hostname)) scripts.push(url.toString()); } catch {}
+    }
+  } catch (error) {
+    errors.push(`lecteur : ${cleanError(error)}`);
+  }
+  await Promise.all([...new Set(scripts)].slice(0, 8).map(async scriptUrl => {
+    try { scan((await read(scriptUrl, 'application/javascript,*/*;q=0.5')).text, 'code'); }
+    catch (error) { errors.push(`script : ${cleanError(error)}`); }
+  }));
+  return {
+    scripts: [...new Set(scripts)].length,
+    endpoints: [...found.entries()].map(([value, where]) => ({ value, where: [...where] }))
+      .sort((a, b) => Number(/stream|hls|vip/i.test(b.value)) - Number(/stream|hls|vip/i.test(a.value))).slice(0, 40),
+    errors
+  };
 }
 
 /** Chaîne choisie dans l'appli : flux VIP direct jusqu'au premier segment, puis réponse brute de l'API. */
@@ -8207,7 +8268,11 @@ async function liveWatchChannelDiagnostic(referenceValue) {
   } catch (error) {
     stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', status: Number(error?.status || 0), message: cleanError(error) };
   }
-  return { kind, id, stream, api: await liveWatchStreamApiProbe(kind, id).catch(error => [{ client: '?', status: 0, ok: false, detail: cleanError(error) }]), durationMs: Date.now() - startedAt };
+  const [api, player] = await Promise.all([
+    liveWatchStreamApiProbe(kind, id).catch(error => [{ client: '?', status: 0, ok: false, detail: cleanError(error) }]),
+    liveWatchPlayerApiHints(kind, id).catch(error => ({ errors: [cleanError(error)] }))
+  ]);
+  return { kind, id, stream, api, player, durationMs: Date.now() - startedAt };
 }
 
 async function liveWatchDiagnosticStream(ref) {
