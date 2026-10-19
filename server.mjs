@@ -8212,45 +8212,75 @@ async function liveWatchPlayerApiHints(kindValue, idValue) {
   const playerUrl = liveWatchOfficialPlayerUrl(kind, id);
   const found = new Map();
   const errors = [];
+  const contexts = { grant: new Set(), stream: new Set() };
+  const calls = { rpc: new Set(), functions: new Set(), tables: new Set() };
   const note = (value, where) => {
     const key = String(value || '').slice(0, 160);
     if (!key) return;
     if (!found.has(key)) found.set(key, new Set());
     found.get(key).add(where);
   };
+  // Extrait lisible du code autour d'un mot (jetons longs masqués) : montre comment le lecteur
+  // obtient l'autorisation de lecture demandée par l'API (« grant_required »).
+  const excerpt = (text, index, length) => String(text).slice(Math.max(0, index - 220), index + length + 260)
+    .replace(/eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g, '[jeton]').replace(/[A-Za-z0-9+/=_-]{60,}/g, '…').replace(/\s+/g, ' ');
   const scan = (text, where) => {
-    for (const match of String(text).matchAll(/["'`](\/api\/[A-Za-z0-9_\-/${}.:]{2,120})["'`]/g)) note(match[1], where);
-    for (const match of String(text).matchAll(/functions\/v1\/[A-Za-z0-9_-]{2,60}/g)) note(match[0], where);
-    for (const match of String(text).matchAll(/["'`](x-[a-z0-9-]{3,40})["'`]\s*:/gi)) note('en-tête ' + match[1].toLowerCase(), where);
-    for (const match of String(text).matchAll(/https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_\-/]*(?:stream|hls|m3u8|proxy)[A-Za-z0-9_\-/.]*/gi)) note(match[0], where);
+    const body = String(text);
+    for (const match of body.matchAll(/["'`](\/api\/[A-Za-z0-9_\-/${}.:]{2,120})["'`]/g)) note(match[1], where);
+    for (const match of body.matchAll(/["'`](\/api\/?)["'`]\s*\+/g)) note(match[1] + '+…', where);
+    for (const match of body.matchAll(/functions\/v1\/[A-Za-z0-9_-]{2,60}/g)) note(match[0], where);
+    for (const match of body.matchAll(/["'`](x-[a-z0-9-]{3,40})["'`]\s*:/gi)) note('en-tête ' + match[1].toLowerCase(), where);
+    for (const match of body.matchAll(/https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_\-/]*(?:stream|hls|m3u8|proxy|grant)[A-Za-z0-9_\-/.]*/gi)) note(match[0], where);
+    for (const match of body.matchAll(/\.rpc\(\s*["'`]([A-Za-z0-9_]{2,80})["'`]/g)) calls.rpc.add(match[1]);
+    for (const match of body.matchAll(/functions\.invoke\(\s*["'`]([A-Za-z0-9_-]{2,80})["'`]/g)) calls.functions.add(match[1]);
+    for (const match of body.matchAll(/\.from\(\s*["'`]([A-Za-z0-9_]{2,60})["'`]\s*\)/g)) calls.tables.add(match[1]);
+    for (const match of body.matchAll(/grant/gi)) if (contexts.grant.size < 14) contexts.grant.add(excerpt(body, match.index, 5));
+    for (const match of body.matchAll(/\/stream\b|stream\/["'`$]/g)) if (contexts.stream.size < 8) contexts.stream.add(excerpt(body, match.index, 7));
   };
   const read = async (url, accept) => {
     const response = await fetchTvRemote(url, { signal: AbortSignal.timeout(15_000), headers: { accept, 'user-agent': liveWatchBrowserAgent, referer: `${liveWatchOrigin}/` } });
     return { response, text: response.ok ? (await response.text()).slice(0, 6 * 1024 * 1024) : '' };
   };
-  const scripts = [];
+  const scripts = new Set();
+  const add = (value, base) => {
+    try { const url = new URL(value, base); if (isLiveWatchFamilyHost(url.hostname) && /\.m?js(?:$|\?)/i.test(url.pathname + url.search)) scripts.add(url.toString()); } catch {}
+  };
   try {
     const { response, text } = await read(playerUrl, 'text/html,*/*;q=0.5');
     if (!response.ok) errors.push(`lecteur : HTTP ${response.status}`);
     scan(text, 'page');
-    for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
-      try { const url = new URL(match[1], response.url || playerUrl); if (isLiveWatchFamilyHost(url.hostname)) scripts.push(url.toString()); } catch {}
-    }
-    for (const match of text.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.js)["']/gi)) {
-      try { const url = new URL(match[1], response.url || playerUrl); if (isLiveWatchFamilyHost(url.hostname)) scripts.push(url.toString()); } catch {}
-    }
+    for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) add(match[1], response.url || playerUrl);
+    for (const match of text.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.m?js)["']/gi)) add(match[1], response.url || playerUrl);
   } catch (error) {
     errors.push(`lecteur : ${cleanError(error)}`);
   }
-  await Promise.all([...new Set(scripts)].slice(0, 8).map(async scriptUrl => {
-    try { scan((await read(scriptUrl, 'application/javascript,*/*;q=0.5')).text, 'code'); }
-    catch (error) { errors.push(`script : ${cleanError(error)}`); }
-  }));
+  // Script principal, puis les morceaux chargés à la demande (le lecteur est souvent l'un d'eux).
+  const done = new Set();
+  for (let round = 0; round < 3; round += 1) {
+    const batch = [...scripts].filter(url => !done.has(url)).slice(0, 40);
+    if (!batch.length) break;
+    for (let index = 0; index < batch.length; index += 6) {
+      await Promise.all(batch.slice(index, index + 6).map(async scriptUrl => {
+        done.add(scriptUrl);
+        try {
+          const { text } = await read(scriptUrl, 'application/javascript,*/*;q=0.5');
+          scan(text, round ? 'morceau' : 'code');
+          // « assets/x.js » (préchargement Vite) part de la racine du site, « ./x.js » du script.
+          for (const match of text.matchAll(/["'`]((?:\.{0,2}\/)?(?:assets\/)?[A-Za-z0-9._-]+\.js)["'`]/g)) add(match[1], match[1].startsWith('assets/') ? `${liveWatchOrigin}/` : scriptUrl);
+        } catch (error) { errors.push(`script : ${cleanError(error)}`); }
+      }));
+    }
+  }
   return {
-    scripts: [...new Set(scripts)].length,
+    scripts: done.size,
     endpoints: [...found.entries()].map(([value, where]) => ({ value, where: [...where] }))
-      .sort((a, b) => Number(/stream|hls|vip/i.test(b.value)) - Number(/stream|hls|vip/i.test(a.value))).slice(0, 40),
-    errors
+      .sort((a, b) => Number(/grant|stream|hls|vip/i.test(b.value)) - Number(/grant|stream|hls|vip/i.test(a.value))).slice(0, 50),
+    rpc: [...calls.rpc].slice(0, 40),
+    functions: [...calls.functions].slice(0, 40),
+    tables: [...calls.tables].slice(0, 40),
+    grant: [...contexts.grant],
+    stream: [...contexts.stream],
+    errors: errors.slice(0, 10)
   };
 }
 
@@ -13294,12 +13324,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.140', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.141', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.140',
+        version: '200.0.141',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

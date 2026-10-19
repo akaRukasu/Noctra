@@ -60,3 +60,8 @@ console.log('Diagnostic LiveWatch VIP vérifié.');
 assert.match(server, /async function liveWatchPlayerApiHints\(kindValue, idValue\)/);
 assert.match(server, /'cf-mitigated', 'www-authenticate'/);
 console.log('Diagnostic LiveWatch VIP détaillé vérifié.');
+
+// Diagnostic : autorisation de lecture LiveWatch (grant_required) recherchée dans les morceaux du lecteur.
+assert.match(server, /rpc: \[\.\.\.calls\.rpc\]/);
+assert.match(server, /grant: \[\.\.\.contexts\.grant\]/);
+console.log('Diagnostic de l’autorisation de lecture LiveWatch vérifié.');

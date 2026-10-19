@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.140 — serveur des applications
+# Version actuelle : 200.0.141 — diagnostic de l'autorisation de lecture LiveWatch
+
+LiveWatch refuse le flux VIP avec « grant_required » (autorisation de lecture requise) : le diagnostic suit maintenant les morceaux du lecteur officiel et relève comment il obtient cette autorisation (appels rpc, fonctions, adresses, extraits de code). Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
+
+# Historique : 200.0.140 — serveur des applications
 
 `production` 200.0.137 et les fonctions serveur des applications iPhone, Android et Noctra TV réunies : stockage de la seedbox, déplacements, destinations des demandes, variantes et diagnostic LiveWatch VIP, multiview piloté. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
 

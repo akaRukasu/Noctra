@@ -16,3 +16,6 @@ Cette version réunit la branche `production` (jusqu'à 200.0.137 : LiveWatch su
 Comme d'habitude : `noctra-update noctra-media-client-v200.0.140.zip` (le `.env` et `runtime/` sont conservés, retour arrière automatique en cas d'échec). Vérification : `/health` répond `"version": "200.0.140"`.
 
 Attention : le déploiement automatique installe chaque nouveau commit de la branche `production`. Tant que cette version n'est pas publiée sur `production`, un prochain commit sur `production` la remplacerait.
+
+## 200.0.141
+LiveWatch répond `403 {"code":"grant_required"}` : une autorisation de lecture est demandée avant le flux VIP. Le diagnostic (`/api/tv/livewatch/diagnostics?ref=…`) suit les morceaux du lecteur officiel chargés à la demande et rapporte les appels `rpc`, `functions.invoke`, tables, adresses d'API et extraits de code autour de « grant » et « stream ».
