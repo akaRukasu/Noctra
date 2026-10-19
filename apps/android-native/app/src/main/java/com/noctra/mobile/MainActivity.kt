@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.noctra.mobile.cast.ChromecastController
@@ -198,7 +199,7 @@ private fun MainTabs() {
                 AppTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = tab == selected, onClick = { select(tab) },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) }, label = { Text(tab.label, fontSize = 10.sp, maxLines = 1) },
+                        icon = { Icon(tab.icon, contentDescription = tab.label) }, label = { Text(tab.label, fontSize = 11.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible) }, alwaysShowLabel = true,
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = Theme.onAccent, indicatorColor = Theme.lilac, selectedTextColor = Theme.lilac, unselectedIconColor = Theme.muted, unselectedTextColor = Theme.muted)
                     )
                 }

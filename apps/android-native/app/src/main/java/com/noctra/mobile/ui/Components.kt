@@ -293,8 +293,9 @@ fun SettingRow(title: String, modifier: Modifier = Modifier, value: String? = nu
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         if (icon != null) Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        // Le titre garde au moins la moitié de la ligne ; une valeur longue (adresse) est coupée.
         Text(title, color = Theme.ink, modifier = Modifier.weight(1f))
-        if (value != null) Text(value, color = Theme.muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (value != null) Text(value, color = Theme.muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.weight(1f, fill = false))
         trailing?.invoke()
     }
 }
@@ -307,6 +308,22 @@ fun SettingGroup(header: String? = null, footer: String? = null, modifier: Modif
         Column(Modifier.fillMaxWidth().auroraPanel(18.dp)) { content() }
         if (footer != null) Text(footer, color = Theme.muted, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp, top = 6.dp, end = 6.dp))
     }
+}
+
+/**
+ * Tirer vers le bas pour actualiser (geste d'Android) : l'indicateur n'apparaît que pour ce
+ * geste, jamais pendant les chargements automatiques ou la page suivante.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RefreshBox(onRefresh: suspend () -> Unit, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    val scope = rememberCoroutineScope()
+    var pulled by remember { mutableStateOf(false) }
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = pulled,
+        onRefresh = { pulled = true; scope.launch { try { onRefresh() } finally { pulled = false } } },
+        modifier = modifier, content = content
+    )
 }
 
 /** Feuille du bas (comme les feuilles d'iOS) : grande, fond de nuit. */

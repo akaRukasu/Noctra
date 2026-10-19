@@ -122,7 +122,7 @@ fun TopBar(title: String, modifier: Modifier = Modifier, large: Boolean = false,
             Spacer(Modifier.width(8.dp))
         }
         if (large) {
-            Text(title, style = Theme.display(32), color = Theme.ink, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            Text(title, style = Theme.display(28), color = Theme.ink, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
         }
     }
 }

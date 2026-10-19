@@ -153,7 +153,9 @@ struct HomeView: View {
                 hero = Array(resumed.prefix(10))
                 heroIsResume = true
             } else {
-                hero = Array((newest ?? []).filter { $0.backdropImageTags?.isEmpty == false }.prefix(8))
+                let fresh = newest ?? []
+                let withArt = fresh.filter { $0.backdropImageTags?.isEmpty == false }
+                hero = Array((withArt.isEmpty ? fresh : withArt).prefix(8))
                 heroIsResume = false
             }
         }
@@ -181,6 +183,15 @@ struct HomeView: View {
             }
         }
         latest = rows
+        // Pas de reprise ni de nouveautés globales : le carrousel prend les derniers ajouts des médiathèques.
+        if hero.isEmpty {
+            let pool = rows.flatMap { $0.items }.filter { $0.type == "Movie" || $0.type == "Series" }
+            let withArt = pool.filter { $0.backdropImageTags?.isEmpty == false }
+            withAnimation(Theme.spring) {
+                hero = Array((withArt.isEmpty ? pool : withArt).prefix(8))
+                heroIsResume = false
+            }
+        }
         failure = (views == nil && newest == nil) ? NoctraError.unreachable.localizedDescription : nil
     }
 

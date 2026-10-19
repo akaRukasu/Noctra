@@ -1,5 +1,7 @@
 package com.noctra.mobile.ui
 
+import androidx.compose.ui.text.style.TextOverflow
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -104,7 +106,7 @@ fun LibrariesScreen() {
         AuroraBackground()
         Column(Modifier.fillMaxSize()) {
             TopBar("Médiathèques", large = true) { AccountButton() }
-            PullToRefreshBox(isRefreshing = model.loading && model.libraries.isNotEmpty(), onRefresh = { scope.launch { model.load() } }, modifier = Modifier.weight(1f)) {
+            RefreshBox(onRefresh = { model.load() }, modifier = Modifier.weight(1f)) {
                 LazyVerticalGrid(GridCells.Adaptive(300.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     item(span = { GridItemSpan(maxLineSpan) }) { OfflineTile { push { OfflineLibraryScreen() } } }
                     items(model.libraries, key = { it.id }) { library ->
@@ -286,7 +288,7 @@ fun SearchScreen() {
 fun SearchField(value: String, placeholder: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
     TextField(
         value = value, onValueChange = onChange, singleLine = true,
-        placeholder = { Text(placeholder, color = Theme.muted) },
+        placeholder = { Text(placeholder, color = Theme.muted, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Theme.accent) },
         trailingIcon = { if (value.isNotEmpty()) IconButton(onClick = { onChange("") }) { Icon(Icons.Filled.Close, contentDescription = "Effacer", tint = Theme.muted) } },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),

@@ -29,6 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -135,7 +138,13 @@ fun NoctraTheme(content: @Composable () -> Unit) {
         headlineSmall = base.headlineSmall.copy(fontFamily = Theme.sora, fontWeight = FontWeight.Bold),
         titleLarge = base.titleLarge.copy(fontFamily = Theme.sora, fontWeight = FontWeight.SemiBold)
     )
-    MaterialTheme(colorScheme = colors, typography = typography, content = content)
+    // Grande taille de police d'Android : texte agrandi jusqu'à 115 % (au-delà, onglets,
+    // pastilles et lignes se coupent). Écrans et images suivent la taille d'affichage.
+    val density = LocalDensity.current
+    val scaled = Density(density.density, density.fontScale.coerceIn(0.85f, 1.15f))
+    CompositionLocalProvider(LocalDensity provides scaled) {
+        MaterialTheme(colorScheme = colors, typography = typography, content = content)
+    }
 }
 
 // MARK: Fond « aurore »

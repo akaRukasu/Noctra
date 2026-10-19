@@ -59,6 +59,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -96,6 +97,7 @@ import com.noctra.mobile.ui.LoadingView
 import com.noctra.mobile.ui.MessageView
 import com.noctra.mobile.ui.NoctraSheet
 import com.noctra.mobile.ui.Notices
+import com.noctra.mobile.ui.RefreshBox
 import com.noctra.mobile.ui.RemoteImage
 import com.noctra.mobile.ui.SearchField
 import com.noctra.mobile.ui.SectionTitle
@@ -164,12 +166,12 @@ fun LiveTVHome() {
                 }
                 return@Column
             }
-            PullToRefreshBox(isRefreshing = store.loading && store.channels.isNotEmpty(), onRefresh = { scope.launch { runCatching { store.loadAll(force = true) } } }, modifier = Modifier.weight(1f)) {
+            RefreshBox(onRefresh = { runCatching { store.loadAll(force = true) } }, modifier = Modifier.weight(1f)) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(if (state.tab == LiveTab.sources) 160.dp else 104.dp),
+                    columns = GridCells.Adaptive(if (state.tab == LiveTab.sources) 150.dp else 96.dp),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 30.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 30.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     item(span = full) {
@@ -190,7 +192,15 @@ fun LiveTVHome() {
                         }
                         else -> {
                             if (state.tab == LiveTab.all && store.categories.isNotEmpty()) item(span = full) { CategoryChips(store.categories, state.category) { state.category = it } }
-                            if (store.loading) item(span = full) { LoadingLine("Chargement des chaînes… ${store.loadedSources}/${maxOf(store.sources.size, 1)} sources") }
+                            if (store.loading) item(span = full) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Chargement des chaînes · ${store.loadedSources}/${maxOf(store.sources.size, 1)} sources", color = Theme.muted, fontSize = 13.sp)
+                                    LinearProgressIndicator(
+                                        progress = { (store.loadedSources.toFloat() / maxOf(store.sources.size, 1)).coerceIn(0.05f, 1f) },
+                                        color = Theme.teal, trackColor = Color.White.copy(alpha = 0.12f), modifier = Modifier.fillMaxWidth().clip(CircleShape)
+                                    )
+                                }
+                            }
                             items(shown) { channel -> ChannelTile(channel, shown) }
                             if (!store.loading && shown.isEmpty()) item(span = full) {
                                 MessageView(
@@ -246,16 +256,17 @@ private fun CountryMenu(changed: () -> Unit) {
 @Composable
 private fun TabStrip(selected: LiveTab, select: (LiveTab) -> Unit) {
     val haptics = LocalHapticFeedback.current
-    Row(Modifier.fillMaxWidth().glass(CircleShape, Color(0x991A1D33)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    // Onglets à leur taille, défilants : jamais coupés, même avec une grande police.
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         LiveTab.entries.forEach { tab ->
             val active = tab == selected
-            Box(
-                Modifier.weight(1f).clip(CircleShape).background(if (active) Theme.teal.copy(alpha = 0.85f) else Color.Transparent)
-                    .focusRing(CircleShape).clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); select(tab) }.padding(vertical = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(tab.label, color = if (active) Theme.onAccent else Theme.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Text(
+                tab.label, color = if (active) Theme.onAccent else Theme.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false,
+                modifier = Modifier.clip(CircleShape).background(if (active) Theme.teal.copy(alpha = 0.9f) else Color(0x991A1D33))
+                    .border(1.dp, if (active) Color.Transparent else Color(0x1F99F6E4), CircleShape)
+                    .focusRing(CircleShape).clickable { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); select(tab) }
+                    .padding(horizontal = 16.dp, vertical = 9.dp)
+            )
         }
     }
 }
@@ -271,11 +282,14 @@ private fun AccessBar() {
     )
     if (access.isEmpty()) return
     Row(
-        Modifier.glass(CircleShape, Color(0x40F59E0B)).padding(horizontal = 14.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp), Color(0x40F59E0B)).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Icon(Icons.Filled.Star, contentDescription = null, tint = Theme.gold, modifier = Modifier.size(16.dp))
-        Text("Accès VIP : " + access.joinToString(" · ") + " · serveurs proposés en premier", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text("Accès VIP : " + access.joinToString(" · "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("Serveurs proposés en premier", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+        }
     }
 }
 

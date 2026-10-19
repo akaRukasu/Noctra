@@ -102,6 +102,7 @@ import com.noctra.mobile.ui.AuroraSecondaryButton
 import com.noctra.mobile.ui.LoadingView
 import com.noctra.mobile.ui.MessageView
 import com.noctra.mobile.ui.NoctraSheet
+import com.noctra.mobile.ui.RefreshBox
 import com.noctra.mobile.ui.RemoteImage
 import com.noctra.mobile.ui.SearchField
 import com.noctra.mobile.ui.SectionTitle
@@ -314,7 +315,7 @@ private fun DiscoverView() {
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<SeerrItem?>(null) }
     LaunchedEffect(Unit) { if (model.items.isEmpty()) model.load() }
-    PullToRefreshBox(isRefreshing = model.busy && model.items.isNotEmpty(), onRefresh = { model.reset(); scope.launch { model.load() } }, modifier = Modifier.fillMaxSize()) {
+    RefreshBox(onRefresh = { model.reset(); model.load() }, modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             GridCells.Adaptive(108.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 30.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -408,7 +409,7 @@ private fun RequestsView() {
         model.results = json?.maps("results")?.mapNotNull { SeerrItem.from(it) } ?: emptyList()
         model.searching = false
     }
-    PullToRefreshBox(isRefreshing = false, onRefresh = { scope.launch { model.loadMine() } }, modifier = Modifier.fillMaxSize()) {
+    RefreshBox(onRefresh = { model.loadMine() }, modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             GridCells.Adaptive(108.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 30.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)

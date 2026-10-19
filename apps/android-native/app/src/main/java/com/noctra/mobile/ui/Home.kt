@@ -117,7 +117,8 @@ class HomeModel {
             hero = resumed.take(10)
             heroIsResume = true
         } else {
-            hero = (newest ?: emptyList()).filter { it.backdropImageTags.isNotEmpty() }.take(8)
+            val fresh = newest ?: emptyList()
+            hero = fresh.filter { it.backdropImageTags.isNotEmpty() }.ifEmpty { fresh }.take(8)
             heroIsResume = false
         }
         val viewItems = views ?: emptyList()
@@ -133,6 +134,12 @@ class HomeModel {
                 library to items
             }
         }.awaitAll().filter { it.second.isNotEmpty() }
+        // Pas de reprise ni de nouveautés globales : le carrousel prend les derniers ajouts des médiathèques.
+        if (hero.isEmpty()) {
+            val pool = latest.flatMap { it.second }.filter { it.type == "Movie" || it.type == "Series" }
+            hero = pool.filter { it.backdropImageTags.isNotEmpty() }.ifEmpty { pool }.take(8)
+            heroIsResume = false
+        }
         failure = if (views == null && newest == null) NoctraException.unreachable.message else null
         loading = false
         loaded = true
@@ -173,7 +180,7 @@ fun HomeScreen() {
     LaunchedEffect(PlaybackManager.endedCount) { if (PlaybackManager.endedCount > 0) model.load() }
     Box(Modifier.fillMaxSize()) {
         AuroraBackground()
-        PullToRefreshBox(isRefreshing = model.loading && model.loaded, onRefresh = { scope.launch { model.load() } }, modifier = Modifier.fillMaxSize()) {
+        RefreshBox(onRefresh = { model.load() }, modifier = Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
                 item {
                     Column(Modifier.statusBarsPadding()) {
