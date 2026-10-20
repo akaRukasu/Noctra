@@ -409,5 +409,7 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(player, /player\.allowsExternalPlayback = !ExternalDisplay\.shared\.connected/, 'recopie : vidéo lue ici, pas envoyée à part');
   assert.match(player, /\.prefix\(casting \? 6 : 36\)/, 'diffusion : peu de tests de serveurs en arrière-plan');
   assert.match(player, /if self\.casting \{ continue \}/);
+  assert.match(player, /"relay": true\]/, 'AirPlay : relais du serveur d’abord');
+  assert.match(player, /func close\(\) \{\n\s*stopRelay\(\)/);
   console.log('Appli iOS native 2.17.3 : vérifiée.');
 }

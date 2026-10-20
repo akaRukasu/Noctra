@@ -13440,12 +13440,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.145', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.146', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.145',
+        version: '200.0.146',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -13532,7 +13532,8 @@ const server = createServer(async (req, res) => {
     if (path === '/api/tv/mosaic' && req.method === 'POST') {
       const body = await readJsonBody(req, 64 * 1024);
       const requestOrigin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-      const tiles = (Array.isArray(body.tiles) ? body.tiles : []).slice(0, 9);
+      const relay = body.relay === true;
+      const tiles = (Array.isArray(body.tiles) ? body.tiles : []).slice(0, relay ? 1 : 9);
       // Chaque chaîne est lue par ffmpeg à travers le relais Noctra local, avec un droit de lecture TV.
       const inputs = tiles.map(tile => {
         const target = new URL(String(tile?.url || ''), requestOrigin);
@@ -13552,13 +13553,15 @@ const server = createServer(async (req, res) => {
       });
       try {
         const mosaic = await tvMosaic.start({
-          owner: session.id || session.token,
+          // Relais d'une chaîne (AirPlay, Chromecast) : à part du multiview diffusé du même compte.
+          owner: `${session.id || session.token}${relay ? ':relais' : ''}`,
+          relay,
           id: String(body.id || ''),
           inputs,
           names: tiles.map(tile => tile?.name),
           audio: Number(body.audio) || 0,
           featured: Number.isInteger(body.featured) ? body.featured : -1,
-          wait: body.wait === false ? 0 : 25_000
+          wait: body.wait === false ? 0 : (relay ? 35_000 : 25_000)
         });
         const cast = tvCastAccess.issue({ token: session.token, path: publicPath(mosaic.playlist), origin: requestOrigin });
         return json(res, 200, { ...mosaic, playlist: publicPath(mosaic.playlist), cast: cast.url, expiresAt: cast.expiresAt });
@@ -13570,7 +13573,8 @@ const server = createServer(async (req, res) => {
     {
       const mosaicMatch = path.match(/^\/api\/tv\/mosaic\/([a-f0-9]{24})(?:\/([^/]+))?$/);
       if (mosaicMatch && !mosaicMatch[2] && req.method === 'DELETE') {
-        return json(res, 200, { stopped: tvMosaic.stop(mosaicMatch[1], session.id || session.token) });
+        const owner = session.id || session.token;
+        return json(res, 200, { stopped: tvMosaic.stop(mosaicMatch[1], owner) || tvMosaic.stop(mosaicMatch[1], `${owner}:relais`) });
       }
       if (mosaicMatch && !mosaicMatch[2] && req.method === 'GET') {
         const mosaic = tvMosaic.get(mosaicMatch[1]);

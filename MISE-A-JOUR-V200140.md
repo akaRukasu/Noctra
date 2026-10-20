@@ -32,3 +32,6 @@ Multiview diffusé sur n'importe quel appareil : `POST /api/tv/mosaic` (`tiles` 
 ## 200.0.145
 Listes HLS servies avec un droit de diffusion (Chromecast, AirPlay, multiview composé) : `#EXT-X-START:TIME-OFFSET=-18,PRECISE=NO` ajouté aux listes de direct assez longues (ni VOD, ni liste principale, ni liste déjà réglée). Les récepteurs démarraient sur le dernier segment, sans réserve : saccades d'image et de son dès qu'un segment arrivait en retard.
 
+## 200.0.146
+`POST /api/tv/mosaic` avec `relay: true` et une seule chaîne : relais pour un téléviseur. ffmpeg lit la chaîne à travers le relais Noctra local (route stable LiveWatch qui renouvelle ses liens) et la copie sans réencodage (`-c copy`) en HLS local de 10 segments ; la réponse n'arrive qu'avec 3 segments prêts (réserve). Relancé jusqu'à 20 fois en 10 minutes tant que le téléviseur lit, à part du multiview diffusé du même compte. L'appli iOS 2.17.6 l'utilise pour AirPlay (sinon droit de lecture TV comme avant).
+

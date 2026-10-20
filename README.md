@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.145 — diffusion plus fluide
+# Version actuelle : 200.0.146 — relais des chaînes diffusées en AirPlay
+
+Une chaîne envoyée en AirPlay passe par un relais du serveur : ffmpeg copie le flux (sans réencodage) dans une liste locale avec une réserve de segments et se reconnecte seul quand le lien de la source expire. Le téléviseur ne lit que des fichiers déjà prêts : plus de « mise en mémoire tampon » à chaque segment, plus de « vidéo inaccessible ». Validation : `npm run test:v200146`.
+
+# Historique : 200.0.145 — diffusion plus fluide
 
 Une chaîne diffusée (Chromecast, AirPlay) démarre ~18 s avant le bord du direct au lieu du dernier segment : le téléviseur garde une réserve et l'image comme le son ne saccadent plus à chaque segment un peu lent. Validation : `npm run test:v200145`.
 

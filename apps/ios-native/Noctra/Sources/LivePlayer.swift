@@ -84,6 +84,7 @@ final class LivePlayerModel {
         let active = Self.airPlayRoute()
         guard active != airPlay else { return }
         airPlay = active
+        if !active { stopRelay() }
         guard presented, let server = current else { return }
         if active, server.kind == .web, let native = nextNative(after: server) { play(native, note: "AirPlay : passage à un flux direct…"); return }
         if server.kind == .native { play(server, note: active ? "Envoi en AirPlay…" : "Retour sur l’iPhone…") }
@@ -108,12 +109,30 @@ final class LivePlayerModel {
             ?? servers.first { $0.id != server.id && $0.kind == .native && $0.streamURL != nil && ![.down, .noVideo, .stale].contains($0.probe) }
     }
 
-    /// Adresse lisible par le téléviseur AirPlay sans le jeton du compte : droit de lecture TV du
-    /// serveur Noctra (comme pour le Chromecast) ; flux MPEG-TS converti en HLS par le serveur (ffmpeg).
+    /// Relais de la chaîne en cours sur le serveur (diffusion AirPlay), arrêté à la fin.
+    @ObservationIgnored private var relayID: String?
+
+    private func stopRelay() {
+        guard let id = relayID, let session else { return }
+        relayID = nil
+        Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(id)", json: nil, timeout: 10) }
+    }
+
+    /// Adresse lisible par le téléviseur AirPlay sans le jeton du compte. D'abord le relais du serveur
+    /// (flux copié par ffmpeg avec une réserve de segments : lecture fluide, lien qui n'expire pas) ;
+    /// sinon le droit de lecture TV (comme le Chromecast) ; MPEG-TS converti en HLS par le serveur.
     private func airPlayAddress(_ server: LiveServer, session: Session) async -> URL? {
         guard let stream = server.streamURL else { return nil }
         let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
         let address = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (parts?.percentEncodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+        let relay: [String: Any] = ["tiles": [["url": address, "headers": server.headers, "name": channel?.name ?? ""]], "relay": true]
+        if let json = try? await session.noctraSend("POST", "/api/tv/mosaic", json: relay, timeout: 45) as? [String: Any],
+           json["ready"] as? Bool == true, let id = json["id"] as? String,
+           let path = json["cast"] as? String, let url = session.noctraURL(path) {
+            if let old = relayID, old != id { Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(old)", json: nil, timeout: 10) } }
+            relayID = id
+            return url
+        }
         if !server.mpegts,
            let json = try? await session.noctraSend("POST", "/api/tv/cast", json: ["url": address, "headers": server.headers], timeout: 20) as? [String: Any],
            let path = json["url"] as? String, let url = session.noctraURL(path) {
@@ -624,6 +643,7 @@ final class LivePlayerModel {
     }
 
     func close() {
+        stopRelay()
         refresh?.cancel()
         finishMeasure()
         generation += 1
