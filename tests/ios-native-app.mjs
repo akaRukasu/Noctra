@@ -406,5 +406,6 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
   assert.match(player, /let useWeb = !airPlay && !ExternalDisplay\.shared\.connected && \(server\.mpegts/);
   assert.match(player, /func externalScreenChanged\(\)/);
+  assert.match(player, /player\.allowsExternalPlayback = !ExternalDisplay\.shared\.connected/, 'recopie : vidéo lue ici, pas envoyée à part');
   console.log('Appli iOS native 2.17.3 : vérifiée.');
 }

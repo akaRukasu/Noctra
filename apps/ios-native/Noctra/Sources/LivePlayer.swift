@@ -92,6 +92,9 @@ final class LivePlayerModel {
     /// Écran externe branché ou retiré (recopie AirPlay, HDMI) : seul le lecteur d'Apple s'affiche en
     /// plein écran sur le téléviseur ; une chaîne lue par le moteur web repart avec lui.
     func externalScreenChanged() {
+        // Écran recopié : la vidéo est lue ici et affichée sur l'écran du téléviseur. L'envoi du flux à
+        // part (lecture AirPlay) la retirerait des deux écrans si le récepteur ne lit pas les directs.
+        player.allowsExternalPlayback = !ExternalDisplay.shared.connected
         guard presented, let server = current, server.kind == .native else { return }
         if ExternalDisplay.shared.connected, engineMode { play(server, note: "Affichage sur le téléviseur…") }
     }
