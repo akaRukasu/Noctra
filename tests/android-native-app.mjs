@@ -192,3 +192,11 @@ console.log('Appli Android native 1.8.1 : vérifiée.');
 assert.match(await src('cast/Chromecast'), /private suspend fun castLiveStream\(/);
 assert.match(await src('cast/Chromecast'), /LiveServerFactory\.probe\(server\)\.state in failing/);
 console.log('Appli Android native 1.8.2 : vérifiée.');
+// 1.8.3 : attente de la diffusion centrée, serveurs homonymes numérotés, historique LiveWatch d'avant 200.0.143 effacé.
+assert.match(await src('ui/Components'), /fun BusyRow\(text: String/);
+assert.match(await src('cast/RemotePlayback'), /BusyRow\("Préparation de la diffusion…"\)/);
+assert.match(await src('live/Multiview'), /BusyRow\("Envoi au téléviseur…"\)/);
+assert.match(await src('live/LiveServers'), /fun uniqueLabels\(servers: List<LiveServer>\): List<LiveServer>/);
+assert.match(await src('live/LiveStore'), /LiveServerFactory\.uniqueLabels\(expanded\)/);
+assert.match(await src('live/LiveServers'), /noctra\.tv\.health\.livewatch-reset\.143/);
+console.log('Appli Android native 1.8.3 : vérifiée.');

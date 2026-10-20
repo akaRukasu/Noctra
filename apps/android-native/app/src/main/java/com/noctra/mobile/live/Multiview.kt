@@ -80,6 +80,7 @@ import com.noctra.mobile.cast.RemotePlayback
 import com.noctra.mobile.core.Net
 import com.noctra.mobile.core.Session
 import com.noctra.mobile.play.ImmersiveEffect
+import com.noctra.mobile.ui.BusyRow
 import com.noctra.mobile.ui.NoctraSheet
 import com.noctra.mobile.ui.SearchField
 import com.noctra.mobile.ui.SettingGroup
@@ -543,7 +544,7 @@ fun MultiviewCastSheet(channels: List<LiveChannel>, onDismiss: () -> Unit) {
                     }))
                 }
             }
-            if (busy) CircularProgressIndicator(modifier = Modifier.padding(24.dp), color = Theme.accent)
+            if (busy) BusyRow("Envoi au téléviseur…")
             error?.let { Text(it, color = Theme.orange, modifier = Modifier.padding(24.dp)) }
         }
     }

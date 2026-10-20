@@ -135,6 +135,7 @@ final class LivePlayerModel {
                     servers[index].probe = .down
                 } else {
                     servers.replaceSubrange(index...index, with: LiveHealth.rank(LiveHealth.withCachedProbes(found, channel: token), channel: token))
+                    servers = LiveServerFactory.uniqueLabels(servers)
                     probeAll()
                 }
             }
@@ -215,9 +216,10 @@ final class LivePlayerModel {
                 let found = LiveHealth.rank(await LiveServerFactory.resolve(server, session: session, timeout: server.vip ? 110 : 45), channel: channel.id)
                 guard token == generation else { return }
                 if let index = servers.firstIndex(where: { $0.id == server.id }) { servers.replaceSubrange(index...index, with: found) }
+                servers = LiveServerFactory.uniqueLabels(servers)
                 probeAll()
                 if let first = found.first(where: { !$0.manualOnly }) {
-                    play(first)
+                    play(servers.first { $0.id == first.id } ?? first)
                 } else {
                     fail(server, message: "\(server.label) n’a proposé aucun serveur : serveur suivant…")
                 }

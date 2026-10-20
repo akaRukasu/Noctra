@@ -351,3 +351,11 @@ console.log('Appli iOS native 2.16.1 : vérifiée.');
 assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /private func castLiveStream\(/);
 assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /let probe = await LiveServerFactory\.probe\(server, session: session\)/);
 console.log('Appli iOS native 2.16.2 : vérifiée.');
+// 2.16.3 : attente de la diffusion centrée, serveurs homonymes numérotés, historique LiveWatch d'avant 200.0.143 effacé.
+assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /struct BusyRow: View/);
+assert.match(await read('apps/ios-native/Noctra/Sources/RemotePlayback.swift'), /BusyRow\("Préparation de la diffusion…"\)/);
+assert.match(await read('apps/ios-native/Noctra/Sources/Multiview.swift'), /BusyRow\("Envoi au téléviseur…"\)/);
+assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /static func uniqueLabels\(_ servers: \[LiveServer\]\) -> \[LiveServer\]/);
+assert.match(await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift'), /LiveServerFactory\.uniqueLabels\(expanded\)/);
+assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /noctra\.tv\.health\.livewatch-reset\.143/);
+console.log('Appli iOS native 2.16.3 : vérifiée.');

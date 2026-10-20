@@ -512,7 +512,7 @@ struct MultiviewCastSheet: View {
                 } footer: {
                     Text("Le téléviseur affiche les \(channels.count) chaînes. Depuis l’iPhone : ajouter ou retirer une chaîne, en mettre une en avant et n’écouter qu’elle. Chromecast ne lit qu’une chaîne à la fois.")
                 }
-                if busy { ProgressView("Envoi au téléviseur…") }
+                if busy { BusyRow("Envoi au téléviseur…") }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
             .disabled(busy)

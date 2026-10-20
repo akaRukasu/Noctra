@@ -88,11 +88,22 @@ enum LiveHealth {
     private static let storeKey = "noctra.tv.health.v1"
     private static var cache: [String: [String: Double]]?
     private static let recent: TimeInterval = 20 * 60
+    private static let liveWatchResetKey = "noctra.tv.health.livewatch-reset.143"
 
     private static var store: [String: [String: Double]] {
         get {
             if let cache { return cache }
-            let loaded = UserDefaults.standard.dictionary(forKey: storeKey) as? [String: [String: Double]] ?? [:]
+            var loaded = UserDefaults.standard.dictionary(forKey: storeKey) as? [String: [String: Double]] ?? [:]
+            if !UserDefaults.standard.bool(forKey: liveWatchResetKey) {
+                // Flux VIP LiveWatch réparés côté serveur (200.0.143) : leurs échecs d'avant
+                // (« 0/18 réussites ») ne les classent plus en dernier.
+                loaded = loaded.filter { !($0.key.hasPrefix("f|LiveWatch|") || ($0.key.hasPrefix("c|") && $0.key.contains("VIP"))) }
+                UserDefaults.standard.set(loaded, forKey: storeKey)
+                var trust = UserDefaults.standard.dictionary(forKey: trustKey) as? [String: Double] ?? [:]
+                trust = trust.filter { !$0.key.hasPrefix("LiveWatch|") }
+                UserDefaults.standard.set(trust, forKey: trustKey)
+                UserDefaults.standard.set(true, forKey: liveWatchResetKey)
+            }
             cache = loaded
             return loaded
         }
@@ -384,6 +395,27 @@ enum LiveServerFactory {
             list.append(server)
         }
         return list
+    }
+
+    /// Noms identiques (plusieurs « BASIC », deux « Secours NorthTV · FHD ») numérotés : tests,
+    /// fiabilité et dernier serveur utilisé sont gardés par nom, chacun doit avoir le sien.
+    static func uniqueLabels(_ servers: [LiveServer]) -> [LiveServer] {
+        var taken = Set(servers.map(\.label))
+        var counts: [String: Int] = [:]
+        return servers.map { server in
+            counts[server.label, default: 0] += 1
+            guard var number = counts[server.label], number > 1 else { return server }
+            var label = numbered(server.label, number)
+            while taken.contains(label) { number += 1; label = numbered(server.label, number) }
+            taken.insert(label)
+            var copy = server
+            copy.label = label
+            return copy
+        }
+    }
+
+    private static func numbered(_ label: String, _ number: Int) -> String {
+        label.hasSuffix(" · VIP") ? String(label.dropLast(6)) + " \(number) · VIP" : label + " \(number)"
     }
 
     /// Sources LiveWatch à lecteur officiel (comme sur PC et Noctra TV).

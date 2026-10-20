@@ -91,6 +91,7 @@ data class ProbeResult(val state: LiveServer.Probe, val ms: Double = 0.0, val ma
 object LiveHealth {
     private const val storeKey = "noctra.tv.health.v1"
     private const val recent = 20 * 60 * 1000L
+    private const val liveWatchResetKey = "noctra.tv.health.livewatch-reset.143"
     private var cache: MutableMap<String, MutableMap<String, Double>>? = null
 
     private fun store(): MutableMap<String, MutableMap<String, Double>> {
@@ -99,6 +100,15 @@ object LiveHealth {
         (Prefs.json(storeKey).asMap())?.forEach { (key, value) ->
             val entry = value.asMap() ?: return@forEach
             loaded[key] = entry.mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap().toMutableMap()
+        }
+        if (!Prefs.bool(liveWatchResetKey)) {
+            // Flux VIP LiveWatch réparés côté serveur (200.0.143) : leurs échecs d'avant
+            // (« 0/18 réussites ») ne les classent plus en dernier.
+            loaded.keys.removeAll { it.startsWith("f|LiveWatch|") || (it.startsWith("c|") && it.contains("VIP")) }
+            Prefs.setJson(storeKey, loaded)
+            val trust = (Prefs.json(trustKey).asMap() ?: emptyMap()).filterKeys { !it.startsWith("LiveWatch|") }
+            Prefs.setJson(trustKey, trust)
+            Prefs.set(liveWatchResetKey, true)
         }
         cache = loaded
         return loaded
@@ -274,6 +284,27 @@ object LiveHealth {
 // MARK: Serveurs d'une chaîne
 
 object LiveServerFactory {
+    /**
+     * Noms identiques (plusieurs « BASIC », deux « Secours NorthTV · FHD ») numérotés : tests,
+     * fiabilité et dernier serveur utilisé sont gardés par nom, chacun doit avoir le sien.
+     */
+    fun uniqueLabels(servers: List<LiveServer>): List<LiveServer> {
+        val taken = servers.map { it.label }.toMutableSet()
+        val counts = mutableMapOf<String, Int>()
+        return servers.map { server ->
+            var number = (counts[server.label] ?: 0) + 1
+            counts[server.label] = number
+            if (number == 1) return@map server
+            var label = numbered(server.label, number)
+            while (label in taken) { number += 1; label = numbered(server.label, number) }
+            taken += label
+            server.copy(label = label)
+        }
+    }
+
+    private fun numbered(label: String, number: Int) =
+        if (label.endsWith(" · VIP")) label.dropLast(6) + " $number · VIP" else "$label $number"
+
     /** Cadre des lecteurs des sites, réglé comme sur PC. */
     const val defaultSandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
     /** Lecteurs publiés qui refusent toute restriction de cadre (comme sur PC). */

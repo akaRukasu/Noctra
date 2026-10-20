@@ -388,7 +388,7 @@ final class LiveLauncher {
                 return streams.insert(stream).inserted
             }
         }
-        return LiveHealth.rank(LiveHealth.withCachedProbes(expanded, channel: channel.id), channel: channel.id)
+        return LiveHealth.rank(LiveHealth.withCachedProbes(LiveServerFactory.uniqueLabels(expanded), channel: channel.id), channel: channel.id)
     }
 
     func open(_ channel: LiveChannel, context: [LiveChannel] = [], session: Session) async {

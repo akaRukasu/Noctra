@@ -164,7 +164,7 @@ object LivePlayerModel {
                 val index = servers.indexOfFirst { it.id == server.id }
                 if (index < 0) return@launch
                 servers = if (found.isEmpty()) servers.map { if (it.id == server.id) it.copy(probe = LiveServer.Probe.down) else it }
-                else servers.toMutableList().apply { removeAt(index); addAll(index, LiveHealth.rank(LiveHealth.withCachedProbes(found, token), token)) }
+                else LiveServerFactory.uniqueLabels(servers.toMutableList().apply { removeAt(index); addAll(index, LiveHealth.rank(LiveHealth.withCachedProbes(found, token), token)) })
                 if (found.isNotEmpty()) probeAll()
             }
         }
@@ -236,9 +236,10 @@ object LivePlayerModel {
                     if (token != generation) return@launch
                     val index = servers.indexOfFirst { it.id == server.id }
                     if (index >= 0) servers = servers.toMutableList().apply { removeAt(index); addAll(index, found) }
+                    servers = LiveServerFactory.uniqueLabels(servers)
                     probeAll()
                     val first = found.firstOrNull { !it.manualOnly }
-                    if (first != null) play(first) else fail(server, "${server.label} n’a proposé aucun serveur : serveur suivant…")
+                    if (first != null) play(servers.firstOrNull { it.id == first.id } ?: first) else fail(server, "${server.label} n’a proposé aucun serveur : serveur suivant…")
                 }
             }
             LiveServer.Kind.web -> {

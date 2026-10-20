@@ -295,7 +295,7 @@ struct LiveCastSheet: View {
                     }
                 }
                 Section { HStack { Label("AirPlay", systemImage: "airplayvideo"); Spacer(); AirPlayButton().frame(width: 44, height: 44) } }
-                if busy { ProgressView("Préparation de la diffusion…") }
+                if busy { BusyRow("Préparation de la diffusion…") }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
             .disabled(busy)

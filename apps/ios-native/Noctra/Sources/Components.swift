@@ -303,6 +303,19 @@ struct LoadingView: View {
     }
 }
 
+/// Attente dans une liste (diffusion, envoi) : indicateur et texte centrés sur une ligne.
+struct BusyRow: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(text).foregroundStyle(Theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
 struct MessageView: View {
     let icon: String
     let text: String

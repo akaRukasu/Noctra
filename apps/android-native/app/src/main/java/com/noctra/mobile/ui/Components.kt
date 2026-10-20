@@ -278,6 +278,16 @@ fun LoadingView(modifier: Modifier = Modifier) {
     }
 }
 
+/** Attente dans une feuille (diffusion, envoi) : indicateur et texte centrés sur une ligne. */
+@Composable
+fun BusyRow(text: String, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(text, color = Theme.muted)
+    }
+}
+
 @Composable
 fun MessageView(icon: ImageVector, text: String, modifier: Modifier = Modifier, retry: (() -> Unit)? = null) {
     Column(modifier.fillMaxWidth().heightIn(min = 260.dp).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {

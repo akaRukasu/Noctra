@@ -230,7 +230,7 @@ fun LiveCastSheet(channel: LiveChannel, onDismiss: () -> Unit) {
                     }))
                 }
             }
-            if (busy) CircularProgressIndicator(modifier = Modifier.padding(24.dp), color = Theme.accent)
+            if (busy) BusyRow("Préparation de la diffusion…")
             error?.let { Text(it, color = Theme.orange, modifier = Modifier.padding(24.dp)) }
         }
     }

@@ -343,7 +343,7 @@ object LiveLauncher {
             val streams = mutableSetOf<String>()
             list.filter { server -> server.streamURL?.let { streams.add(it) } ?: true }
         }
-        LiveHealth.rank(LiveHealth.withCachedProbes(expanded, channel.id), channel.id)
+        LiveHealth.rank(LiveHealth.withCachedProbes(LiveServerFactory.uniqueLabels(expanded), channel.id), channel.id)
     }
 
     fun open(channel: LiveChannel, context: List<LiveChannel> = emptyList()) {
