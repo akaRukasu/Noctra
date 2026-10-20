@@ -377,7 +377,7 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
 {
   const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
   assert.match(player, /AVAudioSession\.routeChangeNotification/);
-  assert.match(player, /let useWeb = !airPlay && \(server\.mpegts/, 'AirPlay : jamais le moteur web');
+  assert.match(player, /let useWeb = !airPlay && (?:!ExternalDisplay\.shared\.connected && )?\(server\.mpegts/, 'AirPlay : jamais le moteur web');
   assert.match(player, /private func airPlayAddress\(_ server: LiveServer, session: Session\) async -> URL\?/);
   assert.match(player, /"\/api\/tv\/cast", json: \["url": address, "headers": server\.headers\]/);
   assert.match(player, /"\/api\/tv\/mosaic", json: \["tiles": \[tile\]/, 'MPEG-TS converti en HLS par le serveur');
