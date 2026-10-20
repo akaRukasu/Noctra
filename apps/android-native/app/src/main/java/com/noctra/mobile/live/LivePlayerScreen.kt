@@ -577,7 +577,11 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 // Navigateur mobile ordinaire (certains lecteurs refusent les vues web).
                 userAgentString = userAgentString.replace("; wv", "").replace(Regex("Version/\\d+\\.\\d+ "), "")
+                // Navigation sécurisée : page vide (noire) sur les sites de streaming (DLStreams…), ouverts ici volontairement.
+                if (android.os.Build.VERSION.SDK_INT >= 26) runCatching { safeBrowsingEnabled = false }
             }
+            // Moteur web du lecteur gardé en priorité (moins d'arrêts faute de mémoire).
+            if (android.os.Build.VERSION.SDK_INT >= 26) runCatching { view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false) }
             CookieManager.getInstance().apply {
                 setAcceptCookie(true)
                 setAcceptThirdPartyCookies(view, true)
@@ -625,6 +629,14 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
                     // Seul l'échec du premier chargement compte.
                     if (!navigation.isForMainFrame || loaded) return
                     report("error", "page du lecteur injoignable (${error.description}).", "")
+                }
+
+                /** Lecteur du site arrêté (mémoire, plantage) : serveur suivant, l'appli reste ouverte. */
+                @androidx.annotation.RequiresApi(26)
+                override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                    if (LivePlayerModel.webView === view) LivePlayerModel.webView = null
+                    report("error", "le lecteur du site s’est arrêté.", "")
+                    return true
                 }
             }
             view.webChromeClient = object : WebChromeClient() {

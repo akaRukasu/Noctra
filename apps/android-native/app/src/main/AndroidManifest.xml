@@ -26,6 +26,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Noctra"
         android:usesCleartextTraffic="true">
+        <!-- Lecteurs des sites : la navigation sécurisée de la WebView affichait une page vide (noire) sur les sites de streaming, comme sur Noctra TV. -->
+        <meta-data android:name="android.webkit.WebView.EnableSafeBrowsing" android:value="false" />
 
         <activity
             android:name=".MainActivity"

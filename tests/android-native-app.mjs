@@ -219,4 +219,9 @@ console.log('Appli Android native 1.8.3 : vérifiée.');
   const remote = await src('cast/Cast');
   assert.match(remote, /private fun CastChannelPicker\(onDismiss: \(\) -> Unit\)/);
   assert.match(remote, /LiveAction\("Serveur suivant"/);
+  // 1.9.2 : lecteurs des sites (DLStreams…) — navigation sécurisée de la WebView coupée (page noire), arrêt du lecteur géré.
+  assert.match(await read('apps/android-native/app/src/main/AndroidManifest.xml'), /android\.webkit\.WebView\.EnableSafeBrowsing" android:value="false"/);
+  const screen = await src('live/LivePlayerScreen');
+  assert.match(screen, /safeBrowsingEnabled = false/);
+  assert.match(screen, /override fun onRenderProcessGone\(/);
 }
