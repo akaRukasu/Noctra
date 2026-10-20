@@ -407,5 +407,7 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(player, /let useWeb = !airPlay && !ExternalDisplay\.shared\.connected && \(server\.mpegts/);
   assert.match(player, /func externalScreenChanged\(\)/);
   assert.match(player, /player\.allowsExternalPlayback = !ExternalDisplay\.shared\.connected/, 'recopie : vidéo lue ici, pas envoyée à part');
+  assert.match(player, /\.prefix\(casting \? 6 : 36\)/, 'diffusion : peu de tests de serveurs en arrière-plan');
+  assert.match(player, /if self\.casting \{ continue \}/);
   console.log('Appli iOS native 2.17.3 : vérifiée.');
 }

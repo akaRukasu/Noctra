@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.144 — multiview diffusé sur Chromecast et AirPlay
+# Version actuelle : 200.0.145 — diffusion plus fluide
+
+Une chaîne diffusée (Chromecast, AirPlay) démarre ~18 s avant le bord du direct au lieu du dernier segment : le téléviseur garde une réserve et l'image comme le son ne saccadent plus à chaque segment un peu lent. Validation : `npm run test:v200145`.
+
+# Historique : 200.0.144 — multiview diffusé sur Chromecast et AirPlay
 
 Le serveur compose les chaînes du multiview en un seul flux (ffmpeg) : grille ou chaîne mise en avant, son de la chaîne choisie. Un Chromecast, un téléviseur AirPlay ou n'importe quel lecteur le lit comme une chaîne, et l'application le pilote (ajouter, retirer, mettre en avant, changer le son). ffmpeg est cherché dans `NOCTRA_FFMPEG`, le `PATH`, `~/bin`, les applis de la seedbox et la configuration de Jellyfin. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md). Validation : `npm run test:v200144`.
 

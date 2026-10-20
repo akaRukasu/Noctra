@@ -89,6 +89,9 @@ final class LivePlayerModel {
         if server.kind == .native { play(server, note: active ? "Envoi en AirPlay…" : "Retour sur l’iPhone…") }
     }
 
+    /// Chaîne lue sur un téléviseur (AirPlay ou écran recopié).
+    var casting: Bool { externalActive || ExternalDisplay.shared.connected }
+
     /// Écran externe branché ou retiré (recopie AirPlay, HDMI) : seul le lecteur d'Apple s'affiche en
     /// plein écran sur le téléviseur ; une chaîne lue par le moteur web repart avec lui.
     func externalScreenChanged() {
@@ -223,6 +226,8 @@ final class LivePlayerModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(180))
                 guard let self, self.channel?.id == token, self.presented else { return }
+                // Pendant une diffusion, les relais ne sont plus retestés en continu (fluidité du téléviseur).
+                if self.casting { continue }
                 let now = Date()
                 for index in self.servers.indices where self.servers[index].testable && self.servers[index].id != self.current?.id
                     && self.servers[index].probe != .testing && now.timeIntervalSince(self.servers[index].probedAt ?? .distantPast) > 150 {
@@ -241,7 +246,8 @@ final class LivePlayerModel {
         if force {
             for index in servers.indices where servers[index].testable && servers[index].probe != .testing { servers[index].probe = .untested }
         }
-        let targets = Array(servers.filter { $0.testable && $0.probe == .untested }.prefix(36))
+        // Diffusion AirPlay ou recopie : peu de tests, le débit (Wi-Fi, seedbox) va d'abord au téléviseur.
+        let targets = Array(servers.filter { $0.testable && $0.probe == .untested }.prefix(casting ? 6 : 36))
         guard !targets.isEmpty else { return }
         for target in targets { if let index = servers.firstIndex(where: { $0.id == target.id }) { servers[index].probe = .testing } }
         probing += 1
