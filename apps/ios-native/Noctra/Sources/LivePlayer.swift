@@ -89,6 +89,13 @@ final class LivePlayerModel {
         if server.kind == .native { play(server, note: active ? "Envoi en AirPlay…" : "Retour sur l’iPhone…") }
     }
 
+    /// Écran externe branché ou retiré (recopie AirPlay, HDMI) : seul le lecteur d'Apple s'affiche en
+    /// plein écran sur le téléviseur ; une chaîne lue par le moteur web repart avec lui.
+    func externalScreenChanged() {
+        guard presented, let server = current, server.kind == .native else { return }
+        if ExternalDisplay.shared.connected, engineMode { play(server, note: "Affichage sur le téléviseur…") }
+    }
+
     /// Flux direct à essayer en AirPlay (les pages des sites ne s'y envoient pas).
     private func nextNative(after server: LiveServer) -> LiveServer? {
         servers.first { $0.id != server.id && $0.kind == .native && $0.streamURL != nil && !tried.contains($0.id) && ![.down, .noVideo, .stale].contains($0.probe) }
@@ -310,8 +317,9 @@ final class LivePlayerModel {
             }
             openPage(server, token: token)
         case .native:
-            // AirPlay : toujours le lecteur d'Apple, qui envoie le flux au téléviseur.
-            let useWeb = !airPlay && (server.mpegts || (forced ?? (server.webEngine || LiveHealth.prefersWeb(server))))
+            // AirPlay ou écran externe : toujours le lecteur d'Apple, qui envoie le flux au téléviseur
+            // ou l'affiche en plein écran sur l'écran recopié.
+            let useWeb = !airPlay && !ExternalDisplay.shared.connected && (server.mpegts || (forced ?? (server.webEngine || LiveHealth.prefersWeb(server))))
             if useWeb { playEngine(server, token: token) } else { playApple(server, token: token) }
         }
     }
@@ -360,8 +368,9 @@ final class LivePlayerModel {
         guard let session, let url = server.streamURL else { fail(server); return }
         engines[server.id, default: []].insert(false)
         web = nil
-        if airPlay {
-            // Le téléviseur lit lui-même l'adresse : ni en-tête ni cookie ne lui parviennent.
+        if (airPlay && !ExternalDisplay.shared.connected) || (server.mpegts && (airPlay || ExternalDisplay.shared.connected)) {
+            // Le téléviseur lit lui-même l'adresse : ni en-tête ni cookie ne lui parviennent. MPEG-TS
+            // (illisible par le lecteur d'Apple) : converti en HLS par le serveur, même en recopie.
             stopVideo()
             status = "Envoi en AirPlay…"
             watch = Task { [weak self] in
@@ -465,8 +474,8 @@ final class LivePlayerModel {
     /// Moteur refusé : l'autre moteur pour le même flux (sauf MPEG-TS, que seul
     /// le moteur web lit), puis le serveur suivant.
     private func engineFailed(_ server: LiveServer, web: Bool, reason: String) {
-        // AirPlay : seul le lecteur d'Apple envoie le flux, pas d'essai avec le moteur web.
-        if airPlay {
+        // AirPlay ou écran externe : seul le lecteur d'Apple y affiche le flux, pas d'essai avec le moteur web.
+        if airPlay || ExternalDisplay.shared.connected {
             fail(server, message: "AirPlay : \(server.label) (\(reason)). Serveur suivant…")
             return
         }

@@ -147,9 +147,9 @@ final class MultiviewStore {
 
     /// Diffusion AirPlay : l'image composée part vers l'Apple TV choisie dans le menu AirPlay.
     func castAirPlay(session: Session) async throws {
-        // Recopie d'écran seule (récepteur sans lecture de flux) : le multiview de l'iPhone y est déjà affiché.
-        if UIScreen.screens.count > 1 {
-            castNote = "Recopie de l’écran : le téléviseur affiche le multiview de l’iPhone tel quel."
+        // Recopie d'écran (récepteur sans lecture de flux) : le multiview s'y affiche déjà en plein écran.
+        if ExternalDisplay.shared.connected {
+            castNote = "Recopie de l’écran : le téléviseur affiche le multiview en plein écran."
             return
         }
         let url = try await prepareMosaic(session: session)

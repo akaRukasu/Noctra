@@ -395,3 +395,16 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(multiview, /guard player\.isExternalPlaybackActive else/, 'multiview AirPlay : flux lu par le téléviseur, sinon recopie');
   console.log('Appli iOS native 2.17.2 : vérifiée.');
 }
+// 2.17.3 : recopie d'écran — la chaîne (ou le multiview) en plein écran sur le téléviseur, l'iPhone garde les commandes.
+{
+  const external = await read('apps/ios-native/Noctra/Sources/ExternalDisplay.swift');
+  assert.match(external, /final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate/);
+  assert.match(external, /ExternalPlayerLayer\(player: live\.player\)/);
+  assert.match(external, /MultiviewLayer\(player: tile\.player\)/);
+  const plist = await read('apps/ios-native/Noctra/Info.plist');
+  assert.match(plist, /UIWindowSceneSessionRoleExternalDisplayNonInteractive[\s\S]*\$\(PRODUCT_MODULE_NAME\)\.ExternalDisplaySceneDelegate/);
+  const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
+  assert.match(player, /let useWeb = !airPlay && !ExternalDisplay\.shared\.connected && \(server\.mpegts/);
+  assert.match(player, /func externalScreenChanged\(\)/);
+  console.log('Appli iOS native 2.17.3 : vérifiée.');
+}
