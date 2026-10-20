@@ -23,7 +23,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
@@ -74,6 +80,8 @@ import com.noctra.mobile.core.asMaps
 import com.noctra.mobile.core.clock
 import com.noctra.mobile.core.str
 import com.noctra.mobile.ui.AuroraSecondaryButton
+import com.noctra.mobile.ui.BusyRow
+import com.noctra.mobile.ui.SearchField
 import com.noctra.mobile.ui.NoctraSheet
 import com.noctra.mobile.ui.RemoteImage
 import com.noctra.mobile.ui.SettingGroup
@@ -289,11 +297,15 @@ fun ChromecastMiniPlayer() {
     if (showRemote) NoctraSheet({ showRemote = false }) { ChromecastRemoteContent { showRemote = false } }
 }
 
-/** Télécommande du Chromecast : avance, recul, volume, arrêt. */
+/**
+ * Télécommande du Chromecast : avance, recul, volume, arrêt ; pour une chaîne de TV, zapping,
+ * liste des chaînes, serveur suivant et retour sur le téléphone.
+ */
 @Composable
 private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
     val cast = ChromecastController
     var scrub by remember { mutableStateOf<Float?>(null) }
+    var choosingChannel by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val current = scrub?.toDouble() ?: cast.currentPosition(now)
@@ -303,6 +315,7 @@ private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(cast.title, style = Theme.display(22), color = Theme.ink, textAlign = TextAlign.Center)
                 if (cast.subtitle.isNotEmpty()) Text(cast.subtitle, color = Theme.muted, fontSize = 14.sp)
+                if (cast.live != null) cast.liveServer?.let { Text("Serveur : $it", color = Theme.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
             if (cast.duration > 0) {
                 Column {
@@ -318,10 +331,21 @@ private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
                     }
                 }
             }
+            val idle = cast.liveBusy == null
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (cast.live != null) RemoteControl(Icons.Filled.SkipPrevious, "Chaîne précédente") { if (idle) cast.zapLive(-1) }
                 if (cast.duration > 0) RemoteControl(Icons.Filled.Replay10, "Reculer de 10 s") { cast.skip(-10.0) }
                 RemoteControl(if (cast.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (cast.isPlaying) "Pause" else "Lecture", large = true) { cast.togglePlay() }
                 if (cast.duration > 0) RemoteControl(Icons.Filled.Forward30, "Avancer de 30 s") { cast.skip(30.0) }
+                if (cast.live != null) RemoteControl(Icons.Filled.SkipNext, "Chaîne suivante") { if (idle) cast.zapLive(1) }
+            }
+            if (cast.live != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LiveAction("Chaînes", Icons.AutoMirrored.Filled.List, Modifier.weight(1f)) { if (idle) choosingChannel = true }
+                    LiveAction("Serveur suivant", Icons.Filled.Autorenew, Modifier.weight(1f)) { if (idle) cast.nextLiveServer() }
+                    LiveAction("Sur le téléphone", Icons.Filled.PhoneAndroid, Modifier.weight(1f)) { cast.liveBackToPhone(); onDismiss() }
+                }
+                cast.liveBusy?.let { BusyRow(it) }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(40.dp).clip(CircleShape).focusRing(CircleShape).clickable { cast.toggleMute() }, contentAlignment = Alignment.Center) {
@@ -340,6 +364,45 @@ private fun ChromecastRemoteContent(onDismiss: () -> Unit) {
                 Icon(Icons.Filled.Stop, contentDescription = null, tint = Theme.red)
                 Spacer(Modifier.width(8.dp))
                 Text("Arrêter la diffusion", color = Theme.red)
+            }
+        }
+    }
+    if (choosingChannel) CastChannelPicker { choosingChannel = false }
+}
+
+@Composable
+private fun LiveAction(title: String, icon: ImageVector, modifier: Modifier, action: () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp)).glass(RoundedCornerShape(18.dp), Color(0x33FFFFFF)).focusRing(RoundedCornerShape(18.dp)).clickable(onClick = action).padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White)
+        Text(title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Chaîne à envoyer au Chromecast : la liste d'où la chaîne a été ouverte, puis toutes à la recherche. */
+@Composable
+private fun CastChannelPicker(onDismiss: () -> Unit) {
+    val cast = ChromecastController
+    var query by remember { mutableStateOf("") }
+    val results = remember(query, cast.liveContext) {
+        val term = query.trim()
+        if (term.isEmpty()) cast.liveContext.ifEmpty { com.noctra.mobile.live.LiveStore.channels }
+        else (com.noctra.mobile.live.LiveStore.channels + com.noctra.mobile.live.LiveStore.events).filter { it.name.contains(term, ignoreCase = true) }.take(200)
+    }
+    NoctraSheet(onDismiss) {
+        Column(Modifier.fillMaxWidth()) {
+            Text("Chaînes", style = Theme.display(20), color = Theme.ink, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            SearchField(query, "Toutes les chaînes", Modifier.padding(horizontal = 16.dp)) { query = it }
+            LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                items(results, key = { it.id }) { channel ->
+                    Row(Modifier.fillMaxWidth().clickable { onDismiss(); cast.castOther(channel) }.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(channel.name, color = Theme.ink, fontSize = 15.sp, fontWeight = if (channel.id == cast.live?.id) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                        if (channel.id == cast.live?.id) Icon(Icons.Filled.Tv, contentDescription = "Diffusée", tint = Theme.teal, modifier = Modifier.size(18.dp))
+                    }
+                }
             }
         }
     }

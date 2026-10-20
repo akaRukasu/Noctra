@@ -219,6 +219,7 @@ object MultiviewStore {
     /** Diffusion sur un Chromecast ; le multiview démarre d'abord ici s'il ne l'est pas encore. */
     suspend fun cast(device: ChromecastDevice) {
         val address = prepareMosaic()
+        ChromecastController.endLive()
         ChromecastController.castStream(address, "Multiview", tiles.joinToString(" · ") { it.channel.name }, null, device)
         castDevice = device
         castNote = null

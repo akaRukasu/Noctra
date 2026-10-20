@@ -210,4 +210,13 @@ console.log('Appli Android native 1.8.3 : vérifiée.');
   assert.match(multiview, /launch\(present = false\)/);
   assert.match(await src('cast/Chromecast'), /suspend fun castStream\(address: String, streamTitle: String/);
   console.log('Appli Android native 1.9 : vérifiée.');
+  // 1.9.1 : Chromecast — relais du serveur pour les chaînes, serveur suivant sur erreur, télécommande TV.
+  const cast = await src('cast/Chromecast');
+  assert.match(cast, /"relay" to true/);
+  assert.match(cast, /fun nextLiveServer\(\)/);
+  assert.match(cast, /fun zapLive\(delta: Int\)/);
+  assert.match(cast, /if \(mediaSessionId != null\) recoverLive\(\)/);
+  const remote = await src('cast/Cast');
+  assert.match(remote, /private fun CastChannelPicker\(onDismiss: \(\) -> Unit\)/);
+  assert.match(remote, /LiveAction\("Serveur suivant"/);
 }

@@ -412,4 +412,13 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(player, /"relay": true\]/, 'AirPlay : relais du serveur d’abord');
   assert.match(player, /func close\(\) \{\n\s*stopRelay\(\)/);
   console.log('Appli iOS native 2.17.3 : vérifiée.');
+  // 2.17.7 : Chromecast — relais du serveur pour les chaînes, serveur suivant sur erreur, télécommande TV.
+  const cast = await read('apps/ios-native/Noctra/Sources/Chromecast.swift');
+  assert.match(cast, /"relay": true\]/, 'Chromecast : relais du serveur d’abord');
+  assert.match(cast, /func nextLiveServer\(\)/);
+  assert.match(cast, /func zapLive\(_ delta: Int\)/);
+  assert.match(cast, /func liveBackToPhone\(\)/);
+  assert.match(cast, /if mediaSessionId != nil \{ recoverLive\(\) \}/, 'coupure sur le téléviseur : serveur suivant');
+  assert.match(cast, /struct CastChannelPicker: View/);
+  assert.match(cast, /liveAction\("Serveur suivant"/);
 }

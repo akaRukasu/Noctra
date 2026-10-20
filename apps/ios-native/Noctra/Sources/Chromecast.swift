@@ -230,6 +230,19 @@ final class ChromecastController {
     var problem: String?
 
     var isActive: Bool { device != nil }
+
+    // Chaîne de TV en direct diffusée : télécommande TV (zapping, serveur suivant, liste des chaînes).
+    private(set) var live: LiveChannel?
+    private(set) var liveContext: [LiveChannel] = []
+    private(set) var liveServer: String?
+    private(set) var liveBusy: String?
+    @ObservationIgnored private weak var liveSession: Session?
+    @ObservationIgnored private var liveCandidates: [LiveServer] = []
+    @ObservationIgnored private var liveTried: Set<UUID> = []
+    @ObservationIgnored private var liveRelayID: String?
+    @ObservationIgnored private var liveRecoveries = 0
+    /// Envoi d'une chaîne en cours : ses erreurs sont gérées par l'envoi, pas par la reprise automatique.
+    @ObservationIgnored private var liveSending = false
     var isPlaying: Bool { playerState == "PLAYING" || playerState == "BUFFERING" }
 
     @ObservationIgnored private var channel: CastChannel?
@@ -280,6 +293,7 @@ final class ChromecastController {
 
     func cast(_ item: BaseItem, session: Session, startSeconds: Double, audioIndex: Int?, subtitleIndex: Int?, to target: ChromecastDevice) async throws {
         guard let token = session.token else { throw NoctraError.http(401) }
+        endLive()
         var query: [String: String?] = [
             "userId": session.userId, "isPlayback": "true", "autoOpenLiveStream": "true", "maxStreamingBitrate": "40000000"
         ]
@@ -366,20 +380,36 @@ final class ChromecastController {
     }
 
     /// Droit média temporaire pour le Chromecast, sans transmettre le jeton du compte.
-    func castLive(_ live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
+    func castLive(_ live: LiveChannel, session: Session, to target: ChromecastDevice, context: [LiveChannel]? = nil) async throws {
         let model = LivePlayerModel.shared
         var choices = model.channel?.id == live.id ? model.servers : await LiveLauncher.shared.prepare(live, session: session)
         // Serveurs de toutes les sources de la chaîne, le plus fiable d'abord ; celui qui lit déjà en tête.
         choices = LiveHealth.rank(choices, channel: live.id)
         if model.channel?.id == live.id, let current = model.current { choices = [current] + choices.filter { $0.id != current.id } }
+        // Chaînes autour pour le zapping depuis la télécommande : la liste d'où la chaîne a été ouverte.
+        let around = context ?? (model.channel?.id == live.id && !model.context.isEmpty ? model.context : (liveContext.contains { $0.id == live.id } ? liveContext : LiveStore.shared.channels))
+        liveSession = session
+        liveCandidates = choices
+        liveTried = []
+        try await castCandidates(live, session: session, to: target)
+        self.live = live
+        liveContext = around.contains { $0.id == live.id } ? around : [live] + around
+        liveRecoveries = 0
+    }
+
+    /// Serveurs de la chaîne essayés dans l'ordre (5 envois au plus), chacun testé avant l'envoi.
+    private func castCandidates(_ live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
+        liveSending = true
+        defer { liveSending = false }
         let failing: [LiveServer.Probe] = [.down, .noVideo, .stale]
         var lastError: Error?
         var attempts = 0
-        for candidate in choices where attempts < 5 && !failing.contains(candidate.probe) {
+        for candidate in liveCandidates where attempts < 5 && !failing.contains(candidate.probe) && !liveTried.contains(candidate.id) {
+            liveTried.insert(candidate.id)
             var streams: [LiveServer] = []
-            if candidate.kind == .native, candidate.streamURL != nil, !candidate.mpegts { streams = [candidate] }
+            if candidate.kind == .native, candidate.streamURL != nil { streams = [candidate] }
             else if candidate.kind == .resolve {
-                streams = Array(await LiveServerFactory.resolve(candidate, session: session, timeout: 45).filter { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }.prefix(2))
+                streams = Array(await LiveServerFactory.resolve(candidate, session: session, timeout: 45).filter { $0.kind == .native && $0.streamURL != nil }.prefix(2))
             }
             for server in streams where attempts < 5 {
                 // Test rapide avant l'envoi : un flux refusé (LiveWatch VIP sans autorisation…) passe au suivant.
@@ -388,6 +418,7 @@ final class ChromecastController {
                 attempts += 1
                 do {
                     try await castLiveStream(server, live: live, session: session, to: target)
+                    liveServer = server.label
                     return
                 } catch {
                     lastError = error
@@ -398,6 +429,68 @@ final class ChromecastController {
         throw NSError(domain: "NoctraCast", code: 1, userInfo: [NSLocalizedDescriptionKey: "Aucun serveur de cette chaîne n’est lisible par le Chromecast pour le moment. Essayez Noctra TV ou un autre serveur."])
     }
 
+    // MARK: Télécommande TV
+
+    /// Serveur suivant de la chaîne diffusée (choix ou coupure sur le téléviseur).
+    func nextLiveServer() {
+        guard let live, let session = liveSession, let target = device, liveBusy == nil else { return }
+        runLive("Serveur suivant…") {
+            if !self.liveCandidates.contains(where: { !self.liveTried.contains($0.id) }) { self.liveTried = [] }
+            try await self.castCandidates(live, session: session, to: target)
+        }
+    }
+
+    /// Chaîne précédente (-1) ou suivante (+1) de la liste d'où elle a été ouverte.
+    func zapLive(_ delta: Int) {
+        guard let live, liveContext.count > 1, let index = liveContext.firstIndex(where: { $0.id == live.id }) else { return }
+        castOther(liveContext[(index + delta + liveContext.count) % liveContext.count])
+    }
+
+    /// Autre chaîne envoyée au même Chromecast.
+    func castOther(_ channel: LiveChannel) {
+        guard let session = liveSession, let target = device, liveBusy == nil else { return }
+        let around = liveContext
+        runLive("Envoi de « \(channel.name) »…") {
+            try await self.castLive(channel, session: session, to: target, context: around)
+        }
+    }
+
+    /// Retour sur l'iPhone : la diffusion s'arrête, la chaîne reprend dans le lecteur.
+    func liveBackToPhone() {
+        guard let live, let session = liveSession else { return }
+        let around = liveContext
+        stop()
+        Task { await LiveLauncher.shared.open(live, context: around, session: session) }
+    }
+
+    private func runLive(_ message: String, _ action: @escaping @MainActor () async throws -> Void) {
+        liveBusy = message
+        Task {
+            defer { liveBusy = nil }
+            do { try await action() } catch { problem = error.localizedDescription }
+        }
+    }
+
+    /// Diffusion qui n'est plus une chaîne de TV (film, épisode, multiview) ou arrêtée.
+    func endLive() {
+        live = nil
+        liveServer = nil
+        liveCandidates = []
+        liveTried = []
+        if let id = liveRelayID, let session = liveSession {
+            Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(id)", json: nil, timeout: 10) }
+        }
+        liveRelayID = nil
+    }
+
+    /// Erreur de lecture sur le téléviseur pendant une chaîne : serveur suivant, 3 fois au plus d'affilée.
+    private func recoverLive() {
+        guard live != nil, liveBusy == nil, !liveSending, liveRecoveries < 3 else { return }
+        liveRecoveries += 1
+        problem = nil
+        nextLiveServer()
+    }
+
     /// Envoi d'un flux de chaîne au Chromecast (droit temporaire du serveur Noctra), jusqu'à la lecture.
     private func castLiveStream(_ server: LiveServer, live: LiveChannel, session: Session, to target: ChromecastDevice) async throws {
         guard let stream = server.streamURL else { throw NoctraError.empty }
@@ -405,6 +498,19 @@ final class ChromecastController {
         let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
         let encodedQuery = parts?.percentEncodedQuery
         let addressToShare = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (encodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+        // Relais du serveur d'abord (flux copié avec une réserve de segments, liens renouvelés) :
+        // le Chromecast ne lit que des fichiers prêts. Sinon le droit de lecture TV, comme avant.
+        let relay: [String: Any] = ["tiles": [["url": addressToShare, "headers": server.headers, "name": live.name]], "relay": true]
+        if let json = try? await session.noctraSend("POST", "/api/tv/mosaic", json: relay, timeout: 45) as? [String: Any],
+           json["ready"] as? Bool == true, let id = json["id"] as? String,
+           let path = json["cast"] as? String, let address = session.noctraURL(path) {
+            if let old = liveRelayID, old != id { Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(old)", json: nil, timeout: 10) } }
+            liveRelayID = id
+            try await castStream(address, title: live.name, subtitle: "TV en direct", image: live.logo.flatMap { session.noctraURL($0) }, to: target)
+            return
+        }
+        // MPEG-TS continu : illisible par le Chromecast sans le relais.
+        if server.mpegts { throw NSError(domain: "NoctraCast", code: 4, userInfo: [NSLocalizedDescriptionKey: "\(server.label) : flux MPEG-TS illisible par le Chromecast sans le relais du serveur."]) }
         do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": addressToShare, "headers": server.headers]) as? [String: Any] }
         catch { throw NSError(domain: "NoctraCast", code: 2, userInfo: [NSLocalizedDescriptionKey: "La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version."]) }
         guard let path = access?["url"] as? String, let address = session.noctraURL(path) else { throw NoctraError.empty }
@@ -464,6 +570,7 @@ final class ChromecastController {
         if let appSessionId {
             send(["type": "STOP", "sessionId": appSessionId], namespace: Self.receiverNS, to: "receiver-0")
         }
+        endLive()
         disconnect()
     }
 
@@ -570,6 +677,7 @@ final class ChromecastController {
             guard let status = (json["status"] as? [[String: Any]])?.first else { return }
             if let id = status["mediaSessionId"] as? Int { mediaSessionId = id }
             if let state = status["playerState"] as? String { playerState = state }
+            if playerState == "PLAYING" { liveRecoveries = 0 }
             if let time = status["currentTime"] as? Double {
                 position = time
                 positionDate = Date()
@@ -581,6 +689,8 @@ final class ChromecastController {
             }
             if playerState == "IDLE", (status["idleReason"] as? String) == "ERROR" {
                 problem = "Le Chromecast n’a pas pu lire ce titre."
+                // Chaîne coupée sur le téléviseur : serveur suivant.
+                if mediaSessionId != nil { recoverLive() }
             }
         case "LOAD_FAILED", "LOAD_CANCELLED", "INVALID_REQUEST":
             problem = "Le Chromecast n’a pas pu lire ce titre."
@@ -679,10 +789,12 @@ struct ChromecastMiniPlayer: View {
     }
 }
 
-/// Télécommande du Chromecast : avance, recul, volume, arrêt.
+/// Télécommande du Chromecast : avance, recul, volume, arrêt ; pour une chaîne de TV, zapping,
+/// liste des chaînes, serveur suivant et retour sur l'iPhone.
 struct ChromecastRemote: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scrub: Double?
+    @State private var choosingChannel = false
     private var cast: ChromecastController { .shared }
 
     var body: some View {
@@ -698,6 +810,9 @@ struct ChromecastRemote: View {
                     VStack(spacing: 4) {
                         Text(cast.title).font(.display(22, .bold, relativeTo: .title2)).multilineTextAlignment(.center)
                         if !cast.subtitle.isEmpty { Text(cast.subtitle).font(.subheadline).foregroundStyle(Theme.muted) }
+                        if cast.live != nil, let server = cast.liveServer {
+                            Text("Serveur : \(server)").font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                        }
                     }
                     if cast.duration > 0 {
                         VStack(spacing: 4) {
@@ -720,10 +835,23 @@ struct ChromecastRemote: View {
                     }
                     GlassEffectContainer(spacing: 18) {
                         HStack(spacing: 18) {
+                            if cast.live != nil { control("backward.end.fill") { cast.zapLive(-1) }.accessibilityLabel("Chaîne précédente") }
                             if cast.duration > 0 { control("gobackward.10") { cast.skip(-10) } }
                             control(cast.isPlaying ? "pause.fill" : "play.fill", large: true) { cast.togglePlay() }
                             if cast.duration > 0 { control("goforward.30") { cast.skip(30) } }
+                            if cast.live != nil { control("forward.end.fill") { cast.zapLive(1) }.accessibilityLabel("Chaîne suivante") }
                         }
+                    }
+                    .disabled(cast.liveBusy != nil)
+                    if cast.live != nil {
+                        HStack(spacing: 10) {
+                            liveAction("Chaînes", icon: "list.bullet") { choosingChannel = true }
+                            liveAction("Serveur suivant", icon: "arrow.triangle.2.circlepath") { cast.nextLiveServer() }
+                            liveAction("Sur l’iPhone", icon: "iphone") { cast.liveBackToPhone(); dismiss() }
+                        }
+                        .disabled(cast.liveBusy != nil)
+                        .padding(.horizontal, 24)
+                        if let busy = cast.liveBusy { BusyRow(busy) }
                     }
                     HStack(spacing: 12) {
                         Button { cast.toggleMute() } label: {
@@ -751,7 +879,28 @@ struct ChromecastRemote: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("OK") { dismiss() } } }
             .background(AuroraBackground())
+            .sheet(isPresented: $choosingChannel) {
+                CastChannelPicker(current: cast.live, context: cast.liveContext) { channel in
+                    choosingChannel = false
+                    cast.castOther(channel)
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
+    }
+
+    private func liveAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.title3)
+                Text(title).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func control(_ icon: String, large: Bool = false, action: @escaping () -> Void) -> some View {
@@ -765,5 +914,41 @@ struct ChromecastRemote: View {
         .foregroundStyle(.white)
         .glassEffect(large ? .regular.tint(Theme.lilac.opacity(0.45)).interactive() : .regular.interactive(), in: Circle())
         .sensoryFeedback(.impact(weight: .light), trigger: cast.playerState)
+    }
+}
+
+/// Chaîne à envoyer au Chromecast : la liste d'où la chaîne a été ouverte, puis toutes à la recherche.
+struct CastChannelPicker: View {
+    let current: LiveChannel?
+    let context: [LiveChannel]
+    let choose: (LiveChannel) -> Void
+    @State private var query = ""
+    private var store: LiveStore { .shared }
+
+    private var shown: [LiveChannel] {
+        let term = query.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty else { return context.isEmpty ? store.channels : context }
+        return (store.channels + store.events).filter { $0.name.localizedCaseInsensitiveContains(term) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(shown) { channel in
+                Button { choose(channel) } label: {
+                    HStack(spacing: 12) {
+                        Text(channel.number > 0 && store.country == "fr" ? "\(channel.number)" : "")
+                            .font(.caption.weight(.heavy).monospacedDigit()).foregroundStyle(Theme.teal).frame(width: 28)
+                        Text(channel.name).font(.subheadline.weight(channel.id == current?.id ? .bold : .regular))
+                        Spacer()
+                        if channel.vip { Image(systemName: "crown.fill").font(.caption2).foregroundStyle(Color(hex: 0xFCD34D)) }
+                        if channel.id == current?.id { Image(systemName: "tv.fill").foregroundStyle(Theme.teal) }
+                    }
+                }
+                .foregroundStyle(.white)
+            }
+            .navigationTitle("Chaînes")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, prompt: "Toutes les chaînes")
+        }
     }
 }

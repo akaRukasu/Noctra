@@ -137,6 +137,7 @@ final class MultiviewStore {
     /// Diffusion sur un Chromecast ; lancée d'abord ici si le multiview ne l'est pas encore.
     func cast(to device: ChromecastDevice, session: Session) async throws {
         let url = try await prepareMosaic(session: session)
+        ChromecastController.shared.endLive()
         try await ChromecastController.shared.castStream(url, title: "Multiview", subtitle: tiles.map(\.channel.name).joined(separator: " · "), image: nil, to: device)
         airPlayer?.pause()
         airPlayer = nil

@@ -284,6 +284,22 @@ object ChromecastController {
     val isActive: Boolean get() = device != null
     val isPlaying: Boolean get() = playerState == "PLAYING" || playerState == "BUFFERING"
 
+    // Chaîne de TV en direct diffusée : télécommande TV (zapping, serveur suivant, liste des chaînes).
+    var live by mutableStateOf<com.noctra.mobile.live.LiveChannel?>(null)
+        private set
+    var liveContext by mutableStateOf<List<com.noctra.mobile.live.LiveChannel>>(emptyList())
+        private set
+    var liveServer by mutableStateOf<String?>(null)
+        private set
+    var liveBusy by mutableStateOf<String?>(null)
+        private set
+    private var liveCandidates: List<com.noctra.mobile.live.LiveServer> = emptyList()
+    private val liveTried = mutableSetOf<String>()
+    private var liveRelayId: String? = null
+    private var liveRecoveries = 0
+    /** Envoi d'une chaîne en cours : ses erreurs sont gérées par l'envoi, pas par la reprise automatique. */
+    private var liveSending = false
+
     private var channel: CastChannel? = null
     private var transportId: String? = null
     private var appSessionId: String? = null
@@ -332,6 +348,7 @@ object ChromecastController {
 
     suspend fun cast(item: BaseItem, startSeconds: Double, audioIndex: Int?, subtitleIndex: Int?, target: ChromecastDevice) {
         val token = Session.token ?: throw NoctraException.http(401)
+        endLive()
         val query = mutableMapOf<String, String?>("userId" to Session.userId, "isPlayback" to "true", "autoOpenLiveStream" to "true", "maxStreamingBitrate" to "40000000")
         audioIndex?.let { query["audioStreamIndex"] = it.toString() }
         subtitleIndex?.let { query["subtitleStreamIndex"] = it.toString() }
@@ -410,49 +427,149 @@ object ChromecastController {
     }
 
     /** Les chaînes utilisent un accès TV temporaire ; le jeton du compte reste sur le téléphone. */
-    suspend fun castLive(live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
+    suspend fun castLive(live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice, context: List<com.noctra.mobile.live.LiveChannel>? = null) {
         val model = com.noctra.mobile.live.LivePlayerModel
-        val native = com.noctra.mobile.live.LiveServer.Kind.native
-        val failing = setOf(com.noctra.mobile.live.LiveServer.Probe.down, com.noctra.mobile.live.LiveServer.Probe.noVideo, com.noctra.mobile.live.LiveServer.Probe.stale)
         // Serveurs de toutes les sources de la chaîne, le plus fiable d'abord ; celui qui lit déjà en tête.
         var choices = com.noctra.mobile.live.LiveHealth.rank(if (model.channel?.id == live.id) model.servers else com.noctra.mobile.live.LiveLauncher.prepare(live), live.id)
         val current = model.current?.takeIf { model.channel?.id == live.id }
         if (current != null) choices = listOf(current) + choices.filter { it.id != current.id }
-        var lastError: Throwable? = null
-        var attempts = 0
-        for (candidate in choices) {
-            if (attempts >= 5) break
-            if (candidate.probe in failing) continue
-            val streams = when {
-                candidate.kind == native && candidate.streamURL != null && !candidate.mpegts -> listOf(candidate)
-                candidate.kind == com.noctra.mobile.live.LiveServer.Kind.resolve ->
-                    com.noctra.mobile.live.LiveServerFactory.resolve(candidate, 45.0).filter { it.kind == native && it.streamURL != null && !it.mpegts }.take(2)
-                else -> emptyList()
-            }
-            for (server in streams) {
-                if (attempts >= 5) break
-                // Test rapide avant l'envoi : un flux refusé (LiveWatch VIP sans autorisation…) passe au suivant.
-                if (com.noctra.mobile.live.LiveServerFactory.probe(server).state in failing) continue
-                attempts += 1
-                try {
-                    castLiveStream(server, live, target)
-                    return
-                } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
-                    lastError = IllegalStateException("Le Chromecast n’a pas démarré la lecture.")
-                } catch (error: kotlinx.coroutines.CancellationException) {
-                    throw error
-                } catch (error: Throwable) {
-                    lastError = error
-                }
-            }
+        // Chaînes autour pour le zapping depuis la télécommande : la liste d'où la chaîne a été ouverte.
+        val around = context ?: when {
+            model.channel?.id == live.id && model.context.isNotEmpty() -> model.context
+            liveContext.any { it.id == live.id } -> liveContext
+            else -> com.noctra.mobile.live.LiveStore.channels
         }
-        throw lastError ?: IllegalStateException("Aucun serveur de cette chaîne n’est lisible par le Chromecast pour le moment. Essayez Noctra TV ou un autre serveur.")
+        liveCandidates = choices
+        liveTried.clear()
+        castCandidates(live, target)
+        this.live = live
+        liveContext = if (around.any { it.id == live.id }) around else listOf(live) + around
+        liveRecoveries = 0
     }
 
-    /** Envoi d'un flux de chaîne au Chromecast (droit temporaire du serveur Noctra), jusqu'à la lecture. */
+    /** Serveurs de la chaîne essayés dans l'ordre (5 envois au plus), chacun testé avant l'envoi. */
+    private suspend fun castCandidates(live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
+        val native = com.noctra.mobile.live.LiveServer.Kind.native
+        val failing = setOf(com.noctra.mobile.live.LiveServer.Probe.down, com.noctra.mobile.live.LiveServer.Probe.noVideo, com.noctra.mobile.live.LiveServer.Probe.stale)
+        liveSending = true
+        try {
+            var lastError: Throwable? = null
+            var attempts = 0
+            for (candidate in liveCandidates) {
+                if (attempts >= 5) break
+                if (candidate.probe in failing || candidate.id in liveTried) continue
+                liveTried += candidate.id
+                val streams = when {
+                    candidate.kind == native && candidate.streamURL != null -> listOf(candidate)
+                    candidate.kind == com.noctra.mobile.live.LiveServer.Kind.resolve ->
+                        com.noctra.mobile.live.LiveServerFactory.resolve(candidate, 45.0).filter { it.kind == native && it.streamURL != null }.take(2)
+                    else -> emptyList()
+                }
+                for (server in streams) {
+                    if (attempts >= 5) break
+                    // Test rapide avant l'envoi : un flux refusé (LiveWatch VIP sans autorisation…) passe au suivant.
+                    if (com.noctra.mobile.live.LiveServerFactory.probe(server).state in failing) continue
+                    attempts += 1
+                    try {
+                        castLiveStream(server, live, target)
+                        liveServer = server.label
+                        return
+                    } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+                        lastError = IllegalStateException("Le Chromecast n’a pas démarré la lecture.")
+                    } catch (error: kotlinx.coroutines.CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        lastError = error
+                    }
+                }
+            }
+            throw lastError ?: IllegalStateException("Aucun serveur de cette chaîne n’est lisible par le Chromecast pour le moment. Essayez Noctra TV ou un autre serveur.")
+        } finally {
+            liveSending = false
+        }
+    }
+
+    // MARK: Télécommande TV
+
+    /** Serveur suivant de la chaîne diffusée (choix ou coupure sur le téléviseur). */
+    fun nextLiveServer() {
+        val channel = live ?: return
+        val target = device ?: return
+        if (liveBusy != null) return
+        runLive("Serveur suivant…") {
+            if (liveCandidates.all { it.id in liveTried }) liveTried.clear()
+            castCandidates(channel, target)
+        }
+    }
+
+    /** Chaîne précédente (-1) ou suivante (+1) de la liste d'où elle a été ouverte. */
+    fun zapLive(delta: Int) {
+        val channel = live ?: return
+        val index = liveContext.indexOfFirst { it.id == channel.id }
+        if (liveContext.size < 2 || index < 0) return
+        castOther(liveContext[(index + delta + liveContext.size) % liveContext.size])
+    }
+
+    /** Autre chaîne envoyée au même Chromecast. */
+    fun castOther(channel: com.noctra.mobile.live.LiveChannel) {
+        val target = device ?: return
+        if (liveBusy != null) return
+        val around = liveContext
+        runLive("Envoi de « ${channel.name} »…") { castLive(channel, target, around) }
+    }
+
+    /** Retour sur le téléphone : la diffusion s'arrête, la chaîne reprend dans le lecteur. */
+    fun liveBackToPhone() {
+        val channel = live ?: return
+        val around = liveContext
+        stop()
+        com.noctra.mobile.live.LiveLauncher.open(channel, around)
+    }
+
+    private fun runLive(message: String, action: suspend () -> Unit) {
+        liveBusy = message
+        Session.scope.launch {
+            runCatching { action() }.onFailure { if (it !is kotlinx.coroutines.CancellationException) problem = it.message }
+            liveBusy = null
+        }
+    }
+
+    /** Diffusion qui n'est plus une chaîne de TV (film, épisode, multiview) ou arrêtée. */
+    fun endLive() {
+        live = null
+        liveServer = null
+        liveCandidates = emptyList()
+        liveTried.clear()
+        liveRelayId?.let { id -> Session.scope.launch { runCatching { Session.noctraSend("DELETE", "/api/tv/mosaic/$id", null, 10.0) } } }
+        liveRelayId = null
+    }
+
+    /** Erreur de lecture sur le téléviseur pendant une chaîne : serveur suivant, 3 fois au plus d'affilée. */
+    private fun recoverLive() {
+        if (live == null || liveBusy != null || liveSending || liveRecoveries >= 3) return
+        liveRecoveries += 1
+        problem = null
+        nextLiveServer()
+    }
+
     private suspend fun castLiveStream(server: com.noctra.mobile.live.LiveServer, live: com.noctra.mobile.live.LiveChannel, target: ChromecastDevice) {
         val uri = java.net.URI(server.streamURL!!)
         val addressToShare = if (Session.isNoctraOrigin(server.streamURL!!)) uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: "") else server.streamURL
+        // Relais du serveur d'abord (flux copié avec une réserve de segments, liens renouvelés) :
+        // le Chromecast ne lit que des fichiers prêts. Sinon le droit de lecture TV, comme avant.
+        val relay = runCatching {
+            Session.noctraSend("POST", "/api/tv/mosaic", mapOf("tiles" to listOf(mapOf("url" to addressToShare, "headers" to server.headers, "name" to live.name)), "relay" to true), 45.0).asMap()
+        }.getOrNull()
+        val relayId = relay?.str("id")
+        val relayAddress = relay?.str("cast")?.let { Session.noctraURL(it) }
+        if (relay?.get("ready") == true && relayId != null && relayAddress != null) {
+            liveRelayId?.takeIf { it != relayId }?.let { old -> Session.scope.launch { runCatching { Session.noctraSend("DELETE", "/api/tv/mosaic/$old", null, 10.0) } } }
+            liveRelayId = relayId
+            castStream(relayAddress, live.name, "TV en direct", live.logo?.let { Session.noctraURL(it) }, target)
+            return
+        }
+        // MPEG-TS continu : illisible par le Chromecast sans le relais.
+        if (server.mpegts) throw IllegalStateException("${server.label} : flux MPEG-TS illisible par le Chromecast sans le relais du serveur.")
         val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to addressToShare, "headers" to server.headers)).asMap() }
             .getOrElse { throw IllegalStateException("La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version.", it) }
         val address = access?.str("url")?.let { Session.noctraURL(it) } ?: error("Le serveur ne fournit pas de lien de diffusion.")
@@ -508,6 +625,7 @@ object ChromecastController {
 
     /** Arrêt : la lecture s'arrête sur le téléviseur et l'appli Cast se ferme. */
     fun stop() {
+        endLive()
         appSessionId?.let { send(mapOf("type" to "STOP", "sessionId" to it), receiverNS, "receiver-0") }
         Session.scope.launch { delay(300); disconnect() }
     }
@@ -608,12 +726,17 @@ object ChromecastController {
                 val status = json["status"].asMaps().firstOrNull() ?: return
                 (status["mediaSessionId"] as? Number)?.let { mediaSessionId = it.toInt() }
                 status.str("playerState")?.let { playerState = it }
+                if (playerState == "PLAYING") liveRecoveries = 0
                 (status["currentTime"] as? Number)?.let { position = it.toDouble(); positionAt = System.currentTimeMillis() }
                 ((status["media"].asMap())?.get("duration") as? Number)?.toDouble()?.takeIf { it > 0 }?.let { duration = it }
                 reportProgress()
                 val reason = status.str("idleReason")
                 if (playerState == "IDLE" && reason in setOf("FINISHED", "CANCELLED", "INTERRUPTED")) finishReport()
-                if (playerState == "IDLE" && reason == "ERROR") problem = "Le Chromecast n’a pas pu lire ce titre."
+                if (playerState == "IDLE" && reason == "ERROR") {
+                    problem = "Le Chromecast n’a pas pu lire ce titre."
+                    // Chaîne coupée sur le téléviseur : serveur suivant.
+                    if (mediaSessionId != null) recoverLive()
+                }
             }
             "LOAD_FAILED", "LOAD_CANCELLED", "INVALID_REQUEST" -> {
                 problem = "Le Chromecast n’a pas pu lire ce titre."
