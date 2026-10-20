@@ -408,13 +408,18 @@ final class ChromecastController {
         do { access = try await session.noctraSend("POST", "/api/tv/cast", json: ["url": addressToShare, "headers": server.headers]) as? [String: Any] }
         catch { throw NSError(domain: "NoctraCast", code: 2, userInfo: [NSLocalizedDescriptionKey: "La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version."]) }
         guard let path = access?["url"] as? String, let address = session.noctraURL(path) else { throw NoctraError.empty }
-        let image = live.logo.flatMap { session.noctraURL($0) }
+        try await castStream(address, title: live.name, subtitle: "TV en direct", image: live.logo.flatMap { session.noctraURL($0) }, to: target)
+    }
+
+    /// Flux direct déjà autorisé pour le Chromecast (chaîne, multiview composé par le serveur) :
+    /// envoyé puis suivi jusqu'à la lecture.
+    func castStream(_ address: URL, title streamTitle: String, subtitle streamSubtitle: String, image: URL?, to target: ChromecastDevice) async throws {
         let media: [String: Any] = ["contentId": address.absoluteString, "contentUrl": address.absoluteString,
             "contentType": "application/x-mpegURL", "streamType": "LIVE",
-            "metadata": ["metadataType": 0, "title": live.name, "subtitle": "TV en direct", "images": image.map { [["url": $0.absoluteString]] } ?? []] as [String: Any]]
+            "metadata": ["metadataType": 0, "title": streamTitle, "subtitle": streamSubtitle, "images": image.map { [["url": $0.absoluteString]] } ?? []] as [String: Any]]
         let load: [String: Any] = ["type": "LOAD", "autoplay": true, "media": media]
         finishReport()
-        title = live.name; subtitle = "TV en direct"; artwork = image
+        title = streamTitle; subtitle = streamSubtitle; artwork = image
         duration = 0; position = 0; playerState = "BUFFERING"; problem = nil; mediaSessionId = nil
         if device?.id == target.id, channel != nil, let transportId { send(load, namespace: Self.mediaNS, to: transportId) }
         else { pendingLoad = load; connect(target) }

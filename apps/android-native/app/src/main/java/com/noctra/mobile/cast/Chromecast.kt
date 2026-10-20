@@ -456,12 +456,16 @@ object ChromecastController {
         val access = runCatching { Session.noctraSend("POST", "/api/tv/cast", mapOf("url" to addressToShare, "headers" to server.headers)).asMap() }
             .getOrElse { throw IllegalStateException("La diffusion TV nécessite la mise à jour du serveur Noctra fournie avec cette version.", it) }
         val address = access?.str("url")?.let { Session.noctraURL(it) } ?: error("Le serveur ne fournit pas de lien de diffusion.")
-        val image = live.logo?.let { Session.noctraURL(it) }
+        castStream(address, live.name, "TV en direct", live.logo?.let { Session.noctraURL(it) }, target)
+    }
+
+    /** Flux direct déjà autorisé pour le Chromecast (chaîne, multiview composé par le serveur) : envoyé puis suivi jusqu'à la lecture. */
+    suspend fun castStream(address: String, streamTitle: String, streamSubtitle: String, image: String?, target: ChromecastDevice) {
         val load = mapOf("type" to "LOAD", "autoplay" to true, "media" to mapOf(
             "contentId" to address, "contentUrl" to address, "contentType" to "application/x-mpegURL", "streamType" to "LIVE",
-            "metadata" to mapOf("metadataType" to 0, "title" to live.name, "subtitle" to "TV en direct", "images" to (image?.let { listOf(mapOf("url" to it)) } ?: emptyList<Any>()))))
+            "metadata" to mapOf("metadataType" to 0, "title" to streamTitle, "subtitle" to streamSubtitle, "images" to (image?.let { listOf(mapOf("url" to it)) } ?: emptyList<Any>()))))
         finishReport()
-        title = live.name; subtitle = "TV en direct"; artwork = image
+        title = streamTitle; subtitle = streamSubtitle; artwork = image
         duration = 0.0; position = 0.0; playerState = "BUFFERING"; problem = null; mediaSessionId = null
         val transport = transportId
         if (device?.id == target.id && channel != null && transport != null) send(load, mediaNS, transport)

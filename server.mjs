@@ -6,6 +6,7 @@ import { rouletteFilters, drawRoulette } from './lib/roulette.mjs';
 import { createTvSegmentCache } from './lib/tv-segment-cache.mjs';
 import { createServer } from 'node:http';
 import { createTvCastAccess } from './lib/tv-cast.mjs';
+import { createTvMosaic, findFfmpeg } from './lib/tv-mosaic.mjs';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline, Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
@@ -90,6 +91,11 @@ const normalizedBasePath = value => {
 const basePath = normalizedBasePath(process.env.BASE_URL || '');
 const publicPath = value => `${basePath}${String(value || '').startsWith('/') ? value : `/${value}`}`;
 const tvCastAccess = createTvCastAccess({ basePath });
+// 200.0.144 : multiview composé en un seul flux (ffmpeg) pour Chromecast, AirPlay et tout lecteur.
+const tvMosaic = createTvMosaic({
+  root: join(runtimeRoot, 'mosaic'),
+  locate: async () => findFfmpeg({ extra: await jellyfinFfmpegPaths() })
+});
 const cookiePath = basePath || '/';
 const withoutSlash = value => String(value || '').replace(/\/+$/, '');
 const jellyfinUrl = withoutSlash(process.env.JELLYFIN_URL);
@@ -6432,6 +6438,25 @@ function decodeTvStateReference(tokenValue, expectedKind = '') {
     return payload;
   } catch {
     return null;
+  }
+}
+
+/** Adresse locale du serveur pour ffmpeg (multiview diffusé). */
+function tvMosaicLoopbackHost() {
+  if (!host || host === '0.0.0.0' || host === '::' || host === 'localhost') return '127.0.0.1';
+  return host.includes(':') ? `[${host}]` : host;
+}
+
+/** ffmpeg de Jellyfin (même machine) proposé pour composer le multiview diffusé. */
+async function jellyfinFfmpegPaths() {
+  if (!jellyfinUrl || !process.env.JELLYFIN_API_KEY) return [];
+  try {
+    const response = await fetch(`${jellyfinUrl}/System/Configuration/encoding`, { headers: jellyfinHeaders(), signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return [];
+    const config = await response.json();
+    return [config?.EncoderAppPathDisplay, config?.EncoderAppPath].filter(value => typeof value === 'string' && value);
+  } catch {
+    return [];
   }
 }
 
@@ -13415,12 +13440,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.143', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.144', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.143',
+        version: '200.0.144',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -13497,6 +13522,76 @@ const server = createServer(async (req, res) => {
         media = tvPublicStreamUrl(issueTvReference(safe.toString(), headers, { kind: 'stream' }));
       }
       return json(res, 200, tvCastAccess.issue({ token: session.token, path: media, origin: requestOrigin }));
+    }
+
+    if (path === '/api/tv/mosaic' && req.method === 'GET') {
+      const found = await tvMosaic.binary();
+      return json(res, 200, { available: Boolean(found), version: found?.version || '' });
+    }
+
+    if (path === '/api/tv/mosaic' && req.method === 'POST') {
+      const body = await readJsonBody(req, 64 * 1024);
+      const requestOrigin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+      const tiles = (Array.isArray(body.tiles) ? body.tiles : []).slice(0, 9);
+      // Chaque chaîne est lue par ffmpeg à travers le relais Noctra local, avec un droit de lecture TV.
+      const inputs = tiles.map(tile => {
+        const target = new URL(String(tile?.url || ''), requestOrigin);
+        let media;
+        if (target.host === new URL(requestOrigin).host && tvCastAccess.mediaPath(target.pathname) && !/\/api\/tv\/mosaic\//.test(target.pathname)) {
+          media = target.pathname + target.search;
+        } else {
+          const safe = safeTvRemoteUrl(target.href);
+          const headers = {};
+          for (const [name, value] of Object.entries(tile?.headers || {})) {
+            if (/^(referer|origin|user-agent)$/i.test(name) && typeof value === 'string') headers[name] = value;
+          }
+          media = tvPublicStreamUrl(issueTvReference(safe.toString(), headers, { kind: 'stream' }));
+        }
+        const access = tvCastAccess.issue({ token: session.token, path: media, origin: requestOrigin });
+        return `http://${tvMosaicLoopbackHost()}:${port}${access.url}`;
+      });
+      try {
+        const mosaic = await tvMosaic.start({
+          owner: session.id || session.token,
+          id: String(body.id || ''),
+          inputs,
+          names: tiles.map(tile => tile?.name),
+          audio: Number(body.audio) || 0,
+          featured: Number.isInteger(body.featured) ? body.featured : -1,
+          wait: body.wait === false ? 0 : 25_000
+        });
+        const cast = tvCastAccess.issue({ token: session.token, path: publicPath(mosaic.playlist), origin: requestOrigin });
+        return json(res, 200, { ...mosaic, playlist: publicPath(mosaic.playlist), cast: cast.url, expiresAt: cast.expiresAt });
+      } catch (error) {
+        throw new HttpError(Number(error?.status) || 502, cleanError(error));
+      }
+    }
+
+    {
+      const mosaicMatch = path.match(/^\/api\/tv\/mosaic\/([a-f0-9]{24})(?:\/([^/]+))?$/);
+      if (mosaicMatch && !mosaicMatch[2] && req.method === 'DELETE') {
+        return json(res, 200, { stopped: tvMosaic.stop(mosaicMatch[1], session.id || session.token) });
+      }
+      if (mosaicMatch && !mosaicMatch[2] && req.method === 'GET') {
+        const mosaic = tvMosaic.get(mosaicMatch[1]);
+        if (!mosaic) throw new HttpError(404, 'Multiview diffusé terminé.');
+        return json(res, 200, tvMosaic.describe(mosaic));
+      }
+      if (mosaicMatch && mosaicMatch[2] && ['GET', 'HEAD'].includes(req.method)) {
+        const file = tvMosaic.file(mosaicMatch[1], mosaicMatch[2]);
+        if (!file) throw new HttpError(404, 'Multiview diffusé terminé.');
+        if (mosaicMatch[2] === 'index.m3u8') {
+          const text = await readFile(file, 'utf8').catch(() => '');
+          if (!text) throw new HttpError(404, 'Multiview en préparation.');
+          res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store' });
+          return res.end(req.method === 'HEAD' ? undefined : text);
+        }
+        const info = await stat(file).catch(() => null);
+        if (!info) throw new HttpError(404, 'Segment expiré.');
+        res.writeHead(200, { 'content-type': 'video/mp2t', 'content-length': info.size, 'cache-control': 'no-store' });
+        if (req.method === 'HEAD') return res.end();
+        return pipeline(createReadStream(file), res, () => {});
+      }
     }
 
     if (path === '/api/tv/provider-keys') {
@@ -14751,11 +14846,13 @@ server.on('error', error => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => server.close(() => process.exit(0)));
+  process.once(signal, () => { tvMosaic.stopAll(); server.close(() => process.exit(0)); });
 }
 
 server.listen(port, host, async () => {
   await mkdir(runtimeRoot, { recursive: true });
+  // Mosaïques d'une exécution précédente : plus aucun ffmpeg ne les écrit.
+  await rm(join(runtimeRoot, 'mosaic'), { recursive: true, force: true }).catch(() => {});
   await writeFile(pidPath, String(process.pid), 'utf8');
   if (process.env.JELLYFIN_API_KEY && process.env.NOCTRA_AUTO_LIBRARY_REFRESH !== 'false') {
     const roots = [...new Set(mediaRoots.filter(root => root.id !== 'trash' && !/trash/i.test(root.label)).map(root => root.path))];

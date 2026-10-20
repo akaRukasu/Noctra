@@ -9,8 +9,8 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "2.16.3"
-    CURRENT_PROJECT_VERSION: "32"
+    MARKETING_VERSION: "2.17.0"
+    CURRENT_PROJECT_VERSION: "33"
     SWIFT_VERSION: "5.0"
 targets:
   Noctra:

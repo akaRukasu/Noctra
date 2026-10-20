@@ -148,7 +148,7 @@ console.log('Appli Android native 1.6.1 : vérifiée.');
   const multiview = await src('live/Multiview');
   for (const name of ['object MultiviewStore', 'class MultiviewTile', 'fun MultiviewScreen', 'fun MultiviewAddSheet', 'fun MultiviewCastSheet', 'fun MultiviewBar']) assert.ok(multiview.includes(name), name);
   assert.match(multiview, /fun solo\(tile: MultiviewTile\)/);
-  assert.match(multiview, /it\.setVolume\(if \(it\.id == audio\) 1f else 0f\)/, 'une seule chaîne écoutée');
+  assert.match(multiview, /it\.setVolume\(if \((?:castDevice == null && )?it\.id == audio\) 1f else 0f\)/, 'une seule chaîne écoutée');
   assert.match(multiview, /C\.AUDIO_CONTENT_TYPE_MOVIE\)\.build\(\), false\)/, 'vignettes sans prise du focus audio');
   const remote = await src('cast/RemotePlayback');
   for (const action of ['playMultiview', 'multiAdd', 'multiAudio', 'multiSolo', 'multiRemove', 'multiGrid']) assert.ok(remote.includes(`"${action}"`), action);
@@ -195,8 +195,19 @@ console.log('Appli Android native 1.8.2 : vérifiée.');
 // 1.8.3 : attente de la diffusion centrée, serveurs homonymes numérotés, historique LiveWatch d'avant 200.0.143 effacé.
 assert.match(await src('ui/Components'), /fun BusyRow\(text: String/);
 assert.match(await src('cast/RemotePlayback'), /BusyRow\("Préparation de la diffusion…"\)/);
-assert.match(await src('live/Multiview'), /BusyRow\("Envoi au téléviseur…"\)/);
+assert.match(await src('live/Multiview'), /busy\?\.let \{ BusyRow\(it\) \}/);
 assert.match(await src('live/LiveServers'), /fun uniqueLabels\(servers: List<LiveServer>\): List<LiveServer>/);
 assert.match(await src('live/LiveStore'), /LiveServerFactory\.uniqueLabels\(expanded\)/);
 assert.match(await src('live/LiveServers'), /noctra\.tv\.health\.livewatch-reset\.143/);
 console.log('Appli Android native 1.8.3 : vérifiée.');
+// 1.9 : multiview diffusé sur Chromecast (image composée par le serveur), piloté depuis le téléphone.
+{
+  const multiview = await src('live/Multiview');
+  assert.match(multiview, /suspend fun cast\(device: ChromecastDevice\)/);
+  assert.match(multiview, /Session\.noctraSend\("POST", "\/api\/tv\/mosaic", body, 40\.0\)/);
+  assert.match(multiview, /it\.setVolume\(if \(castDevice == null && it\.id == audio\) 1f else 0f\)/);
+  assert.match(multiview, /private fun mosaicChanged\(\)/);
+  assert.match(multiview, /launch\(present = false\)/);
+  assert.match(await src('cast/Chromecast'), /suspend fun castStream\(address: String, streamTitle: String/);
+  console.log('Appli Android native 1.9 : vérifiée.');
+}

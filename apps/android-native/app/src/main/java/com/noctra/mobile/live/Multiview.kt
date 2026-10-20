@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Tv
@@ -76,9 +77,14 @@ import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.noctra.mobile.NoctraApplication
+import com.noctra.mobile.cast.ChromecastBrowser
+import com.noctra.mobile.cast.ChromecastController
+import com.noctra.mobile.cast.ChromecastDevice
 import com.noctra.mobile.cast.RemotePlayback
 import com.noctra.mobile.core.Net
 import com.noctra.mobile.core.Session
+import com.noctra.mobile.core.asMap
+import com.noctra.mobile.core.str
 import com.noctra.mobile.play.ImmersiveEffect
 import com.noctra.mobile.ui.BusyRow
 import com.noctra.mobile.ui.NoctraSheet
@@ -98,7 +104,8 @@ import kotlin.math.ceil
 /**
  * Multiview : plusieurs chaînes de n'importe quelle source à l'écran, comme sur la version web et
  * Noctra TV. Une chaîne est écoutée, une peut être mise en avant, chacune passe seule au serveur
- * suivant quand son flux tombe. Diffusable vers Noctra TV, puis pilotable depuis le téléphone.
+ * suivant quand son flux tombe. Diffusable vers Noctra TV ou un Chromecast (image composée par le
+ * serveur Noctra), puis pilotable depuis le téléphone.
  */
 object MultiviewStore {
     const val MAX_TILES = 9
@@ -117,6 +124,13 @@ object MultiviewStore {
     /** Vignette en plein écran (les autres continuent en arrière-plan). */
     var zoomed by mutableStateOf<String?>(null)
         private set
+    /** Chromecast qui reçoit le multiview composé par le serveur Noctra. */
+    var castDevice by mutableStateOf<ChromecastDevice?>(null)
+        private set
+    var castNote by mutableStateOf<String?>(null)
+        private set
+    private var mosaicId: String? = null
+    private var mosaicJob: Job? = null
 
     fun contains(channel: LiveChannel) = picked.any { it.id == channel.id }
 
@@ -128,7 +142,7 @@ object MultiviewStore {
     fun clear() { picked.clear(); selecting = false }
 
     /** Lancement : les chaînes démarrent l'une après l'autre (moins d'échecs au départ). */
-    fun launch() {
+    fun launch(present: Boolean = true) {
         if (picked.isEmpty()) return
         LivePlayerModel.close()
         stopAll()
@@ -138,7 +152,7 @@ object MultiviewStore {
         featured = null
         zoomed = null
         selecting = false
-        presented = true
+        presented = present
         tiles.forEachIndexed { index, tile -> tile.start(index * 400L) }
         applyAudio()
     }
@@ -150,6 +164,7 @@ object MultiviewStore {
         if (picked.none { it.id == channel.id }) picked += channel
         tile.start(0)
         applyAudio()
+        mosaicChanged()
     }
 
     fun remove(tile: MultiviewTile) {
@@ -159,12 +174,12 @@ object MultiviewStore {
         if (featured == tile.id) featured = null
         if (zoomed == tile.id) zoomed = null
         if (audio == tile.id) audio = tiles.firstOrNull()?.id
-        if (tiles.isEmpty()) close() else applyAudio()
+        if (tiles.isEmpty()) close() else { applyAudio(); mosaicChanged() }
     }
 
-    fun listen(tile: MultiviewTile) { audio = tile.id; applyAudio() }
+    fun listen(tile: MultiviewTile) { audio = tile.id; applyAudio(); mosaicChanged() }
 
-    fun feature(tile: MultiviewTile) { zoomed = null; featured = if (featured == tile.id || tiles.size < 2) null else tile.id }
+    fun feature(tile: MultiviewTile) { zoomed = null; featured = if (featured == tile.id || tiles.size < 2) null else tile.id; mosaicChanged() }
 
     /** Chaîne mise en avant, et seule écoutée. */
     fun solo(tile: MultiviewTile) {
@@ -172,17 +187,23 @@ object MultiviewStore {
         featured = if (tiles.size > 1) tile.id else null
         zoomed = null
         applyAudio()
+        mosaicChanged()
     }
 
-    fun grid() { featured = null; zoomed = null }
+    fun grid() { featured = null; zoomed = null; mosaicChanged() }
 
     /** Plein écran d'une vignette, avec son son. */
     fun zoom(tile: MultiviewTile) {
         zoomed = if (zoomed == tile.id) null else tile.id
         if (zoomed != null) { audio = tile.id; applyAudio() }
+        mosaicChanged()
     }
 
+    /** Multiview démarré pour une diffusion : ouvert ensuite comme télécommande. */
+    fun show() { if (tiles.isNotEmpty()) presented = true }
+
     fun close() {
+        stopCasting()
         stopAll()
         tiles.clear()
         featured = null
@@ -192,7 +213,84 @@ object MultiviewStore {
 
     private fun stopAll() = tiles.forEach { it.stop() }
 
-    private fun applyAudio() = tiles.forEach { it.setVolume(if (it.id == audio) 1f else 0f) }
+    // Multiview diffusé : le son passe par le téléviseur, le téléphone reste muet.
+    private fun applyAudio() = tiles.forEach { it.setVolume(if (castDevice == null && it.id == audio) 1f else 0f) }
+
+    /** Diffusion sur un Chromecast ; le multiview démarre d'abord ici s'il ne l'est pas encore. */
+    suspend fun cast(device: ChromecastDevice) {
+        val address = prepareMosaic()
+        ChromecastController.castStream(address, "Multiview", tiles.joinToString(" · ") { it.channel.name }, null, device)
+        castDevice = device
+        castNote = null
+        applyAudio()
+    }
+
+    fun stopCasting() {
+        mosaicJob?.cancel()
+        if (castDevice != null) ChromecastController.stop()
+        castDevice = null
+        castNote = null
+        mosaicId?.let { id -> Session.scope.launch { runCatching { Session.noctraSend("DELETE", "/api/tv/mosaic/$id", null, 10.0) } } }
+        mosaicId = null
+        applyAudio()
+    }
+
+    /** Une vignette lit (de nouveau) : la mosaïque diffusée la reprend. */
+    fun tilePlaying() = mosaicChanged()
+
+    /** Serveur à jour et ffmpeg présent, multiview lancé si besoin, attente des chaînes qui lisent (45 s au plus). */
+    private suspend fun prepareMosaic(): String {
+        val check = runCatching { Session.noctraJSON("/api/tv/mosaic", 15.0).asMap() }.getOrNull()
+            ?: throw IllegalStateException("Diffuser le multiview sur Chromecast nécessite le serveur Noctra 200.0.144.")
+        if (check["available"] != true) throw IllegalStateException("ffmpeg est introuvable sur le serveur Noctra : il compose le multiview diffusé. Indiquez son chemin dans NOCTRA_FFMPEG.")
+        // Lancé depuis la barre des chaînes : multiview démarré sans l'ouvrir sous la feuille de diffusion.
+        if (tiles.isEmpty()) launch(present = false)
+        val started = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < 45_000) {
+            val playing = tiles.count { it.playing }
+            if (playing == tiles.size || (playing > 0 && System.currentTimeMillis() - started > 12_000)) break
+            delay(500)
+        }
+        return requestMosaic(true)
+    }
+
+    /** Chaînes qui lisent, envoyées au serveur dans l'ordre affiché (adresse, en-têtes, son, mise en avant). */
+    private suspend fun requestMosaic(wait: Boolean): String {
+        val live = tiles.filter { it.playing && it.current?.streamURL != null }
+        if (live.isEmpty()) throw IllegalStateException("Aucune chaîne du multiview ne lit encore : réessayez quand une image apparaît.")
+        val list = live.map { tile ->
+            val server = tile.current!!
+            val stream = server.streamURL!!
+            val uri = java.net.URI(stream)
+            val address = if (Session.isNoctraOrigin(stream)) uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: "") else stream
+            mapOf("url" to address, "headers" to server.headers, "name" to tile.channel.name)
+        }
+        val main = zoomed ?: featured
+        val body = mutableMapOf<String, Any?>(
+            "tiles" to list,
+            "audio" to live.indexOfFirst { it.id == audio }.coerceAtLeast(0),
+            "featured" to live.indexOfFirst { it.id == main },
+            "wait" to wait
+        )
+        mosaicId?.let { body["id"] = it }
+        val json = Session.noctraSend("POST", "/api/tv/mosaic", body, 40.0).asMap()
+        val id = json?.str("id")
+        val cast = json?.str("cast")?.let { Session.noctraURL(it) }
+        if (id == null || cast == null) error("Le serveur ne fournit pas le multiview diffusé.")
+        mosaicId = id
+        return cast
+    }
+
+    /** Changement pendant la diffusion : mosaïque mise à jour (même adresse, le Chromecast continue). */
+    private fun mosaicChanged() {
+        if (castDevice == null) return
+        if (!ChromecastController.isActive) { stopCasting(); return }
+        mosaicJob?.cancel()
+        mosaicJob = Session.scope.launch {
+            delay(1_200)
+            runCatching { requestMosaic(false) }.onSuccess { castNote = null }.onFailure { castNote = it.message }
+        }
+    }
 
     /** Chaînes à diffuser : celles affichées, sinon celles choisies. */
     val castChannels: List<LiveChannel> get() = if (tiles.isEmpty()) picked.toList() else tiles.map { it.channel }
@@ -207,6 +305,11 @@ class MultiviewTile(val channel: LiveChannel) {
     var count by mutableIntStateOf(0)
         private set
     var player by mutableStateOf<ExoPlayer?>(null)
+        private set
+    /** Serveur en cours et lecture effective (pour la mosaïque diffusée). */
+    var current by mutableStateOf<LiveServer?>(null)
+        private set
+    var playing by mutableStateOf(false)
         private set
     private var servers: MutableList<LiveServer> = mutableListOf()
     private var index = -1
@@ -238,12 +341,14 @@ class MultiviewTile(val channel: LiveChannel) {
         generation += 1
         job?.cancel()
         job = null
+        playing = false
         player?.release()
         player = null
     }
 
     /** Serveur suivant (choix manuel ou flux tombé) ; nouvel essai de toute la liste ensuite. */
     fun next() {
+        playing = false
         if (servers.isEmpty()) { status = "Aucun flux direct pour le multiview"; return }
         index += 1
         generation += 1
@@ -292,7 +397,8 @@ class MultiviewTile(val channel: LiveChannel) {
 
     private fun play(server: LiveServer, token: Int) {
         val url = server.streamURL ?: run { next(); return }
-        status = "Connexion…"
+        current = server
+        status = "Connexion · ${server.label}…"
         val exo = exo()
         exo.stop()
         listener?.let { exo.removeListener(it) }
@@ -329,7 +435,9 @@ class MultiviewTile(val channel: LiveChannel) {
                         ready = true
                         rounds = 0
                         status = null
+                        playing = true
                         LiveHealth.record(server, channel.id, true)
+                        MultiviewStore.tilePlaying()
                     } else if (System.currentTimeMillis() - started > if (server.vip) 30_000 else 20_000) {
                         LiveHealth.record(server, channel.id, false)
                         status = "Serveur trop lent · essai du suivant…"
@@ -374,11 +482,19 @@ private fun multiviewLayout(width: Dp, height: Dp): List<TileFrame> {
             others.forEachIndexed { position, index -> frames[index] = TileFrame(mainWidth + cellW * (position % columns), cellH * (position / columns), cellW - gap, cellH - gap) }
         } else {
             val mainHeight = minOf(width * 9f / 16f, height * 0.5f)
-            frames[main] = TileFrame(0.dp, 0.dp, width, mainHeight)
             val columns = if (others.size > 4) 3 else 2
+            val rows = ceil(others.size / columns.toDouble()).toInt()
             val cellW = width / columns
             val cellH = cellW * 9f / 16f
-            others.forEachIndexed { position, index -> frames[index] = TileFrame(cellW * (position % columns), mainHeight + gap + cellH * (position / columns), cellW - gap, cellH - gap) }
+            // Ensemble centré verticalement, comme la grille (pas de grand vide en bas).
+            val top = maxOf(0.dp, (height - mainHeight - gap - cellH * rows) / 2)
+            frames[main] = TileFrame(0.dp, top, width, mainHeight)
+            others.forEachIndexed { position, index ->
+                val row = position / columns
+                val inRow = if (row == rows - 1) others.size - row * columns else columns
+                val shift = cellW * (columns - inRow) / 2
+                frames[index] = TileFrame(shift + cellW * (position % columns), top + mainHeight + gap + cellH * row, cellW - gap, cellH - gap)
+            }
         }
         return frames
     }
@@ -425,10 +541,15 @@ fun MultiviewScreen() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { MultiviewStore.close() }) { Icon(Icons.Filled.Close, "Fermer le multiview", tint = Color.White) }
-            Text("Multiview · ${MultiviewStore.tiles.size}/${MultiviewStore.MAX_TILES}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+            Column(Modifier.weight(1f)) {
+                Text("Multiview · ${MultiviewStore.tiles.size}/${MultiviewStore.MAX_TILES}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                MultiviewStore.castDevice?.let { Text("Diffusé sur ${it.name}", color = Theme.teal, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+            }
             if (MultiviewStore.featured != null || MultiviewStore.zoomed != null) IconButton(onClick = { MultiviewStore.grid() }) { Icon(Icons.Filled.GridView, "Revenir à la grille", tint = Color.White) }
             if (MultiviewStore.tiles.size < MultiviewStore.MAX_TILES) IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Ajouter une chaîne", tint = Color.White) }
-            IconButton(onClick = { casting = true }) { Icon(Icons.Filled.Tv, "Diffuser le multiview sur un téléviseur", tint = Color.White) }
+            IconButton(onClick = { casting = true }) {
+                Icon(Icons.Filled.Tv, MultiviewStore.castDevice?.let { "Diffusé sur ${it.name}" } ?: "Diffuser le multiview sur un téléviseur", tint = if (MultiviewStore.castDevice != null) Theme.teal else Color.White)
+            }
         }
     }
     menu?.let { tile ->
@@ -520,32 +641,67 @@ fun MultiviewAddSheet(onDismiss: () -> Unit, onPick: (LiveChannel) -> Unit) {
     }
 }
 
-/** Diffusion du multiview : Noctra TV (Android TV, LG, Samsung) le reçoit et se pilote ensuite d'ici. */
+/**
+ * Diffusion du multiview sur n'importe quel téléviseur : un Chromecast reçoit l'image composée par le
+ * serveur Noctra ; Noctra TV (Android TV, LG, Samsung) affiche les chaînes lui-même. Dans tous les cas,
+ * le téléphone pilote ensuite : ajouter, retirer, mettre en avant, choisir le son.
+ */
 @Composable
 fun MultiviewCastSheet(channels: List<LiveChannel>, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { RemotePlayback.refresh() }
+    LaunchedEffect(Unit) { ChromecastBrowser.start(); RemotePlayback.refresh() }
+    fun startCast(message: String, action: suspend () -> Unit) {
+        busy = message
+        error = null
+        scope.launch {
+            runCatching { action() }
+                .onSuccess {
+                    onDismiss()
+                    // Multiview démarré pour la diffusion : il s'ouvre ensuite comme télécommande.
+                    MultiviewStore.show()
+                }
+                .onFailure {
+                    error = it.message
+                    // Diffusion impossible : le multiview démarré en arrière-plan pour elle s'arrête.
+                    if (!MultiviewStore.presented && MultiviewStore.tiles.isNotEmpty()) MultiviewStore.close()
+                }
+            busy = null
+        }
+    }
     NoctraSheet(onDismiss) {
         SheetColumn("Diffuser le multiview") {
-            SettingGroup("Noctra TV", footer = "Le téléviseur affiche les ${channels.size} chaînes. Depuis le téléphone : ajouter ou retirer une chaîne, en mettre une en avant et n’écouter qu’elle. Chromecast ne lit qu’une chaîne à la fois.") {
+            MultiviewStore.castDevice?.let { device ->
+                SettingGroup(footer = "Les changements faits ici (chaîne ajoutée, retirée, mise en avant, son) arrivent sur le téléviseur en quelques secondes.") {
+                    SettingRow("Diffusé sur ${device.name}", icon = Icons.Filled.Cast, tint = Theme.teal)
+                    SettingRow("Arrêter la diffusion", tint = Theme.orange, onClick = { MultiviewStore.stopCasting() })
+                }
+            }
+            SettingGroup("Chromecast et Google TV") {
+                if (ChromecastBrowser.devices.isEmpty()) SettingRow("Recherche sur le Wi-Fi…")
+                ChromecastBrowser.devices.forEach { device ->
+                    SettingRow(device.name, icon = Icons.Filled.Cast, onClick = if (busy != null) null else ({
+                        startCast("Préparation du multiview pour ${device.name}…") { MultiviewStore.cast(device) }
+                    }))
+                }
+            }
+            SettingGroup("Noctra TV", footer = "Le Chromecast reçoit les ${channels.size} chaînes en une seule image, composée par le serveur Noctra. Noctra TV les affiche lui-même.") {
                 val targets = RemotePlayback.devices.filter { it.custom }
                 if (targets.isEmpty()) SettingRow("Ouvrez la version à jour de Noctra TV avec le même compte.")
                 targets.forEach { target ->
-                    SettingRow(target.name, value = target.title, icon = Icons.Filled.Tv, onClick = if (busy) null else ({
-                        busy = true
-                        scope.launch {
-                            runCatching { RemotePlayback.castMultiview(channels, target) }
-                                .onSuccess { MultiviewStore.close(); MultiviewStore.clear(); onDismiss() }
-                                .onFailure { error = it.message }
-                            busy = false
+                    SettingRow(target.name, value = target.title, icon = Icons.Filled.Tv, onClick = if (busy != null) null else ({
+                        startCast("Envoi au téléviseur…") {
+                            RemotePlayback.castMultiview(channels, target)
+                            MultiviewStore.close()
+                            MultiviewStore.clear()
                         }
                     }))
                 }
             }
-            if (busy) BusyRow("Envoi au téléviseur…")
+            busy?.let { BusyRow(it) }
             error?.let { Text(it, color = Theme.orange, modifier = Modifier.padding(24.dp)) }
+            MultiviewStore.castNote?.let { Text(it, color = Theme.orange, modifier = Modifier.padding(horizontal = 24.dp)) }
         }
     }
 }

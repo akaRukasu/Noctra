@@ -297,7 +297,7 @@ function WebVttSeconds(value) {
   const multiview = await src('Multiview');
   for (const name of ['final class MultiviewStore', 'final class MultiviewTile', 'struct MultiviewView', 'struct MultiviewAddSheet', 'struct MultiviewCastSheet', 'struct MultiviewBar']) assert.ok(multiview.includes(name), name);
   assert.match(multiview, /func solo\(_ tile: MultiviewTile\)/, 'chaîne mise en avant avec le son seul');
-  assert.match(multiview, /tile\.player\.isMuted = tile\.id != audio/, 'une seule chaîne écoutée');
+  assert.match(multiview, /tile\.player\.isMuted = (?:castTarget != nil \|\| )?tile\.id != audio/, 'une seule chaîne écoutée');
   assert.match(multiview, /LiveLauncher\.shared\.prepare\(channel, session: session\)/, 'serveurs de toutes les sources');
   const remote = await src('RemotePlayback');
   for (const action of ['playMultiview', 'multiAdd']) assert.ok(remote.includes(`"${action}"`), action);
@@ -354,8 +354,22 @@ console.log('Appli iOS native 2.16.2 : vérifiée.');
 // 2.16.3 : attente de la diffusion centrée, serveurs homonymes numérotés, historique LiveWatch d'avant 200.0.143 effacé.
 assert.match(await read('apps/ios-native/Noctra/Sources/Components.swift'), /struct BusyRow: View/);
 assert.match(await read('apps/ios-native/Noctra/Sources/RemotePlayback.swift'), /BusyRow\("Préparation de la diffusion…"\)/);
-assert.match(await read('apps/ios-native/Noctra/Sources/Multiview.swift'), /BusyRow\("Envoi au téléviseur…"\)/);
+assert.match(await read('apps/ios-native/Noctra/Sources/Multiview.swift'), /if let busy \{ BusyRow\(busy\) \}/);
 assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /static func uniqueLabels\(_ servers: \[LiveServer\]\) -> \[LiveServer\]/);
 assert.match(await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift'), /LiveServerFactory\.uniqueLabels\(expanded\)/);
 assert.match(await read('apps/ios-native/Noctra/Sources/LiveServers.swift'), /noctra\.tv\.health\.livewatch-reset\.143/);
 console.log('Appli iOS native 2.16.3 : vérifiée.');
+// 2.17 : multiview diffusé sur Chromecast et AirPlay (image composée par le serveur), piloté depuis l'iPhone.
+{
+  const multiview = await read('apps/ios-native/Noctra/Sources/Multiview.swift');
+  assert.match(multiview, /func cast\(to device: ChromecastDevice, session: Session\) async throws/);
+  assert.match(multiview, /func castAirPlay\(session: Session\) async throws/);
+  assert.match(multiview, /session\.noctraSend\("POST", "\/api\/tv\/mosaic", json: body, timeout: 40\)/);
+  assert.match(multiview, /player\.allowsExternalPlayback = false/, 'vignettes : jamais envoyées seules en AirPlay');
+  assert.match(multiview, /tile\.player\.isMuted = castTarget != nil \|\| tile\.id != audio/);
+  assert.match(multiview, /AVAudioSession\.routeChangeNotification/);
+  assert.match(multiview, /private func mosaicChanged\(\)/);
+  assert.match(multiview, /launch\(session: session, present: false\)/);
+  assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /func castStream\(_ address: URL, title streamTitle: String/);
+  console.log('Appli iOS native 2.17 : vérifiée.');
+}

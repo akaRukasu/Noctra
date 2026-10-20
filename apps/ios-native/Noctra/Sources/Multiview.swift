@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Multiview : plusieurs chaînes de n'importe quelle source à l'écran, comme sur la version web
 /// et Noctra TV. Une chaîne est écoutée, une peut être mise en avant, chacune passe seule au
-/// serveur suivant quand son flux tombe. Diffusable vers Noctra TV, puis pilotable depuis l'iPhone.
+/// serveur suivant quand son flux tombe. Diffusable vers Noctra TV, un Chromecast ou AirPlay
+/// (image composée par le serveur Noctra), puis pilotable depuis l'iPhone.
 @MainActor
 @Observable
 final class MultiviewStore {
@@ -23,6 +24,26 @@ final class MultiviewStore {
     private(set) var zoomed: UUID?
     @ObservationIgnored private weak var session: Session?
 
+    /// Téléviseur qui reçoit le multiview composé par le serveur (Chromecast ou AirPlay).
+    enum CastTarget: Equatable {
+        case chromecast(ChromecastDevice)
+        case airplay
+    }
+    private(set) var castTarget: CastTarget?
+    private(set) var castNote: String?
+    @ObservationIgnored private var mosaicID: String?
+    @ObservationIgnored private var mosaicTask: Task<Void, Never>?
+    /// Lecteur envoyé à l'Apple TV (lecture AirPlay de l'image composée).
+    @ObservationIgnored private var airPlayer: AVPlayer?
+
+    var castName: String? {
+        switch castTarget {
+        case .chromecast(let device): device.name
+        case .airplay: "AirPlay"
+        case nil: nil
+        }
+    }
+
     func contains(_ channel: LiveChannel) -> Bool { picked.contains { $0.id == channel.id } }
 
     func toggle(_ channel: LiveChannel) {
@@ -34,7 +55,7 @@ final class MultiviewStore {
     func clear() { picked = []; selecting = false }
 
     /// Lancement : les chaînes choisies démarrent l'une après l'autre (moins d'échecs au départ).
-    func launch(session: Session) {
+    func launch(session: Session, present: Bool = true) {
         guard !picked.isEmpty else { return }
         self.session = session
         LivePlayerModel.shared.close()
@@ -44,7 +65,7 @@ final class MultiviewStore {
         featured = nil
         zoomed = nil
         selecting = false
-        presented = true
+        presented = present
         UIApplication.shared.isIdleTimerDisabled = true
         for (index, tile) in tiles.enumerated() {
             tile.start(session: session, delay: Double(index) * 0.4)
@@ -59,6 +80,7 @@ final class MultiviewStore {
         if !picked.contains(where: { $0.id == channel.id }) { picked.append(channel) }
         tile.start(session: session, delay: 0)
         applyAudio()
+        mosaicChanged()
     }
 
     func remove(_ tile: MultiviewTile) {
@@ -68,12 +90,12 @@ final class MultiviewStore {
         if featured == tile.id { featured = nil }
         if zoomed == tile.id { zoomed = nil }
         if audio == tile.id { audio = tiles.first?.id }
-        if tiles.isEmpty { close() } else { applyAudio() }
+        if tiles.isEmpty { close() } else { applyAudio(); mosaicChanged() }
     }
 
-    func listen(_ tile: MultiviewTile) { audio = tile.id; applyAudio() }
+    func listen(_ tile: MultiviewTile) { audio = tile.id; applyAudio(); mosaicChanged() }
 
-    func feature(_ tile: MultiviewTile) { zoomed = nil; featured = featured == tile.id || tiles.count < 2 ? nil : tile.id }
+    func feature(_ tile: MultiviewTile) { zoomed = nil; featured = featured == tile.id || tiles.count < 2 ? nil : tile.id; mosaicChanged() }
 
     /// Chaîne mise en avant, et seule écoutée.
     func solo(_ tile: MultiviewTile) {
@@ -81,17 +103,20 @@ final class MultiviewStore {
         featured = tiles.count > 1 ? tile.id : nil
         zoomed = nil
         applyAudio()
+        mosaicChanged()
     }
 
-    func grid() { featured = nil; zoomed = nil }
+    func grid() { featured = nil; zoomed = nil; mosaicChanged() }
 
     /// Plein écran d'une vignette, avec son son.
     func zoom(_ tile: MultiviewTile) {
         zoomed = zoomed == tile.id ? nil : tile.id
         if zoomed != nil { audio = tile.id; applyAudio() }
+        mosaicChanged()
     }
 
     func close() {
+        stopCasting()
         stopAll()
         tiles = []
         featured = nil
@@ -103,7 +128,119 @@ final class MultiviewStore {
     private func stopAll() { tiles.forEach { $0.stop() } }
 
     private func applyAudio() {
-        for tile in tiles { tile.player.isMuted = tile.id != audio }
+        // Multiview diffusé : le son passe par le téléviseur, l'iPhone reste muet.
+        for tile in tiles { tile.player.isMuted = castTarget != nil || tile.id != audio }
+    }
+
+    // MARK: Diffusion (Chromecast, AirPlay)
+
+    /// Diffusion sur un Chromecast ; lancée d'abord ici si le multiview ne l'est pas encore.
+    func cast(to device: ChromecastDevice, session: Session) async throws {
+        let url = try await prepareMosaic(session: session)
+        try await ChromecastController.shared.castStream(url, title: "Multiview", subtitle: tiles.map(\.channel.name).joined(separator: " · "), image: nil, to: device)
+        airPlayer?.pause()
+        airPlayer = nil
+        castTarget = .chromecast(device)
+        castNote = nil
+        applyAudio()
+    }
+
+    /// Diffusion AirPlay : l'image composée part vers l'Apple TV choisie dans le menu AirPlay.
+    func castAirPlay(session: Session) async throws {
+        let url = try await prepareMosaic(session: session)
+        let player = AVPlayer(url: url)
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        player.play()
+        airPlayer = player
+        if case .chromecast = castTarget { ChromecastController.shared.stop() }
+        castTarget = .airplay
+        castNote = nil
+        applyAudio()
+    }
+
+    func stopCasting() {
+        mosaicTask?.cancel()
+        switch castTarget {
+        case .chromecast: ChromecastController.shared.stop()
+        case .airplay: airPlayer?.pause(); airPlayer = nil
+        case nil: break
+        }
+        castTarget = nil
+        castNote = nil
+        if let id = mosaicID, let session {
+            Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(id)", json: nil, timeout: 10) }
+        }
+        mosaicID = nil
+        applyAudio()
+    }
+
+    /// Une vignette lit (de nouveau) : la mosaïque diffusée la reprend.
+    func tilePlaying(_ tile: MultiviewTile) { mosaicChanged() }
+
+    /// Multiview lancé si besoin, puis attente des chaînes qui lisent (au plus 45 s), puis mosaïque.
+    private func prepareMosaic(session: Session) async throws -> URL {
+        self.session = session
+        // Serveur à jour et ffmpeg présent, avant de lancer quoi que ce soit.
+        guard let check = try? await session.noctraJSON("/api/tv/mosaic", timeout: 15) as? [String: Any] else {
+            throw NSError(domain: "NoctraMultiview", code: 2, userInfo: [NSLocalizedDescriptionKey: "Diffuser le multiview sur Chromecast ou AirPlay nécessite le serveur Noctra 200.0.144."])
+        }
+        guard check["available"] as? Bool == true else {
+            throw NSError(domain: "NoctraMultiview", code: 3, userInfo: [NSLocalizedDescriptionKey: "ffmpeg est introuvable sur le serveur Noctra : il compose le multiview diffusé. Indiquez son chemin dans NOCTRA_FFMPEG."])
+        }
+        // Lancé depuis la barre des chaînes : multiview démarré sans l'ouvrir sous la feuille de diffusion.
+        if tiles.isEmpty { launch(session: session, present: false) }
+        let started = Date()
+        while Date().timeIntervalSince(started) < 45 {
+            let playing = tiles.filter(\.playing).count
+            if playing == tiles.count || (playing > 0 && Date().timeIntervalSince(started) > 12) { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        return try await requestMosaic(wait: true)
+    }
+
+    /// Chaînes qui lisent, envoyées au serveur dans l'ordre affiché (adresse, en-têtes, son, mise en avant).
+    private func requestMosaic(wait: Bool) async throws -> URL {
+        guard let session else { throw NoctraError.empty }
+        let live = tiles.filter { $0.playing && $0.current?.streamURL != nil }
+        guard !live.isEmpty else {
+            throw NSError(domain: "NoctraMultiview", code: 1, userInfo: [NSLocalizedDescriptionKey: "Aucune chaîne du multiview ne lit encore : réessayez quand une image apparaît."])
+        }
+        let list: [[String: Any]] = live.compactMap { tile in
+            guard let server = tile.current, let stream = server.streamURL else { return nil }
+            let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
+            let address = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (parts?.percentEncodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+            return ["url": address, "headers": server.headers, "name": tile.channel.name]
+        }
+        let main = zoomed ?? featured
+        var body: [String: Any] = [
+            "tiles": list,
+            "audio": live.firstIndex { $0.id == audio } ?? 0,
+            "featured": main.flatMap { id in live.firstIndex { $0.id == id } } ?? -1,
+            "wait": wait
+        ]
+        if let mosaicID { body["id"] = mosaicID }
+        let json = try await session.noctraSend("POST", "/api/tv/mosaic", json: body, timeout: 40) as? [String: Any]
+        guard let id = json?["id"] as? String, let cast = json?["cast"] as? String, let url = session.noctraURL(cast) else { throw NoctraError.empty }
+        mosaicID = id
+        return url
+    }
+
+    /// Changement pendant la diffusion : mosaïque mise à jour (même adresse, le téléviseur continue).
+    private func mosaicChanged() {
+        guard castTarget != nil else { return }
+        if case .chromecast = castTarget, !ChromecastController.shared.isActive { stopCasting(); return }
+        mosaicTask?.cancel()
+        mosaicTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard let self, !Task.isCancelled, self.castTarget != nil else { return }
+            do {
+                _ = try await self.requestMosaic(wait: false)
+                self.castNote = nil
+            } catch {
+                self.castNote = error.localizedDescription
+            }
+        }
     }
 
     /// Chaînes à diffuser : celles affichées, sinon celles choisies.
@@ -120,6 +257,9 @@ final class MultiviewTile: Identifiable {
     private(set) var status: String? = "Recherche des serveurs…"
     private(set) var server: String?
     private(set) var count = 0
+    /// Serveur en cours et lecture effective (pour la mosaïque diffusée).
+    private(set) var current: LiveServer?
+    private(set) var playing = false
     @ObservationIgnored private var servers: [LiveServer] = []
     @ObservationIgnored private var index = -1
     @ObservationIgnored private var generation = 0
@@ -131,6 +271,8 @@ final class MultiviewTile: Identifiable {
         self.channel = channel
         player.automaticallyWaitsToMinimizeStalling = true
         player.isMuted = true
+        // AirPlay : seule l'image composée part vers l'Apple TV, pas chaque vignette.
+        player.allowsExternalPlayback = false
     }
 
     func start(session: Session, delay: Double) {
@@ -155,12 +297,14 @@ final class MultiviewTile: Identifiable {
         generation += 1
         task?.cancel()
         task = nil
+        playing = false
         player.replaceCurrentItem(with: nil)
     }
 
     /// Serveur suivant (choix manuel ou flux tombé) ; nouvel essai de toute la liste ensuite.
     func next() {
         guard let session else { return }
+        playing = false
         guard !servers.isEmpty else { status = "Aucun flux direct pour le multiview"; return }
         index += 1
         if index >= servers.count {
@@ -202,7 +346,8 @@ final class MultiviewTile: Identifiable {
     private func play(_ server: LiveServer, token: Int, session: Session) {
         guard let url = server.streamURL else { next(); return }
         self.server = server.label
-        status = "Connexion…"
+        current = server
+        status = "Connexion · \(server.label)…"
         var headers = server.headers
         if session.isNoctraOrigin(url), let auth = session.token { headers["x-noctra-token"] = auth }
         var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": headers]
@@ -233,7 +378,9 @@ final class MultiviewTile: Identifiable {
                         ready = true
                         self.rounds = 0
                         self.status = nil
+                        self.playing = true
                         LiveHealth.record(server, channel: channelID, ok: true)
+                        MultiviewStore.shared.tilePlaying(self)
                     } else if Date().timeIntervalSince(started) > (server.vip ? 30 : 20) {
                         LiveHealth.record(server, channel: channelID, ok: false)
                         self.status = "Serveur trop lent · essai du suivant…"
@@ -311,7 +458,12 @@ struct MultiviewView: View {
         HStack(spacing: 10) {
             Button { store.close() } label: { Image(systemName: "xmark").frame(width: 40, height: 40) }
                 .accessibilityLabel("Fermer le multiview")
-            Text("Multiview · \(store.tiles.count)/\(MultiviewStore.maxTiles)").font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Multiview · \(store.tiles.count)/\(MultiviewStore.maxTiles)").font(.subheadline.weight(.semibold))
+                if let name = store.castName {
+                    Text("Diffusé sur \(name)").font(.caption2.weight(.semibold)).foregroundStyle(Theme.teal).lineLimit(1)
+                }
+            }
             Spacer()
             if store.featured != nil || store.zoomed != nil {
                 Button { store.grid() } label: { Image(systemName: "square.grid.2x2").frame(width: 40, height: 40) }
@@ -321,8 +473,11 @@ struct MultiviewView: View {
                 Button { adding = true } label: { Image(systemName: "plus").frame(width: 40, height: 40) }
                     .accessibilityLabel("Ajouter une chaîne")
             }
-            Button { casting = true } label: { Image(systemName: "tv.badge.wifi").frame(width: 40, height: 40) }
-                .accessibilityLabel("Diffuser le multiview sur un téléviseur")
+            Button { casting = true } label: {
+                Image(systemName: "tv.badge.wifi").frame(width: 40, height: 40)
+                    .foregroundStyle(store.castTarget != nil ? Theme.teal : .white)
+            }
+            .accessibilityLabel(store.castName.map { "Diffusé sur \($0)" } ?? "Diffuser le multiview sur un téléviseur")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
@@ -357,12 +512,18 @@ struct MultiviewView: View {
                 }
             } else {
                 let mainHeight = min(size.width * 9 / 16, size.height * 0.5)
-                frames[main] = CGRect(x: 0, y: 0, width: size.width, height: mainHeight)
                 let columns = others.count > 4 ? 3 : 2
+                let rows = Int(ceil(Double(others.count) / Double(columns)))
                 let cellW = size.width / CGFloat(columns)
                 let cellH = cellW * 9 / 16
+                // Ensemble centré verticalement, comme la grille (pas de grand vide en bas).
+                let top = max(0, (size.height - mainHeight - gap - CGFloat(rows) * cellH) / 2)
+                frames[main] = CGRect(x: 0, y: top, width: size.width, height: mainHeight)
                 for (position, index) in others.enumerated() {
-                    frames[index] = CGRect(x: CGFloat(position % columns) * cellW, y: mainHeight + gap + CGFloat(position / columns) * cellH, width: cellW - gap, height: cellH - gap)
+                    let row = position / columns
+                    let inRow = row == rows - 1 ? others.count - row * columns : columns
+                    let shift = CGFloat(columns - inRow) * cellW / 2
+                    frames[index] = CGRect(x: shift + CGFloat(position % columns) * cellW, y: top + mainHeight + gap + CGFloat(row) * cellH, width: cellW - gap, height: cellH - gap)
                 }
             }
             return frames
@@ -479,48 +640,116 @@ struct MultiviewAddSheet: View {
     }
 }
 
-/// Diffusion du multiview : Noctra TV (Android TV, LG, Samsung) le reçoit et se pilote ensuite d'ici.
+/// Diffusion du multiview sur n'importe quel téléviseur : Chromecast et AirPlay reçoivent l'image
+/// composée par le serveur Noctra ; Noctra TV (Android TV, LG, Samsung) affiche les chaînes lui-même.
+/// Dans tous les cas, l'iPhone pilote ensuite : ajouter, retirer, mettre en avant, choisir le son.
 struct MultiviewCastSheet: View {
     let channels: [LiveChannel]
+    @Environment(Session.self) private var session
     @Environment(\.dismiss) private var dismiss
-    @State private var busy = false
+    @State private var busy: String?
     @State private var error: String?
     private var remote: RemotePlayback { .shared }
+    private var browser: ChromecastBrowser { .shared }
+    private var store: MultiviewStore { .shared }
 
     var body: some View {
         NavigationStack {
             List {
+                if let name = store.castName {
+                    Section {
+                        Label("Diffusé sur \(name)", systemImage: "dot.radiowaves.left.and.right").foregroundStyle(Theme.teal)
+                        Button("Arrêter la diffusion", role: .destructive) { store.stopCasting() }
+                    } footer: {
+                        Text("Les changements faits ici (chaîne ajoutée, retirée, mise en avant, son) arrivent sur le téléviseur en quelques secondes.")
+                    }
+                }
+                Section {
+                    if browser.devices.isEmpty { Text("Recherche sur le Wi-Fi…").foregroundStyle(Theme.muted) }
+                    ForEach(browser.devices) { device in
+                        Button { run("Préparation du multiview pour \(device.name)…") { try await store.cast(to: device, session: session) } } label: {
+                            Label(device.name, systemImage: "tv")
+                        }
+                    }
+                } header: {
+                    Text("Chromecast et Google TV")
+                }
+                Section {
+                    HStack {
+                        Label("AirPlay", systemImage: "airplayvideo")
+                        Spacer()
+                        AirPlayButton().frame(width: 44, height: 44)
+                    }
+                    if store.castTarget != .airplay, AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .airPlay }) {
+                        Button("Envoyer sur l’appareil AirPlay connecté") {
+                            run("Préparation du multiview pour AirPlay…") { try await store.castAirPlay(session: session) }
+                        }
+                    }
+                } header: {
+                    Text("Apple TV et téléviseurs AirPlay")
+                } footer: {
+                    Text("Choisissez le téléviseur dans le menu AirPlay : le multiview y part aussitôt.")
+                }
                 Section {
                     let targets = remote.devices.filter { $0.custom }
                     if targets.isEmpty { Text("Ouvrez la version à jour de Noctra TV avec le même compte.").foregroundStyle(Theme.muted) }
                     ForEach(targets) { target in
                         Button {
-                            busy = true
-                            Task {
-                                defer { busy = false }
-                                do {
-                                    try await remote.castMultiview(channels, to: target)
-                                    MultiviewStore.shared.close()
-                                    MultiviewStore.shared.clear()
-                                    dismiss()
-                                } catch { self.error = error.localizedDescription }
+                            run("Envoi au téléviseur…") {
+                                try await remote.castMultiview(channels, to: target)
+                                store.close()
+                                store.clear()
                             }
                         } label: { Label(target.name, systemImage: "tv") }
                     }
                 } header: {
                     Text("Noctra TV")
                 } footer: {
-                    Text("Le téléviseur affiche les \(channels.count) chaînes. Depuis l’iPhone : ajouter ou retirer une chaîne, en mettre une en avant et n’écouter qu’elle. Chromecast ne lit qu’une chaîne à la fois.")
+                    Text("Chromecast et AirPlay reçoivent les \(channels.count) chaînes en une seule image, composée par le serveur Noctra. Noctra TV les affiche lui-même.")
                 }
-                if busy { BusyRow("Envoi au téléviseur…") }
+                if let busy { BusyRow(busy) }
                 if let error { Text(error).foregroundStyle(Color.orange) }
+                if let note = store.castNote { Text(note).foregroundStyle(Color.orange) }
             }
-            .disabled(busy)
+            .disabled(busy != nil)
             .navigationTitle("Diffuser le multiview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Fermer") { dismiss() } } }
         }
+        .onAppear { browser.start() }
         .task { await remote.refresh() }
+        // Téléviseur AirPlay choisi dans le menu : le multiview y est envoyé.
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
+            Task { @MainActor in
+                let airplay = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .airPlay }
+                if airplay, store.castTarget != .airplay, busy == nil {
+                    run("Préparation du multiview pour AirPlay…") { try await store.castAirPlay(session: session) }
+                } else if !airplay, store.castTarget == .airplay {
+                    store.stopCasting()
+                }
+            }
+        }
+    }
+
+    private func run(_ message: String, _ action: @escaping @MainActor () async throws -> Void) {
+        busy = message
+        error = nil
+        Task {
+            defer { busy = nil }
+            do {
+                try await action()
+                dismiss()
+                // Multiview démarré pour la diffusion : il s'ouvre ensuite ici comme télécommande.
+                if !store.tiles.isEmpty, !store.presented {
+                    try? await Task.sleep(for: .milliseconds(600))
+                    store.presented = true
+                }
+            } catch {
+                self.error = error.localizedDescription
+                // Diffusion impossible : le multiview démarré en arrière-plan pour elle s'arrête.
+                if !store.presented, !store.tiles.isEmpty { store.close() }
+            }
+        }
     }
 }
 
