@@ -34,6 +34,8 @@ final class LivePlayerModel {
     var askServer = false
     /// Téléviseur AirPlay choisi : la chaîne part en flux vers lui (lecteur d'Apple), pas en recopie d'écran.
     private(set) var airPlay = false
+    /// Le téléviseur lit lui-même le flux (Apple TV…) ; faux en recopie d'écran : l'image reste ici et y est recopiée.
+    private(set) var externalActive = false
     let player = AVPlayer()
 
     @ObservationIgnored weak var session: Session?
@@ -51,12 +53,18 @@ final class LivePlayerModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var webPlaying = false
     @ObservationIgnored private var routeObserver: NSObjectProtocol?
+    @ObservationIgnored private var externalObservation: NSKeyValueObservation?
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
         player.allowsExternalPlayback = true
-        // Recopie de l'écran active : la vidéo part quand même seule, en plein écran, sur le téléviseur.
-        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        // Recopie de l'écran : l'image reste dans le lecteur et le récepteur la recopie (comme les vidéos).
+        // Certains récepteurs ne font que la recopie : un flux envoyé à part n'y apparaîtrait pas.
+        player.usesExternalPlaybackWhileExternalScreenIsActive = false
+        externalObservation = player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { [weak self] player, _ in
+            let active = player.isExternalPlaybackActive
+            Task { @MainActor in self?.externalActive = active }
+        }
         airPlay = Self.airPlayRoute()
         routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.routeChanged() }
@@ -642,7 +650,7 @@ struct LivePlayerView: View {
             }
             .ignoresSafeArea()
             .offset(y: drag / 3)
-            if model.airPlay && model.web == nil && !model.loading {
+            if model.externalActive && model.web == nil && !model.loading {
                 // La vidéo est sur le téléviseur : l'iPhone sert de télécommande.
                 VStack(spacing: 10) {
                     Image(systemName: "airplayvideo").font(.system(size: 44, weight: .semibold)).foregroundStyle(Theme.accent)

@@ -147,11 +147,26 @@ final class MultiviewStore {
 
     /// Diffusion AirPlay : l'image composée part vers l'Apple TV choisie dans le menu AirPlay.
     func castAirPlay(session: Session) async throws {
+        // Recopie d'écran seule (récepteur sans lecture de flux) : le multiview de l'iPhone y est déjà affiché.
+        if UIScreen.screens.count > 1 {
+            castNote = "Recopie de l’écran : le téléviseur affiche le multiview de l’iPhone tel quel."
+            return
+        }
         let url = try await prepareMosaic(session: session)
         let player = AVPlayer(url: url)
         player.allowsExternalPlayback = true
-        player.usesExternalPlaybackWhileExternalScreenIsActive = true
         player.play()
+        // Le récepteur doit lire le flux lui-même (Apple TV, téléviseur AirPlay) ; sinon rien n'y apparaîtrait.
+        let started = Date()
+        while !player.isExternalPlaybackActive && Date().timeIntervalSince(started) < 6 {
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        guard player.isExternalPlaybackActive else {
+            player.pause()
+            if let id = mosaicID { Task { _ = try? await session.noctraSend("DELETE", "/api/tv/mosaic/\(id)", json: nil, timeout: 10) } }
+            mosaicID = nil
+            throw NSError(domain: "NoctraMultiview", code: 4, userInfo: [NSLocalizedDescriptionKey: "Cet appareil AirPlay ne lit pas les flux vidéo (son seul ou recopie d’écran). Utilisez la recopie de l’écran : le multiview de l’iPhone s’y affiche."])
+        }
         airPlayer = player
         if case .chromecast = castTarget { ChromecastController.shared.stop() }
         castTarget = .airplay

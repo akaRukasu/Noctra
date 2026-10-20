@@ -377,7 +377,6 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
 {
   const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
   assert.match(player, /AVAudioSession\.routeChangeNotification/);
-  assert.match(player, /player\.usesExternalPlaybackWhileExternalScreenIsActive = true/);
   assert.match(player, /let useWeb = !airPlay && \(server\.mpegts/, 'AirPlay : jamais le moteur web');
   assert.match(player, /private func airPlayAddress\(_ server: LiveServer, session: Session\) async -> URL\?/);
   assert.match(player, /"\/api\/tv\/cast", json: \["url": address, "headers": server\.headers\]/);
@@ -385,4 +384,14 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(player, /self\.startApple\(server, asset: AVURLAsset\(url: address\), token: token\)/, 'sans en-tête ni cookie');
   assert.doesNotMatch(player, /if model\.web == nil \{\n\s*AirPlayButton/, 'bouton AirPlay toujours proposé');
   console.log('Appli iOS native 2.17.1 : vérifiée.');
+}
+// 2.17.2 : récepteur en recopie d'écran seule — l'image reste dans le lecteur (recopiée), « Lecture sur le téléviseur » seulement si le téléviseur lit le flux.
+{
+  const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
+  assert.match(player, /player\.usesExternalPlaybackWhileExternalScreenIsActive = false/);
+  assert.match(player, /player\.observe\(\\\.isExternalPlaybackActive/);
+  assert.match(player, /if model\.externalActive && model\.web == nil && !model\.loading/);
+  const multiview = await read('apps/ios-native/Noctra/Sources/Multiview.swift');
+  assert.match(multiview, /guard player\.isExternalPlaybackActive else/, 'multiview AirPlay : flux lu par le téléviseur, sinon recopie');
+  console.log('Appli iOS native 2.17.2 : vérifiée.');
 }
