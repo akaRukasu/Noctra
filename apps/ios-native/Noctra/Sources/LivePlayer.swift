@@ -32,6 +32,8 @@ final class LivePlayerModel {
     private(set) var probing = 0
     /// Aucun serveur n'a pu lire : la liste des serveurs s'ouvre.
     var askServer = false
+    /// Téléviseur AirPlay choisi : la chaîne part en flux vers lui (lecteur d'Apple), pas en recopie d'écran.
+    private(set) var airPlay = false
     let player = AVPlayer()
 
     @ObservationIgnored weak var session: Session?
@@ -48,10 +50,60 @@ final class LivePlayerModel {
     @ObservationIgnored private var readyAt: Date?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var webPlaying = false
+    @ObservationIgnored private var routeObserver: NSObjectProtocol?
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
         player.allowsExternalPlayback = true
+        // Recopie de l'écran active : la vidéo part quand même seule, en plein écran, sur le téléviseur.
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        airPlay = Self.airPlayRoute()
+        routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.routeChanged() }
+        }
+    }
+
+    // MARK: AirPlay
+
+    private static func airPlayRoute() -> Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .airPlay }
+    }
+
+    /// AirPlay choisi ou quitté pendant la lecture : la chaîne repart avec le bon lecteur. Le moteur web
+    /// et les pages des sites ne passent en AirPlay qu'en recopie d'écran (ou le son seul) ; le lecteur
+    /// d'Apple envoie le flux lui-même au téléviseur, comme le Chromecast.
+    private func routeChanged() {
+        let active = Self.airPlayRoute()
+        guard active != airPlay else { return }
+        airPlay = active
+        guard presented, let server = current else { return }
+        if active, server.kind == .web, let native = nextNative(after: server) { play(native, note: "AirPlay : passage à un flux direct…"); return }
+        if server.kind == .native { play(server, note: active ? "Envoi en AirPlay…" : "Retour sur l’iPhone…") }
+    }
+
+    /// Flux direct à essayer en AirPlay (les pages des sites ne s'y envoient pas).
+    private func nextNative(after server: LiveServer) -> LiveServer? {
+        servers.first { $0.id != server.id && $0.kind == .native && $0.streamURL != nil && !tried.contains($0.id) && ![.down, .noVideo, .stale].contains($0.probe) }
+            ?? servers.first { $0.id != server.id && $0.kind == .native && $0.streamURL != nil && ![.down, .noVideo, .stale].contains($0.probe) }
+    }
+
+    /// Adresse lisible par le téléviseur AirPlay sans le jeton du compte : droit de lecture TV du
+    /// serveur Noctra (comme pour le Chromecast) ; flux MPEG-TS converti en HLS par le serveur (ffmpeg).
+    private func airPlayAddress(_ server: LiveServer, session: Session) async -> URL? {
+        guard let stream = server.streamURL else { return nil }
+        let parts = URLComponents(url: stream, resolvingAgainstBaseURL: false)
+        let address = session.isNoctraOrigin(stream) ? (parts?.percentEncodedPath ?? stream.path) + (parts?.percentEncodedQuery.map { "?" + $0 } ?? "") : stream.absoluteString
+        if !server.mpegts,
+           let json = try? await session.noctraSend("POST", "/api/tv/cast", json: ["url": address, "headers": server.headers], timeout: 20) as? [String: Any],
+           let path = json["url"] as? String, let url = session.noctraURL(path) {
+            return url
+        }
+        let tile: [String: Any] = ["url": address, "headers": server.headers, "name": channel?.name ?? ""]
+        if let json = try? await session.noctraSend("POST", "/api/tv/mosaic", json: ["tiles": [tile], "audio": 0, "featured": -1], timeout: 40) as? [String: Any],
+           let path = json["cast"] as? String, let url = session.noctraURL(path) {
+            return url
+        }
+        return nil
     }
 
     var position: Int? { channel.flatMap { current in context.firstIndex { $0.id == current.id } } }
@@ -192,6 +244,11 @@ final class LivePlayerModel {
     /// marché pour ce fournisseur, et le moteur web pour un flux MPEG-TS.
     func play(_ server: LiveServer, web forced: Bool? = nil, note: String? = nil) {
         guard let session, let channel else { return }
+        // AirPlay : une page de site ne s'envoie qu'en recopie d'écran, un flux direct passe avant.
+        if airPlay, server.kind == .web, let native = nextNative(after: server), !tried.contains(native.id) {
+            play(native, note: "AirPlay : flux direct plutôt que le lecteur du site…")
+            return
+        }
         finishMeasure()
         generation += 1
         let token = generation
@@ -245,7 +302,8 @@ final class LivePlayerModel {
             }
             openPage(server, token: token)
         case .native:
-            let useWeb = server.mpegts || (forced ?? (server.webEngine || LiveHealth.prefersWeb(server)))
+            // AirPlay : toujours le lecteur d'Apple, qui envoie le flux au téléviseur.
+            let useWeb = !airPlay && (server.mpegts || (forced ?? (server.webEngine || LiveHealth.prefersWeb(server))))
             if useWeb { playEngine(server, token: token) } else { playApple(server, token: token) }
         }
     }
@@ -291,15 +349,36 @@ final class LivePlayerModel {
 
     /// Lecteur d'Apple (HLS) : image dans l'image, AirPlay.
     private func playApple(_ server: LiveServer, token: Int) {
-        guard let session, let channel, let url = server.streamURL else { fail(server); return }
+        guard let session, let url = server.streamURL else { fail(server); return }
         engines[server.id, default: []].insert(false)
         web = nil
+        if airPlay {
+            // Le téléviseur lit lui-même l'adresse : ni en-tête ni cookie ne lui parviennent.
+            stopVideo()
+            status = "Envoi en AirPlay…"
+            watch = Task { [weak self] in
+                guard let self else { return }
+                let address = await self.airPlayAddress(server, session: session)
+                guard token == self.generation else { return }
+                guard let address else {
+                    self.fail(server, message: "AirPlay : \(server.label) ne peut pas être envoyé au téléviseur. Serveur suivant…")
+                    return
+                }
+                self.startApple(server, asset: AVURLAsset(url: address), token: token)
+            }
+            return
+        }
         var headers = server.headers
         if session.isNoctraOrigin(url), let auth = session.token { headers["x-noctra-token"] = auth }
         var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": headers]
         let cookies = session.noctraCookies(for: url)
         if !cookies.isEmpty { options[AVURLAssetHTTPCookiesKey] = cookies }
-        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+        startApple(server, asset: AVURLAsset(url: url, options: options), token: token)
+    }
+
+    private func startApple(_ server: LiveServer, asset: AVURLAsset, token: Int) {
+        guard let channel else { return }
+        let item = AVPlayerItem(asset: asset)
         item.preferredForwardBufferDuration = 0
         let title = AVMutableMetadataItem()
         title.identifier = .commonIdentifierTitle
@@ -378,6 +457,11 @@ final class LivePlayerModel {
     /// Moteur refusé : l'autre moteur pour le même flux (sauf MPEG-TS, que seul
     /// le moteur web lit), puis le serveur suivant.
     private func engineFailed(_ server: LiveServer, web: Bool, reason: String) {
+        // AirPlay : seul le lecteur d'Apple envoie le flux, pas d'essai avec le moteur web.
+        if airPlay {
+            fail(server, message: "AirPlay : \(server.label) (\(reason)). Serveur suivant…")
+            return
+        }
         if !server.mpegts { LiveHealth.noteEngine(server, web: web, ok: false) }
         let other = !web
         let tested = engines[server.id] ?? []
@@ -558,6 +642,15 @@ struct LivePlayerView: View {
             }
             .ignoresSafeArea()
             .offset(y: drag / 3)
+            if model.airPlay && model.web == nil && !model.loading {
+                // La vidéo est sur le téléviseur : l'iPhone sert de télécommande.
+                VStack(spacing: 10) {
+                    Image(systemName: "airplayvideo").font(.system(size: 44, weight: .semibold)).foregroundStyle(Theme.accent)
+                    Text("Lecture sur le téléviseur AirPlay").font(.headline)
+                    Text(model.channel?.name ?? "").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+                }
+                .allowsHitTesting(false)
+            }
             if !pageMode {
                 Color.clear
                     .contentShape(Rectangle())
@@ -659,9 +752,8 @@ struct LivePlayerView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .glassEffect(.regular.tint(.black.opacity(0.35)), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                if model.web == nil {
-                    AirPlayButton().frame(width: 44, height: 44).glassEffect(.regular, in: Circle())
-                }
+                // Toujours proposé : AirPlay choisi, la chaîne repart avec le lecteur d'Apple vers le téléviseur.
+                AirPlayButton().frame(width: 44, height: 44).glassEffect(.regular, in: Circle())
                 if !pageMode && AVPictureInPictureController.isPictureInPictureSupported() {
                     circleButton("pip.enter") { model.startPictureInPicture() }
                 }

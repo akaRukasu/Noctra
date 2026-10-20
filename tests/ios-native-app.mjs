@@ -373,3 +373,16 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(await read('apps/ios-native/Noctra/Sources/Chromecast.swift'), /func castStream\(_ address: URL, title streamTitle: String/);
   console.log('Appli iOS native 2.17 : vérifiée.');
 }
+// 2.17.1 : AirPlay d'une chaîne = le flux envoyé au téléviseur (lecteur d'Apple, adresse autorisée), pas une recopie d'écran.
+{
+  const player = await read('apps/ios-native/Noctra/Sources/LivePlayer.swift');
+  assert.match(player, /AVAudioSession\.routeChangeNotification/);
+  assert.match(player, /player\.usesExternalPlaybackWhileExternalScreenIsActive = true/);
+  assert.match(player, /let useWeb = !airPlay && \(server\.mpegts/, 'AirPlay : jamais le moteur web');
+  assert.match(player, /private func airPlayAddress\(_ server: LiveServer, session: Session\) async -> URL\?/);
+  assert.match(player, /"\/api\/tv\/cast", json: \["url": address, "headers": server\.headers\]/);
+  assert.match(player, /"\/api\/tv\/mosaic", json: \["tiles": \[tile\]/, 'MPEG-TS converti en HLS par le serveur');
+  assert.match(player, /self\.startApple\(server, asset: AVURLAsset\(url: address\), token: token\)/, 'sans en-tête ni cookie');
+  assert.doesNotMatch(player, /if model\.web == nil \{\n\s*AirPlayButton/, 'bouton AirPlay toujours proposé');
+  console.log('Appli iOS native 2.17.1 : vérifiée.');
+}

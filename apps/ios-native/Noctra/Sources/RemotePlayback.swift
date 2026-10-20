@@ -294,7 +294,11 @@ struct LiveCastSheet: View {
                         }
                     }
                 }
-                Section { HStack { Label("AirPlay", systemImage: "airplayvideo"); Spacer(); AirPlayButton().frame(width: 44, height: 44) } }
+                Section {
+                    HStack { Label("AirPlay", systemImage: "airplayvideo"); Spacer(); AirPlayButton().frame(width: 44, height: 44) }
+                } footer: {
+                    Text("Choisissez l’Apple TV ou le téléviseur AirPlay : la chaîne y part en flux, en plein écran, et l’iPhone sert de télécommande.")
+                }
                 if busy { BusyRow("Préparation de la diffusion…") }
                 if let error { Text(error).foregroundStyle(Color.orange) }
             }
