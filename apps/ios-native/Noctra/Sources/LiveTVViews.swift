@@ -992,12 +992,18 @@ struct BouquetCard: View {
 struct LiveWebView: UIViewRepresentable {
     let request: WebPlayerRequest
     let session: Session
+    /// Vignette du multiview : ses propres événements (sinon ceux du lecteur TV).
+    var onEvent: ((_ state: String, _ message: String, _ url: String) -> Void)? = nil
+    var onCreate: ((WKWebView) -> Void)? = nil
+    /// Son de départ des vidéos de la page (vignette du multiview) ; nil : lecteur TV.
+    var muted: Bool? = nil
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var allowedHosts: Set<String> = []
         var loaded = false
         var requestID = UUID()
         var noctraBase = ""
+        var onEvent: ((String, String, String) -> Void)?
 
         private func host(_ url: URL?) -> String { (url?.host ?? "").lowercased().replacingOccurrences(of: "www.", with: "") }
 
@@ -1051,8 +1057,9 @@ struct LiveWebView: UIViewRepresentable {
 
         private func report(state: String, message: String, url: String) {
             let id = requestID
+            let sink = onEvent
             MainActor.assumeIsolated {
-                LivePlayerModel.shared.webEvent(id, state: state, message: message, url: url)
+                if let sink { sink(state, message, url) } else { LivePlayerModel.shared.webEvent(id, state: state, message: message, url: url) }
             }
         }
     }
@@ -1067,11 +1074,16 @@ struct LiveWebView: UIViewRepresentable {
         configuration.allowsAirPlayForMediaPlayback = true
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        // Vignette du multiview : son des vidéos coupé ou non dès le départ, dans tous les cadres.
+        if let muted {
+            configuration.userContentController.addUserScript(WKUserScript(source: "window.__noctraMuted=\(muted);", injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        }
         // Messages des lecteurs (tous les cadres) : vidéo lancée, états des ponts Noctra.
         configuration.userContentController.addUserScript(WKUserScript(source: Self.bridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         configuration.userContentController.add(context.coordinator, name: "noctra")
         context.coordinator.requestID = request.id
         context.coordinator.noctraBase = session.noctraBase
+        context.coordinator.onEvent = onEvent
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
@@ -1080,7 +1092,8 @@ struct LiveWebView: UIViewRepresentable {
         view.scrollView.backgroundColor = .black
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
-        LivePlayerModel.shared.webView = view
+        if onEvent == nil { LivePlayerModel.shared.webView = view }
+        onCreate?(view)
         let store = configuration.websiteDataStore.httpCookieStore
         let base = URL(string: session.noctraBase + "/")
         if let noctraHost = base?.host?.lowercased() { context.coordinator.allowedHosts.insert(noctraHost.replacingOccurrences(of: "www.", with: "")) }
@@ -1135,6 +1148,14 @@ struct LiveWebView: UIViewRepresentable {
     addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;var t=String(d.type||'');
     if(!/^noctra-[a-z0-9]+-state$/.test(t))return;send({state:String(d.state||''),message:String(d.message||''),url:String(d.url||'')})},true);
     document.addEventListener('playing',function(e){var t=e.target;if(t&&t.tagName==='VIDEO')send({state:'playing'})},true);
+    function applyMute(m){window.__noctraMuted=m;try{document.querySelectorAll('video,audio').forEach(function(x){try{x.muted=m;if(!m&&x.volume===0)x.volume=1}catch(e){}})}catch(e){}
+    for(var i=0;i<frames.length;i++){try{frames[i].postMessage({type:'noctra-mute',muted:m},'*')}catch(e){}}}
+    window.__noctraMute=applyMute;
+    addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;
+    if(d.type==='noctra-mute')applyMute(!!d.muted);
+    else if(d.type==='noctra-mute-ask'&&typeof window.__noctraMuted==='boolean'&&e.source){try{e.source.postMessage({type:'noctra-mute',muted:window.__noctraMuted},'*')}catch(x){}}},true);
+    ['play','playing','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){var t=e.target;if(window.__noctraMuted===true&&t&&(t.tagName==='VIDEO'||t.tagName==='AUDIO')&&!t.muted)t.muted=true},true)});
+    if(window.parent!==window){try{parent.postMessage({type:'noctra-mute-ask'},'*')}catch(e){}}
     var MS=window.ManagedMediaSource||window.MediaSource,proto=window.HTMLMediaElement&&HTMLMediaElement.prototype;
     var desc=proto&&Object.getOwnPropertyDescriptor(proto,'src'),setAttr=Element.prototype.setAttribute,pending=[];
     if(!MS||!desc||!desc.set)return;

@@ -224,4 +224,9 @@ console.log('Appli Android native 1.8.3 : vérifiée.');
   const screen = await src('live/LivePlayerScreen');
   assert.match(screen, /safeBrowsingEnabled = false/);
   assert.match(screen, /override fun onRenderProcessGone\(/);
+  // 1.9.3 : multiview — lecteurs des sites dans les vignettes, son coupé dans tous les cadres.
+  const tiles = await src('live/Multiview');
+  assert.match(tiles, /private fun playWeb\(server: LiveServer, token: Int\)/);
+  assert.match(tiles, /LiveWebView\(web, Modifier\.fillMaxSize\(\), onEvent =/);
+  assert.match(screen, /if\(d\.type==='noctra-mute'\)applyMute/);
 }

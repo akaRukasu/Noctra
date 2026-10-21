@@ -312,6 +312,11 @@ class MultiviewTile(val channel: LiveChannel) {
         private set
     var playing by mutableStateOf(false)
         private set
+    /** Lecteur du site dans la vignette (sinon : ExoPlayer). */
+    var web by mutableStateOf<WebPlayerRequest?>(null)
+        private set
+    var webView: android.webkit.WebView? = null
+    val muted: Boolean get() = volume == 0f
     private var servers: MutableList<LiveServer> = mutableListOf()
     private var index = -1
     private var generation = 0
@@ -328,21 +333,83 @@ class MultiviewTile(val channel: LiveChannel) {
             if (delayMs > 0) delay(delayMs)
             val prepared = LiveLauncher.prepare(channel)
             if (token != generation) return@launch
-            // Lecteur natif seulement : flux directs (HLS ou MPEG-TS) et serveurs automatiques.
-            servers = prepared.filter { (it.kind == LiveServer.Kind.native && it.streamURL != null) || it.kind == LiveServer.Kind.resolve }.toMutableList()
+            // Flux directs (HLS ou MPEG-TS) et serveurs automatiques d'abord, puis les lecteurs des sites :
+            // une chaîne sans flux direct passe quand même dans le multiview.
+            servers = ordered(prepared).toMutableList()
             count = servers.size
             index = -1
             next()
         }
     }
 
-    fun setVolume(value: Float) { volume = value; player?.volume = value }
+    fun setVolume(value: Float) {
+        volume = value
+        player?.volume = value
+        // Lecteur du site : vidéos de la page (tous ses cadres).
+        webView?.evaluateJavascript("window.__noctraMute&&window.__noctraMute(${value == 0f})", null)
+    }
+
+    /** Serveurs lisibles dans une vignette, dans l'ordre d'essai. */
+    private fun ordered(list: List<LiveServer>): List<LiveServer> {
+        val direct = list.filter { (it.kind == LiveServer.Kind.native && it.streamURL != null) || it.kind == LiveServer.Kind.resolve }
+        val pages = list.filter { it.kind == LiveServer.Kind.web && (it.pageURL != null || it.relayPrepare != null) }
+        return direct + pages
+    }
+
+    /** Lecteur du site (page) dans la vignette. */
+    private fun playWeb(server: LiveServer, token: Int) {
+        player?.stop()
+        current = server
+        status = "Connexion · ${server.label}…"
+        val prepare = server.relayPrepare
+        if (prepare != null && server.pageURL == null) {
+            // Relais officiel (LiveWatch VIP) : page préparée par le serveur Noctra.
+            job = Session.scope.launch {
+                val json = runCatching { Session.noctraJSON(prepare, 20.0).asMap() }.getOrNull()
+                if (token != generation) return@launch
+                val url = json?.str("embedUrl")?.let { Session.noctraURL(it) }
+                if (url == null) { next(); return@launch }
+                playWeb(server.copy(pageURL = url), token)
+            }
+            return
+        }
+        val url = server.pageURL ?: run { next(); return }
+        web = WebPlayerRequest(title = channel.name, mode = WebPlayerRequest.Mode.page, url = url, framed = server.framed, sandbox = server.sandbox)
+        job = Session.scope.launch {
+            delay(40_000)
+            // Lecture non signalée : la page reste affichée (bouton Lecture à toucher).
+            if (token == generation && !playing) status = null
+        }
+    }
+
+    /** Événements de la page de la vignette : vidéo lancée, erreur. */
+    fun webEvent(request: String, state: String) {
+        val server = current ?: return
+        if (request != web?.id) return
+        when (state) {
+            "playing", "ready" -> if (!playing) {
+                playing = true
+                rounds = 0
+                status = null
+                setVolume(volume)
+                LiveHealth.record(server, channel.id, true)
+                MultiviewStore.tilePlaying()
+            }
+            "error" -> if (!playing) {
+                LiveHealth.record(server, channel.id, false)
+                status = "Serveur indisponible · essai du suivant…"
+                next()
+            }
+        }
+    }
 
     fun stop() {
         generation += 1
         job?.cancel()
         job = null
         playing = false
+        web = null
+        webView = null
         player?.release()
         player = null
     }
@@ -350,7 +417,7 @@ class MultiviewTile(val channel: LiveChannel) {
     /** Serveur suivant (choix manuel ou flux tombé) ; nouvel essai de toute la liste ensuite. */
     fun next() {
         playing = false
-        if (servers.isEmpty()) { status = "Aucun flux direct pour le multiview"; return }
+        if (servers.isEmpty()) { status = "Aucun serveur pour le multiview"; return }
         index += 1
         generation += 1
         val token = generation
@@ -370,13 +437,14 @@ class MultiviewTile(val channel: LiveChannel) {
                 val found = LiveServerFactory.resolve(candidate, if (candidate.vip) 60.0 else 30.0)
                 if (token != generation) return@launch
                 servers.removeAt(index)
-                servers.addAll(index, found.filter { it.kind == LiveServer.Kind.native && it.streamURL != null })
+                servers.addAll(index, ordered(found).filter { it.kind != LiveServer.Kind.resolve })
                 count = servers.size
                 index -= 1
                 next()
             }
             return
         }
+        if (candidate.kind == LiveServer.Kind.web) { playWeb(candidate, token); return }
         play(candidate, token)
     }
 
@@ -398,6 +466,7 @@ class MultiviewTile(val channel: LiveChannel) {
 
     private fun play(server: LiveServer, token: Int) {
         val url = server.streamURL ?: run { next(); return }
+        web = null
         current = server
         status = "Connexion · ${server.label}…"
         val exo = exo()
@@ -530,9 +599,10 @@ fun MultiviewScreen() {
                 androidx.compose.runtime.key(tile.id) {
                     // Vignette masquée (une autre en plein écran) : elle continue sans prendre de place.
                     val hidden = frame.width == 0.dp
-                    MultiviewTileView(tile, Modifier.offset(frame.x, frame.y).size(if (hidden) 1.dp else frame.width, if (hidden) 1.dp else frame.height)
-                        .alpha(if (hidden) 0f else 1f)
-                        .pointerInput(tile.id, hidden) { if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { menu = tile }) })
+                    val base = Modifier.offset(frame.x, frame.y).size(if (hidden) 1.dp else frame.width, if (hidden) 1.dp else frame.height).alpha(if (hidden) 0f else 1f)
+                    // Lecteur de site : les touches vont à la page (bouton Lecture) ; menu par le bouton « ⋯ ».
+                    MultiviewTileView(tile, if (tile.web != null) base else base.pointerInput(tile.id, hidden) { if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { menu = tile }) },
+                        onMenu = { menu = tile })
                 }
             }
         }
@@ -576,7 +646,7 @@ fun MultiviewScreen() {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier) {
+private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, onMenu: () -> Unit = {}) {
     val listening = MultiviewStore.audio == tile.id
     val shape = RoundedCornerShape(10.dp)
     Box(
@@ -584,7 +654,12 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier) {
             .semantics { contentDescription = tile.channel.name + if (listening) ", écoutée" else "" },
         contentAlignment = Alignment.Center
     ) {
-        AndroidView(
+        val web = tile.web
+        if (web != null) {
+            androidx.compose.runtime.key(web.id) {
+                LiveWebView(web, Modifier.fillMaxSize(), onEvent = { state, _, _ -> tile.webEvent(web.id, state) }, onCreate = { tile.webView = it }, muted = tile.muted)
+            }
+        } else AndroidView(
             factory = { context ->
                 PlayerView(context).apply {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -600,6 +675,13 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier) {
             update = { view -> if (view.player !== tile.player) view.player = tile.player },
             modifier = Modifier.fillMaxSize()
         )
+        if (web != null) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onMenu)
+                    .semantics { contentDescription = "Options de ${tile.channel.name}" },
+                contentAlignment = Alignment.Center
+            ) { Text("⋯", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+        }
         tile.status?.let { status ->
             Column(Modifier.background(Color(0x8C000000), RoundedCornerShape(10.dp)).padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (!status.contains("indisponible") && !status.contains("Aucun")) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))

@@ -1,6 +1,7 @@
 import AVFoundation
 import Observation
 import SwiftUI
+import WebKit
 
 /// Multiview : plusieurs chaînes de n'importe quelle source à l'écran, comme sur la version web
 /// et Noctra TV. Une chaîne est écoutée, une peut être mise en avant, chacune passe seule au
@@ -129,7 +130,7 @@ final class MultiviewStore {
 
     private func applyAudio() {
         // Multiview diffusé : le son passe par le téléviseur, l'iPhone reste muet.
-        for tile in tiles { tile.player.isMuted = castTarget != nil || tile.id != audio }
+        for tile in tiles { tile.setMuted(castTarget != nil || tile.id != audio) }
     }
 
     // MARK: Diffusion (Chromecast, AirPlay)
@@ -276,6 +277,10 @@ final class MultiviewTile: Identifiable {
     /// Serveur en cours et lecture effective (pour la mosaïque diffusée).
     private(set) var current: LiveServer?
     private(set) var playing = false
+    /// Lecteur du site ou flux MPEG-TS lu par le moteur web (sinon : lecteur d'Apple).
+    private(set) var web: WebPlayerRequest?
+    @ObservationIgnored weak var webView: WKWebView?
+    @ObservationIgnored private(set) var muted = true
     @ObservationIgnored private var servers: [LiveServer] = []
     @ObservationIgnored private var index = -1
     @ObservationIgnored private var generation = 0
@@ -300,10 +305,11 @@ final class MultiviewTile: Identifiable {
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             let prepared = await LiveLauncher.shared.prepare(channel, session: session)
             guard let self, token == self.generation else { return }
-            // Lecteur d'Apple seulement : flux directs et serveurs automatiques (pas les pages de sites).
-            self.servers = prepared.filter { ($0.kind == .native && $0.streamURL != nil && !$0.mpegts) || $0.kind == .resolve }
+            // Flux directs (lecteur d'Apple) et serveurs automatiques d'abord, puis les flux MPEG-TS (moteur web)
+            // et les lecteurs des sites : une chaîne sans flux direct passe quand même dans le multiview.
+            self.servers = Self.ordered(prepared)
             self.count = self.servers.count
-            guard !self.servers.isEmpty else { self.status = "Aucun flux direct pour le multiview"; return }
+            guard !self.servers.isEmpty else { self.status = "Aucun serveur pour le multiview"; return }
             self.index = -1
             self.next()
         }
@@ -314,6 +320,7 @@ final class MultiviewTile: Identifiable {
         task?.cancel()
         task = nil
         playing = false
+        web = nil
         player.replaceCurrentItem(with: nil)
     }
 
@@ -321,7 +328,7 @@ final class MultiviewTile: Identifiable {
     func next() {
         guard let session else { return }
         playing = false
-        guard !servers.isEmpty else { status = "Aucun flux direct pour le multiview"; return }
+        guard !servers.isEmpty else { status = "Aucun serveur pour le multiview"; return }
         index += 1
         if index >= servers.count {
             index = -1
@@ -346,7 +353,7 @@ final class MultiviewTile: Identifiable {
             task = Task { [weak self] in
                 let found = await LiveServerFactory.resolve(candidate, session: session, timeout: candidate.vip ? 60 : 30)
                 guard let self, token == self.generation else { return }
-                let playable = found.filter { $0.kind == .native && $0.streamURL != nil && !$0.mpegts }
+                let playable = Self.ordered(found).filter { $0.kind != .resolve }
                 self.servers.replaceSubrange(self.index...self.index, with: playable)
                 self.count = self.servers.count
                 self.index -= 1
@@ -354,13 +361,95 @@ final class MultiviewTile: Identifiable {
             }
             return
         }
+        if candidate.kind == .web || candidate.mpegts { playWeb(candidate, token: token, session: session); return }
         play(candidate, token: token, session: session)
     }
 
     func retry() { rounds = 0; index = -1; next() }
 
+    /// Serveurs lisibles dans une vignette, dans l'ordre d'essai.
+    private static func ordered(_ list: [LiveServer]) -> [LiveServer] {
+        let direct = list.filter { ($0.kind == .native && $0.streamURL != nil && !$0.mpegts) || $0.kind == .resolve }
+        let engine = list.filter { $0.kind == .native && $0.streamURL != nil && $0.mpegts }
+        let pages = list.filter { $0.kind == .web && ($0.pageURL != nil || $0.relayPrepare != nil) }
+        return direct + engine + pages
+    }
+
+    /// Son de la vignette : lecteur d'Apple, et vidéos de la page (tous ses cadres).
+    func setMuted(_ value: Bool) {
+        muted = value
+        player.isMuted = value
+        webView?.evaluateJavaScript("window.__noctraMute&&window.__noctraMute(\(value))") { _, _ in }
+    }
+
+    /// Lecteur du site (page) ou flux MPEG-TS (moteur web) dans la vignette.
+    private func playWeb(_ server: LiveServer, token: Int, session: Session) {
+        player.replaceCurrentItem(with: nil)
+        self.server = server.label
+        current = server
+        status = "Connexion · \(server.label)…"
+        if let prepare = server.relayPrepare, server.pageURL == nil {
+            // Relais officiel (LiveWatch VIP) : page préparée par le serveur Noctra.
+            task = Task { [weak self] in
+                let json = try? await session.noctraJSON(prepare, timeout: 20) as? [String: Any]
+                guard let self, token == self.generation else { return }
+                guard let raw = json?["embedUrl"] as? String, let url = session.noctraURL(raw) else { self.next(); return }
+                var prepared = server
+                prepared.pageURL = url
+                self.playWeb(prepared, token: token, session: session)
+            }
+            return
+        }
+        let request: WebPlayerRequest
+        if server.kind == .native, let url = server.streamURL {
+            request = WebPlayerRequest(title: channel.name, mode: .mpegts(url))
+        } else if let url = server.pageURL {
+            request = WebPlayerRequest(title: channel.name, mode: .page(url), framed: server.framed, sandbox: server.sandbox)
+        } else {
+            next()
+            return
+        }
+        web = request
+        let page = server.kind == .web
+        let channelID = channel.id
+        task = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(page ? 40 : 30))
+            guard let self, token == self.generation, !self.playing else { return }
+            if page {
+                // Lecteur de site sans lecture signalée : la page reste affichée (bouton Lecture à toucher).
+                self.status = nil
+            } else {
+                LiveHealth.record(server, channel: channelID, ok: false)
+                self.status = "Serveur trop lent · essai du suivant…"
+                self.next()
+            }
+        }
+    }
+
+    /// Événements de la page de la vignette : vidéo lancée, erreur.
+    func webEvent(_ request: UUID, state: String) {
+        guard request == web?.id, let server = current else { return }
+        switch state {
+        case "playing", "ready":
+            guard !playing else { return }
+            playing = true
+            rounds = 0
+            status = nil
+            LiveHealth.record(server, channel: channel.id, ok: true)
+            MultiviewStore.shared.tilePlaying(self)
+        case "error":
+            guard !playing else { return }
+            LiveHealth.record(server, channel: channel.id, ok: false)
+            status = "Serveur indisponible · essai du suivant…"
+            next()
+        default:
+            break
+        }
+    }
+
     private func play(_ server: LiveServer, token: Int, session: Session) {
         guard let url = server.streamURL else { next(); return }
+        web = nil
         self.server = server.label
         current = server
         status = "Connexion · \(server.label)…"
@@ -435,13 +524,13 @@ struct MultiviewView: View {
                 Color.black.ignoresSafeArea()
                 ForEach(Array(store.tiles.enumerated()), id: \.element.id) { index, tile in
                     if index < frames.count {
-                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id)
+                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id, menu: { menuTile = tile })
                             .frame(width: max(1, frames[index].width), height: max(1, frames[index].height))
                             .offset(x: frames[index].minX, y: frames[index].minY)
                             .opacity(frames[index].width > 0 ? 1 : 0)
                             .allowsHitTesting(frames[index].width > 0)
-                            .onTapGesture(count: 2) { store.zoom(tile) }
-                            .onTapGesture { menuTile = tile }
+                            // Lecteur de site : les touches vont à la page (bouton Lecture) ; menu par le bouton « … ».
+                            .modifier(TileGestures(enabled: tile.web == nil, zoom: { store.zoom(tile) }, menu: { menuTile = tile }))
                     }
                 }
             }
@@ -559,14 +648,38 @@ struct MultiviewView: View {
     }
 }
 
+/// Touches d'une vignette du lecteur d'Apple : double appui plein écran, appui menu.
+private struct TileGestures: ViewModifier {
+    let enabled: Bool
+    let zoom: () -> Void
+    let menu: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onTapGesture(count: 2, perform: zoom).onTapGesture(perform: menu)
+        } else {
+            content
+        }
+    }
+}
+
 struct MultiviewTileView: View {
+    @Environment(Session.self) private var session
     let tile: MultiviewTile
     let listening: Bool
     let featured: Bool
+    /// Vignette d'un lecteur de site : menu par le bouton (les touches vont à la page).
+    var menu: (() -> Void)? = nil
 
     var body: some View {
         ZStack {
-            MultiviewLayer(player: tile.player)
+            if let web = tile.web {
+                LiveWebView(request: web, session: session, onEvent: { [weak tile] state, _, _ in tile?.webEvent(web.id, state: state) },
+                            onCreate: { [weak tile] view in tile?.webView = view }, muted: tile.muted)
+                    .id(web.id)
+            } else {
+                MultiviewLayer(player: tile.player)
+            }
             if let status = tile.status {
                 VStack(spacing: 6) {
                     if !status.contains("indisponible") && !status.contains("Aucun") { ProgressView().tint(.white) }
@@ -574,6 +687,18 @@ struct MultiviewTileView: View {
                 }
                 .padding(8)
                 .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let menu, tile.web != nil {
+                Button(action: menu) {
+                    Image(systemName: "ellipsis").font(.caption.weight(.bold)).frame(width: 30, height: 30)
+                        .background(.black.opacity(0.6), in: Circle())
+                }
+                .foregroundStyle(.white)
+                .padding(6)
+                .accessibilityLabel("Options de \(tile.channel.name)")
             }
         }
         .overlay(alignment: .bottomLeading) {
@@ -586,6 +711,7 @@ struct MultiviewTileView: View {
             .padding(.vertical, 4)
             .background(.black.opacity(0.6), in: Capsule())
             .padding(6)
+            .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(listening ? Theme.teal : .white.opacity(0.1), lineWidth: listening ? 2 : 1))

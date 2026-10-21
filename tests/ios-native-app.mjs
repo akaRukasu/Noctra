@@ -297,7 +297,7 @@ function WebVttSeconds(value) {
   const multiview = await src('Multiview');
   for (const name of ['final class MultiviewStore', 'final class MultiviewTile', 'struct MultiviewView', 'struct MultiviewAddSheet', 'struct MultiviewCastSheet', 'struct MultiviewBar']) assert.ok(multiview.includes(name), name);
   assert.match(multiview, /func solo\(_ tile: MultiviewTile\)/, 'chaîne mise en avant avec le son seul');
-  assert.match(multiview, /tile\.player\.isMuted = (?:castTarget != nil \|\| )?tile\.id != audio/, 'une seule chaîne écoutée');
+  assert.match(multiview, /tile\.(?:player\.isMuted = |setMuted\()(?:castTarget != nil \|\| )?tile\.id != audio/, 'une seule chaîne écoutée');
   assert.match(multiview, /LiveLauncher\.shared\.prepare\(channel, session: session\)/, 'serveurs de toutes les sources');
   const remote = await src('RemotePlayback');
   for (const action of ['playMultiview', 'multiAdd']) assert.ok(remote.includes(`"${action}"`), action);
@@ -311,7 +311,7 @@ function WebVttSeconds(value) {
   const src = name => read(`apps/ios-native/Noctra/Sources/${name}.swift`);
   assert.match(await src('LivePlayer'), /private var multiviewMenu: some View/, 'chaîne en cours ajoutée au multiview');
   assert.match(await src('Multiview'), /func zoom\(_ tile: MultiviewTile\)/);
-  assert.match(await src('Multiview'), /\.onTapGesture\(count: 2\) \{ store\.zoom\(tile\) \}/);
+  assert.match(await src('Multiview'), /TileGestures\(enabled: tile\.web == nil, zoom: \{ store\.zoom\(tile\) \}/);
   console.log('Appli iOS native 2.15.1 : vérifiée.');
 }
 // 2.15.2 : diagnostic LiveWatch VIP dans l'appli (administrateurs).
@@ -366,7 +366,7 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(multiview, /func castAirPlay\(session: Session\) async throws/);
   assert.match(multiview, /session\.noctraSend\("POST", "\/api\/tv\/mosaic", json: body, timeout: 40\)/);
   assert.match(multiview, /player\.allowsExternalPlayback = false/, 'vignettes : jamais envoyées seules en AirPlay');
-  assert.match(multiview, /tile\.player\.isMuted = castTarget != nil \|\| tile\.id != audio/);
+  assert.match(multiview, /tile\.setMuted\(castTarget != nil \|\| tile\.id != audio\)/);
   assert.match(multiview, /AVAudioSession\.routeChangeNotification/);
   assert.match(multiview, /private func mosaicChanged\(\)/);
   assert.match(multiview, /launch\(session: session, present: false\)/);
@@ -421,4 +421,12 @@ console.log('Appli iOS native 2.16.3 : vérifiée.');
   assert.match(cast, /if mediaSessionId != nil \{ recoverLive\(\) \}/, 'coupure sur le téléviseur : serveur suivant');
   assert.match(cast, /struct CastChannelPicker: View/);
   assert.match(cast, /liveAction\("Serveur suivant"/);
+  // 2.17.8 : multiview — lecteurs des sites et flux MPEG-TS dans les vignettes, son coupé dans tous les cadres.
+  const tiles = await read('apps/ios-native/Noctra/Sources/Multiview.swift');
+  assert.match(tiles, /private func playWeb\(_ server: LiveServer, token: Int, session: Session\)/);
+  assert.match(tiles, /let pages = list\.filter \{ \$0\.kind == \.web/);
+  assert.match(tiles, /window\.__noctraMute&&window\.__noctraMute/);
+  assert.match(tiles, /LiveWebView\(request: web, session: session, onEvent:/);
+  const webView = await read('apps/ios-native/Noctra/Sources/LiveTVViews.swift');
+  assert.match(webView, /if\(d\.type==='noctra-mute'\)applyMute/);
 }

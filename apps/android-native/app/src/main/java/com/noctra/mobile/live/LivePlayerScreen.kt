@@ -551,7 +551,15 @@ fun probeColor(server: LiveServer): Color = when (server.probe) {
  */
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
-fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
+fun LiveWebView(
+    request: WebPlayerRequest,
+    modifier: Modifier = Modifier,
+    /** Vignette du multiview : ses propres événements (sinon ceux du lecteur TV). */
+    onEvent: ((state: String, message: String, url: String) -> Unit)? = null,
+    onCreate: ((WebView) -> Unit)? = null,
+    /** Son de départ des vidéos de la page (vignette du multiview) ; null : lecteur TV. */
+    muted: Boolean? = null
+) {
     var fullscreen by remember { mutableStateOf<View?>(null) }
     AndroidView(
         factory = { context ->
@@ -561,7 +569,7 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
             var loaded = false
             fun host(url: String?): String = url?.toHttpUrlOrNull()?.host?.lowercase()?.removePrefix("www.") ?: ""
             fun report(state: String, message: String, url: String) {
-                main.post { LivePlayerModel.webEvent(request.id, state, message, url) }
+                main.post { if (onEvent != null) onEvent(state, message, url) else LivePlayerModel.webEvent(request.id, state, message, url) }
             }
             view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             view.setBackgroundColor(AndroidColor.BLACK)
@@ -598,6 +606,8 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
                 }
             }, "NoctraAndroid")
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                // Vignette du multiview : son des vidéos coupé ou non dès le départ, dans tous les cadres.
+                if (muted != null) runCatching { WebViewCompat.addDocumentStartJavaScript(view, "window.__noctraMuted=$muted;", setOf("*")) }
                 runCatching { WebViewCompat.addDocumentStartJavaScript(view, bridgeScript, setOf("*")) }
             }
             view.webViewClient = object : WebViewClient() {
@@ -648,10 +658,15 @@ fun LiveWebView(request: WebPlayerRequest, modifier: Modifier = Modifier) {
                     if (media.isEmpty()) permission.deny() else permission.grant(media.toTypedArray())
                 }
 
-                override fun onShowCustomView(custom: View, callback: CustomViewCallback) { fullscreen = custom }
+                override fun onShowCustomView(custom: View, callback: CustomViewCallback) {
+                    // Vignette du multiview : pas de plein écran de la page (le plein écran se fait par le menu).
+                    if (onEvent != null) { callback.onCustomViewHidden(); return }
+                    fullscreen = custom
+                }
                 override fun onHideCustomView() { fullscreen = null }
             }
-            LivePlayerModel.webView = view
+            if (onEvent == null) LivePlayerModel.webView = view
+            onCreate?.invoke(view)
             val base = Session.noctraBase + "/"
             host(base).takeIf { it.isNotEmpty() }?.let { allowed += it }
             val local = Session.isNoctraOrigin(request.url)
@@ -699,6 +714,14 @@ function send(o){try{if(window.NoctraAndroid)window.NoctraAndroid.post(JSON.stri
 addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;var t=String(d.type||'');
 if(!/^noctra-[a-z0-9]+-state${'$'}/.test(t))return;send({state:String(d.state||''),message:String(d.message||''),url:String(d.url||'')})},true);
 document.addEventListener('playing',function(e){var t=e.target;if(t&&t.tagName==='VIDEO')send({state:'playing'})},true);
+function applyMute(m){window.__noctraMuted=m;try{document.querySelectorAll('video,audio').forEach(function(x){try{x.muted=m;if(!m&&x.volume===0)x.volume=1}catch(e){}})}catch(e){}
+for(var i=0;i<frames.length;i++){try{frames[i].postMessage({type:'noctra-mute',muted:m},'*')}catch(e){}}}
+window.__noctraMute=applyMute;
+addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;
+if(d.type==='noctra-mute')applyMute(!!d.muted);
+else if(d.type==='noctra-mute-ask'&&typeof window.__noctraMuted==='boolean'&&e.source){try{e.source.postMessage({type:'noctra-mute',muted:window.__noctraMuted},'*')}catch(x){}}},true);
+['play','playing','loadedmetadata'].forEach(function(n){document.addEventListener(n,function(e){var t=e.target;if(window.__noctraMuted===true&&t&&(t.tagName==='VIDEO'||t.tagName==='AUDIO')&&!t.muted)t.muted=true},true)});
+if(window.parent!==window){try{parent.postMessage({type:'noctra-mute-ask'},'*')}catch(e){}}
 })();
 """
 
