@@ -98,6 +98,43 @@ jobs:
           name: noctra-android-native
           path: dist/Noctra-android-native.apk
           if-no-files-found: error
+      # Mêmes APK en formats d'installateurs (SAI, APKMirror Installer, XAPK Installer…) :
+      # .apks et .apkm (base.apk + description), .xapk (manifest.json + base.apk).
+      - name: Formats d'installation (APKS, XAPK, APKM)
+        run: |
+          gradle_file=apps/android-native/app/build.gradle.kts
+          version_name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' "$gradle_file" | head -1)
+          version_code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          min_sdk=$(sed -n 's/.*minSdk = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          target_sdk=$(sed -n 's/.*targetSdk = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          work=$(mktemp -d)
+          cp dist/Noctra-android-native.apk "$work/base.apk"
+          size=$(stat -c %s "$work/base.apk")
+          cat > "$work/manifest.json" <<JSON
+          {"xapk_version":2,"package_name":"com.noctra.mobile","name":"Noctra","version_code":"$version_code","version_name":"$version_name","min_sdk_version":"$min_sdk","target_sdk_version":"$target_sdk","permissions":[],"split_configs":[],"total_size":$size,"split_apks":[{"file":"base.apk","id":"base"}]}
+          JSON
+          cat > "$work/info.json" <<JSON
+          {"apkm_version":5,"app_name":"Noctra","pname":"com.noctra.mobile","release_version":"$version_name","versioncode":"$version_code","min_api":"$min_sdk","target_api":"$target_sdk","arches":[],"capabilities":[],"accent_color":"7C5CFF"}
+          JSON
+          name="Noctra-android-$version_name"
+          (cd "$work" && zip -q -X -0 "$OLDPWD/dist/$name.apks" base.apk && zip -q -X -0 "$OLDPWD/dist/$name.xapk" manifest.json base.apk && zip -q -X -0 "$OLDPWD/dist/$name.apkm" info.json base.apk)
+          for file in dist/$name.apks dist/$name.xapk dist/$name.apkm; do unzip -tq "$file"; done
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-apks
+          path: dist/Noctra-android-*.apks
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-xapk
+          path: dist/Noctra-android-*.xapk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-apkm
+          path: dist/Noctra-android-*.apkm
+          if-no-files-found: error
       - name: APK Noctra TV avec réception du cast et télécommande
         run: |
           node apps/scripts/build-androidtv.mjs > noctra-tv-build.log 2>&1 || { tail -120 noctra-tv-build.log; exit 1; }
