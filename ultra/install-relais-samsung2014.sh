@@ -63,7 +63,8 @@ fi
 # Adresse publique HTTPS du serveur : utilisateur.serveur.usbx.me (comme le navigateur).
 SHORT_HOST="$(hostname -s 2>/dev/null || hostname)"
 SERVER_URL="${NOCTRA_SERVEUR:-https://$(whoami).${SHORT_HOST}.usbx.me${BASE_URL}}"
-PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+# Adresse publique : celle du nom du serveur (hostname -I donne une adresse interne, 172.x).
+PUBLIC_IP="$(getent hosts "${SHORT_HOST}.usbx.me" 2>/dev/null | awk '{print $1}' | head -n 1 || true)"
 
 mkdir -p "$(dirname "$SERVICE_FILE")" "$LOG_DIR"
 NODE_BIN="$(command -v node)"
