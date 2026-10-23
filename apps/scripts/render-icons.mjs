@@ -2,7 +2,9 @@
 /* Régénère les icônes, bannières et écrans de démarrage des applications à
    partir du logo Noctra (public/noctra-mark.svg). Outil de développement :
    nécessite Playwright (npx playwright). Les images produites sont versionnées,
-   la construction des applis n'en a donc pas besoin. */
+   la construction des applis n'en a donc pas besoin.
+   Usage : node apps/scripts/render-icons.mjs [filtre] (ex. samsung-orsay :
+   seulement les images dont le chemin contient ce texte). */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,6 +79,16 @@ for (const [folder, scale] of densities.slice(1)) {
   targets.push([`androidtv/overlay/res/mipmap-${folder}/app_banner.png`, px(160), px(90), wordmark(px(160), px(90), px(32), px(25), px(8)), false]);
 }
 
+// Samsung Smart TV 2014 (Orsay) : vignettes du Smart Hub, aux tailles du config.xml.
+const hubIcon = (width, height) => page(`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(80% 90% at 20% 10%, rgba(120,168,255,.30), transparent 60%), radial-gradient(70% 80% at 90% 100%, rgba(208,112,255,.26), transparent 60%), #050711">
+  <img src="${uri(glyph)}" style="width:${Math.round(height * .78)}px;height:${Math.round(height * .78)}px"></div>`);
+for (const [width, height] of [[106, 87], [115, 95], [85, 70], [95, 78]]) {
+  targets.push([`samsung-orsay/icon/noctra_${width}_${height}.png`, width, height, hubIcon(width, height), false]);
+}
+
+const only = process.argv[2] || '';
+if (only) targets.splice(0, targets.length, ...targets.filter(([target]) => target.includes(only)));
 const browser = await playwright.chromium.launch();
 try {
   for (const [target, width, height, html, transparent] of targets) {

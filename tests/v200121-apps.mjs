@@ -276,7 +276,7 @@ assert.match(tvLauncherCode, /base \+ '\/tv-app\/index\.html\?platform=' \+ enco
 assert.match(tvLauncherCode, /serverTvApp === true/, 'Serveur ancien : interface complète');
 assert.match(await read('apps/tizen/platform.js'), /tizen\.tvinputdevice\.registerKey\(name\)/);
 const webHost = await read('apps/androidtv/web/tv-native.js');
-assert.match(webHost, /if \(\['webos', 'tizen', 'web'\]\.indexOf\(platform\) < 0\) return;/, 'Inactif dans l’appli Android TV');
+assert.match(webHost, /if \(\['webos', 'tizen', 'web', 'orsay'\]\.indexOf\(platform\) < 0\) return;/, 'Inactif dans l’appli Android TV');
 assert.ok(!/\basync\s+(?:function|\()|\bawait\s+[\w(]|\?\.[\w([]|\?\?/.test(webHost), 'Pont web en ES2015 (webOS 5, Tizen 5)');
 for (const needle of ["'/Users/AuthenticateByName'", "'/QuickConnect/Initiate'", "'/Sessions/Playing'", "'ApiKey='", "event: 'zap'", "event: 'failed'", 'MULTI_MAX = 12']) assert.ok(webHost.includes(needle), needle);
 assert.match(await read('apps/androidtv/web/index.html'), /<script src="tv-native\.js"><\/script>\s*<script src="tv-data\.js"><\/script>\s*<script src="app\.js"><\/script>/);
@@ -620,14 +620,15 @@ assert.match(streamVodInfo, /"Démarrage du film… "/);
 assert.match(streamVodInfo, /Qualité des films/);
 assert.match(homeJava, /EXTRA_BITRATE, Math\.max\(0, message\.optLong\("bitrate", 0\)\)/);
 assert.match(tvApp, /var VOD_QUALITIES = \[0, 20, 12, 8, 4\];/);
-assert.match(tvApp, /MaxStreamingBitrate: vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000/);
+assert.match(tvApp, /var maxRate = vodQuality\(\) \? vodQuality\(\) \* 1000000 : orsay \? 20000000 : 80000000;/);
+assert.match(tvApp, /MaxStreamingBitrate: maxRate,/);
 assert.match(tvApp, /'Qualité des films : ' \+ vodQualityLabel\(vodQuality\(\)\)/);
 // Films : vidéo d'origine ou convertie (et pourquoi) dans le diagnostic ; conversions évitables écartées.
 const reportJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlaybackReport.java');
 assert.match(reportJava, /"\/Sessions\?deviceId=" \+ URLEncoder\.encode\(deviceId, "UTF-8"\)/);
 assert.match(reportJava, /"sous-titres incrustés dans l'image"/);
 assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java'), /report\.checkTranscoding\(\);/);
-assert.match(tvApp, /VideoBitrate: \(vodQuality\(\) \? vodQuality\(\) \* 1000000 : 80000000\) - 400000,/);
+assert.match(tvApp, /VideoBitrate: maxRate - 400000,/);
 assert.match(tvApp, /EnableAdaptiveBitrateStreaming: 'false'/);
 assert.match(tvApp, /return text\.filter\(chosen\)\[0\] \|\| subs\.filter\(chosen\)\[0\] \|\| null;/);
 // Films : image reçue (format du décodeur) comparée à la vidéo du fichier : d'origine ou convertie.

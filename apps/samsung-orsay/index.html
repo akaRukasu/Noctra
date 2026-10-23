@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr" class="host-orsay-boot">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="Cache-Control" content="no-cache">
+<title>Noctra</title>
+<!-- API du téléviseur (Samsung Smart TV 2010-2014, « Orsay ») -->
+<script type="text/javascript" src="$MANAGER_WIDGET/Common/API/Widget.js"></script>
+<script type="text/javascript" src="$MANAGER_WIDGET/Common/API/TVKeyValue.js"></script>
+<script type="text/javascript" src="$MANAGER_WIDGET/Common/API/Plugin.js"></script>
+<script type="text/javascript" src="$MANAGER_WIDGET/Common/webapi/1.0/webapis.js"></script>
+<link rel="stylesheet" href="app.css?v={{VERSION}}" type="text/css">
+<link rel="stylesheet" href="orsay.css?v={{VERSION}}" type="text/css">
+<script type="text/javascript" src="config.js?v={{VERSION}}"></script>
+<script type="text/javascript" src="orsay-compat.js?v={{VERSION}}"></script>
+<object id="pluginObjectNNavi" border="0" classid="clsid:SAMSUNG-INFOLINK-NNAVI" style="position:absolute;width:0;height:0;opacity:0;"></object>
+<object id="pluginObjectTVMW" border="0" classid="clsid:SAMSUNG-INFOLINK-TVMW" style="position:absolute;width:0;height:0;opacity:0;"></object>
+</head>
+<body onload="NoctraOrsay.onLoad();" onunload="NoctraOrsay.onUnload();">
+<!-- Ancre de secours : les touches de la télécommande arrivent à l'élément actif. -->
+<a href="javascript:void(0);" id="anchor"></a>
+<!-- Lecteur vidéo du téléviseur (dessiné sous la page). -->
+<div id="orsay-av"></div>
+<!--NOCTRA-INTERFACE-->
+<script type="text/javascript" src="orsay-host.js?v={{VERSION}}"></script>
+</body>
+</html>

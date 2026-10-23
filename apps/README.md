@@ -11,6 +11,7 @@ Noctra existe en applications pour :
 | iPhone et iPad (iOS 15 à 18) | `Noctra-ios-unsigned.ipa` (interface web) | Sideloadly ou AltStore |
 | Téléviseurs LG (webOS) | `com.noctra.media_1.1.49_all.ipk` (**Noctra TV**) | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
+| Téléviseurs Samsung 2014 (série H, Orsay : UE40H6400…) | `Noctra-Samsung-2014-<version>.zip` (**Noctra TV**, kit) | User App Sync : [guide](samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md) |
 
 ## Android TV : Noctra TV (appli native)
 
@@ -91,6 +92,7 @@ Le serveur doit être en **200.0.121 ou plus récent**. Cette version ajoute le 
 ### Compatibilité
 
 - **Samsung** : Noctra TV sur les téléviseurs 2019 et plus récents (Tizen 5+) ; l’interface web complète demande 2021+ (Tizen 6.5+).
+- **Samsung 2014 (série H, plateforme Orsay, pas Tizen)** : variante dédiée `apps/samsung-orsay`, construite par `npm run apps:samsung2014` et vérifiée par `npm run test:orsay` (émulation navigateur, pas encore essayée sur un téléviseur). Installation, relais local, mise à jour et limites : [guide](samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md) et [rapport de compatibilité](samsung-orsay/RAPPORT-COMPATIBILITE-UE40H6400.md).
 - **LG** : Noctra TV sur les téléviseurs 2020 et plus récents (webOS 5+) ; l’interface web complète demande webOS 22 (2022+).
 - **Android et Android TV** : Android 7 ou plus récent, avec « Android System WebView » (ou Chrome) à jour.
 - **iPhone et iPad** : iOS 15 ou plus récent.

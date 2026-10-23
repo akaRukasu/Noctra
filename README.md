@@ -2,6 +2,10 @@
 
 Interface Noctra TV 1.1.51 (LG, Samsung, servie à `/tv-app/`) et appli Android TV noctra.71 : une chaîne sans flux direct (DLStreams…) n'est plus écartée du multiview. Sur Android TV, la vignette ouvre la page du lecteur, repère la liste HLS qu'elle demande et la lit avec le lecteur natif (son, définition et changement de serveur du multiview). Validation : `npm run test:v200147`.
 
+# Samsung Smart TV 2014 (UE40H6400, plateforme Orsay)
+
+Variante de Noctra TV pour les Samsung de 2014, qui n'ont pas Tizen : `apps/samsung-orsay` (compléments du moteur WebKit 537, lecteur AVPlay du téléviseur, touches Samsung, clavier à l'écran, multiview en mosaïque du serveur, relais local HTTP → HTTPS). Le kit `npm run apps:samsung2014` contient l'appli, le serveur d'installation « User App Sync » et le relais. Guide : [apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md](apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md). Validation : `npm run test:orsay` (émulation navigateur ; aucun essai sur téléviseur pour l'instant). Aucun changement côté serveur.
+
 # Historique : 200.0.146 — relais des chaînes diffusées en AirPlay
 
 Une chaîne envoyée en AirPlay passe par un relais du serveur : ffmpeg copie le flux (sans réencodage) dans une liste locale avec une réserve de segments et se reconnecte seul quand le lien de la source expire. Le téléviseur ne lit que des fichiers déjà prêts : plus de « mise en mémoire tampon » à chaque segment, plus de « vidéo inaccessible ». Validation : `npm run test:v200146`.

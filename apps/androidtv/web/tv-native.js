@@ -1,4 +1,4 @@
-/* Pont web de Noctra TV pour LG webOS et Samsung Tizen.
+/* Pont web de Noctra TV pour LG webOS, Samsung Tizen et Samsung 2014 (Orsay).
 
    L'interface Noctra TV (app.js) dialogue avec un « hôte natif » par un
    MessagePort : sur Android TV, c'est l'appli (lecteur ExoPlayer, lecteur
@@ -11,19 +11,25 @@
        sous-titres, suivi de lecture Jellyfin, SyncPlay) ;
      - multiview (jusqu'à 12 vignettes, selon les décodeurs du téléviseur) ;
      - réglages (compte, déconnexion) et touches de la télécommande.
-   Actif seulement avec ?platform=webos|tizen|web (ouvert par le lanceur des
-   applis) : dans l'appli Android TV, il ne fait rien.
-   Syntaxe ES2015 sans async/await : webOS 4 (Chromium 53) et Tizen 4. */
+   Actif seulement avec ?platform=webos|tizen|web|orsay (ouvert par le lanceur
+   des applis) : dans l'appli Android TV, il ne fait rien.
+   Samsung 2014 (orsay) : lecteur, multiview, touches et sortie confiés à
+   l'hôte de cette plateforme (apps/samsung-orsay/orsay-host.js).
+   Syntaxe ES5 : webOS 4 (Chromium 53), Tizen 4 et, avec les compléments de
+   orsay-compat.js, le moteur WebKit des Samsung de 2014. */
 (function () {
   'use strict';
 
-  var params = new URLSearchParams(location.search);
+  // Samsung 2014 : adresse fixée par l'hôte (une seule page, pas de paramètres).
+  var params = new URLSearchParams(window.NOCTRA_HOST_QUERY || location.search);
   var platform = String(params.get('platform') || '').toLowerCase();
-  if (['webos', 'tizen', 'web'].indexOf(platform) < 0) return;
-  document.documentElement.classList.add('web-host', 'host-' + platform);
+  if (['webos', 'tizen', 'web', 'orsay'].indexOf(platform) < 0) return;
+  document.documentElement.classList.add('web-host');
+  document.documentElement.classList.add('host-' + platform);
+  var ORSAY = platform === 'orsay' ? window.NoctraOrsay || null : null;
 
   var VERSION = '1.1.51';
-  var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : 'Navigateur';
+  var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : ORSAY ? ORSAY.deviceName : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).
   var SERVER = String(params.get('server') || '').replace(/\/+$/, '');
@@ -49,6 +55,7 @@
     for (var i = 2; i < arguments.length; i++) {
       var child = arguments[i];
       if (child === null || child === undefined || child === false) continue;
+      if (Array.isArray(child)) { child.forEach(function (item) { if (item) node.appendChild(item); }); continue; }
       node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
     }
     return node;
@@ -112,6 +119,7 @@
   // ── Canal avec l'interface ────────────────────────────────────────────
   function send(message) { if (appPort) appPort.postMessage(JSON.stringify(message)); }
   function codecs() {
+    if (ORSAY) return ORSAY.codecs();
     var video = document.createElement('video');
     function mse(type) { try { return Boolean(window.MediaSource && MediaSource.isTypeSupported(type)); } catch (error) { return false; } }
     function can(type) { try { return Boolean(video.canPlayType(type)); } catch (error) { return false; } }
@@ -124,6 +132,7 @@
     };
   }
   function engineInfo() {
+    if (ORSAY) return ORSAY.engine();
     var match = /Chrome\/(\d+)[\d.]*/.exec(navigator.userAgent || '');
     return { version: match ? match[0].slice(7) : '', major: match ? Number(match[1]) : 0, package: '', recommended: 110 };
   }
@@ -132,7 +141,7 @@
       type: 'session', token: session.token, userId: session.userId, userName: session.userName,
       serverAddress: JF, noctraUrl: BASE, jellyfinUrl: JF, version: VERSION, codecs: codecs(), platform: platform,
       // Ni lecteur Jellyfin natif, ni lecteur web séparé : lecteur HTML5 et iframes.
-      caps: { jellyfinPlayer: false, webPlayer: false, multiview: true },
+      caps: { jellyfinPlayer: false, webPlayer: false, multiview: true, mosaic: Boolean(ORSAY) },
       // Moteur web du téléviseur (fixé par le micrologiciel : pas de mise à jour possible).
       webEngine: engineInfo()
     });
@@ -150,6 +159,7 @@
     else if (action === 'exit') exitApp();
   }
   function keepScreenOn(on) {
+    if (ORSAY) { ORSAY.keepScreenOn(on); return; }
     try {
       if (window.tizen && tizen.power) {
         if (on) tizen.power.request('SCREEN', 'SCREEN_NORMAL'); else tizen.power.release('SCREEN');
@@ -157,6 +167,7 @@
     } catch (error) { /* réglage indisponible */ }
   }
   function exitApp() {
+    if (ORSAY) { ORSAY.exit(); return; }
     try { if (window.tizen && tizen.application) { tizen.application.getCurrentApplication().exit(); return; } } catch (error) { /* hors Tizen */ }
     try { if (window.webOS && typeof webOS.platformBack === 'function') { webOS.platformBack(); return; } } catch (error) { /* hors webOS */ }
     try { if (window.PalmSystem && typeof PalmSystem.platformBack === 'function') { PalmSystem.platformBack(); return; } } catch (error) { /* hors webOS */ }
@@ -328,7 +339,11 @@
             Settings.hide();
             location.reload();
           } }, 'Se déconnecter / changer de compte'),
-          el('button', { class: 'nw-f nw-btn', onclick: function () { location.href = BASE + '/client/index.html?noctraApp=' + platform; } }, 'Ouvrir l’interface web complète'),
+          // Samsung 2014 : l'interface web complète demande un navigateur récent.
+          ORSAY ? null : el('button', { class: 'nw-f nw-btn', onclick: function () { location.href = BASE + '/client/index.html?noctraApp=' + platform; } }, 'Ouvrir l’interface web complète'),
+          ORSAY ? ORSAY.settings().map(function (entry) {
+            return el('button', { class: 'nw-f nw-btn', onclick: function () { Settings.hide(); entry[1](); } }, entry[0]);
+          }) : null,
           el('button', { class: 'nw-f nw-btn primary', onclick: function () { Settings.hide(); } }, 'Fermer')));
       document.body.appendChild(Settings.node);
       Settings.node.querySelector('.nw-f').focus();
@@ -385,6 +400,7 @@
   Engine.prototype.destroy = function () {
     // Un test de type en cours (sniffStream) n'aboutit plus à un chargement.
     this.loads++;
+    if (ORSAY) ORSAY.release(this);
     try { if (this.hls) this.hls.destroy(); } catch (error) { /* déjà libéré */ }
     try { if (this.ts) { this.ts.unload(); this.ts.detachMediaElement(); this.ts.destroy(); } } catch (error) { /* déjà libéré */ }
     this.hls = null;
@@ -407,7 +423,9 @@
     return Boolean(SERVER && session && session.token && String(url).indexOf(BASE + '/') === 0);
   }
   // library : false = lecteur du téléviseur ; true = hls.js / mpegts.js (secours).
-  Engine.prototype.load = function (url, mime, library) {
+  // Samsung 2014 : lecteur du téléviseur seulement ; secours = relais du serveur.
+  Engine.prototype.load = function (url, mime, library, headers) {
+    if (ORSAY) return ORSAY.load(this, url, mime, library, headers);
     var self = this;
     var video = this.video;
     this.destroy();
@@ -508,7 +526,9 @@
       return 'hls.js';
     });
   };
-  Engine.prototype.canFallback = function () { return !this.hls && !this.ts; };
+  Engine.prototype.canFallback = function () { return ORSAY ? ORSAY.canFallback(this) : !this.hls && !this.ts; };
+  // Vidéo du lecteur : <video>, ou l'élément du lecteur matériel (Samsung 2014).
+  function videoElement(attrs) { return ORSAY ? ORSAY.video(attrs) : el('video', attrs); }
 
   var PLAYER_ICONS = {
     playpause: '<path d="M4 5v14l9-7zM15 5h2v14h-2zM19 5h2v14h-2z"/>',
@@ -536,8 +556,9 @@
       Player.failure = null;
       Player.pendingSeek = -1;
       Player.playSessionId = m.playSessionId || '';
-      var video = el('video', { autoplay: true, playsinline: true });
+      var video = videoElement({ autoplay: true, playsinline: true });
       Player.video = video;
+      if (video.noctraLog !== undefined) video.noctraLog = function (line) { Player.log(line); };
       Player.title = el('div', { class: 'nw-title', text: m.title || '' });
       Player.subtitle = el('div', { class: 'nw-sub', text: m.subtitle || '' });
       Player.now = el('div', { class: 'nw-now' });
@@ -634,8 +655,10 @@
       Player.setStatus('Connexion…');
       // Direct : 12 s pour démarrer (10 s pour le second lecteur), puis serveur
       // suivant (la fenêtre des serveurs ou l'accueil en choisit un autre) ; film : 30 s.
+      // Samsung 2014 : le relais du serveur prépare d'abord quelques segments (45 s).
+      if (ORSAY && Player.library) limit = 45000;
       Player.watch(limit || (Player.m && !Player.m.vod ? 12000 : 30000));
-      Player.engine.load(Player.url(url), mime, Player.library).then(function () {
+      Player.engine.load(Player.url(url), mime, Player.library, Player.m && Player.m.headers).then(function () {
         var attempt = Player.video.play();
         if (attempt && attempt.catch) attempt.catch(function () { /* lecture automatique refusée : OK relance */ });
       }, function (error) { Player.fail(error.message); });
@@ -918,7 +941,8 @@
       url.searchParams.set('AudioStreamIndex', String(tracks.audioIndex));
       if (subtitle) {
         url.searchParams.set('SubtitleStreamIndex', String(subtitle.index));
-        url.searchParams.set('SubtitleMethod', subtitle.text ? 'Hls' : 'Encode');
+        // Samsung 2014 : sous-titres incrustés par le serveur (pas de pistes WebVTT).
+        url.searchParams.set('SubtitleMethod', subtitle.text && !ORSAY ? 'Hls' : 'Encode');
       } else {
         url.searchParams.delete('SubtitleStreamIndex');
         url.searchParams.delete('SubtitleMethod');
@@ -959,6 +983,7 @@
         Player.library = false;
         Player.reconnects = 0;
         if (c.playSessionId) Player.playSessionId = c.playSessionId;
+        Player.m.headers = c.headers || null;
         Player.title.textContent = c.title || '';
         Player.subtitle.textContent = c.subtitle || '';
         if (c.epg) Player.epg = c.epg;
@@ -1130,6 +1155,8 @@
     node: null, tiles: [], audio: null, featured: null, zoomed: null, menu: null, catalog: [],
 
     open: function (items, catalog) {
+      // Samsung 2014 : un seul décodeur, mosaïque composée par le serveur.
+      if (ORSAY) { ORSAY.multiview(items, catalog); return; }
       if (Multiview.node) Multiview.close();
       Multiview.catalog = (catalog || []).filter(function (channel) { return channel && (channel.stream || channel.resolver); });
       Multiview.node = el('div', { id: 'nw-multi', class: 'nw-overlay' });
@@ -1203,6 +1230,7 @@
     },
     // Commandes du téléphone : add (item {title, subtitle, options}), remove, audio, feature, solo, grid, state.
     remote: function (message) {
+      if (ORSAY) { ORSAY.multiviewRemote(message); return; }
       var command = message.command;
       if (command === 'state') { Multiview.publish(); return; }
       if (!Multiview.node) return;
@@ -1473,7 +1501,14 @@
 
   // ── Démarrage ─────────────────────────────────────────────────────────
   session = read(STORE, null);
-  document.addEventListener('DOMContentLoaded', function () {
+  if (ORSAY) {
+    ORSAY.bridge({
+      el: el, send: send, is: is, handlers: handlers, listKeys: listKeys, listScroll: listScroll, noctraFetch: noctraFetch,
+      keepScreenOn: keepScreenOn, sniff: sniffStream, session: function () { return session; },
+      BASE: BASE, JF: JF, SERVER_ORIGIN: SERVER_ORIGIN
+    });
+  }
+  function start() {
     var channel = new MessageChannel();
     appPort = channel.port1;
     appPort.onmessage = function (event) {
@@ -1490,7 +1525,12 @@
       })
       : Promise.resolve();
     ready.then(function () {
+      // Samsung 2014 : liaison directe (ni MessageEvent ni vrai MessageChannel sur ce moteur).
+      if (ORSAY && window.NoctraAttachHost) { window.NoctraAttachHost(channel.port2); return; }
       window.dispatchEvent(new MessageEvent('message', { data: 'noctra-host', ports: [channel.port2] }));
     });
-  });
+  }
+  // Samsung 2014 : l'interface est chargée après ce fichier ; l'hôte lance la liaison.
+  if (ORSAY) window.NoctraHostStart = start;
+  else document.addEventListener('DOMContentLoaded', start);
 })();

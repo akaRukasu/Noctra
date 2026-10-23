@@ -119,9 +119,11 @@
     "test:v200127": "node tests/v200127-premiere-logo.mjs && npm run test:v200126",
     "test:v200126": "node tests/v200126-intro-duration.mjs && npm run test:v200125",
     "test:apps": "node tests/v200121-apps.mjs",
+    "test:orsay": "node tests/orsay-samsung-2014.mjs",
     "apps:build": "node apps/scripts/build-tv.mjs",
     "apps:android": "node apps/scripts/build-android.mjs",
-    "apps:androidtv": "node apps/scripts/build-androidtv.mjs"
+    "apps:androidtv": "node apps/scripts/build-androidtv.mjs",
+    "apps:samsung2014": "node apps/scripts/build-orsay.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -9,7 +9,7 @@ const end = bridge.indexOf('  handlers.push({ active: function () { return Boole
 const sent = [];
 const node = () => ({ appendChild() {}, remove() {}, focus() {}, classList: { toggle() {} }, addEventListener() {}, setAttribute() {}, getAttribute() { return ''; }, style: {} });
 const context = vm.createContext({
-  MULTI_MAX: 12, sent, send: message => sent.push(message), keepScreenOn() {},
+  MULTI_MAX: 12, ORSAY: null, sent, send: message => sent.push(message), keepScreenOn() {},
   document: { body: node(), activeElement: null }, setTimeout() {}, clearTimeout() {},
   el: () => node(), Engine: function () { this.destroy = () => {}; this.load = () => Promise.resolve(); }, listKeys() {}, is() { return false; },
   noctraFetch: () => Promise.resolve({})

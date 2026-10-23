@@ -166,7 +166,13 @@
   window.addEventListener('message', function (event) {
     // postWebMessage n'a pas de fenêtre d'origine ; un lecteur web (iframe) en a une.
     if (event.data !== 'noctra-host' || event.source !== null || !event.ports || !event.ports[0]) return;
-    port = event.ports[0];
+    attachHost(event.ports[0]);
+  });
+  // Samsung 2014 (Orsay) : l'hôte (tv-native.js) remet son canal directement.
+  window.NoctraAttachHost = attachHost;
+  function attachHost(hostPort) {
+    if (port) return;
+    port = hostPort;
     port.onmessage = function (message) {
       var data;
       try { data = JSON.parse(message.data); } catch (error) { return; }
@@ -182,7 +188,7 @@
       else if (data.type === 'nativeError') toast('Action impossible : ' + data.message, true);
     };
     native('hello');
-  });
+  }
 
   // Hors de l'appli (essais dans un navigateur) : #token=…&user=…&jellyfin=…
   setTimeout(function () {
@@ -1041,20 +1047,25 @@
     var codecs = S.codecs || {};
     var video = ['h264'].concat(codecs.hevc ? ['hevc'] : []);
     var audioCodecs = ['aac', 'mp3'].concat(codecs.ac3 ? ['ac3'] : [], codecs.eac3 ? ['eac3'] : []);
+    // Samsung 2014 : décodeur H.264 jusqu'au niveau 4.1 (1080p), son stéréo,
+    // sous-titres incrustés, 20 Mb/s au plus (lecteur HLS du téléviseur).
+    var orsay = S.platform === 'orsay';
+    var maxRate = vodQuality() ? vodQuality() * 1000000 : orsay ? 20000000 : 80000000;
     var params = {
       MediaSourceId: source.Id, PlaySessionId: playSessionId, DeviceId: deviceId(),
       VideoCodec: video.join(','), AudioCodec: audioCodecs.join(','),
       AudioStreamIndex: audio ? audio.Index : '',
       SubtitleStreamIndex: subtitle ? subtitle.Index : '',
-      SubtitleMethod: subtitle ? (subtitle.IsTextSubtitleStream ? 'Hls' : 'Encode') : '',
-      MaxStreamingBitrate: vodQuality() ? vodQuality() * 1000000 : 80000000, TranscodingMaxAudioChannels: 6,
+      SubtitleMethod: subtitle ? (subtitle.IsTextSubtitleStream && !orsay ? 'Hls' : 'Encode') : '',
+      MaxStreamingBitrate: maxRate, TranscodingMaxAudioChannels: orsay ? 2 : 6,
       // Qualité limitée : vidéo convertie par le serveur sous ce débit.
       // Sans débit demandé, une conversion part sur un débit bas (image floue).
-      VideoBitrate: (vodQuality() ? vodQuality() * 1000000 : 80000000) - 400000,
+      VideoBitrate: maxRate - 400000,
       // Une seule qualité : pas de variantes réduites choisies par le lecteur.
       EnableAdaptiveBitrateStreaming: 'false', SegmentContainer: 'ts', MinSegments: 1,
       BreakOnNonKeyFrames: 'True', AllowVideoStreamCopy: 'true', AllowAudioStreamCopy: 'true', RequireAvc: 'false',
-      'h264-profile': 'high,main,baseline,constrained baseline', 'h264-level': '51', 'hevc-profile': 'main,main10'
+      'h264-profile': 'high,main,baseline,constrained baseline', 'h264-level': orsay ? '41' : '51', 'hevc-profile': 'main,main10',
+      MaxWidth: orsay ? 1920 : '', MaxHeight: orsay ? 1080 : ''
     };
     var query = Object.keys(params).filter(function (key) { return params[key] !== ''; })
       .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); }).join('&');
@@ -3885,6 +3896,9 @@
   function unavailableHere(option) {
     if (!tvBrowserHost()) return false;
     var kind = optionKind(option);
+    // Samsung 2014 : pas de lecteur de site (moteur web sans MSE) ; les flux qui
+    // exigent des en-têtes passent par le relais du serveur Noctra.
+    if (S.platform === 'orsay') return kind === 'web';
     // Flux direct qui exige une identité (Referer, Origin, User-Agent, cookie) :
     // seul le lecteur Android l'envoie, un navigateur de téléviseur ne le peut pas.
     if (kind === 'native' && option.headers && typeof option.headers === 'object') {

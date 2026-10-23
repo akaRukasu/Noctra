@@ -1,0 +1,58 @@
+/* Noctra pour Samsung Smart TV 2014 (Orsay) : compléments du style de
+   l'interface Noctra TV (app.css, converti à la construction : variables
+   remplacées, grilles en flexbox préfixée -webkit-). Appli en 1280 × 720. */
+html { font-size: 16px; }
+[hidden] { display: none !important; }
+html.host-orsay .aurora { display: none; }
+#anchor { position: absolute; left: -10px; top: -10px; width: 1px; height: 1px; overflow: hidden; }
+#orsay-av { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; z-index: 0; pointer-events: none; }
+
+/* Lecture : la vidéo est dessinée sous la page, qui devient transparente. */
+html.orsay-video, html.orsay-video body { background: transparent !important; }
+html.orsay-video #top, html.orsay-video #main, html.orsay-video .aurora, html.orsay-video #layer { visibility: hidden; }
+html.orsay-video #nw-player, html.orsay-video #nw-multi { background: transparent; }
+.orsay-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; }
+
+/* Multiview : mosaïque du serveur, cases dessinées par-dessus. */
+.orsay-mosaic { background: #05060a; }
+.om-frame { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+.om-box { position: absolute; -webkit-box-sizing: border-box; box-sizing: border-box; border: .2rem solid transparent; border-radius: .4rem; }
+.om-box.on { border-color: #70d9c2; }
+.om-box.waiting { background: rgba(9, 10, 15, .85); border-color: #1c1f2a; }
+.om-box.waiting.on { border-color: #70d9c2; }
+.om-label { position: absolute; left: .5rem; bottom: .5rem; max-width: 92%; padding: .25rem .6rem; border-radius: .45rem; background: rgba(9, 10, 15, .75); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.om-box.audio .om-label { color: #70d9c2; }
+.om-status { position: absolute; left: 50%; top: 50%; width: 44rem; margin: -1.6rem 0 0 -22rem; padding: .8rem 1.2rem; border-radius: .8rem; background: rgba(9, 10, 15, .88); text-align: center; z-index: 2; }
+.om-help { position: absolute; left: 0; right: 0; top: 0; padding: .35rem 1rem; background: rgba(9, 10, 15, .72); color: #aab4c4; font-size: .75rem; text-align: center; z-index: 2; }
+
+/* Clavier à l'écran. */
+.ok-keyboard { position: fixed; left: 50%; bottom: 1.5rem; width: 46rem; margin-left: -23rem; z-index: 300; padding: 1rem 1.2rem; border-radius: 1.1rem; background: #131722; border: 1px solid rgba(145, 164, 194, .25); }
+.ok-keyboard h3 { font-size: 1rem; color: #9aa5b8; margin-bottom: .4rem; }
+.ok-preview { padding: .5rem .8rem; border-radius: .6rem; background: #0d1017; font-size: 1.2rem; min-height: 2.2rem; margin-bottom: .6rem; word-wrap: break-word; }
+.ok-row { white-space: nowrap; text-align: center; margin-bottom: .3rem; }
+.ok-key { display: inline-block; width: 3.6rem; padding: .45rem 0; margin: 0 .15rem; border-radius: .45rem; background: rgba(255, 255, 255, .08); text-align: center; font-weight: 700; }
+.ok-key.wide { width: 6.6rem; font-size: .85rem; }
+.ok-key.on { background: #f2f6f4; color: #0b0d12; }
+.ok-help { color: #9aa5b8; font-size: .75rem; margin-top: .4rem; text-align: center; }
+
+/* Écran de démarrage : serveur, test de connexion, diagnostic. */
+.ob-screen { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 250; background: #07080d; }
+.ob-card { position: absolute; left: 50%; top: 3.5rem; width: 48rem; margin-left: -24rem; padding: 1.8rem 2.2rem; border-radius: 1.4rem; background: #12141c; border: 1px solid rgba(145, 164, 194, .14); }
+.ob-brand { font-weight: 800; font-size: 1.25rem; }
+.ob-brand img { display: inline-block; width: 2.1rem; height: 2.1rem; margin-right: .6rem; vertical-align: middle; }
+.ob-brand span { vertical-align: middle; }
+.ob-card h1 { font-size: 1.7rem; font-weight: 800; margin: .7rem 0 .5rem; }
+.ob-text { color: #cfd6e2; font-size: .95rem; line-height: 1.45; margin: .35rem 0; }
+.ob-input { display: block; width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box; margin: .8rem 0; padding: .7rem 1rem; border-radius: .8rem; border: 2px solid rgba(145, 164, 194, .3); background: #0d1017; color: #f2f6f4; font-size: 1.05rem; outline: none; }
+.ob-input.on { border-color: #f2f6f4; }
+.ob-actions { margin-top: 1rem; }
+.ob-btn { display: inline-block; margin: 0 .6rem .6rem 0; padding: .65rem 1.2rem; border-radius: 99rem; background: rgba(255, 255, 255, .08); border: 1px solid rgba(145, 164, 194, .14); font-weight: 700; outline: none; }
+.ob-btn.primary { background: #70d9c2; color: #07110f; }
+.ob-btn.on { background: #f2f6f4; color: #0b0d12; }
+.ob-foot { margin-top: .8rem; color: #6f7a8c; font-size: .75rem; }
+.ob-loading { position: fixed; left: 0; right: 0; top: 50%; margin-top: -1rem; z-index: 240; text-align: center; color: #9aa5b8; font-size: 1.1rem; }
+
+/* Grilles converties : cas que la conversion automatique ne couvre pas. */
+.grid.tiles > .tile.source-tile.all-tile { width: -webkit-calc((100% - 3rem) / 4 * 2 + 1rem); width: calc((100% - 3rem) / 4 * 2 + 1rem); }
+/* Pas de « object-fit » sur ce moteur : logos centrés sans déformation. */
+.bouquet-logo img, .tile-icon img { width: auto; height: auto; max-width: 100%; max-height: 100%; }
