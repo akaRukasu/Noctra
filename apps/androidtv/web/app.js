@@ -4833,14 +4833,25 @@
   // multiview passe seul au suivant, ou au choix depuis son menu (OK).
   function multiviewOptions(options, channel) {
     var list = [];
+    var pages = [];
+    var manualPages = [];
     options.forEach(function (option, index) {
-      if (option.manualOnly) return;
       var label = optionLabel(option, index);
+      var kind = optionKind(option);
+      // Lecteur d'un site : la vignette Android TV ouvre la page, repère son flux et le lit en natif.
+      if (kind === 'web' && option.url) {
+        var page = absolute(option.url);
+        var frame = frameConfig(channel, option, page);
+        (option.manualOnly ? manualPages : pages).push({ label: label + ' · lecteur du site', page: page, sandbox: frame.sandbox, referrer: frame.referrer });
+        return;
+      }
+      if (option.manualOnly) return;
       if (option.streamUrl) list.push({ label: label, url: absolute(option.streamUrl), mime: tsTransport(option) || tsTransport(channel) ? 'video/mp2t' : '' });
-      else if (optionKind(option) === 'resolve') list.push({ label: label, resolve: absolute(option.resolveUrl) });
+      else if (kind === 'resolve') list.push({ label: label, resolve: absolute(option.resolveUrl) });
     });
-    // Serveurs directs d'abord.
-    return list.filter(function (item) { return item.url; }).concat(list.filter(function (item) { return !item.url; }));
+    // Serveurs directs d'abord, puis automatiques, puis les lecteurs des sites (ceux avec publicités en dernier).
+    var ordered = list.filter(function (item) { return item.url; }).concat(list.filter(function (item) { return !item.url; }), pages);
+    return ordered.length ? ordered.concat(manualPages) : manualPages;
   }
   // Catalogue pour « Ajouter une chaîne » dans le multiview : chaînes des
   // sources déjà ouvertes (flux direct ou serveurs à demander au serveur Noctra).
@@ -4883,7 +4894,7 @@
         if (!options.length) { skipped.push(channel.name); return; }
         items.push({ title: channel.name, subtitle: channel.provider || '', options: options });
       });
-      if (skipped.length) toast('Sans flux direct, ignorées : ' + skipped.join(', '), true);
+      if (skipped.length) toast('Aucun serveur, ignorées : ' + skipped.join(', '), true);
       if (!items.length) return;
       if (!native('multiview', { items: items, catalog: multiCatalog() })) toast('Le multiview est disponible dans l’appli Noctra TV.', true);
     });

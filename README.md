@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.146 — relais des chaînes diffusées en AirPlay
+# Version actuelle : 200.0.147 — Noctra TV 1.1.51 : multiview avec les lecteurs des sites
+
+Interface Noctra TV 1.1.51 (LG, Samsung, servie à `/tv-app/`) et appli Android TV noctra.71 : une chaîne sans flux direct (DLStreams…) n'est plus écartée du multiview. Sur Android TV, la vignette ouvre la page du lecteur, repère la liste HLS qu'elle demande et la lit avec le lecteur natif (son, définition et changement de serveur du multiview). Validation : `npm run test:v200147`.
+
+# Historique : 200.0.146 — relais des chaînes diffusées en AirPlay
 
 Une chaîne envoyée en AirPlay passe par un relais du serveur : ffmpeg copie le flux (sans réencodage) dans une liste locale avec une réserve de segments et se reconnecte seul quand le lien de la source expire. Le téléviseur ne lit que des fichiers déjà prêts : plus de « mise en mémoire tampon » à chaque segment, plus de « vidéo inaccessible ». Validation : `npm run test:v200146`.
 

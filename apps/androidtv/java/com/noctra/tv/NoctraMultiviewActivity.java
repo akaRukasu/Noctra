@@ -6,12 +6,20 @@ import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.CookieManager;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -26,6 +34,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +85,16 @@ public class NoctraMultiviewActivity extends Activity {
         String url;
         String resolve;
         String mime;
+        /** Lecteur d'un site : la page est ouverte dans la vignette, son flux repéré puis lu en natif. */
+        String page = "";
+        String sandbox;
+        String referrer = "strict-origin-when-cross-origin";
+        /** En-têtes de la page pour le flux repéré (Referer, Origin, User-Agent, Cookie). */
+        Map<String, String> headers;
     }
+
+    /** Délai du repérage du flux d'une page de site avant le serveur suivant. */
+    private static final long SNIFF_MS = 35000;
 
     /** Délais des nouveaux essais d'une vignette dont tous les serveurs ont échoué. */
     private static final long[] RETRY_MS = { 20000, 45000, 90000, 180000 };
@@ -100,6 +118,8 @@ public class NoctraMultiviewActivity extends Activity {
         long renewedAt;
         int retries;
         Runnable retry;
+        /** Page d'un site ouverte pour repérer son flux (détruite dès qu'il est trouvé). */
+        WebView web;
 
         @Override
         public void onStatus(NoctraStream source, String text) {
@@ -128,7 +148,7 @@ public class NoctraMultiviewActivity extends Activity {
             long now = System.currentTimeMillis();
             // Coupure d'un flux qui fonctionnait : lien neuf du même serveur
             // (jeton expiré le plus souvent), au plus une fois toutes les 2 min.
-            if (source.hasPlayed() && option != null && !option.resolve.isEmpty() && now - renewedAt > 120000) {
+            if (source.hasPlayed() && option != null && (!option.resolve.isEmpty() || !option.page.isEmpty()) && now - renewedAt > 120000) {
                 renewedAt = now;
                 option.url = "";
                 showStatus(this, "Reconnexion au serveur…");
@@ -177,7 +197,10 @@ public class NoctraMultiviewActivity extends Activity {
                 option.url = source.optString("url", "");
                 option.resolve = source.optString("resolve", "");
                 option.mime = source.optString("mime", "");
-                if (!option.url.isEmpty() || !option.resolve.isEmpty()) tile.options.add(option);
+                option.page = source.optString("page", "");
+                option.sandbox = source.isNull("sandbox") ? null : source.optString("sandbox", null);
+                option.referrer = source.optString("referrer", option.referrer);
+                if (!option.url.isEmpty() || !option.resolve.isEmpty() || !option.page.isEmpty()) tile.options.add(option);
             }
             if (tile.options.isEmpty()) continue;
             tiles.add(tile);
@@ -611,6 +634,7 @@ public class NoctraMultiviewActivity extends Activity {
 
     private void removeTile(Tile tile) {
         tile.generation++;
+        closePage(tile);
         if (tile.stream != null) tile.stream.release();
         tile.stream = null;
         int index = tiles.indexOf(tile);
@@ -632,6 +656,7 @@ public class NoctraMultiviewActivity extends Activity {
     private List<Option> options(String address, String mime) {
         List<Option> direct = new ArrayList<Option>();
         List<Option> automatic = new ArrayList<Option>();
+        List<Option> pages = new ArrayList<Option>();
         JSONObject result = fetch(address);
         if (result == null) return direct;
         try {
@@ -657,11 +682,17 @@ public class NoctraMultiviewActivity extends Activity {
                     option.resolve = new URL(base, resolve).toString();
                     if (option.label.isEmpty()) option.label = "Serveur " + (i + 1);
                     automatic.add(option);
+                } else if (!page.isEmpty() && !new URL(base, page).getHost().toLowerCase().contains("livewatch.")) {
+                    // Lecteur d'un site : flux repéré sur sa page (jamais la page publique LiveWatch, avec publicités).
+                    option.page = new URL(base, page).toString();
+                    if (option.label.isEmpty()) option.label = "Lecteur du site";
+                    pages.add(option);
                 }
             }
         } catch (Exception ignored) {
         }
         direct.addAll(automatic);
+        direct.addAll(pages);
         return direct;
     }
 
@@ -693,7 +724,7 @@ public class NoctraMultiviewActivity extends Activity {
                 if (isFinishing() || generation != tile.generation) return;
                 tile.failed.clear();
                 for (Option option : tile.options) {
-                    if (!option.resolve.isEmpty()) option.url = "";
+                    if (!option.resolve.isEmpty() || !option.page.isEmpty()) option.url = "";
                 }
                 play(tile, 0);
             }
@@ -705,12 +736,17 @@ public class NoctraMultiviewActivity extends Activity {
         if (tile.retry != null) handler.removeCallbacks(tile.retry);
         if (tile.stream != null) tile.stream.release();
         tile.stream = null;
+        closePage(tile);
         tile.current = index;
         final int generation = ++tile.generation;
         refreshLabels();
         final Option option = tile.options.get(index);
         if (!option.url.isEmpty()) {
-            start(tile, option.url, option.mime);
+            start(tile, option);
+            return;
+        }
+        if (!option.page.isEmpty()) {
+            sniff(tile, option, index, generation);
             return;
         }
         // Serveur « automatique » : le serveur Noctra fournit le flux à la demande.
@@ -731,19 +767,167 @@ public class NoctraMultiviewActivity extends Activity {
                             return;
                         }
                         option.url = url;
-                        start(tile, url, option.mime);
+                        start(tile, option);
                     }
                 });
             }
         }).start();
     }
 
-    private void start(Tile tile, String url, String mime) {
+    private void start(Tile tile, Option option) {
+        String url = option.url;
         boolean ours = NoctraHomeActivity.sameOrigin(Uri.parse(url), Uri.parse(NoctraConfig.NOCTRA_URL));
-        tile.stream = new NoctraStream(this, tile.view, tile, url, mime, ours ? token : null, true);
+        if (option.headers != null && !option.headers.isEmpty()) {
+            // Flux repéré sur la page d'un site : lu avec les en-têtes de la page (jeton Noctra pour nos adresses).
+            Map<String, String> headers = new HashMap<String, String>(option.headers);
+            if (ours && token != null) headers.put("x-noctra-token", token);
+            tile.stream = new NoctraStream(this, tile.view, tile, url, option.mime, headers, true, true, 0);
+        } else {
+            tile.stream = new NoctraStream(this, tile.view, tile, url, option.mime, ours ? token : null, true);
+        }
         tile.stream.setVolume(tile == audio ? 1f : 0f);
         if (tile.maxWidth > 0) tile.stream.setMaxVideoSize(tile.maxWidth, tile.maxHeight);
         tile.stream.start();
+    }
+
+    // ── Lecteurs des sites : flux repéré sur la page ───────────────────────
+    /**
+     * Page du lecteur ouverte dans la vignette (comme le lecteur web de Noctra TV) ; la première liste
+     * HLS qu'elle demande est reprise par le lecteur natif de la vignette, avec les en-têtes de la page :
+     * son, définition et changement de serveur restent ceux du multiview. Sans flux en 35 s : serveur suivant.
+     */
+    @SuppressWarnings("SetJavaScriptEnabled")
+    private void sniff(final Tile tile, final Option option, final int index, final int generation) {
+        showStatus(tile, "Lecteur du site · recherche du flux…");
+        final WebView web = new WebView(this);
+        web.setBackgroundColor(Color.BLACK);
+        web.setFocusable(false);
+        WebSettings settings = web.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+        settings.setUserAgentString(NoctraWebPlayerActivity.desktopUserAgent(settings.getUserAgentString()));
+        final String agent = settings.getUserAgentString();
+        if (Build.VERSION.SDK_INT >= 26) {
+            try { settings.setSafeBrowsingEnabled(false); } catch (Throwable ignored) { }
+        }
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+        final boolean[] found = { false };
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri url = request.getUrl();
+                if (!found[0] && isStream(url)) {
+                    found[0] = true;
+                    final Map<String, String> headers = new HashMap<String, String>();
+                    Map<String, String> sent = request.getRequestHeaders();
+                    if (sent != null) {
+                        for (Map.Entry<String, String> entry : sent.entrySet()) {
+                            if (entry.getKey() == null || entry.getValue() == null) continue;
+                            String lower = entry.getKey().toLowerCase();
+                            if (lower.equals("referer")) headers.put("Referer", entry.getValue());
+                            else if (lower.equals("origin")) headers.put("Origin", entry.getValue());
+                            else if (lower.equals("user-agent")) headers.put("User-Agent", entry.getValue());
+                        }
+                    }
+                    if (!headers.containsKey("User-Agent")) headers.put("User-Agent", agent);
+                    String cookies = CookieManager.getInstance().getCookie(url.toString());
+                    if (cookies != null && !cookies.isEmpty()) headers.put("Cookie", cookies);
+                    final String media = url.toString();
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (isFinishing() || generation != tile.generation) return;
+                            closePage(tile);
+                            option.url = media;
+                            option.headers = headers;
+                            option.mime = "";
+                            start(tile, option);
+                        }
+                    });
+                }
+                return null;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // Page principale : jamais quittée pour une publicité ou une autre appli.
+                return request.isForMainFrame() && found[0];
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                if (tile.web == view) tile.web = null;
+                ((ViewGroup) view.getParent()).removeView(view);
+                view.destroy();
+                pageFailed(tile, index, generation);
+                return true;
+            }
+        });
+        web.setWebChromeClient(new WebChromeClient());
+        tile.web = web;
+        // Sous le libellé et l'état : la page est visible le temps du repérage.
+        tile.frame.addView(web, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        String sandbox = option.sandbox == null ? "" : " sandbox=\"" + attribute(option.sandbox) + "\"";
+        String html = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            + "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style></head>"
+            + "<body><iframe src=\"" + attribute(option.page) + "\"" + sandbox + " referrerpolicy=\"" + attribute(option.referrer) + "\""
+            + " allow=\"autoplay *; fullscreen *; encrypted-media *\" allowfullscreen></iframe></body></html>";
+        web.loadDataWithBaseURL(NoctraConfig.NOCTRA_URL + "/", html, "text/html", "utf-8", null);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isFinishing() || generation != tile.generation || found[0]) return;
+                closePage(tile);
+                pageFailed(tile, index, generation);
+            }
+        }, SNIFF_MS);
+    }
+
+    private void pageFailed(Tile tile, int index, int generation) {
+        if (isFinishing() || generation != tile.generation) return;
+        if (!tile.failed.contains(index)) tile.failed.add(index);
+        int next = nextOption(tile);
+        if (next >= 0) {
+            showStatus(tile, "Lecteur du site sans flux · essai du suivant…");
+            play(tile, next);
+        } else {
+            scheduleRetry(tile);
+        }
+    }
+
+    private void closePage(Tile tile) {
+        WebView web = tile.web;
+        tile.web = null;
+        if (web == null) return;
+        try {
+            ViewGroup parent = (ViewGroup) web.getParent();
+            if (parent != null) parent.removeView(web);
+            web.stopLoading();
+            web.destroy();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Liste HLS demandée par la page (pas une publicité ni un script). */
+    private static boolean isStream(Uri url) {
+        if (url == null || url.getPath() == null) return false;
+        String scheme = url.getScheme();
+        if (!"https".equals(scheme) && !"http".equals(scheme)) return false;
+        String text = url.toString().toLowerCase();
+        if (text.contains("/tv-app/") || text.matches(".*(?:^|[/._=?&-])(?:ads?|vast|vpaid|preroll|advert[a-z]*|adserver|doubleclick|imasdk)(?:[/._=?&-]|$).*")) return false;
+        String path = url.getPath().toLowerCase();
+        String query = url.getEncodedQuery() == null ? "" : url.getEncodedQuery().toLowerCase();
+        return path.contains(".m3u8") || path.endsWith(".m3u")
+            || (query.contains(".m3u8") && !path.matches(".*\\.(?:js|html?|php|css)$"));
+    }
+
+    private static String attribute(String value) {
+        return value == null ? "" : value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;");
     }
 
     private String resolve(String address) {
@@ -833,6 +1017,7 @@ public class NoctraMultiviewActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         for (Tile tile : tiles) {
             tile.generation++;
+            closePage(tile);
             if (tile.stream != null) tile.stream.release();
         }
         super.onDestroy();
