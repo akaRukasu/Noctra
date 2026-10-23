@@ -72,7 +72,8 @@ L'appli installée par le réseau reste sur le téléviseur après une mise hors
 1. Ouvrez **Noctra** depuis le Smart Hub.
 2. L'appli vérifie le serveur Noctra (`https://akarukasu.merlion.usbx.me/noctra`).
    - **Si l'écran de connexion Jellyfin s'affiche**, tout va bien. Passez à l'étape 3.
-   - **Si « Connexion impossible » s'affiche** avec un message sur la connexion sécurisée (HTTPS), le téléviseur refuse le certificat du serveur. Suivez le chapitre 7 (relais local), puis revenez ici.
+   - **Si « Connexion sécurisée impossible » s'affiche avec « Utiliser HTTP »**, le téléviseur refuse le certificat, mais le serveur répond aussi en HTTP simple. « Utiliser HTTP » marche sans aucun autre appareil. Les échanges ne sont alors pas chiffrés : connectez-vous avec Quick Connect plutôt qu'avec votre mot de passe. Le relais local (chapitre 7) reste la solution chiffrée.
+   - **Si « Connexion impossible » s'affiche** avec un message sur la connexion sécurisée (HTTPS), le téléviseur refuse le certificat et le serveur ne répond pas en HTTP (redirection vers HTTPS chez l'hébergeur). Suivez le chapitre 7 (relais local), puis revenez ici.
 3. **Connexion Jellyfin** : un code **Quick Connect** s'affiche. Sur votre téléphone ou votre PC, ouvrez Jellyfin › Paramètres › Quick Connect, puis saisissez ce code. Le téléviseur se connecte seul. Vous pouvez aussi entrer vos identifiants : appuyez sur OK sur un champ pour ouvrir le clavier à l'écran.
 4. La session est mémorisée. Aux lancements suivants, l'accueil Noctra s'ouvre directement.
 

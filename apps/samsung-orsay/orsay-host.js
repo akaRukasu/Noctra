@@ -1040,7 +1040,8 @@
   function saveServer(entry) { try { localStorage.setItem(SERVER_KEY, JSON.stringify(entry)); } catch (error) { /* stockage plein */ } }
   // Adresse utilisée : le relais local (s'il est indiqué), sinon le serveur.
   function activeBase(entry) {
-    if (!entry.relay) return entry.url;
+    // Connexion non chiffrée acceptée (HTTPS refusé par le téléviseur, serveur joignable en HTTP).
+    if (!entry.relay) return entry.insecure ? entry.url.replace(/^https:/i, 'http:') : entry.url;
     var path = '';
     try { path = new URL(entry.url).pathname.replace(/\/+$/, ''); } catch (error) { path = ''; }
     return normalize(entry.relay).replace(/\/+$/, '') + path;
@@ -1144,13 +1145,15 @@
     // Écran principal des réglages de connexion (diagnostic éventuel).
     menu: function (problem) {
       var entry = loadServer();
-      var lines = (problem ? problem + '\n' : '') + 'Serveur : ' + (entry.url || 'non défini') + '\nRelais local : ' + (entry.relay || 'aucun (connexion directe au serveur)');
+      var lines = (problem ? problem + '\n' : '') + 'Serveur : ' + (entry.url || 'non défini') + (entry.insecure && !entry.relay ? ' (en HTTP non chiffré)' : '')
+        + '\nRelais local : ' + (entry.relay || 'aucun (connexion directe au serveur)');
       var actions = [
         { label: 'Réessayer', primary: true, run: function () { Boot.connect(); } },
         { label: 'Utiliser un relais local', run: function () { Boot.askRelay(); } },
         { label: 'Adresse du serveur', run: function () { Boot.askServer(); } }
       ];
       if (entry.relay) actions.push({ label: 'Connexion directe (sans relais)', run: function () { entry.relay = ''; saveServer(entry); Boot.connect(); } });
+      if (entry.insecure && !entry.relay) actions.push({ label: 'Revenir au HTTPS', run: function () { entry.insecure = false; saveServer(entry); Boot.connect(); } });
       if (started) actions.push({ label: 'Fermer', run: function () { Boot.hide(); } });
       else actions.push({ label: 'Quitter', run: exit });
       Boot.show(problem ? 'Connexion impossible' : 'Connexion au serveur', lines, actions);
@@ -1161,6 +1164,7 @@
         var url = normalize(Boot.input.value);
         if (!/^https?:\/\/[^\s\/?#]+/i.test(url)) { Boot.menu('Adresse invalide. Exemple : https://mon-serveur.fr/noctra'); return; }
         entry.url = url;
+        entry.insecure = false;
         saveServer(entry);
         Boot.connect();
       };
@@ -1182,6 +1186,23 @@
         [{ label: 'Valider', primary: true, run: submit }, { label: 'Retour', run: function () { Boot.menu(''); } }],
         { value: (entry.relay || '').replace(/^http:\/\//, ''), placeholder: '192.168.1.20:8095', submit: submit });
     },
+    // HTTPS refusé : le même serveur répond-il en HTTP simple ? (pas de redirection
+    // vers HTTPS chez l'hébergeur). Proposé, jamais imposé : rien n'est chiffré.
+    tryHttp: function (entry, base, failure) {
+      var plain = base.replace(/^https:/i, 'http:');
+      Boot.busy('Connexion sécurisée refusée par le téléviseur. Essai de ' + plain.replace(/^http:\/\//, '') + ' en HTTP…');
+      probe(plain, function (result) {
+        if (Boot.cancelled) return;
+        if (!result.ok) { Boot.menu(explain(entry, failure)); return; }
+        Boot.show('Connexion sécurisée impossible',
+          'Le téléviseur refuse le certificat HTTPS du serveur (trop récent pour un modèle de 2014), mais le serveur répond aussi en HTTP simple.\n'
+          + 'En HTTP, les échanges avec le serveur ne sont pas chiffrés : sur Internet, votre jeton de session pourrait être lu. Connectez-vous de préférence avec Quick Connect (le mot de passe ne passe pas par le téléviseur).\n'
+          + 'Solution chiffrée : le relais local (voir le guide).',
+          [{ label: 'Utiliser HTTP', primary: true, run: function () { entry.insecure = true; saveServer(entry); Boot.connect(); } },
+            { label: 'Utiliser un relais local', run: function () { Boot.askRelay(); } },
+            { label: 'Retour', run: function () { Boot.menu(explain(entry, failure)); } }]);
+      });
+    },
     connect: function () {
       var entry = loadServer();
       if (!entry.url) { Boot.askServer(); return; }
@@ -1190,6 +1211,7 @@
       Boot.busy('Vérification de ' + base.replace(/^https?:\/\//, '') + '…');
       probe(base, function (result) {
         if (Boot.cancelled) return;
+        if (!result.ok && result.status === 0 && /^https:/i.test(base)) { Boot.tryHttp(entry, base, result); return; }
         if (!result.ok) { Boot.menu(explain(entry, result)); return; }
         Boot.hide();
         if (started) { location.reload(); return; }

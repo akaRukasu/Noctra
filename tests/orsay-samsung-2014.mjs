@@ -404,6 +404,27 @@ try {
   assert.equal(relayState.stored.relay, origin);
   assert.equal(relayState.query, '?platform=orsay&server=' + encodeURIComponent(origin + '/noctra'), 'relais + chemin du serveur');
   assert.deepEqual(errors, [], 'aucune erreur JavaScript');
+
+  // HTTPS refusé mais serveur joignable en HTTP : proposé (non chiffré), puis utilisé.
+  const third = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  third.on('pageerror', error => errors.push(error.message));
+  await third.addInitScript(tvInit, { origin });
+  await third.addInitScript(httpsBase => { localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: httpsBase, relay: '' })); }, origin.replace('http:', 'https:') + '/noctra');
+  await third.goto(origin + '/index.html');
+  await third.waitForFunction(() => /Connexion sécurisée impossible/.test(document.body.textContent), null, { timeout: 20000 });
+  assert.match(await third.evaluate(() => document.getElementById('orsay-boot').textContent), /pas chiffrés/);
+  assert.equal(await third.evaluate(() => document.activeElement.textContent), 'Utiliser HTTP');
+  await third.evaluate(() => {
+    const event = document.createEvent('Event');
+    event.initEvent('keydown', true, true);
+    Object.defineProperty(event, 'keyCode', { value: 29443 });
+    document.activeElement.dispatchEvent(event);
+  });
+  await third.waitForFunction(() => document.querySelectorAll('#nav .nav').length > 0, null, { timeout: 20000 });
+  const insecure = await third.evaluate(() => ({ stored: JSON.parse(localStorage.getItem('noctra-orsay-server-v1')), query: window.NOCTRA_HOST_QUERY }));
+  assert.equal(insecure.stored.insecure, true);
+  assert.equal(insecure.query, '?platform=orsay&server=' + encodeURIComponent(origin + '/noctra'), 'serveur ouvert en HTTP');
+  assert.deepEqual(errors, [], 'aucune erreur JavaScript');
 } finally {
   await browser.close();
   server.close();
