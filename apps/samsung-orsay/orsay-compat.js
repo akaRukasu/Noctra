@@ -125,7 +125,8 @@
   // File d'exécution rapide : MutationObserver (WebKit) plutôt que setTimeout,
   // bridé à 4 ms par appel imbriqué sur ce moteur.
   var asap = (function () {
-    var queue = [], Observer = global.MutationObserver || global.WebKitMutationObserver;
+    // NOCTRA_NO_OBSERVER : tests automatiques, comme sur l'UE40H6400 (sans MutationObserver).
+    var queue = [], Observer = global.NOCTRA_NO_OBSERVER ? null : global.MutationObserver || global.WebKitMutationObserver;
     function flush() {
       var list = queue;
       queue = [];
@@ -135,6 +136,17 @@
       var node = document.createTextNode(''), toggle = 0;
       new Observer(flush).observe(node, { characterData: true });
       return function (fn) { queue.push(fn); if (queue.length === 1) node.data = String(toggle = 1 - toggle); };
+    }
+    // Samsung 2014 : pas de MutationObserver, et setTimeout(0) y est bridé.
+    // Un message à soi-même passe aussitôt la main, sans délai minimal.
+    if (typeof global.postMessage === 'function' && global.addEventListener) {
+      var token = 'noctra-asap-' + Math.random().toString(36).slice(2);
+      global.addEventListener('message', function (event) {
+        if (event.data !== token) return;
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        flush();
+      }, true);
+      return function (fn) { queue.push(fn); if (queue.length === 1) global.postMessage(token, '*'); };
     }
     return function (fn) { queue.push(fn); if (queue.length === 1) setTimeout(flush, 0); };
   })();

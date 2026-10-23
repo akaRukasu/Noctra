@@ -2915,7 +2915,8 @@
     var finished = new Promise(function (resolve) {
       function pump() {
         if (!queue.length && !running) { resolve(); return; }
-        while (running < 6 && queue.length) {
+        // Samsung 2014 : 2 catalogues à la fois (chaque réponse se décode lentement).
+        while (running < (S.platform === 'orsay' ? 2 : 6) && queue.length) {
           (function (job) {
             running++;
             var key = job.ref ? 'tv-ref:' + job.ref : 'tv:' + job.source.id;
@@ -3147,6 +3148,10 @@
   // réunies, françaises par défaut) ; « Sources » permet d'en choisir une.
   views.live = function (params, alive) {
     favoriteMode = false;
+    // Samsung 2014 : réunir toutes les sources demande une dizaine de secondes de
+    // calcul à ce processeur (interface figée) : la liste des sources s'ouvre
+    // d'abord, « Toutes les chaînes » reste au choix.
+    if (S.platform === 'orsay') return liveSourcesPage(alive);
     var merged = {};
     Object.keys(params || {}).forEach(function (key) { merged[key] = params[key]; });
     merged.section = 'live';
@@ -3154,6 +3159,26 @@
     merged.home = true;
     return views.liveSource(merged, alive);
   };
+  function liveSourcesPage(alive) {
+    var last = storedChannels(RECENTS_KEY)[0];
+    var resume = last ? h('button', { class: 'btn primary f', onclick: function () { openStoredChannel(last); } }, icon('play'), 'Reprendre ' + last.name) : null;
+    main.appendChild(head('TV en direct', 'Choisissez une source', resume));
+    var body = h('div', { class: 'live-body' });
+    main.appendChild(body);
+    var status = loading('Chargement des sources…');
+    body.appendChild(status);
+    return sourcesList().then(function (sources) {
+      if (!alive()) return;
+      status.remove();
+      var all = {};
+      Object.keys(ALL_SOURCE).forEach(function (key) { all[key] = ALL_SOURCE[key]; });
+      all.description = 'Les chaînes de toutes les sources réunies · lent sur ce téléviseur (20 s environ)';
+      var grid = h('div', { class: 'grid tiles' }, sourceTile(all, 'channels'));
+      sources.forEach(function (source) { grid.appendChild(sourceTile(source, source.section || 'channels')); });
+      body.appendChild(grid);
+      if (!sources.length) body.appendChild(h('div', { class: 'empty', text: 'Aucune source TV configurée sur le serveur Noctra.' }));
+    }, function (error) { if (alive()) status.replaceWith(failure(error)); });
+  }
   function groupingDetails(channels) {
     var list = h('div', { class: 'list scroll grouping-list' }, h('h2', null, 'Détail des regroupements', h('small', { text: 'Chaînes françaises · noms réunis par source · ○ sans logo officiel' })));
     numberChannels(channels.filter(function (channel) { return channel.country === 'fr'; }), true).forEach(function (channel) {
@@ -5178,6 +5203,13 @@
     }
     function roll(pool, winners) {
       clear(stage);
+      // Samsung 2014 : pas de rouleau d'affiches animé (texture trop grande pour
+      // la mémoire graphique de ce téléviseur, qui plantait) : tirage direct.
+      if (S.platform === 'orsay') {
+        stage.appendChild(h('div', { class: 'rolling' }, h('div', { class: 'kicker', text: 'La roulette tourne…' })));
+        setTimeout(function () { if (alive()) reveal(winners); }, 900);
+        return;
+      }
       var strip = h('div', { class: 'reel-strip' });
       var landing = 26;
       for (var i = 0; i < landing + 4; i++) {
@@ -5207,7 +5239,7 @@
       spin.disabled = false;
       clear(stage);
       var pick = winners[0];
-      var backdrop = image(S.jf + '/Items/' + pick.id + '/Images/Backdrop?maxWidth=1280&quality=80', '');
+      var backdrop = image(S.jf + '/Items/' + pick.id + '/Images/Backdrop?maxWidth=' + (S.platform === 'orsay' ? 960 : 1280) + '&quality=80', '');
       backdrop.className = 'reveal-backdrop';
       var watch = h('button', { class: 'btn primary f', onclick: function () { openItem(pick.id); } }, icon('play'), 'Voir la fiche');
       var card = h('div', { class: 'reveal' },

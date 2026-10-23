@@ -131,6 +131,8 @@ const server = createServer((req, res) => {
     }
     if (/^\/noctra\/api\/tv\/mosaic\/\w+$/.test(path) && req.method === 'DELETE') { json(res, 200, { stopped: true }); return; }
     if (path === '/noctra/api/tv/stream/ref1') { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', ...cors }); res.end('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg1.ts\n'); return; }
+    if (path === '/noctra/api/tv/sources') { json(res, 200, { sources: [{ id: 'fr-tnt', name: 'TNT France', section: 'channels' }, { id: 'sport', name: 'Sport', section: 'sports' }] }); return; }
+    if (path === '/noctra/api/roulette') { json(res, 200, { results: items.slice(0, 3).map(item => ({ id: item.Id, title: item.Name, year: 2020, genres: ['Action'] })) }); return; }
     if (path.startsWith('/noctra/api/')) { json(res, 200, {}); return; }
     if (path.startsWith('/jellyfin/')) {
       if (/\/Images\//.test(path)) { res.writeHead(200, { 'content-type': 'image/png', ...cors }); res.end(poster); return; }
@@ -150,6 +152,8 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 
 // Moteur du téléviseur : fonctions absentes retirées, API Samsung simulées.
 const tvInit = ({ origin }) => {
+  // Comme relevé sur l'UE40H6400 (journal) : seuls requestAnimationFrame et classList existent.
+  window.NOCTRA_NO_OBSERVER = true;
   for (const name of ['Promise', 'fetch', 'URL', 'URLSearchParams', 'AbortController', 'AbortSignal', 'MessageChannel', 'MessageEvent', 'IntersectionObserver', 'Headers']) {
     try { delete window[name]; } catch (error) { /* non configurable */ }
     try { Object.defineProperty(window, name, { value: undefined, configurable: true, writable: true }); } catch (error) { /* non configurable */ }
@@ -207,8 +211,13 @@ const tvInit = ({ origin }) => {
   };
   window.webapis = { avplay: { getAVPlay: function (success) { setTimeout(function () { success(player); }, 10); } } };
   // Session Jellyfin déjà ouverte (connexion testée par les tests du pont web).
-  localStorage.setItem('noctra-tv-web-session-v1', JSON.stringify({ token: 'jf-token', userId: 'user1', userName: 'Lucas' }));
-  localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: origin + '/noctra', relay: '' }));
+  // Une seule fois par onglet : la page redémarre après un changement de serveur.
+  window.__firstLoad = !sessionStorage.getItem('noctra-test-init');
+  sessionStorage.setItem('noctra-test-init', '1');
+  if (window.__firstLoad) {
+    localStorage.setItem('noctra-tv-web-session-v1', JSON.stringify({ token: 'jf-token', userId: 'user1', userName: 'Lucas' }));
+    localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: origin + '/noctra', relay: '' }));
+  }
   // Canal de l'interface : capté pour envoyer les ordres « play », « multiview »…
   window.__fromHost = [];
   let attach;
@@ -290,6 +299,21 @@ try {
   await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => document.querySelectorAll('#nw-player').length), 0, '13 = touche « 8 » sur ce téléviseur, pas OK');
 
+  // TV en direct : liste des sources, sans réunir tous les catalogues (trop lourd ici).
+  const before = requests.filter(r => r.path === '/noctra/api/tv/catalog').length;
+  await page.evaluate(() => { document.querySelector('#nav .nav[data-section="live"]').click(); });
+  await page.waitForFunction(() => document.querySelectorAll('#main .tile.source-tile').length === 3, null, { timeout: 10000 });
+  assert.match(await page.evaluate(() => document.querySelector('#main .tile.source-tile').textContent), /Toutes les chaînes.*lent sur ce téléviseur/);
+  await page.waitForTimeout(500);
+  assert.equal(requests.filter(r => r.path === '/noctra/api/tv/catalog').length, before, 'aucun catalogue chargé d’office');
+  // Roulette : tirage sans rouleau d'affiches animé.
+  await page.evaluate(() => { document.querySelector('#nav .nav[data-section="roulette"]').click(); });
+  await page.waitForFunction(() => Array.prototype.some.call(document.querySelectorAll('#main button'), b => /Lancer/.test(b.textContent)), null, { timeout: 10000 });
+  await page.evaluate(() => { Array.prototype.filter.call(document.querySelectorAll('#main button'), b => /Lancer/.test(b.textContent))[0].click(); });
+  await page.waitForFunction(() => /Voir la fiche/.test(document.getElementById('main').textContent), null, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.reel-strip').length), 0, 'pas de rouleau animé');
+  await page.evaluate(() => { document.querySelector('#nav .nav[data-section="home"]').click(); });
+  await page.waitForTimeout(500);
   // Chaîne : droit de lecture du serveur, type détecté, lecteur AVPlay en HLS.
   const send = message => page.evaluate(value => window.__port.postMessage(JSON.stringify(value)), message);
   await send({ action: 'play', url: origin + '/noctra/api/tv/stream/ref1', title: 'TF1', subtitle: 'Serveur 1', mime: '', headers: { Referer: 'https://site.example/' }, epg: null, playSessionId: 'p1' });
@@ -307,7 +331,9 @@ try {
   await key(88);
   await page.waitForFunction(() => window.__fromHost.some(m => m.type === 'playerClosed'), null, { timeout: 5000 });
   av = await page.evaluate(() => ({ calls: window.__av.calls, classes: document.documentElement.className, block: window.__calls.filter(c => c[0] === 'block').length, ret: window.__calls.filter(c => c[0] === 'return').length }));
-  assert.deepEqual(av.calls[av.calls.length - 1], ['stop']);
+  await page.waitForTimeout(150);
+  av = await page.evaluate(() => ({ calls: window.__av.calls, classes: document.documentElement.className, block: window.__calls.filter(c => c[0] === 'block').length, ret: window.__calls.filter(c => c[0] === 'return').length }));
+  assert.deepEqual(av.calls[av.calls.length - 1], ['stop'], 'lecteur arrêté juste après la fermeture');
   assert.doesNotMatch(av.classes, /orsay-video/);
   assert.ok(av.block >= 1, 'Retour bloqué (le téléviseur ne quitte pas l’appli)');
   assert.equal(av.ret, 0, 'Retour dans le lecteur : retour à l’interface, pas au Smart Hub');
@@ -389,7 +415,7 @@ try {
   const second = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   second.on('pageerror', error => errors.push(error.message));
   await second.addInitScript(tvInit, { origin });
-  await second.addInitScript(() => { localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: 'http://127.0.0.1:9/noctra', relay: '' })); });
+  await second.addInitScript(() => { if (window.__firstLoad) localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: 'http://127.0.0.1:9/noctra', relay: '' })); });
   await second.goto(origin + '/index.html');
   await second.waitForFunction(() => /Connexion impossible/.test(document.body.textContent), null, { timeout: 20000 });
   assert.match(await second.evaluate(() => document.getElementById('orsay-boot').textContent), /relais/);
@@ -429,7 +455,7 @@ try {
   const third = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   third.on('pageerror', error => errors.push(error.message));
   await third.addInitScript(tvInit, { origin });
-  await third.addInitScript(httpsBase => { localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: httpsBase, relay: '' })); }, origin.replace('http:', 'https:') + '/noctra');
+  await third.addInitScript(httpsBase => { if (window.__firstLoad) localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: httpsBase, relay: '' })); }, origin.replace('http:', 'https:') + '/noctra');
   await third.goto(origin + '/index.html');
   await third.waitForFunction(() => /Connexion sécurisée impossible/.test(document.body.textContent), null, { timeout: 20000 });
   assert.match(await third.evaluate(() => document.getElementById('orsay-boot').textContent), /pas chiffrés/);

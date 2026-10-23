@@ -33,7 +33,16 @@
   try { if (samsung) { widgetAPI = new Common.API.Widget(); tvKey = new Common.API.TVKeyValue(); pluginAPI = new Common.API.Plugin(); } } catch (error) { samsung = false; }
 
   var tools = null;     // outils de tv-native.js (voir bridge)
-  var started = false;  // interface Noctra TV chargée
+  var started = false;  // interface Noctra TV lancée
+  // Démarrage : l'interface se charge pendant la vérification du serveur.
+  var pending = { base: '', probed: false, loaded: false, loading: null };
+  function maybeStart() {
+    if (started || !pending.probed || !pending.loaded) return;
+    started = true;
+    if (pending.loading && pending.loading.parentNode) pending.loading.parentNode.removeChild(pending.loading);
+    Diag.add('DEMARRAGE', 'interface lancée ' + ((Date.now() - Diag.started) / 1000).toFixed(1) + ' s après l’ouverture');
+    if (typeof window.NoctraHostStart === 'function') window.NoctraHostStart();
+  }
 
   function $(id) { return document.getElementById(id); }
   function node(tag, className, text) {
@@ -468,7 +477,19 @@
     } catch (error) { return ''; }
   }
   var Device = {
+    stopTimer: 0,
+    stopSoon: function () {
+      clearTimeout(Device.stopTimer);
+      Device.stopTimer = setTimeout(function () {
+        Device.stopTimer = 0;
+        var begun = Date.now();
+        Device.stop();
+        Diag.add('LECTURE', 'lecteur arrêté en ' + (Date.now() - begun) + ' ms');
+      }, 60);
+    },
     open: function (url, kind, rect, start) {
+      clearTimeout(Device.stopTimer);
+      Device.stopTimer = 0;
       var target = url + (kind === 'hls' && url.indexOf('|COMPONENT=') < 0 ? '|COMPONENT=HLS' : '');
       if (Hardware.name === 'avplay') {
         var player = Hardware.avplay;
@@ -593,7 +614,9 @@
       state.readyState = 0;
       state.time = 0;
       state.duration = NaN;
-      if (wasOwner) { Hardware.owner = null; Device.stop(); videoActive(false); }
+      // Interface rendue d'abord, lecteur arrêté juste après : cet arrêt peut
+      // bloquer la page un moment sur ce téléviseur (retour à l'accueil plus rapide).
+      if (wasOwner) { Hardware.owner = null; videoActive(false); Device.stopSoon(); }
     }
     function open(url) {
       stop();
@@ -1296,14 +1319,19 @@
       if (!entry.url) { Boot.askServer(); return; }
       var base = activeBase(entry);
       Boot.cancelled = false;
-      Boot.busy('Vérification de ' + base.replace(/^https?:\/\//, '') + '…');
+      if (!started && !pending.base) { pending.base = base; launch(base); }
+      // Interface déjà chargée : l'écran de vérification ne s'affiche que si elle tarde.
+      var busyTimer = setTimeout(function () { Boot.busy('Vérification de ' + base.replace(/^https?:\/\//, '') + '…'); }, started || pending.base !== base ? 0 : 600);
       probe(base, function (result) {
+        clearTimeout(busyTimer);
         if (Boot.cancelled) return;
         if (!result.ok && result.status === 0 && /^https:/i.test(base)) { Boot.tryHttp(entry, base, result); return; }
         if (!result.ok) { Boot.menu(explain(entry, result)); return; }
         Boot.hide();
-        if (started) { location.reload(); return; }
-        launch(base);
+        // Autre adresse que celle chargée : nouveau départ de la page.
+        if (started || pending.base !== base) { location.reload(); return; }
+        pending.probed = true;
+        maybeStart();
       });
     }
   };
@@ -1333,11 +1361,11 @@
     var scripts = ['tv-native.js', 'tv-data.js', 'app.js'];
     var loading = node('div', 'ob-loading', 'Ouverture de Noctra…');
     document.body.appendChild(loading);
+    pending.loading = loading;
     (function next(index) {
       if (index >= scripts.length) {
-        started = true;
-        if (loading.parentNode) loading.parentNode.removeChild(loading);
-        if (typeof window.NoctraHostStart === 'function') window.NoctraHostStart();
+        pending.loaded = true;
+        maybeStart();
         return;
       }
       var script = document.createElement('script');
