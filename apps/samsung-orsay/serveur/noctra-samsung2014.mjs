@@ -69,7 +69,7 @@ function startInstaller(port) {
   const server = http.createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://tv').pathname);
     console.log(`${time()}  ${req.socket.remoteAddress.replace(/^::ffff:/, '')}  ${req.method} ${path}`);
-    if (/^\/widgetlist\.xml$/i.test(path)) {
+    if (/widgetlist\.xml$/i.test(path)) {
       // Adresse demandée par le téléviseur (celle saisie dans « IP Setting »).
       const host = String(req.headers.host || addresses()[0] || '').replace(/:80$/, '');
       const body = widgetList(host, statSync(archive).size);
@@ -97,6 +97,10 @@ function startInstaller(port) {
     console.log('Sur le téléviseur, dans « IP Setting », saisissez l’adresse de ce PC :');
     for (const address of addresses()) console.log(`    ${address}`);
     console.log('puis « Start User App Sync ». Ctrl+C pour arrêter une fois l’installation terminée.\n');
+    console.log('Vérification : sur un téléphone connecté au même Wi-Fi, ouvrez dans le navigateur');
+    for (const address of addresses()) console.log(`    http://${address}${port === 80 ? '' : ':' + port}/widgetlist.xml`);
+    console.log('Une page de texte (XML) doit s’afficher ; sinon le téléviseur ne peut pas joindre ce PC non plus (pare-feu, autre réseau).');
+    console.log('Chaque demande reçue s’affiche ci-dessous. Rien pendant « User App Sync » = le téléviseur ne joint pas ce PC.\n');
   });
 }
 

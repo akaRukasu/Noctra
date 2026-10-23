@@ -13,12 +13,18 @@ if (-not $admin) {
   exit
 }
 
-# Pare-feu : le téléviseur doit pouvoir joindre ce PC sur le port 80 (réseau privé).
+# Pare-feu : le téléviseur doit pouvoir joindre ce PC sur le port 80. Windows classe
+# souvent le réseau de la maison en « Public » : règle valable pour tous les profils,
+# mais seulement pour les appareils du réseau local.
 try {
-  if (-not (Get-NetFirewallRule -DisplayName 'Noctra installation TV' -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName 'Noctra installation TV' -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Private | Out-Null
-  }
+  Get-NetFirewallRule -DisplayName 'Noctra installation TV' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+  New-NetFirewallRule -DisplayName 'Noctra installation TV' -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Any -RemoteAddress LocalSubnet | Out-Null
+  Write-Host 'Pare-feu Windows : port 80 ouvert pour le réseau local.'
 } catch { Write-Host "Règle de pare-feu non créée : autorisez le port 80 si le téléviseur ne trouve pas le PC." -ForegroundColor Yellow }
+try {
+  foreach ($profile in Get-NetConnectionProfile) { Write-Host ("Réseau « {0} » : profil {1}" -f $profile.Name, $profile.NetworkCategory) }
+} catch {}
+# Un autre pare-feu (antivirus) peut bloquer aussi : à désactiver le temps de l'installation.
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add('http://+:80/')
@@ -34,6 +40,11 @@ Write-Host 'Sur le téléviseur, dans « IP Setting », saisissez l''adresse de 
 foreach ($ip in $ips) { Write-Host "    $ip" -ForegroundColor Cyan }
 Write-Host 'puis « Start User App Sync ». Fermez cette fenêtre une fois l''installation terminée.'
 Write-Host ''
+Write-Host 'Vérification : sur un téléphone connecté au même Wi-Fi, ouvrez dans le navigateur' -ForegroundColor Yellow
+foreach ($ip in $ips) { Write-Host "    http://$ip/widgetlist.xml" -ForegroundColor Cyan }
+Write-Host 'Une page de texte (XML) doit s''afficher. Sinon, le téléviseur ne peut pas joindre ce PC non plus.' -ForegroundColor Yellow
+Write-Host 'Chaque demande reçue s''affiche ci-dessous. Rien pendant « User App Sync » = le téléviseur ne joint pas ce PC.'
+Write-Host ''
 
 $size = (Get-Item $archive).Length
 while ($listener.IsListening) {
@@ -43,7 +54,7 @@ while ($listener.IsListening) {
   $path = $request.Url.AbsolutePath
   Write-Host ("{0}  {1}  {2} {3}" -f (Get-Date -Format 'HH:mm:ss'), $request.RemoteEndPoint.Address, $request.HttpMethod, $path)
   try {
-    if ($path -match '^/widgetlist\.xml$') {
+    if ($path -match 'widgetlist\.xml$') {
       $hostName = $request.Url.Host
       $xml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<rsp stat=`"ok`">`r`n  <list>`r`n    <widget id=`"Noctra`">`r`n      <title>Noctra</title>`r`n      <compression size=`"$size`" type=`"zip`"/>`r`n      <description>Noctra pour Samsung Smart TV 2014</description>`r`n      <download>http://$hostName/Noctra.zip</download>`r`n    </widget>`r`n  </list>`r`n</rsp>`r`n"
       $bytes = [System.Text.Encoding]::UTF8.GetBytes($xml)
