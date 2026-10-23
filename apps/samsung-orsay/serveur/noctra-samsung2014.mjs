@@ -13,6 +13,15 @@
        HTTP à ce relais, sur le réseau de la maison ; le relais parle en HTTPS au
        serveur. Seuls les appareils du réseau local sont acceptés.
 
+   node noctra-samsung2014.mjs relais --public [--autoriser IP,IP] --port <port>
+       Même relais, installé SUR LA SEEDBOX (toujours allumée) : le téléviseur
+       le joint par Internet en HTTP (http://<serveur>.usbx.me:<port>), le relais
+       parle en HTTPS au serveur Noctra sur la même machine. Aucun appareil chez
+       vous. Il ne relaie que vers le serveur Noctra (jamais ailleurs). Les
+       échanges entre le téléviseur et la seedbox ne sont pas chiffrés ;
+       --autoriser limite l'accès aux adresses indiquées (celle de la box).
+       Voir ultra/install-relais-samsung2014.sh.
+
    node noctra-samsung2014.mjs tout [options]   les deux à la fois.
 
    Node.js 18 ou plus récent, aucune dépendance. */
@@ -107,6 +116,13 @@ function startInstaller(port) {
 // ── Relais local HTTP → HTTPS ────────────────────────────────────────────
 const TEXT = /json|mpegurl|m3u|text\/|javascript|xml/i;
 const MAX_REWRITE = 16 * 1024 * 1024;
+const publicRelay = args.includes('--public');
+const allowed = String(option('autoriser', '')).split(',').map(item => item.trim()).filter(Boolean);
+function relayAllowed(address) {
+  const ip = String(address || '').replace(/^::ffff:/, '');
+  if (allowed.length) return allowed.includes(ip) || ip === '127.0.0.1' || ip === '::1';
+  return publicRelay || privateAddress(ip);
+}
 function startRelay(port, serverUrl) {
   let upstream;
   try { upstream = new URL(serverUrl); } catch { console.error('Adresse du serveur invalide : ' + serverUrl); process.exit(1); }
@@ -116,9 +132,10 @@ function startRelay(port, serverUrl) {
   const escaped = text => text.replace(/\//g, '\\/');
   function swap(text, from, to) { return text.split(from).join(to).split(escaped(from)).join(escaped(to)); }
   const server = http.createServer((req, res) => {
-    if (!privateAddress(req.socket.remoteAddress)) {
+    if (!relayAllowed(req.socket.remoteAddress)) {
+      console.log(`${time()}  refusé : ${String(req.socket.remoteAddress).replace(/^::ffff:/, '')} (adresse non autorisée)`);
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('Relais Noctra : réservé aux appareils du réseau local.');
+      res.end(publicRelay ? 'Relais Noctra : adresse non autorisée.' : 'Relais Noctra : réservé aux appareils du réseau local.');
       return;
     }
     const relayOrigin = `http://${req.headers.host || 'localhost:' + port}`;
@@ -171,12 +188,20 @@ function startRelay(port, serverUrl) {
     });
   });
   server.on('error', error => {
-    if (error.code === 'EADDRINUSE') console.error(`Port ${port} déjà utilisé : choisissez-en un autre avec --port.`);
+    // Port pris (relais déjà ouvert dans une autre fenêtre, autre programme) :
+    // port suivant, sauf si --port a été imposé.
+    if (error.code === 'EADDRINUSE' && !args.includes('--port') && port < 8105) {
+      console.log(`Port ${port} déjà utilisé (un relais est peut-être déjà ouvert dans une autre fenêtre) : essai du port ${port + 1}.`);
+      startRelay(port + 1, serverUrl);
+      return;
+    }
+    if (error.code === 'EADDRINUSE') console.error(`Port ${port} déjà utilisé : un relais tourne peut-être déjà (autre fenêtre) ; sinon choisissez un autre port avec --port.`);
     else console.error('Relais : ' + error.message);
     process.exit(1);
   });
-  server.listen(port, () => {
-    console.log(`\nRelais local Noctra prêt : ${upstream.href}`);
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`\nRelais ${publicRelay ? 'public (seedbox)' : 'local'} Noctra prêt : ${upstream.href}`);
+    if (publicRelay) console.log(allowed.length ? `Accès limité à : ${allowed.join(', ')}` : 'Accès ouvert à toute adresse (le serveur Noctra exige toujours la connexion Jellyfin).');
     console.log('Sur le téléviseur (Noctra › Paramètres › Serveur et relais local › Utiliser un relais local), saisissez :');
     for (const address of addresses()) console.log(`    ${address}:${port}`);
     console.log('Laissez ce programme ouvert tant que le téléviseur utilise Noctra.\n');

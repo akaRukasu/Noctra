@@ -24,7 +24,7 @@ const variantRoot = join(appsRoot, 'samsung-orsay');
 const tvRoot = join(appsRoot, 'androidtv', 'web');
 
 // Révision de la variante Samsung 2014 (à augmenter à chaque livraison).
-export const ORSAY_REVISION = 3;
+export const ORSAY_REVISION = 4;
 export const DEFAULT_SERVER = 'https://akarukasu.merlion.usbx.me/noctra';
 
 // ── Conversion du style pour WebKit 537 (2013) ────────────────────────────

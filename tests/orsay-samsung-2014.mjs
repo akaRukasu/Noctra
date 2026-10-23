@@ -490,6 +490,26 @@ try {
     assert.match(xml, new RegExp(`<compression size="${built.size}" type="zip"/>`));
     const archive = await fetchText(installPort, '/Noctra.zip');
     assert.equal(archive.body.length, built.size, 'appli servie');
+    // Relais de la seedbox (--public) et port déjà pris : port suivant.
+    const publicPort = await free();
+    const publicRelay = spawn(process.execPath, [script, 'relais', '--public', '--serveur', upstreamOrigin + '/noctra', '--port', String(publicPort)], { stdio: 'pipe' });
+    children.push(publicRelay);
+    const publicLog = [];
+    publicRelay.stdout.on('data', d => publicLog.push(String(d)));
+    for (let i = 0; i < 50 && !/prêt/.test(publicLog.join('')); i++) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.match(publicLog.join(''), /Relais public \(seedbox\) Noctra prêt/);
+    assert.equal((await fetchText(publicPort, '/noctra/health')).status, 200);
+    const blocker = createServer(() => {});
+    const blocked = await new Promise(resolve => { blocker.once('error', () => resolve(false)); blocker.listen(8095, '0.0.0.0', () => resolve(true)); });
+    if (blocked) {
+      const fallback = spawn(process.execPath, [script, 'relais', '--serveur', upstreamOrigin + '/noctra'], { stdio: 'pipe' });
+      children.push(fallback);
+      const fallbackLog = [];
+      fallback.stdout.on('data', d => fallbackLog.push(String(d)));
+      for (let i = 0; i < 50 && !/prêt/.test(fallbackLog.join('')); i++) await new Promise(resolve => setTimeout(resolve, 100));
+      assert.match(fallbackLog.join(''), /Port 8095 déjà utilisé[\s\S]*Relais local Noctra prêt/, 'port suivant quand 8095 est pris');
+      blocker.close();
+    }
   } finally {
     children.forEach(child => child.kill());
     upstream.close();

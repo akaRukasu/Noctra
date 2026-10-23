@@ -9,7 +9,7 @@ Ce guide vaut pour la Samsung **UE40H6400** et, en principe, pour les autres Sma
 - **Ce téléviseur n'utilise pas Tizen.** Les Samsung de 2010 à 2014 utilisent l'ancienne plateforme « Orsay » (Smart Hub de 2014). Tizen n'est arrivé qu'en 2015. Les applis Tizen (`.wgt`) ne s'y installent pas. Le **2910** affiché dans le menu Assistance est le numéro de version du logiciel du téléviseur, pas une version de Tizen.
 - **Noctra n'est pas sur la boutique Samsung.** On l'installe avec la fonction développeur du Smart Hub, « **User App Sync** ». Le téléviseur télécharge l'appli depuis un ordinateur de votre réseau.
 - **Un ordinateur n'est nécessaire que pendant l'installation** (et pour les mises à jour). Une fois installée, l'appli reste sur le téléviseur et se connecte seule au serveur Noctra.
-- **Exception : le relais local.** Si le téléviseur refuse la connexion sécurisée (HTTPS) au serveur Noctra, il faut un petit relais sur un appareil de la maison qui reste allumé (PC, NAS ou Raspberry Pi). Le chapitre 6 explique comment le savoir et comment faire. C'est probable sur un modèle de 2014 : ses certificats de sécurité datent de sa fabrication.
+- **Le relais.** Ce téléviseur refuse la connexion sécurisée (HTTPS) au serveur Noctra : ses certificats datent de 2014. La solution recommandée est le **relais installé sur la seedbox** (chapitre 7) : elle est toujours allumée, il n'y a rien à laisser allumé chez vous. Un relais sur un PC, un NAS ou un Raspberry Pi de la maison reste possible (chapitre 7 bis).
 
 ## 2. Contenu du kit
 
@@ -73,11 +73,27 @@ L'appli installée par le réseau reste sur le téléviseur après une mise hors
 2. L'appli vérifie le serveur Noctra (`https://akarukasu.merlion.usbx.me/noctra`).
    - **Si l'écran de connexion Jellyfin s'affiche**, tout va bien. Passez à l'étape 3.
    - **Si « Connexion sécurisée impossible » s'affiche avec « Utiliser HTTP »**, le téléviseur refuse le certificat, mais le serveur répond aussi en HTTP simple. « Utiliser HTTP » marche sans aucun autre appareil. Les échanges ne sont alors pas chiffrés : connectez-vous avec Quick Connect plutôt qu'avec votre mot de passe. Le relais local (chapitre 7) reste la solution chiffrée.
-   - **Si « Connexion impossible » s'affiche** avec un message sur la connexion sécurisée (HTTPS), le téléviseur refuse le certificat et le serveur ne répond pas en HTTP (redirection vers HTTPS chez l'hébergeur). Suivez le chapitre 7 (relais local), puis revenez ici.
+   - **Si « Connexion impossible » s'affiche** avec un message sur la connexion sécurisée (HTTPS), le téléviseur refuse le certificat et le serveur ne répond pas en HTTP (redirection vers HTTPS chez l'hébergeur). Suivez le chapitre 7 (relais sur la seedbox), puis revenez ici.
 3. **Connexion Jellyfin** : un code **Quick Connect** s'affiche. Sur votre téléphone ou votre PC, ouvrez Jellyfin › Paramètres › Quick Connect, puis saisissez ce code. Le téléviseur se connecte seul. Vous pouvez aussi entrer vos identifiants : appuyez sur OK sur un champ pour ouvrir le clavier à l'écran.
 4. La session est mémorisée. Aux lancements suivants, l'accueil Noctra s'ouvre directement.
 
-## 7. Relais local (seulement si le HTTPS est refusé)
+## 7. Relais sur la seedbox (recommandé)
+
+Le téléviseur parle en HTTP simple à un relais qui tourne sur la seedbox. Ce relais transmet tout en HTTPS au serveur Noctra et à Jellyfin, sur la même machine. Il ne relaie que vers votre serveur. Les échanges entre le téléviseur et la seedbox ne sont pas chiffrés : connectez-vous avec Quick Connect, et limitez l'accès à votre box (étape 4).
+
+1. Mettez le serveur Noctra à jour en **200.0.148** ou plus récent (`noctra-update`, comme d'habitude).
+2. En SSH sur la seedbox (`ssh akarukasu@merlion.usbx.me`), dans le dossier de Noctra :
+   ```bash
+   bash ultra/install-relais-samsung2014.sh
+   ```
+   Le script choisit un port libre de votre slot (`app-ports free`), installe le service `noctra-relais-tv` (relancé tout seul), puis affiche l'adresse à saisir sur le téléviseur, par exemple `169.150.243.3:12345`. Pour imposer un port : `bash ultra/install-relais-samsung2014.sh 12345`.
+3. **Vérifiez l'accès depuis Internet** : sur un téléphone en 4G (Wi-Fi coupé), ouvrez `http://merlion.usbx.me:<port>/noctra/health`. Un texte contenant « Noctra » doit s'afficher. Sinon, ce port n'est pas ouvert : relancez le script avec un autre port de `app-ports free`.
+4. **Conseillé** : limitez l'accès à votre box. Depuis un appareil de la maison, notez votre adresse publique sur <https://ifconfig.me>, puis lancez `bash ultra/install-relais-samsung2014.sh <port> --autoriser <adresse>`. Si votre box change d'adresse, relancez cette commande avec la nouvelle.
+5. Sur le téléviseur, dans Noctra : **Utiliser un relais local**, OK sur le champ, puis saisissez `169.150.243.3:<port>` avec les chiffres de la télécommande (le « . » et le « : » sont sur le clavier à l'écran). Validez.
+
+Suivi : `systemctl --user status noctra-relais-tv`, journal dans `logs/relais-tv.log`. Désinstallation : `bash ultra/install-relais-samsung2014.sh --desinstaller`.
+
+## 7 bis. Relais local (sur un appareil de la maison)
 
 **Pourquoi.** Le téléviseur de 2014 ne connaît pas les autorités de certification actuelles. Il peut donc refuser la connexion HTTPS au serveur Noctra, alors même qu'Internet fonctionne. Le relais règle ce problème. Le téléviseur lui parle en HTTP simple, uniquement à l'intérieur de la maison. Le relais, lui, parle en HTTPS au serveur Noctra. Il n'accepte que les appareils du réseau local.
 
@@ -89,7 +105,7 @@ Donnez à cet appareil une **adresse IP fixe**. Dans l'interface de votre box, c
 
 ### Windows
 1. Installez **Node.js** 18 ou plus récent (<https://nodejs.org>, version « LTS »).
-2. Double-cliquez sur `serveur\Relais local (Node.js).cmd`. Acceptez la demande du pare-feu Windows pour les **réseaux privés**.
+2. Double-cliquez sur `serveur\Relais local (Node.js).cmd`. Acceptez la demande du pare-feu Windows. Si une fenêtre du relais est déjà ouverte, n'en ouvrez pas une seconde. Si le port 8095 est pris, le relais prend le suivant (8096…) : utilisez l'adresse qu'il affiche.
 3. La fenêtre affiche « serveur Noctra joint », puis l'adresse à saisir sur le téléviseur, par exemple `192.168.1.20:8095`. Laissez-la ouverte.
 4. Pour que le relais démarre seul : Planificateur de tâches › Créer une tâche › Déclencheur « À l'ouverture de session » › Action « Démarrer un programme » › le fichier `.cmd` ci-dessus.
 

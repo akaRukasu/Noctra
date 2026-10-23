@@ -1071,7 +1071,7 @@
     if (result.error) return result.error;
     var https = /^https:/i.test(activeBase(entry));
     return https
-      ? 'Le téléviseur n’a pas pu ouvrir la connexion sécurisée (HTTPS) vers le serveur. Sur un modèle de 2014, la cause la plus probable est le certificat du serveur, plus récent que les autorités connues du téléviseur (il n’accepte plus les certificats actuels). Solution durable : le relais local Noctra sur un PC, un NAS ou un Raspberry Pi allumé (voir le guide, partie « Relais local »), puis « Utiliser un relais local ». Vérifiez aussi la connexion Internet du téléviseur (Menu › Réseau › État du réseau).'
+      ? 'Le téléviseur n’a pas pu ouvrir la connexion sécurisée (HTTPS) vers le serveur. Sur un modèle de 2014, la cause la plus probable est le certificat du serveur, plus récent que les autorités connues du téléviseur (il n’accepte plus les certificats actuels). Solution : le relais Noctra, installé sur la seedbox (toujours allumée, rien à laisser allumé chez vous) ou sur un appareil de la maison (voir le guide, « Relais »), puis « Utiliser un relais local ». Vérifiez aussi la connexion Internet du téléviseur (Menu › Réseau › État du réseau).'
       : 'Le téléviseur ne joint pas ' + activeBase(entry).replace(/^https?:\/\//, '') + '. Vérifiez que l’appareil du relais est allumé, que le relais est lancé, et que le téléviseur et cet appareil sont sur le même réseau.';
   }
 
@@ -1146,7 +1146,7 @@
     menu: function (problem) {
       var entry = loadServer();
       var lines = (problem ? problem + '\n' : '') + 'Serveur : ' + (entry.url || 'non défini') + (entry.insecure && !entry.relay ? ' (en HTTP non chiffré)' : '')
-        + '\nRelais local : ' + (entry.relay || 'aucun (connexion directe au serveur)');
+        + '\nRelais : ' + (entry.relay || 'aucun (connexion directe au serveur)');
       var actions = [
         { label: 'Réessayer', primary: true, run: function () { Boot.connect(); } },
         { label: 'Utiliser un relais local', run: function () { Boot.askRelay(); } },
@@ -1175,14 +1175,16 @@
     askRelay: function () {
       var entry = loadServer();
       var submit = function () {
-        var relay = normalize(Boot.input.value);
+        // Relais : toujours en HTTP (c'est tout son intérêt), sauf adresse complète saisie.
+        var typed = String(Boot.input.value || '').replace(/^\s+|\s+$/g, '');
+        var relay = typed ? normalize(/^https?:\/\//i.test(typed) ? typed : 'http://' + typed) : '';
         if (relay && !/^https?:\/\/[^\s\/?#]+/i.test(relay)) { Boot.menu('Adresse du relais invalide. Exemple : 192.168.1.20:8095'); return; }
         // Origine seule (http://192.168.1.20:8095) : le chemin du serveur (/noctra) est ajouté.
         entry.relay = relay ? relay.replace(/^(https?:\/\/[^\/]+).*$/i, '$1') : '';
         saveServer(entry);
         Boot.connect();
       };
-      Boot.show('Relais local Noctra', 'Adresse affichée par le relais lancé sur votre PC, NAS ou Raspberry Pi (même réseau que le téléviseur), par exemple 192.168.1.20:8095.\nLaissez vide pour ne plus l’utiliser.',
+      Boot.show('Relais Noctra', 'Adresse affichée par le relais : celui de la seedbox (par exemple 169.150.243.3:12345, voir le guide) ou celui d’un PC, NAS ou Raspberry Pi de la maison (par exemple 192.168.1.20:8095).\nLaissez vide pour ne plus l’utiliser.',
         [{ label: 'Valider', primary: true, run: submit }, { label: 'Retour', run: function () { Boot.menu(''); } }],
         { value: (entry.relay || '').replace(/^http:\/\//, ''), placeholder: '192.168.1.20:8095', submit: submit });
     },

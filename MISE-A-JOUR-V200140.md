@@ -35,3 +35,6 @@ Listes HLS servies avec un droit de diffusion (Chromecast, AirPlay, multiview co
 ## 200.0.146
 `POST /api/tv/mosaic` avec `relay: true` et une seule chaîne : relais pour un téléviseur. ffmpeg lit la chaîne à travers le relais Noctra local (route stable LiveWatch qui renouvelle ses liens) et la copie sans réencodage (`-c copy`) en HLS local de 10 segments ; la réponse n'arrive qu'avec 3 segments prêts (réserve). Relancé jusqu'à 20 fois en 10 minutes tant que le téléviseur lit, à part du multiview diffusé du même compte. L'appli iOS 2.17.6 l'utilise pour AirPlay (sinon droit de lecture TV comme avant).
 
+
+## 200.0.148
+Samsung Smart TV 2014 (UE40H6400, plateforme Orsay) : ces téléviseurs refusent le certificat HTTPS de la seedbox. Nouveau script `ultra/install-relais-samsung2014.sh` : un relais HTTP sur un port libre du slot (`app-ports free`), en service utilisateur `noctra-relais-tv`, qui transmet tout en HTTPS au serveur Noctra et à Jellyfin de la seedbox. Aucun appareil à laisser allumé chez soi. Il ne relaie que vers ce serveur ; `--autoriser <IP de la box>` limite l'accès. Les échanges téléviseur ↔ seedbox ne sont pas chiffrés. Désinstallation : `bash ultra/install-relais-samsung2014.sh --desinstaller`. Aucun autre changement du serveur.
