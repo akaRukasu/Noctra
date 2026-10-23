@@ -38,3 +38,6 @@ Listes HLS servies avec un droit de diffusion (Chromecast, AirPlay, multiview co
 
 ## 200.0.148
 Samsung Smart TV 2014 (UE40H6400, plateforme Orsay) : ces téléviseurs refusent le certificat HTTPS de la seedbox. Nouveau script `ultra/install-relais-samsung2014.sh` : un relais HTTP sur un port libre du slot (`app-ports free`), en service utilisateur `noctra-relais-tv`, qui transmet tout en HTTPS au serveur Noctra et à Jellyfin de la seedbox. Aucun appareil à laisser allumé chez soi. Il ne relaie que vers ce serveur ; `--autoriser <IP de la box>` limite l'accès. Les échanges téléviseur ↔ seedbox ne sont pas chiffrés. Désinstallation : `bash ultra/install-relais-samsung2014.sh --desinstaller`. Aucun autre changement du serveur.
+
+## 200.0.149
+Relais Samsung 2014 : il reçoit le journal de diagnostic envoyé par l'appli du téléviseur (`POST /__noctra-diag`) et l'écrit dans `logs/tv-diagnostic.log` de la seedbox. Le journal contient le moteur web, les fonctions CSS et JavaScript disponibles, les touches reçues, les clics, les erreurs, les blocages de l'interface et les requêtes lentes. Après la mise à jour : `systemctl --user restart noctra-relais-tv`.

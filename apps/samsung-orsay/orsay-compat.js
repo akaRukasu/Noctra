@@ -14,6 +14,15 @@
   'use strict';
 
   var global = window;
+  // Fonctions présentes d'origine sur ce moteur (journal de diagnostic).
+  global.NOCTRA_ENGINE = {
+    Promise: typeof global.Promise === 'function', fetch: typeof global.fetch === 'function', URL: typeof global.URL === 'function',
+    URLSearchParams: typeof global.URLSearchParams === 'function', MessageChannel: typeof global.MessageChannel === 'function',
+    Map: typeof global.Map === 'function', requestAnimationFrame: typeof global.requestAnimationFrame === 'function',
+    MutationObserver: typeof (global.MutationObserver || global.WebKitMutationObserver) === 'function',
+    closest: Boolean(global.Element && Element.prototype.closest), classList: 'classList' in document.documentElement,
+    Uint8Array: typeof global.Uint8Array === 'function', Blob: typeof global.Blob === 'function'
+  };
   var slice = Array.prototype.slice;
   function define(target, name, value) {
     if (!target || typeof target[name] === 'function') return;

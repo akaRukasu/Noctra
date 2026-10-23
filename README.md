@@ -1,4 +1,4 @@
-# Version actuelle : 200.0.148 — relais pour les Samsung Smart TV 2014
+# Version actuelle : 200.0.149 — relais pour les Samsung Smart TV 2014 (avec journal de diagnostic)
 
 Les Samsung de 2014 (UE40H6400…) refusent le certificat HTTPS de la seedbox. `bash ultra/install-relais-samsung2014.sh` installe sur la seedbox un relais HTTP (port libre du slot, service `noctra-relais-tv`) que l'appli du téléviseur utilise à la place du HTTPS : aucun appareil à laisser allumé chez soi. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md), guide du téléviseur : [apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md](apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md). Validation : `npm run test:v200148`.
 

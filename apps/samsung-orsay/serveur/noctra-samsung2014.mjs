@@ -25,7 +25,7 @@
    node noctra-samsung2014.mjs tout [options]   les deux à la fois.
 
    Node.js 18 ou plus récent, aucune dépendance. */
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { appendFile, createReadStream, existsSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { networkInterfaces } from 'node:os';
@@ -117,6 +117,7 @@ function startInstaller(port) {
 const TEXT = /json|mpegurl|m3u|text\/|javascript|xml/i;
 const MAX_REWRITE = 16 * 1024 * 1024;
 const publicRelay = args.includes('--public');
+const diagnosticFile = option('journal', existsSync(join(process.cwd(), 'logs')) ? join(process.cwd(), 'logs', 'tv-diagnostic.log') : join(process.cwd(), 'tv-diagnostic.log'));
 const allowed = String(option('autoriser', '')).split(',').map(item => item.trim()).filter(Boolean);
 function relayAllowed(address) {
   const ip = String(address || '').replace(/^::ffff:/, '');
@@ -136,6 +137,19 @@ function startRelay(port, serverUrl) {
       console.log(`${time()}  refusé : ${String(req.socket.remoteAddress).replace(/^::ffff:/, '')} (adresse non autorisée)`);
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(publicRelay ? 'Relais Noctra : adresse non autorisée.' : 'Relais Noctra : réservé aux appareils du réseau local.');
+      return;
+    }
+    // Journal de diagnostic envoyé par l'appli du téléviseur (logs/tv-diagnostic.log).
+    if (req.method === 'POST' && req.url === '/__noctra-diag') {
+      let text = '';
+      req.on('data', chunk => { if (text.length < 256 * 1024) text += chunk; });
+      req.on('end', () => {
+        const who = String(req.socket.remoteAddress).replace(/^::ffff:/, '');
+        const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+        appendFile(diagnosticFile, text.split('\n').map(line => `${stamp} ${who} ${line}`).join('\n') + '\n', () => {});
+        res.writeHead(204, { 'access-control-allow-origin': '*' });
+        res.end();
+      });
       return;
     }
     const relayOrigin = `http://${req.headers.host || 'localhost:' + port}`;
@@ -204,7 +218,8 @@ function startRelay(port, serverUrl) {
     if (publicRelay) console.log(allowed.length ? `Accès limité à : ${allowed.join(', ')}` : 'Accès ouvert à toute adresse (le serveur Noctra exige toujours la connexion Jellyfin).');
     console.log('Sur le téléviseur (Noctra › Paramètres › Serveur et relais local › Utiliser un relais local), saisissez :');
     for (const address of addresses()) console.log(`    ${address}:${port}`);
-    console.log('Laissez ce programme ouvert tant que le téléviseur utilise Noctra.\n');
+    console.log('Laissez ce programme ouvert tant que le téléviseur utilise Noctra.');
+    console.log(`Journal de diagnostic du téléviseur : ${diagnosticFile}\n`);
   });
   // Test de la connexion au serveur au démarrage.
   client.get(new URL(upstream.pathname.replace(/\/+$/, '') + '/health', upstreamOrigin), { agent }, response => {

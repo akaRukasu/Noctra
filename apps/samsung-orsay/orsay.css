@@ -56,3 +56,25 @@ html.orsay-video #nw-player, html.orsay-video #nw-multi { background: transparen
 .grid.tiles > .tile.source-tile.all-tile { width: -webkit-calc((100% - 3rem) / 4 * 2 + 1rem); width: calc((100% - 3rem) / 4 * 2 + 1rem); }
 /* Pas de « object-fit » sur ce moteur : logos centrés sans déformation. */
 .bouquet-logo img, .tile-icon img { width: auto; height: auto; max-width: 100%; max-height: 100%; }
+
+/* Anciens moteurs WebKit : un <button> n'est jamais un conteneur flexbox.
+   Boutons ronds (flèches du carrousel, lecture) centrés à l'ancienne. */
+html.host-orsay .round { display: inline-block; text-align: center; line-height: 2.9rem; vertical-align: middle; }
+html.host-orsay .round svg { display: inline-block; vertical-align: middle; margin: 0; }
+html.host-orsay button > svg { vertical-align: middle; }
+
+/* Processeur et rendu du téléviseur de 2014 : ni transitions, ni animations,
+   ni ombres, ni filtres (chacun redessine de grandes zones de l'écran). */
+html.host-orsay *, html.host-orsay *::before, html.host-orsay *::after {
+  -webkit-transition: none !important; transition: none !important;
+  -webkit-animation: none !important; animation: none !important;
+  box-shadow: none !important; text-shadow: none !important;
+  -webkit-filter: none !important; filter: none !important;
+  -webkit-mask-image: none !important;
+}
+/* Sélection toujours visible sans ombre. */
+html.host-orsay .f:focus { outline: .2rem solid #f2f6f4; outline-offset: 0; }
+html.host-orsay .nav.f:focus, html.host-orsay .btn.f:focus, html.host-orsay .round:focus { outline: none; }
+
+/* Journal de diagnostic (touche rouge). */
+.ok-diag { position: fixed; left: 1rem; right: 1rem; bottom: 1rem; z-index: 400; max-height: 40rem; overflow: hidden; margin: 0; padding: .8rem 1rem; border-radius: .8rem; background: rgba(5, 6, 10, .94); color: #e7b96e; font: .72rem/1.35 monospace; white-space: pre-wrap; word-wrap: break-word; }

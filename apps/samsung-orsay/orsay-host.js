@@ -44,6 +44,77 @@
   }
   function log(line) { try { if (window.console && console.log) console.log('[Noctra] ' + line); } catch (error) { /* console absente */ } }
 
+  // ── Journal de diagnostic ──────────────────────────────────────────
+  // Erreurs, touches reçues, blocages, requêtes lentes : envoyés toutes les
+  // 5 s au relais (fichier logs/tv-diagnostic.log de la seedbox) et visibles
+  // à l'écran avec la touche rouge (A) de la télécommande.
+  var Diag = {
+    started: Date.now(), lines: [], queue: [], sent: 0, node: null, keys: 0, target: '',
+    add: function (kind, text) {
+      var line = '+' + ((Date.now() - Diag.started) / 1000).toFixed(1) + 's ' + kind + ' ' + text;
+      Diag.lines.push(line);
+      if (Diag.lines.length > 60) Diag.lines.shift();
+      if (Diag.sent + Diag.queue.length < 1500) Diag.queue.push(line);
+      log(line);
+      if (Diag.node) Diag.render();
+    },
+    describe: function (node) {
+      if (!node || !node.tagName) return String(node);
+      return node.tagName + (node.id ? '#' + node.id : '') + (node.className && typeof node.className === 'string' ? '.' + node.className.replace(/\s+/g, '.') : '');
+    },
+    flush: function () {
+      if (!Diag.target || !Diag.queue.length) return;
+      var lines = Diag.queue.splice(0, 200);
+      Diag.sent += lines.length;
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', Diag.target + '/__noctra-diag', true);
+        xhr.setRequestHeader('Content-Type', 'text/plain; charset=utf-8');
+        xhr.send('[Noctra ' + VERSION + '] ' + lines.join('\n[Noctra ' + VERSION + '] '));
+      } catch (error) { /* journal facultatif */ }
+    },
+    render: function () {
+      Diag.node.textContent = 'Journal Noctra (touche rouge : fermer)\n' + Diag.lines.slice(-24).join('\n');
+    },
+    toggle: function () {
+      if (Diag.node) { Diag.node.parentNode.removeChild(Diag.node); Diag.node = null; return; }
+      Diag.node = node('pre', 'ok-diag');
+      document.body.appendChild(Diag.node);
+      Diag.render();
+    },
+    features: function () {
+      var probe = document.createElement('div');
+      function css(prop, value) { try { probe.style[prop] = ''; probe.style[prop] = value; return probe.style[prop] !== ''; } catch (error) { return false; } }
+      var engine = window.NOCTRA_ENGINE || {};
+      var native = Object.keys(engine).filter(function (key) { return engine[key]; });
+      Diag.add('MOTEUR', navigator.userAgent);
+      Diag.add('ECRAN', (window.innerWidth || 0) + 'x' + (window.innerHeight || 0) + ' · écran ' + (screen && screen.width) + 'x' + (screen && screen.height) + ' · Samsung ' + (samsung ? 'oui' : 'non'));
+      Diag.add('CSS', 'flex ' + css('display', 'flex') + ' · -webkit-flex ' + css('display', '-webkit-flex') + ' · -webkit-box ' + css('display', '-webkit-box')
+        + ' · calc ' + css('width', 'calc(10px + 1px)') + ' · -webkit-calc ' + css('width', '-webkit-calc(10px + 1px)') + ' · transform ' + css('webkitTransform', 'scale(1.1)')
+        + ' · vw ' + css('width', '10vw') + ' · rgba ' + css('color', 'rgba(1,2,3,.5)'));
+      Diag.add('JS', 'd’origine : ' + native.join(', '));
+      var probeStore = false;
+      try { localStorage.setItem('noctra-diag', '1'); probeStore = localStorage.getItem('noctra-diag') === '1'; localStorage.removeItem('noctra-diag'); } catch (error) { probeStore = false; }
+      Diag.add('STOCKAGE', 'localStorage ' + probeStore + ' · FileSystem ' + (typeof FileSystem === 'function') + ' · webapis.avplay ' + Boolean(window.webapis && webapis.avplay));
+    }
+  };
+  window.onerror = function (message, file, line, column, error) {
+    Diag.add('ERREUR', String(message) + ' @ ' + String(file || '').replace(/^.*\//, '') + ':' + line + (column ? ':' + column : '') + (error && error.stack ? ' · ' + String(error.stack).split('\n').slice(0, 3).join(' | ') : ''));
+    return false;
+  };
+  // Blocages : un minuteur de 250 ms qui arrive très en retard = interface figée.
+  (function () {
+    var last = Date.now(), total = 0, count = 0;
+    setInterval(function () {
+      var now = Date.now(), late = now - last - 250;
+      last = now;
+      if (late > 700) { count++; total += late; if (count <= 80) Diag.add('BLOCAGE', (late / 1000).toFixed(1) + ' s (après : ' + Diag.lastAction + ')'); }
+    }, 250);
+    setInterval(function () { if (count) Diag.add('BLOCAGES', count + ' en 60 s, ' + (total / 1000).toFixed(1) + ' s au total'); count = 0; total = 0; }, 60000);
+  })();
+  Diag.lastAction = 'démarrage';
+  setInterval(Diag.flush, 5000);
+
   // ── Mémoire des réglages ───────────────────────────────────────────
   // Copie des clés « noctra… » du stockage web dans un fichier de l'appli,
   // relue au démarrage si le téléviseur a vidé ce stockage.
@@ -165,12 +236,21 @@
     // Un événement créé par script n'a pas d'action par défaut : OK « clique »
     // l'élément actif (bouton, lien), comme la touche Entrée d'un clavier.
     if (code === STANDARD.enter && allowed && target !== document.body && target.id !== 'anchor'
-      && (target.tagName === 'BUTTON' || target.tagName === 'A' || target.getAttribute('role') === 'button') && typeof target.click === 'function') target.click();
+      && (target.tagName === 'BUTTON' || target.tagName === 'A' || target.getAttribute('role') === 'button') && typeof target.click === 'function') {
+      var begun = Date.now();
+      Diag.lastAction = 'OK sur ' + Diag.describe(target);
+      try { target.click(); } catch (error) { Diag.add('ERREUR', 'clic : ' + error.message); }
+      Diag.add('CLIC', Diag.describe(target) + ' (' + (Date.now() - begun) + ' ms)');
+    } else if (code === STANDARD.enter) Diag.add('OK', 'sans clic : ' + (allowed ? 'élément ' + Diag.describe(target) : 'déjà traité par l’interface'));
   }
   window.addEventListener('keydown', function (event) {
     if (event.noctraOrsay) return;
     var code = event.keyCode;
+    // Touche rouge (A) : journal de diagnostic à l'écran.
+    if (code === ((tvKey && tvKey.KEY_RED) || 108)) { event.preventDefault(); Diag.toggle(); return; }
     var standard = samsung ? KEYS[code] : code;
+    Diag.lastAction = 'touche ' + code;
+    if (Diag.keys++ < 80) Diag.add('TOUCHE', code + ' → ' + (standard === undefined ? 'non traduite' : standard) + ' · actif ' + Diag.describe(document.activeElement));
     if (!samsung && code === 27) standard = STANDARD.back;
     if (standard === undefined) return;
     // Retour : bloqué, sinon le téléviseur ferme l'appli (Noctra décide).
@@ -540,6 +620,7 @@
           state.paused = false;
           videoActive(true);
           say('Lecteur du téléviseur (' + (name === 'avplay' ? 'AVPlay' : 'Player') + (kind === 'hls' ? ', HLS' : '') + ')');
+          Diag.add('LECTURE', (name || 'aucun') + ' · ' + url.replace(/([?&](api_?key|ApiKey|cast)=)[^&|]+/gi, '$1…').slice(0, 140));
           try { Device.open(url, kind, screenRect(video), state.startAt); }
           catch (error) { fail(4, error.message); }
         });
@@ -549,6 +630,7 @@
       state.error = { code: code, message: detail || '' };
       state.readyState = 0;
       say('Erreur du lecteur du téléviseur : ' + (detail || 'code ' + code));
+      Diag.add('LECTURE', 'erreur ' + code + ' · ' + (detail || ''));
       emit('error');
     }
     video._release = function () { state.generation++; state.started = false; state.paused = true; state.readyState = 0; };
@@ -1230,6 +1312,24 @@
   // Chargée après le choix du serveur (elle lit son adresse au démarrage).
   function launch(base) {
     window.NOCTRA_HOST_QUERY = '?platform=orsay&server=' + encodeURIComponent(base);
+    Diag.target = base.replace(/^(https?:\/\/[^\/]+).*$/, '$1');
+    Diag.add('SERVEUR', base);
+    var launched = Date.now();
+    // Requêtes lentes ou en erreur (durée jusqu'à la réponse du serveur).
+    var fetchNative = window.fetch;
+    window.fetch = function (input, init) {
+      var begun = Date.now(), url = typeof input === 'string' ? input : String(input && input.url || input);
+      var short = url.replace(/^https?:\/\/[^\/]+/, '').replace(/([?&](api_?key|ApiKey|cast|token)=)[^&]+/gi, '$1…').slice(0, 120);
+      return fetchNative.call(window, input, init).then(function (response) {
+        var spent = Date.now() - begun;
+        if (spent > 1500 || !response.ok) Diag.add('REQUETE', response.status + ' en ' + (spent / 1000).toFixed(1) + ' s ' + short);
+        return response;
+      }, function (error) {
+        Diag.add('REQUETE', 'échec (' + (error && error.message) + ') ' + short);
+        throw error;
+      });
+    };
+    setTimeout(function () { Diag.add('ACCUEIL', document.querySelectorAll('#main .f').length + ' éléments, ' + document.getElementsByTagName('*').length + ' nœuds, ' + ((Date.now() - launched) / 1000).toFixed(1) + ' s après le lancement'); }, 15000);
     var scripts = ['tv-native.js', 'tv-data.js', 'app.js'];
     var loading = node('div', 'ob-loading', 'Ouverture de Noctra…');
     document.body.appendChild(loading);
@@ -1242,7 +1342,8 @@
       }
       var script = document.createElement('script');
       script.src = scripts[index] + (VERSION ? '?v=' + encodeURIComponent(VERSION) : '');
-      script.onload = function () { next(index + 1); };
+      var begun = Date.now();
+      script.onload = function () { Diag.add('SCRIPT', scripts[index] + ' chargé en ' + (Date.now() - begun) + ' ms'); next(index + 1); };
       script.onerror = function () { loading.textContent = 'Fichier manquant dans l’appli : ' + scripts[index] + '. Réinstallez Noctra (voir le guide).'; };
       document.body.appendChild(script);
     })(0);
@@ -1272,6 +1373,7 @@
     },
     onLoad: function () {
       try { if (widgetAPI) widgetAPI.sendReadyEvent(); } catch (error) { /* hors téléviseur */ }
+      Diag.features();
       keepFocus();
       Boot.connect();
     },
@@ -1294,6 +1396,7 @@
       try { if (window.localStorage) Store.save(); } catch (error) { /* rien à enregistrer */ }
     },
     // Pour les tests automatiques (navigateur) : état interne en lecture.
+    diag: Diag,
     debug: { keys: KEYS, hardware: Hardware, mosaic: Mosaic, boot: Boot, keyboard: Keyboard, normalize: normalize, activeBase: activeBase, mosaicCells: mosaicCells }
   };
   window.onShow = window.NoctraOrsay.onShow;

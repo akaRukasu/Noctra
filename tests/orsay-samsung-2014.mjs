@@ -116,7 +116,9 @@ const server = createServer((req, res) => {
     const path = url.pathname;
     if (widget.has(path)) { res.writeHead(200, { 'content-type': types[path.split('.').pop()] || 'application/octet-stream' }); res.end(widget.get(path)); return; }
     if (path === '/' || path === '/index.html') { res.writeHead(200, { 'content-type': types.html }); res.end(widget.get('/index.html')); return; }
-    requests.push({ method: req.method, path, search: url.search, body: body ? JSON.parse(body) : null, token: req.headers['x-noctra-token'] || '' });
+    let parsed = null;
+    try { parsed = body ? JSON.parse(body) : null; } catch { parsed = null; }
+    requests.push({ method: req.method, path, search: url.search, body: parsed, raw: body, token: req.headers['x-noctra-token'] || '' });
     if (path === '/noctra/health') { if (!healthOk) { req.socket.destroy(); return; } json(res, 200, { client: 'Noctra', version: '200.0.147', tvApp: true }); return; }
     if (path === '/noctra/api/session') { json(res, 200, { user: { name: 'Lucas' }, isAdmin: false }); return; }
     if (path === '/noctra/api/config') { json(res, 200, { configured: {} }); return; }
@@ -371,6 +373,12 @@ try {
   assert.ok(requests.some(r => r.method === 'DELETE' && r.path === '/noctra/api/tv/mosaic/bbbbbbbbbbbbbbbbbbbbbbbb'), 'mosaïque arrêtée');
   assert.equal(await page.evaluate(() => document.querySelectorAll('.orsay-mosaic').length), 0);
 
+  // Journal de diagnostic envoyé au relais / serveur (toutes les 5 s).
+  await page.waitForTimeout(5500);
+  const diag = requests.filter(r => r.path === '/__noctra-diag');
+  assert.ok(diag.length >= 1, 'journal de diagnostic envoyé');
+  const diagText = requests.filter(r => r.path === '/__noctra-diag').map(r => r.raw).join('\n');
+  for (const needle of ['MOTEUR', 'CSS flex', 'TOUCHE 29443', 'CLIC BUTTON.card', 'LECTURE']) assert.ok(diagText.includes(needle), 'journal : ' + needle);
   // Réglages copiés dans le fichier de l'appli (stockage web pas toujours conservé).
   await page.waitForTimeout(1700);
   const saved = await page.evaluate(() => JSON.parse(window.__files['Noctra/noctra-reglages.json'] || '{}'));
@@ -466,7 +474,7 @@ try {
   const installPort = await free();
   const script = join(built.kitDir, 'serveur', 'noctra-samsung2014.mjs');
   const children = [
-    spawn(process.execPath, [script, 'relais', '--serveur', upstreamOrigin + '/noctra', '--port', String(relayPort)], { stdio: 'pipe' }),
+    spawn(process.execPath, [script, 'relais', '--serveur', upstreamOrigin + '/noctra', '--port', String(relayPort), '--journal', join(out, 'tv-diagnostic.log')], { stdio: 'pipe' }),
     spawn(process.execPath, [script, 'installer', '--port', String(installPort)], { stdio: 'pipe' })
   ];
   const logs = children.map(child => { const text = []; child.stdout.on('data', d => text.push(String(d))); child.stderr.on('data', d => text.push(String(d))); return text; });
@@ -495,6 +503,11 @@ try {
     const received = JSON.parse(upstreamHits.find(h => h.url === '/noctra/api/tv/cast').body);
     assert.equal(received.url, upstreamOrigin + '/noctra/api/tv/stream/x', 'requête : adresse du serveur, pas du relais');
     assert.equal(grantBody.url, relayOrigin + '/noctra/api/tv/stream/r?cast=1');
+    const journal = await fetchText(relayPort, '/__noctra-diag', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '[Noctra test] +1.0s MOTEUR essai' });
+    assert.equal(journal.status, 204);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const { readFile: readText } = await import('node:fs/promises');
+    assert.match(await readText(join(out, 'tv-diagnostic.log'), 'utf8'), /127\.0\.0\.1 \[Noctra test\] \+1\.0s MOTEUR essai/, 'journal écrit par le relais');
     const video = await fetchText(relayPort, '/video.ts');
     assert.equal(video.body.length, 188 * 4, 'segment vidéo relayé tel quel');
     const xml = (await fetchText(installPort, '/widgetlist.xml', { headers: { host: '192.168.1.20' } })).body.toString();

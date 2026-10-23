@@ -175,4 +175,11 @@ Options du relais : `--serveur https://…/noctra` (autre serveur), `--port 8095
 | Une chaîne « lecteur du site » est absente ou indisponible | Ces lecteurs demandent un navigateur récent : ils ne fonctionnent pas sur ce téléviseur (voir le rapport). |
 | Le multiview reste sur « Préparation… » | Le serveur compose la mosaïque (10 à 30 s). En cas d'échec, le message affiché donne la raison. |
 
+### Journal de diagnostic
+
+L'appli note ce qui se passe sur le téléviseur : moteur web, touches reçues, erreurs, blocages de l'interface et requêtes lentes.
+- **À l'écran** : touche **rouge (A)** de la télécommande. Un nouvel appui ferme le journal.
+- **Sur la seedbox** (relais de la seedbox) : le journal est envoyé toutes les 5 s. En SSH : `tail -n 300 ~/apps/noctra/logs/tv-diagnostic.log`. Copiez le résultat pour le signaler.
+- **Relais sur un PC** : fichier `tv-diagnostic.log` dans le dossier depuis lequel le relais a été lancé.
+
 Pour signaler un problème, joignez si possible une photo de l'écran (message et journal du lecteur), la touche pressée et ce qu'affichait la fenêtre du serveur ou du relais.
