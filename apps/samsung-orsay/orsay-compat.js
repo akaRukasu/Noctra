@@ -476,20 +476,22 @@
     };
     // Corps lu en octets (jeu « x-user-defined ») : texte, JSON, image ou lecture
     // progressive (getReader) d'un flux vidéo, comme le fetch des navigateurs récents.
-    var bytesOf = function (text, from) {
-      var length = text.length - (from || 0);
-      var bytes = typeof Uint8Array === 'function' ? new Uint8Array(Math.max(0, length)) : [];
-      for (var i = 0; i < length; i++) bytes[i] = text.charCodeAt(i + (from || 0)) & 0xff;
+    // Octets réels jusqu'à `limit` (au-delà : seule la taille sert, aux tests de
+    // débit des serveurs TV ; pas de conversion octet par octet, très lente ici).
+    var bytesOf = function (text, from, limit) {
+      from = from || 0;
+      var length = Math.max(0, text.length - from);
+      var bytes = typeof Uint8Array === 'function' ? new Uint8Array(length) : [];
+      var real = limit === undefined ? length : Math.max(0, Math.min(length, limit - from));
+      for (var i = 0; i < real; i++) bytes[i] = text.charCodeAt(i + from) & 0xff;
+      if (!bytes.buffer) for (var j = real; j < length; j++) bytes[j] = 0;
       return bytes;
     };
+    // Jeu « x-user-defined » : octets 0x80-0xFF reçus en U+F780-U+F7FF. Remise en
+    // octets par une expression régulière (native), puis décodage UTF-8 natif.
     var decodeUtf8 = function (text) {
-      var chunks = [], size = 8192;
-      for (var i = 0; i < text.length; i += size) {
-        var part = text.slice(i, i + size), out = '';
-        for (var j = 0; j < part.length; j++) out += String.fromCharCode(part.charCodeAt(j) & 0xff);
-        chunks.push(out);
-      }
-      var binary = chunks.join('');
+      var binary = text.replace(/[\uf780-\uf7ff]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xf700); });
+      if (!/[\u0080-\u00ff]/.test(binary)) return binary;
       try { return decodeURIComponent(escape(binary)); } catch (error) { return binary; }
     };
     var abortError = function () { var error = new Error('Requête annulée'); error.name = 'AbortError'; return error; };
@@ -538,7 +540,7 @@
                   return new Promise(function (ok, ko) {
                     function check() {
                       var body = text();
-                      if (body.length > offset) { var chunk = bytesOf(body, offset); offset = body.length; ok({ value: chunk, done: false }); return; }
+                      if (body.length > offset) { var chunk = bytesOf(body, offset, 16384); offset = body.length; ok({ value: chunk, done: false }); return; }
                       if (finished) { ok({ value: undefined, done: true }); return; }
                       if (failure) { ko(failure); return; }
                       waiters.push(check);

@@ -24,7 +24,7 @@ const variantRoot = join(appsRoot, 'samsung-orsay');
 const tvRoot = join(appsRoot, 'androidtv', 'web');
 
 // Révision de la variante Samsung 2014 (à augmenter à chaque livraison).
-export const ORSAY_REVISION = 4;
+export const ORSAY_REVISION = 5;
 export const DEFAULT_SERVER = 'https://akarukasu.merlion.usbx.me/noctra';
 
 // ── Conversion du style pour WebKit 537 (2013) ────────────────────────────
@@ -162,16 +162,38 @@ const UNSUPPORTED_SELECTORS = /:focus-within|:focus-visible|:is\(|:where\(|:has\
 
 function flexValue(value) { return value.replace(/(^|[^-\w])start\b/g, '$1flex-start').replace(/(^|[^-\w])end\b/g, '$1flex-end').replace(/\bspace-evenly\b/g, 'space-around'); }
 
+// Ancien flexbox (display: -webkit-box, spécification 2009) : secours si le moteur
+// du téléviseur ne connaît pas -webkit-flex. Sans retour à la ligne possible :
+// les rangées qui passent à la ligne retombent en blocs « inline-block ».
+const BOX_ALIGN = { 'flex-start': 'start', 'flex-end': 'end', center: 'center', stretch: 'stretch', baseline: 'baseline', start: 'start', end: 'end' };
+const BOX_PACK = { 'flex-start': 'start', 'flex-end': 'end', center: 'center', 'space-between': 'justify', start: 'start', end: 'end' };
+export function wraps(decls) { return decls.some(d => d.prop === 'flex-wrap' && /\bwrap\b/.test(d.value)); }
 function prefixDecls(decls) {
   const out = [];
+  const wrapping = wraps(decls);
   for (const decl of decls) {
     const { prop } = decl;
     const value = staticMinMax(decl.value);
     if (DROPPED.has(prop)) continue;
     const add = (name, text) => out.push({ prop: name, value: text, important: decl.important });
     const webkitValue = text => text.replace(/\btransform\b/g, '-webkit-transform').replace(/\bfilter\b/g, '-webkit-filter');
-    if (prop === 'display' && /^(inline-)?flex$/.test(value)) { add('display', value === 'flex' ? '-webkit-flex' : '-webkit-inline-flex'); add('display', value); continue; }
-    if (FLEX_PROPS.has(prop)) { const text = flexValue(value); add('-webkit-' + prop, text); add(prop, text); continue; }
+    if (prop === 'display' && /^(inline-)?flex$/.test(value)) {
+      const inline = value !== 'flex';
+      add('display', wrapping ? (inline ? 'inline-block' : 'block') : (inline ? '-webkit-inline-box' : '-webkit-box'));
+      add('display', inline ? '-webkit-inline-flex' : '-webkit-flex');
+      add('display', value);
+      continue;
+    }
+    if (FLEX_PROPS.has(prop)) {
+      const text = flexValue(value);
+      if (prop === 'flex-direction') add('-webkit-box-orient', /column/.test(text) ? 'vertical' : 'horizontal');
+      else if (prop === 'align-items' && BOX_ALIGN[text]) add('-webkit-box-align', BOX_ALIGN[text]);
+      else if (prop === 'justify-content' && BOX_PACK[text]) add('-webkit-box-pack', BOX_PACK[text]);
+      else if (prop === 'flex') add('-webkit-box-flex', text === 'none' ? '0' : text === 'auto' ? '1' : String(parseFloat(text) || 0));
+      add('-webkit-' + prop, text);
+      add(prop, text);
+      continue;
+    }
     // Transitions : forme préfixée en dernier (c'est elle que ce moteur applique).
     if (/^transition/.test(prop)) { add(prop, value); add('-webkit-' + prop, webkitValue(value)); continue; }
     if (prop === 'mask-image') { add('-webkit-mask-image', legacyGradients(value)); continue; }
@@ -319,6 +341,8 @@ export function convertCss(css) {
       for (const selector of selectors) out.push({ selector: selector.trim(), decls: finalDecls });
     } else out.push({ selector: item.selector, decls: finalDecls });
     for (const rule of extra) out.push({ selector: rule.selector, decls: prefixDecls(rule.decls) });
+    // Secours sans flexbox : éléments d'une rangée à retour à la ligne côte à côte.
+    if (wraps(finalDecls)) out.push({ selector: selectors.map(s => s.trim() + ' > *').join(', '), decls: [{ prop: 'display', value: 'inline-block' }, { prop: 'vertical-align', value: 'top' }] });
   }
   return '/* Converti pour Samsung Smart TV 2014 par apps/scripts/build-orsay.mjs : ne pas modifier. */\n' + serialize(out) + '\n';
 }

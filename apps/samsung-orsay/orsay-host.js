@@ -161,7 +161,11 @@
     event.repeat = false;
     event.key = code === 37 ? 'ArrowLeft' : code === 38 ? 'ArrowUp' : code === 39 ? 'ArrowRight' : code === 40 ? 'ArrowDown' : code === 13 ? 'Enter' : code >= 48 && code <= 57 ? String(code - 48) : '';
     event.original = original;
-    target.dispatchEvent(event);
+    var allowed = target.dispatchEvent(event);
+    // Un événement créé par script n'a pas d'action par défaut : OK « clique »
+    // l'élément actif (bouton, lien), comme la touche Entrée d'un clavier.
+    if (code === STANDARD.enter && allowed && target !== document.body && target.id !== 'anchor'
+      && (target.tagName === 'BUTTON' || target.tagName === 'A' || target.getAttribute('role') === 'button') && typeof target.click === 'function') target.click();
   }
   window.addEventListener('keydown', function (event) {
     if (event.noctraOrsay) return;

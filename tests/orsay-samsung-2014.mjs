@@ -272,6 +272,18 @@ try {
   await key(29461);
   await page.waitForTimeout(150);
   assert.ok(await page.evaluate(() => document.activeElement !== window.__before && document.activeElement !== document.body), 'touche ▼ Samsung : focus déplacé');
+  // OK (29443) sur une carte de l'accueil : l'action de la carte (fiche du film).
+  await page.evaluate(() => {
+    const card = document.querySelector('#main .card');
+    card.focus();
+    window.__clicked = 0;
+    card.addEventListener('click', () => { window.__clicked++; });
+  });
+  await key(29443);
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => window.__clicked), 1, 'OK ouvre la carte (un seul clic)');
+  await key(88);
+  await page.waitForTimeout(300);
   await key(13);
   await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => document.querySelectorAll('#nw-player').length), 0, '13 = touche « 8 » sur ce téléviseur, pas OK');
