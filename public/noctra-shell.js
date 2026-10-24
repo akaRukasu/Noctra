@@ -325,7 +325,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.149';
+  const NOCTRA_BUILD_VERSION = '200.0.150';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2128,7 +2128,8 @@
     catch { return String(authContext?.user?.id || ''); }
   }
 
-  function resumeItemsForUser(items) {
+  // Carrousel : 12 titres ; limit Infinity : tous (rangée « Continuer à regarder » de Jellyfin).
+  function resumeItemsForUser(items, limit = 12) {
     const seen = new Set();
     return (Array.isArray(items) ? items : []).filter(item => {
       const id = String(item?.Id || '');
@@ -2141,7 +2142,7 @@
       if (runtime > 0 && position >= runtime * .99) return false;
       seen.add(id);
       return true;
-    }).slice(0, 12);
+    }).slice(0, limit);
   }
 
   function nativeResumeSections(home) {
@@ -2155,7 +2156,7 @@
   }
 
   function reconcileNativeResumeSections(home, items, userId = '') {
-    const allowedIds = new Set(resumeItemsForUser(items).map(item => String(item.Id)));
+    const allowedIds = new Set(resumeItemsForUser(items, Infinity).map(item => String(item.Id)));
     nativeResumeSections(home).forEach(section => {
       section.dataset.noctraResumeUser = String(userId || '');
       section.dataset.noctraResumeSynced = 'true';

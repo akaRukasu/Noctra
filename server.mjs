@@ -13440,12 +13440,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.149', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.150', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.149',
+        version: '200.0.150',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -14128,11 +14128,14 @@ const server = createServer(async (req, res) => {
 
     if (path === '/api/home/resume' && req.method === 'GET') {
       if (!session?.user?.Id) throw new HttpError(401, 'Connexion requise.');
+      // Tous les titres commencés (60 au plus) : les applis en montrent 10 à 12 dans le
+      // carrousel et le reste dans la rangée « Autres titres à reprendre ».
+      const wanted = Math.min(60, Math.max(1, Number(requestUrl.searchParams.get('limit')) || 60));
       const rawItems = await jellyfinItems('/Users/{userId}/Items/Resume', {
-        Limit: 36, MediaTypes: 'Video', EnableUserData: true,
+        Limit: 100, MediaTypes: 'Video', EnableUserData: true,
         Fields: 'PrimaryImageAspectRatio', EnableTotalRecordCount: false
       }, session);
-      const items = strictResumeItems(rawItems, 12);
+      const items = strictResumeItems(rawItems, wanted);
       res.setHeader('Cache-Control', 'private, no-store, max-age=0');
       res.setHeader('Vary', 'Cookie, X-Noctra-Token');
       return json(res, 200, { userId: session.user.Id, items });

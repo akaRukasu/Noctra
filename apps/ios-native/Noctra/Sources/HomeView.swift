@@ -49,6 +49,7 @@ struct HomeView: View {
                     }
                 }
                 if !heroIsResume { ItemRow(title: "Reprendre", items: resume, wide: true) }
+                else if resume.count > hero.count { ItemRow(title: "Autres titres à reprendre", items: Array(resume.dropFirst(hero.count)), wide: true) }
                 ForEach(latest, id: \.library.id) { entry in
                     ItemRow(title: "Derniers ajouts · \(entry.library.title)", items: entry.items)
                 }

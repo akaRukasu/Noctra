@@ -218,6 +218,7 @@ fun HomeScreen() {
                     }
                 }
                 if (!model.heroIsResume) item { ItemRow("Reprendre", model.resume, wide = true) }
+                else if (model.resume.size > model.hero.size) item { ItemRow("Autres titres à reprendre", model.resume.drop(model.hero.size), wide = true) }
                 items(model.latest, key = { "latest-" + it.first.id }) { entry -> ItemRow("Derniers ajouts · ${entry.first.title}", entry.second) }
                 // « À suivre » et les médiathèques ferment l'accueil.
                 item { ItemRow("À suivre", model.nextUp, wide = true) }

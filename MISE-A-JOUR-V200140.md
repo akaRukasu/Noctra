@@ -41,3 +41,6 @@ Samsung Smart TV 2014 (UE40H6400, plateforme Orsay) : ces téléviseurs refusent
 
 ## 200.0.149
 Relais Samsung 2014 : il reçoit le journal de diagnostic envoyé par l'appli du téléviseur (`POST /__noctra-diag`) et l'écrit dans `logs/tv-diagnostic.log` de la seedbox. Le journal contient le moteur web, les fonctions CSS et JavaScript disponibles, les touches reçues, les clics, les erreurs, les blocages de l'interface et les requêtes lentes. Après la mise à jour : `systemctl --user restart noctra-relais-tv`.
+
+## 200.0.150
+« Continuer à regarder » : `/api/home/resume` renvoyait 12 titres au plus, et aucune appli n'affichait les suivants. Il renvoie maintenant tous les titres commencés, 60 au plus (`?limit=`, entre 1 et 60). Le carrousel garde ses 10 à 12 titres ; la rangée « Autres titres à reprendre » montre le reste sur Noctra TV (Android TV, LG, Samsung), iOS 2.17.9 et Android 1.9.4. Sur le site, la rangée « Continuer à regarder » de Jellyfin n'est plus réduite à 12 titres.

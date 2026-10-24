@@ -1838,10 +1838,12 @@
       h('div', null, h('p', { text: 'VOTRE SALLE DE CINÉMA' }), h('h1', null, 'À l’affiche chez vous', h('span', { text: '.' }))),
       h('span', { class: 'note', text: 'Votre collection. À votre rythme.' })));
     var hero = h('div', { class: 'premiere-slot' }, h('section', { class: 'premiere premiere-empty' }));
+    var moreResume = h('div');
     var libs = h('div');
     var rows = h('div', null, loading());
     var nextUp = h('div');
     main.appendChild(hero);
+    main.appendChild(moreResume);
     main.appendChild(rows);
     main.appendChild(nextUp);
     main.appendChild(libs);
@@ -1857,6 +1859,8 @@
       if (!alive()) return;
       clear(hero);
       hero.appendChild(premiere(items));
+      // Au-delà des 12 du carrousel : tous les autres titres commencés.
+      if (items.length > 12) add(moreResume, row('Autres titres à reprendre', items.slice(12).map(function (item) { return itemCard(item, 'wide'); })));
     }, function () { /* le carrousel reste vide */ });
     var libsDone = Promise.all([noctraLibs, views_]).then(function (result) {
       if (!alive()) return;

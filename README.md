@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.149 — relais pour les Samsung Smart TV 2014 (avec journal de diagnostic)
+# Version actuelle : 200.0.150 — tous les titres à reprendre
+
+« Continuer à regarder » montrait 12 titres au plus, partout. Le serveur renvoie maintenant tous les titres commencés (60 au plus). Le carrousel en garde 10 à 12, et la rangée « Autres titres à reprendre » affiche les autres : Noctra TV, iOS 2.17.9, Android 1.9.4 et site web. Validation : `npm run test:v200150`.
+
+# Historique : 200.0.149 — relais pour les Samsung Smart TV 2014 (avec journal de diagnostic)
 
 Les Samsung de 2014 (UE40H6400…) refusent le certificat HTTPS de la seedbox. `bash ultra/install-relais-samsung2014.sh` installe sur la seedbox un relais HTTP (port libre du slot, service `noctra-relais-tv`) que l'appli du téléviseur utilise à la place du HTTPS : aucun appareil à laisser allumé chez soi. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md), guide du téléviseur : [apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md](apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md). Validation : `npm run test:v200148`.
 
