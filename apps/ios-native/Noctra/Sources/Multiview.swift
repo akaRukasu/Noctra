@@ -859,6 +859,7 @@ struct MultiviewCastSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Fermer") { dismiss() } } }
         }
         .onAppear { browser.start() }
+        .onDisappear { browser.stop() }
         .task { await remote.refresh() }
         // Téléviseur AirPlay choisi dans le menu : le multiview y est envoyé.
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in

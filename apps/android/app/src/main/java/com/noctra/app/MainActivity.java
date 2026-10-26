@@ -438,6 +438,11 @@ public class MainActivity extends Activity {
         if ("intent".equals(uri.getScheme())) {
             try {
                 intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME);
+                if (intent != null) {
+                    intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                    intent.setComponent(null);
+                    intent.setSelector(null);
+                }
             } catch (Exception ignored) {
                 intent = null;
             }

@@ -734,7 +734,8 @@ fun MultiviewCastSheet(channels: List<LiveChannel>, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { ChromecastBrowser.start(); RemotePlayback.refresh() }
+    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { ChromecastBrowser.stop() } }
+    LaunchedEffect(Unit) { RemotePlayback.refresh() }
     fun startCast(message: String, action: suspend () -> Unit) {
         busy = message
         error = null

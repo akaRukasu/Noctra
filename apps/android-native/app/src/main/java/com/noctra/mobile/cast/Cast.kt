@@ -143,7 +143,7 @@ fun CastHubSheet(onDismiss: () -> Unit) {
                     else SettingRow("Ouvrez un film ou un épisode, puis touchez son bouton de diffusion pour le lire sur un autre écran.", icon = Icons.Filled.TouchApp)
                 }
                 ScreenMirroring()
-                DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { } }
+                DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { ChromecastBrowser.stop() } }
                 SettingGroup("Chromecast et Google TV du Wi-Fi") {
                     if (ChromecastBrowser.devices.isEmpty()) SettingRow(if (ChromecastBrowser.blocked) "Recherche impossible sur ce réseau." else "Recherche…")
                     ChromecastBrowser.devices.forEach { SettingRow(it.name, icon = Icons.Filled.Tv, value = it.model) }
@@ -167,7 +167,7 @@ private fun CastContent(item: BaseItem, startSeconds: Double, audioIndex: Int?, 
     var castingTo by remember { mutableStateOf<String?>(null) }
     var sent by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { } }
+    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { ChromecastBrowser.stop() } }
     LaunchedEffect(Unit) {
         val list = runCatching { Json.parse(Session.data("GET", "/Sessions", mapOf("controllableByUserId" to Session.userId, "activeWithinSeconds" to "960"))) }.getOrNull().asMaps()
         targets = list.mapNotNull { entry ->

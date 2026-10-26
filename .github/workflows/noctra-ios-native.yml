@@ -53,6 +53,7 @@ jobs:
           cp -R build/Release-iphoneos/Noctra.app Payload/
           plutil -lint Payload/Noctra.app/Info.plist
           chmod 755 Payload/Noctra.app/Noctra
+          xcrun strip -S -x Payload/Noctra.app/Noctra
           zip -qryX ../../dist/apps/Noctra-ios26-unsigned.ipa Payload
       - name: IPA à resigner avec E-Sign
         working-directory: apps/ios-native

@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lookup } from 'node:dns/promises';
-import { createGunzip, gzipSync } from 'node:zlib';
+import { createGunzip, gzip, gzipSync } from 'node:zlib';
 import { matchTorrentMediaFiles, recoverRelinkByPieces, describeUnmatchedFiles } from './lib/torrent-relink.mjs';
 import { trackerSearchIdentity, searchTrackerReleases } from './lib/tracker-search.mjs';
 import { summarizeReleaseLanguages } from './lib/release-language.mjs';
@@ -140,18 +140,32 @@ const mime = {
 
 function json(res, status, data, extraHeaders = {}) {
   const raw = JSON.stringify(data);
+  const rawBytes = Buffer.byteLength(raw);
   const acceptsGzip = /(?:^|,|\s)gzip(?:\s|,|$)/i.test(String(res.req?.headers?.['accept-encoding'] || ''));
-  const compress = acceptsGzip && Buffer.byteLength(raw) >= 24 * 1024;
-  const body = compress ? gzipSync(raw, { level: 4 }) : raw;
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'vary': 'accept-encoding',
-    ...(compress ? { 'content-encoding': 'gzip' } : {}),
-    'content-length': Buffer.byteLength(body),
-    ...extraHeaders
+  const compress = acceptsGzip && rawBytes >= 24 * 1024;
+  const send = (body, compressed) => {
+    if (res.destroyed || res.writableEnded) return;
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'vary': 'accept-encoding',
+      ...(compressed ? { 'content-encoding': 'gzip' } : {}),
+      'content-length': Buffer.byteLength(body),
+      ...extraHeaders
+    });
+    res.end(body);
+  };
+  if (!compress) {
+    send(raw, false);
+    return;
+  }
+  return new Promise(resolve => {
+    gzip(raw, { level: 4 }, (error, compressed) => {
+      if (error || !compressed) send(raw, false);
+      else send(compressed, true);
+      resolve();
+    });
   });
-  res.end(body);
 }
 
 function cleanError(error) {
@@ -236,15 +250,26 @@ async function authenticateRequest(req) {
       signal: AbortSignal.timeout(8_000)
     });
   } catch (error) {
+    if (cached && cached.expiresAt > Date.now() && cached.user?.Id) {
+      cached.validationExpiresAt = Date.now() + 15_000;
+      return { token, cacheKey, user: cached.user, ...publicUser(cached.user) };
+    }
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
       throw new HttpError(503, 'Jellyfin ne répond pas pour le moment.');
     }
     throw error;
   }
   if (response.status === 401 || response.status === 403) {
+    sessionCache.delete(cacheKey);
     throw new HttpError(401, 'La session Jellyfin a expiré.');
   }
-  if (!response.ok) throw new HttpError(503, `Validation Jellyfin indisponible (${response.status}).`);
+  if (!response.ok) {
+    if (cached && cached.expiresAt > Date.now() && cached.user?.Id) {
+      cached.validationExpiresAt = Date.now() + 15_000;
+      return { token, cacheKey, user: cached.user, ...publicUser(cached.user) };
+    }
+    throw new HttpError(503, `Validation Jellyfin indisponible (${response.status}).`);
+  }
 
   const user = await response.json();
   if (!user?.Id) throw new HttpError(401, 'Utilisateur Jellyfin introuvable.');
@@ -3868,6 +3893,7 @@ async function grabDiscoveryTorrent(body) {
       if (!location) throw new HttpError(502, 'Redirection du tracker invalide.');
       url = new URL(location, url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new HttpError(502, 'Redirection du tracker non prise en charge.');
+      if (url.origin !== original.origin) await assertPublicTvUrl(url.toString());
     }
     if (!response.ok) { await response.body?.cancel(); throw new HttpError(502, `Le tracker a refusé le fichier (${response.status}). Actualise la recherche.`); }
     if (Number(response.headers.get('content-length') || 0) > 8 * 1024 * 1024) { await response.body?.cancel(); throw new HttpError(413, 'Fichier .torrent trop volumineux.'); }
@@ -4905,6 +4931,48 @@ const tvProviderChildReferenceCache = new Map();
 // à la chaîne + variante + media-sequence. Une URL CDN signée peut ainsi être
 // renouvelée sans que HLS.js change de ressource locale en plein direct.
 const liveWatchStableMediaResourceCache = new Map();
+const liveWatchVariantUrlCache = new Map();
+
+function pruneBoundedMap(map, maxEntries, now = Date.now()) {
+  if (!(map instanceof Map) || map.size === 0) return;
+  for (const [key, entry] of map) {
+    if (entry && typeof entry === 'object') {
+      const expiresAt = Number(entry.expiresAt || 0);
+      if (expiresAt > 0 && expiresAt <= now && !entry.pending) map.delete(key);
+    }
+  }
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+const runtimeCacheReaper = setInterval(() => {
+  const now = Date.now();
+  pruneBoundedMap(sessionCache, 250, now);
+  pruneBoundedMap(identificationJobs, 120, now);
+  pruneBoundedMap(arrCatalogCache, 16, now);
+  pruneBoundedMap(seriesStatusCache, 600, now);
+  pruneBoundedMap(discoveryCache, 400, now);
+  pruneBoundedMap(discoverySeedCache, 400, now);
+  pruneBoundedMap(discoveryStatusCache, 1200, now);
+  pruneBoundedMap(requestMetadataCache, 1200, now);
+  pruneBoundedMap(discoveryCatalogCache, 120, now);
+  pruneBoundedMap(tasteProfileCache, 100, now);
+  pruneBoundedMap(trackerAvailabilityCache, 800, now);
+  pruneBoundedMap(discoveryGrabReleases, 4000, now);
+  pruneBoundedMap(discoveryPlatformCache, 250, now);
+  pruneBoundedMap(discoveryProviderListCache, 64, now);
+  pruneBoundedMap(tvCatalogCache, 120, now);
+  pruneBoundedMap(tvEpgCache, 64, now);
+  pruneBoundedMap(tvReferences, 12000, now);
+  pruneBoundedMap(liveWatchVipDirectCache, 1500, now);
+  pruneBoundedMap(tvProviderChildReferenceCache, 8000, now);
+  pruneBoundedMap(liveWatchStableMediaResourceCache, 6000, now);
+  pruneBoundedMap(liveWatchVariantUrlCache, 1500, now);
+}, 5 * 60_000);
+runtimeCacheReaper.unref?.();
 
 function tvLogoIdentityKeys(value) {
   const raw = String(value || '')
@@ -5213,12 +5281,16 @@ function safeTvRemoteUrl(value) {
   const host = url.hostname.toLocaleLowerCase('en').replace(/^\[|\]$/g, '');
   const privateHost = host === 'localhost'
     || host === '::1'
+    || host === '::'
+    || host === '0.0.0.0'
     || host.endsWith('.local')
     || /^127\./.test(host)
     || /^10\./.test(host)
     || /^192\.168\./.test(host)
     || /^169\.254\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    || /^(?:fc|fd|fe[89ab])[0-9a-f]*:/i.test(host)
+    || /^::ffff:(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|7f|0a|c0a8|a9fe|ac1[0-f]|ac[23][0-9a-f])/i.test(host);
   if (privateHost) throw new HttpError(400, 'Les adresses réseau privées ne peuvent pas être utilisées comme source TV.');
   return url;
 }
@@ -5244,11 +5316,12 @@ function tvBridgeMediaResponseAllowed(urlValue, contentTypeValue = '') {
 function privateTvAddress(address) {
   const value = String(address || '').toLowerCase();
   return value === '::1'
+    || value === '::'
     || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')
     || /^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)
     || /^172\.(1[6-9]|2\d|3[01])\./.test(value)
     || /^0\./.test(value)
-    || /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value);
+    || /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.|7f|0a|c0a8|a9fe|ac1[0-f]|ac[23][0-9a-f])/.test(value);
 }
 
 async function assertPublicTvUrl(urlValue) {
@@ -6225,9 +6298,9 @@ const complementaryTvBuiltInSources = [
   { id: 'streamsports99-live-tv', name: 'StreamSports99 TV', section: 'channels', description: 'Chaînes internationales · pays et programmes Live TV', url: 'https://streamsports99.su/live-tv', type: 'streamsports99', provider: 'StreamSports99' },
   { id: 'dlstreams-sports', name: 'DLStreams', section: 'sports', description: 'Programme sportif public · lecteurs intégrés DLStreams', url: 'https://dlstreams.st/', type: 'dlstreams', provider: 'DLStreams' },
   { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · streamed.pk', url: 'https://streamed.pk/', type: 'streamed', provider: 'Streamed' },
-  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH-Sport / Volkamax · catégories et chaînes sportives', url: 'https://bzh-sport.lat/', type: 'volkamax', provider: 'Volkamax' },
+  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · catégories et chaînes sportives', url: 'https://bzh.lat/', type: 'volkamax', provider: 'Volkamax' },
   { id: 'daddylive-sports', name: 'DaddyLive', section: 'sports', description: 'Programme sportif · lecteurs DaddyLive intégrés', url: 'https://dlive.sx/', type: 'daddylive', provider: 'DaddyLive' },
-  { id: 'brigitte-sports', name: 'BrigitteTV', section: 'sports', description: 'Programme QuelleFrappe · lecteur du fournisseur', url: 'https://quellefrappe.click/prog.php', type: 'brigitte', provider: 'BrigitteTV' },
+  { id: 'brigitte-sports', name: 'Streamonsport', section: 'sports', description: 'Programme Streamonsport · lecteur du fournisseur', url: 'https://choc2foot.biz/', type: 'brigitte', provider: 'Streamonsport' },
   { id: 'xtemus-box', name: 'Xtemus · Ma sélection', section: 'personal', description: 'Playlist Xtemus · portail du fournisseur', url: 'https://box.xtemus.com/?playlist=u256y494u21596x2', type: 'portal', provider: 'Xtemus' },
   { id: 'haloule-alternatives', name: 'Alternative', section: 'alternatives', description: 'Chaînes et variantes · Haloule section 1.1', url: 'https://www.haloule.com/2024/01/meilleurs-sites-applications-android-PC-regarder-live-tv-gratuitement.html', type: 'alternative', provider: 'Haloule' }
 ].map(source => ({ ...source, origin: 'builtin', editable: false }));
@@ -7520,15 +7593,16 @@ function liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders = {
   let partOffset = 0;
   let keyOffset = 0;
   let mapOffset = 0;
+  let pendingDuration = 0;
   for (const line of lines) {
     const match = line.trim().match(/^#EXT-X-MEDIA-SEQUENCE\s*:\s*(\d+)/i);
     if (match) { mediaSequence = Number(match[1]) || 0; break; }
   }
-  const add = (key, lineIndex, rawUrl, kind) => {
+  const add = (key, lineIndex, rawUrl, kind, duration = 0) => {
     try {
       const url = resolveTvUrl(rawUrl, baseUrl);
       const headers = tvChildReferenceHeaders(inheritedHeaders, baseUrl, url);
-      const value = { key, lineIndex, kind, url, headers };
+      const value = { key, lineIndex, kind, url, headers, duration };
       byKey.set(key, value);
       byLine.set(lineIndex, value);
     } catch {}
@@ -7538,9 +7612,14 @@ function liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders = {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (!trimmed.startsWith('#')) {
-      add(`s${mediaSequence + segmentOffset}`, lineIndex, trimmed, 'segment');
+      add(`s${mediaSequence + segmentOffset}`, lineIndex, trimmed, 'segment', pendingDuration);
+      pendingDuration = 0;
       segmentOffset += 1;
       partOffset = 0;
+      continue;
+    }
+    if (/^#EXTINF\s*:/i.test(trimmed)) {
+      pendingDuration = Number(trimmed.slice(8).split(',')[0]) || 0;
       continue;
     }
     if (/^#EXT-X-PART\s*:/i.test(trimmed)) {
@@ -7578,13 +7657,33 @@ function liveWatchMediaResourceCacheKey(kind, id, selector, resourceKey) {
   return `${kind}:${id}:${selector || 'root'}:${resourceKey}`;
 }
 
-function rememberLiveWatchMediaPointers(kind, id, selector, pointers) {
+function rememberLiveWatchMediaPointers(kind, id, selector, pointers, canWarm = false) {
   const now = Date.now();
+  const segments = [];
   for (const pointer of pointers?.byKey?.values?.() || []) {
+    const cacheKey = liveWatchMediaResourceCacheKey(kind, id, selector, pointer.key);
     liveWatchStableMediaResourceCache.set(
-      liveWatchMediaResourceCacheKey(kind, id, selector, pointer.key),
+      cacheKey,
       { ...pointer, expiresAt: now + 30_000 }
     );
+    if (canWarm && pointer.kind === 'segment' && pointer.duration > 0) {
+      segments.push({ cacheKey, pointer });
+    }
+  }
+  if (canWarm && segments.length && typeof tvSegmentCache !== 'undefined' && typeof fetchTvRemoteUntilHeaders === 'function' && process.env.NOCTRA_TV_PREFETCH !== '0') {
+    let distance = 0, start = segments.length - 1;
+    for (; start > 0; start--) {
+      distance += segments[start].pointer.duration;
+      if (distance >= 12) break;
+    }
+    for (const item of segments.slice(start, start + 2)) {
+      const deadlineMs = Math.min(20_000, Math.max(6_000, Math.round(Number(item.pointer.duration || 0) * 1_500)));
+      void tvSegmentCache.prime(item.cacheKey, signal => fetchTvRemoteUntilHeaders(
+        safeTvRemoteUrl(item.pointer.url),
+        { headers: { accept: '*/*', ...liveWatchForwardHeaders(item.pointer.headers || {}) }, signal },
+        4_000
+      ), { deadlineMs });
+    }
   }
   if (liveWatchStableMediaResourceCache.size > 20_000) {
     for (const [key, value] of liveWatchStableMediaResourceCache) {
@@ -7595,8 +7694,9 @@ function rememberLiveWatchMediaPointers(kind, id, selector, pointers) {
 }
 
 function rewriteLiveWatchStableMediaPlaylist(textValue, baseUrl, kind, id, selector = '', inheritedHeaders = {}) {
+  const canWarm = !/#EXT-X-(?:BYTERANGE|ENDLIST|PART|PRELOAD-HINT)/i.test(String(textValue || ''));
   const pointers = liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders);
-  rememberLiveWatchMediaPointers(kind, id, selector, pointers);
+  rememberLiveWatchMediaPointers(kind, id, selector, pointers, canWarm);
   return pointers.lines.map((line, lineIndex) => {
     const pointer = pointers.byLine.get(lineIndex);
     if (!pointer) return line;
@@ -7610,13 +7710,52 @@ function liveWatchRefreshableMediaStatus(statusValue) {
   return [401, 403, 404, 410, 429, 502, 503, 504].includes(Number(statusValue || 0));
 }
 
+// 200.0.152 : Shaka interroge chaque segment LiveWatch en HEAD pour connaître son
+// type MIME car l'URL /api/tv/livewatch/hls/...?res=s100 n'a pas d'extension .ts.
+// Sans réponse 200 en HEAD, Shaka réessaie 5 fois puis télécharge chaque segment
+// deux fois en GET (~30 s perdues au démarrage et famine de tampon en lecture).
+function headLiveWatchVipHls(kindValue, idValue, selectorValue, resourceKeyValue, res) {
+  const safe = validLiveWatchChannelReference(kindValue, idValue);
+  const selector = String(selectorValue || '').trim();
+  const resourceKey = String(resourceKeyValue || '').trim();
+  if (!resourceKey) {
+    res.writeHead(200, {
+      'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
+      'cache-control': 'no-store',
+      'access-control-allow-origin': 'same-origin'
+    });
+    res.end();
+    return;
+  }
+  if (!/^(?:s\d+|p\d+\.\d+|q\d+\.\d+|[km][a-f0-9]{12})$/i.test(resourceKey)) {
+    res.writeHead(400, { 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  const cacheKey = liveWatchMediaResourceCacheKey(safe.kind, safe.id, selector, resourceKey);
+  const pointer = liveWatchStableMediaResourceCache.get(cacheKey);
+  const cachedType = (typeof tvSegmentCache !== 'undefined' && tvSegmentCache.get(cacheKey)?.type)
+    || (typeof tvMediaTypeFromUrl === 'function' && pointer?.url ? tvMediaTypeFromUrl(pointer.url) : '');
+  const type = cachedType
+    || (/^m[a-f0-9]{12}$/i.test(resourceKey) ? 'video/mp4'
+      : /^k[a-f0-9]{12}$/i.test(resourceKey) ? 'application/octet-stream'
+        : 'video/mp2t');
+  res.writeHead(200, {
+    'content-type': type,
+    'cache-control': 'no-store',
+    'access-control-allow-origin': 'same-origin',
+    'x-noctra-livewatch-resource': resourceKey
+  });
+  res.end();
+}
+
 async function liveWatchFreshMediaPointer(kind, id, selector, resourceKey) {
   const resource = await liveWatchFreshHlsResource(kind, id, selector, null);
   if (!resource.playlist || liveWatchPlaylistIsMaster(resource.text)) {
     throw new HttpError(502, 'La ressource LiveWatch ne pointe plus vers une media-playlist.');
   }
   const pointers = liveWatchMediaPlaylistPointers(resource.text, resource.finalUrl, resource.headers);
-  rememberLiveWatchMediaPointers(kind, id, selector, pointers);
+  rememberLiveWatchMediaPointers(kind, id, selector, pointers, false);
   return pointers.byKey.get(resourceKey) || null;
 }
 
@@ -7628,6 +7767,51 @@ async function proxyLiveWatchVipHlsMediaResource(kindValue, idValue, selectorVal
     throw new HttpError(400, 'Ressource HLS LiveWatch invalide.');
   }
   const cacheKey = liveWatchMediaResourceCacheKey(safe.kind, safe.id, selector, resourceKey);
+  if (!req?.headers?.range && typeof tvSegmentCache !== 'undefined') {
+    const ready = tvSegmentCache.get(cacheKey);
+    if (ready) {
+      res.writeHead(200, {
+        'content-type': ready.type,
+        'content-length': String(ready.body.length),
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-hit',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      res.end(ready.body);
+      return;
+    }
+    const shared = await tvSegmentCache.attach?.(cacheKey);
+    if (req?.aborted || res.destroyed) { shared?.stream.destroy(); return; }
+    if (shared) {
+      res.writeHead(200, {
+        'content-type': shared.type,
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-stream',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      const stop = () => shared.stream.destroy();
+      res.once('close', stop);
+      shared.stream.on('error', () => { res.removeListener('close', stop); res.destroy(); });
+      shared.stream.pipe(res);
+      return;
+    }
+    const memCached = await tvSegmentCache.read?.(cacheKey);
+    if (req?.aborted || res.destroyed) return;
+    if (memCached) {
+      res.writeHead(200, {
+        'content-type': memCached.type,
+        'content-length': String(memCached.body.length),
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-hit',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      res.end(memCached.body);
+      return;
+    }
+  }
   const cached = liveWatchStableMediaResourceCache.get(cacheKey);
   let pointer = cached && cached.expiresAt > Date.now() ? cached : null;
   if (!pointer) pointer = await liveWatchFreshMediaPointer(safe.kind, safe.id, selector, resourceKey);
@@ -7718,6 +7902,40 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
   const selector = String(selectorValue || '').trim();
   if (selector && !/^(?:[vmi]\d+)(?:\.(?:[vmi]\d+))*$/.test(selector)) throw new HttpError(400, 'Sélecteur HLS LiveWatch invalide.');
   const chain = selector ? selector.split('.') : [];
+  const variantCacheKey = selector ? `${kind}:${id}:${selector}` : '';
+  if (variantCacheKey && typeof liveWatchVariantUrlCache !== 'undefined') {
+    const cachedVariant = liveWatchVariantUrlCache.get(variantCacheKey);
+    if (cachedVariant && cachedVariant.expiresAt > Date.now() && cachedVariant.url) {
+      try {
+        const directUrl = safeTvRemoteUrl(cachedVariant.url);
+        const directHeaders = {
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/*,audio/*,*/*;q=0.7',
+          ...liveWatchForwardHeaders(cachedVariant.headers || {}),
+          ...(req?.headers?.range ? { range: req.headers.range } : {})
+        };
+        const directResponse = await fetchTvRemoteUntilHeaders(directUrl, { headers: directHeaders }, 10_000);
+        if (directResponse.ok || directResponse.status === 206) {
+          const directType = String(directResponse.headers.get('content-type') || '');
+          const directFinalUrl = directResponse.url || directUrl.toString();
+          const isPlaylist = /(?:mpegurl|m3u8)/i.test(directType) || /\.m3u8?(?:$|[?#/])/i.test(directFinalUrl);
+          if (isPlaylist) {
+            const directText = await readTvPlaylistBody(directResponse);
+            if (!liveWatchPlaylistIsMaster(directText)) {
+              const directCookie = tvResponseCookieHeader(directResponse);
+              const mergedDirectHeaders = {
+                ...(cachedVariant.headers || {}),
+                ...(directCookie ? { cookie: mergeTvCookieHeaders(cachedVariant.headers?.cookie || '', directCookie) } : {})
+              };
+              liveWatchVariantUrlCache.set(variantCacheKey, { url: directFinalUrl, headers: mergedDirectHeaders, expiresAt: Date.now() + 45_000 });
+              return { response: directResponse, playlist: true, text: directText, contentType: directType, finalUrl: directFinalUrl, headers: mergedDirectHeaders, selector };
+            }
+          }
+        }
+        try { await directResponse.body?.cancel?.(); } catch {}
+      } catch {}
+      liveWatchVariantUrlCache.delete(variantCacheKey);
+    }
+  }
   const token = await liveWatchStreamReference(kind, id);
   const root = tvReferences.get(String(token || ''));
   if (!root?.url) throw new HttpError(502, 'LiveWatch n’a pas fourni de flux direct exploitable.');
@@ -7770,6 +7988,9 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
     currentUrl = pointer.url;
     currentHeaders = childHeaders;
     currentPrefix = currentPrefix ? `${currentPrefix}.${key}` : key;
+    if (typeof liveWatchVariantUrlCache !== 'undefined') {
+      liveWatchVariantUrlCache.set(`${kind}:${id}:${currentPrefix}`, { url: currentUrl, headers: currentHeaders, expiresAt: Date.now() + 45_000 });
+    }
   }
 }
 
@@ -9198,8 +9419,8 @@ function sanitizeWiTvPlayerHtml(htmlValue, baseUrl) {
 async function resolveTvPageReference(token) {
   const additionalRef = tvReferences.get(String(token || ''));
   if (additionalRef?.meta?.kind === 'brigitte-event') {
-    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme BrigitteTV.');
-    const page = await fetchPublicTvHtml(additionalRef.url, 'BrigitteTV', 12_000);
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme Streamonsport.');
+    const page = await fetchPublicTvHtml(additionalRef.url, 'Streamonsport', 12_000);
     const choices = parseBrigittePlayers(page.html, page.finalUrl).sort((a,b)=>Number(!/Cartel/i.test(a.label))-Number(!/Cartel/i.test(b.label)));
     const options = choices.map(choice => {
       const id = issueTvReference(safeTvRemoteUrl(choice.url).toString(), {}, {kind:'brigitte-player'});
@@ -9208,7 +9429,7 @@ async function resolveTvPageReference(token) {
     return {options: [...options,{label:'Page du match · compatibilité mobile',url:page.finalUrl,playbackType:'embed',compatPage:true,manualOnly:options.length>0}], externalUrl:page.finalUrl};
   }
   if (additionalRef?.meta?.kind === 'brigitte-player') {
-    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme BrigitteTV.');
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme Streamonsport.');
     // Keep the published embed document: its nested player requires the
     // provider's real embedding origin. Do not extract the protected leaf URL.
     const target = safeTvRemoteUrl(additionalRef.url).toString();
@@ -9216,12 +9437,12 @@ async function resolveTvPageReference(token) {
       let current=target;let parentUrl='';const seen=new Set();
       for(let depth=0;depth<4&&!seen.has(current);depth++){
         seen.add(current);
-        const page=await fetchPublicTvHtml(current,'BrigitteTV',6000,parentUrl);
+        const page=await fetchPublicTvHtml(current,'Streamonsport',6000,parentUrl);
         const parsed=parseBrigitteNativeDocument(page.html,page.finalUrl);
         if(parsed.urls.length){
           const headers={referer:page.finalUrl};
           const ready=await Promise.any(parsed.urls.slice(0,3).map(async url=>validateWiTvHlsStream(url,headers,6000,null,true)));
-          const nativeToken=issueTvReference(ready.url,{...headers,...(ready.cookie?{cookie:ready.cookie}:{})},{provider:'BrigitteTV',forceHls:true});
+          const nativeToken=issueTvReference(ready.url,{...headers,...(ready.cookie?{cookie:ready.cookie}:{})},{provider:'Streamonsport',forceHls:true});
           return {options:[{playbackType:'stream',streamUrl:publicPath('/api/tv/stream/'+nativeToken),resolveUrl:publicPath('/api/tv/resolve/'+token)}],externalUrl:target};
         }
         if(!parsed.next)break;
@@ -10062,25 +10283,35 @@ async function tvCatalogFromSportsPage(source) {
   let channels = [];
   let warning = '';
   try {
-    const page = await fetchPublicTvHtml(root, source.name, 10_000);
+    let page = await fetchPublicTvHtml(root, source.name, 10_000);
     if (source.type === 'daddylive') channels = parseDlStreamsSports(page.html, page.finalUrl, 'DaddyLive');
     else {
-      const seen = new Set();
-      for (const match of page.html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-        let target;
-        try { target = new URL(decodeTvHtml(match[1]), page.finalUrl); } catch { continue; }
-        // Only published event links, never guessed player IDs or navigation links.
-        if (target.origin !== new URL(page.finalUrl).origin || !/(?:\/regarder-[^/]+|\/(?:match|watch|event|live|stream|player)[^/]*(?:\.php|\/))/i.test(target.pathname)) continue;
-        if (seen.has(target.href)) continue;
-        const name = publicTvPageName(match[2], '', '');
-        if (!name) continue;
-        const channel = normalizeTvChannel({name, embed_url:target.href, provider:source.name, group:'Sports', description:'Lecteur du fournisseur'}, page.finalUrl, 'Sports');
-        if (channel) {
-          seen.add(target.href);
-          const token = issueTvReference(target.href, {}, {kind:'brigitte-event'});
-          channels.push({...channel, playbackType:'resolver', embedUrl:'', resolverUrl:publicPath('/api/tv/resolve/'+token), externalUrl:target.href, streamKind:'Serveurs du match'});
+      const collectEventChannels = (doc) => {
+        const seen = new Set();
+        for (const match of doc.html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+          let target;
+          try { target = new URL(decodeTvHtml(match[1]), doc.finalUrl); } catch { continue; }
+          // Only published event links, never guessed player IDs or navigation links.
+          if (target.origin !== new URL(doc.finalUrl).origin || !/(?:\/regarder-[^/]+|\/(?:match|watch|event|live|stream|player)[^/]*(?:\.php|\/))/i.test(target.pathname)) continue;
+          if (seen.has(target.href)) continue;
+          const name = publicTvPageName(match[2], '', '');
+          if (!name) continue;
+          const channel = normalizeTvChannel({name, embed_url:target.href, provider:source.name, group:'Sports', description:'Lecteur du fournisseur'}, doc.finalUrl, 'Sports');
+          if (channel) {
+            seen.add(target.href);
+            const token = issueTvReference(target.href, {}, {kind:'brigitte-event'});
+            channels.push({...channel, playbackType:'resolver', embedUrl:'', resolverUrl:publicPath('/api/tv/resolve/'+token), externalUrl:target.href, streamKind:'Serveurs du match'});
+          }
+          if (channels.length >= 500) break;
         }
-        if (channels.length >= 500) break;
+      };
+      collectEventChannels(page);
+      if (!channels.length && new URL(page.finalUrl).pathname === '/') {
+        try {
+          const progUrl = new URL('/prog.php', page.finalUrl).toString();
+          page = await fetchPublicTvHtml(progUrl, source.name, 10_000);
+          collectEventChannels(page);
+        } catch {}
       }
     }
     if (!channels.length) warning = 'Le programme ne fournit pas de liens de lecture exploitables : ouvre le portail du fournisseur.';
@@ -10813,7 +11044,7 @@ async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
 }
 
 function volkamaxAllowedHost(urlValue) {
-  try { return /(?:^|\.)(?:volkamax\.club|bzh-sport\.lat)$/i.test(new URL(urlValue).hostname); }
+  try { return /(?:^|\.)(?:volkamax\.club|bzh-sport\.lat|bzh\.lat)$/i.test(new URL(urlValue).hostname); }
   catch { return false; }
 }
 
@@ -10835,7 +11066,7 @@ function volkamaxExtractEmbedUrl(htmlValue, baseUrl) {
 
 function volkamaxBridgeUrl(pageUrl) {
   const token = issueTvReference(pageUrl, {
-    referer: 'https://bzh-sport.lat/',
+    referer: 'https://bzh.lat/',
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36 Noctra/163'
   }, { kind: 'volkamax-page', provider: 'Volkamax' });
   return publicPath(`/api/tv/volkamax/embed/${token}`);
@@ -10913,7 +11144,7 @@ function parseVolkamaxSports(htmlValue, baseUrl) {
   return channels;
 }
 
-async function tvCatalogFromVolkamax(rootValue = 'https://volkamax.club/') {
+async function tvCatalogFromVolkamax(rootValue = 'https://bzh.lat/') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `volkamax::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -10922,7 +11153,8 @@ async function tvCatalogFromVolkamax(rootValue = 'https://volkamax.club/') {
   try { page = await fetchPublicTvHtml(root, 'Volkamax', 9_000); }
   catch (error) {
     if (!volkamaxAllowedHost(root)) throw error;
-    const alternate = new URL(root).hostname === 'bzh-sport.lat' ? 'https://volkamax.club/' : 'https://bzh-sport.lat/';
+    const host = new URL(root).hostname;
+    const alternate = host === 'bzh.lat' ? 'https://bzh-sport.lat/' : 'https://bzh.lat/';
     page = await fetchPublicTvHtml(alternate, 'Volkamax', 9_000);
   }
   const jsRedirect = String(page.html || '').match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)?.[1]
@@ -12854,7 +13086,8 @@ async function proxyOhaEmbed(token, res) {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'referrer-policy': 'origin-when-cross-origin',
-      'x-content-type-options': 'nosniff'
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "frame-ancestors 'self'"
     });
     res.end(html);
   } catch (error) {
@@ -12970,6 +13203,7 @@ async function proxyOhaSite(token, req, res, requestUrl, path) {
     delete responseHeaders['content-length'];
     responseHeaders['content-type'] = 'text/html; charset=utf-8';
     responseHeaders['cache-control'] = 'no-store';
+    responseHeaders['content-security-policy'] = "frame-ancestors 'self'";
     res.writeHead(response.status, responseHeaders);
     res.end(buffer);
     return;
@@ -13378,8 +13612,8 @@ async function serveTvApp(pathname, res) {
 
 async function serveStatic(pathname, res) {
   const relative = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '');
-  const filePath = join(publicRoot, relative);
-  if (!filePath.startsWith(publicRoot)) return false;
+  const filePath = resolve(publicRoot, relative);
+  if (filePath !== publicRoot && !filePath.startsWith(`${publicRoot}${sep}`)) return false;
   const info = await stat(filePath).catch(() => null);
   if (!info?.isFile()) return false;
   const content = await readFile(filePath);
@@ -13440,12 +13674,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.150', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.152', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.150',
+        version: '200.0.152',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -13496,7 +13730,7 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           const libraryImageFallback = Boolean(process.env.JELLYFIN_API_KEY)
             && req.method === 'GET'
-            && (path === '/api/libraries' || path.startsWith('/api/jellyfin/image/'));
+            && path.startsWith('/api/jellyfin/image/');
           if (!libraryImageFallback) throw error;
           session = null;
         }
@@ -13943,21 +14177,30 @@ const server = createServer(async (req, res) => {
       }));
     }
 
-    if (path.startsWith('/api/tv/livewatch/hls/') && req.method === 'GET') {
+    if (path.startsWith('/api/tv/livewatch/hls/') && ['GET', 'HEAD'].includes(req.method)) {
       const parts = path.slice('/api/tv/livewatch/hls/'.length).split('/');
       const kind = decodeURIComponent(parts.shift() || '');
       const id = decodeURIComponent(parts.join('/'));
       const selector = requestUrl.searchParams.get('sel') || '';
       const resourceKey = requestUrl.searchParams.get('res') || '';
+      if (req.method === 'HEAD') {
+        headLiveWatchVipHls(kind, id, selector, resourceKey, res);
+        return;
+      }
       if (resourceKey) await proxyLiveWatchVipHlsMediaResource(kind, id, selector, resourceKey, req, res);
       else await proxyLiveWatchVipHls(kind, id, selector, req, res);
       return;
     }
 
-    if (path.startsWith('/api/tv/livewatch/stream/') && req.method === 'GET') {
+    if (path.startsWith('/api/tv/livewatch/stream/') && ['GET', 'HEAD'].includes(req.method)) {
       const parts = path.slice('/api/tv/livewatch/stream/'.length).split('/');
       const kind = parts.shift() || '';
       const id = decodeURIComponent(parts.join('/'));
+      if (req.method === 'HEAD') {
+        const token = await liveWatchStreamReference(kind, id);
+        headTvStream(token, res);
+        return;
+      }
       await proxyLiveWatchVipStream(kind, id, req, res);
       return;
     }

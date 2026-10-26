@@ -306,6 +306,7 @@ struct LiveCastSheet: View {
             .navigationTitle(channel.name).navigationBarTitleDisplayMode(.inline)
         }
         .onAppear { browser.start() }
+        .onDisappear { browser.stop() }
         .task { await remote.refresh() }
     }
     private func send(_ action: @escaping @MainActor () async throws -> Void) {

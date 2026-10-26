@@ -629,14 +629,19 @@
     var timer = setTimeout(function () { timedOut = true; if (controller) controller.abort(); }, PROBE_MS);
     var stop = function () { if (controller) controller.abort(); };
     if (signal) signal.addEventListener('abort', stop, { once: true });
-    function get(target) {
-      return fetch(target, { credentials: 'same-origin', cache: 'no-store', signal: controller ? controller.signal : undefined });
+    function get(target, headers) {
+      var opts = { credentials: 'same-origin', cache: 'no-store', signal: controller ? controller.signal : undefined };
+      if (headers) opts.headers = headers;
+      return fetch(target, opts);
+    }
+    function cancelBody(response) {
+      try { if (response && response.body && typeof response.body.cancel === 'function') response.body.cancel(); } catch (error) {}
     }
     function playlist(target, depth) {
       return get(target).then(function (response) {
-        if (!response.ok) return 'down';
+        if (!response.ok) { cancelBody(response); return 'down'; }
         var type = String(response.headers.get('content-type') || '').toLowerCase();
-        if (!/mpegurl|text|json/.test(type)) return 'up';
+        if (!/mpegurl|text|json/.test(type)) { cancelBody(response); return 'up'; }
         return response.text().then(function (text) {
           if (!/^\s*#EXTM3U/.test(text)) return 'down';
           var uris = text.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(function (line) { return line && line.charAt(0) !== '#'; });
@@ -648,7 +653,11 @@
           }
           var segment = new URL(uris[uris.length - 1], base);
           if (segment.origin !== location.origin) return 'up';
-          return get(segment.toString()).then(function (answer) { return answer.ok ? 'up' : 'down'; });
+          return get(segment.toString(), { Range: 'bytes=0-65535' }).then(function (answer) {
+            var ok = Boolean(answer && (answer.ok || answer.status === 206));
+            cancelBody(answer);
+            return ok ? 'up' : 'down';
+          });
         });
       });
     }
