@@ -142,6 +142,7 @@ struct CastSheet: View {
             .task { await load() }
             .refreshable { await load() }
             .onAppear { browser.start() }
+            .onDisappear { browser.stop() }
             .sensoryFeedback(.success, trigger: sent)
         }
     }
@@ -274,6 +275,7 @@ struct CastHubSheet: View {
                     .navigationBarTitleDisplayMode(.inline)
                 }
                 .onAppear { browser.start() }
+                .onDisappear { browser.stop() }
             }
         }
         .task {

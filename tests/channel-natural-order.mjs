@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-// 200.0.151 (site, Noctra TV), iOS 2.18.6, Android 1.9.11 : chaînes réunies dans l'ordre des
+// 200.0.153 (site, Noctra TV), iOS 2.18.6, Android 1.9.11 : chaînes réunies dans l'ordre des
 // nombres. Le tri comparait les noms caractère par caractère : « A LA CARTE 10 » passait avant
 // « A LA CARTE 2 », « C+Live 11 » avant « C+Live 2 », « 750G » avant « 7A Limoges ».
 const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8');

@@ -217,6 +217,8 @@
     mainMutedBeforeMulti: null,
     mainPausedBeforeMulti: null,
     mainHlsSuspended: false,
+    mainShakaSuspended: false,
+    mainShakaStreamUrl: '',
     mainEmbedSrc: '',
     multiGeneration: 0,
     multiQuality: 'stable',
@@ -325,7 +327,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.151';
+  const NOCTRA_BUILD_VERSION = '200.0.153';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -5532,7 +5534,7 @@
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
   // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
-  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;
@@ -5540,7 +5542,7 @@
     frame.setAttribute('scrolling', frame.dataset.tvCompatPage === 'true' ? 'auto' : 'no');
     // Published Brigitte players reject every sandbox attribute. Keep their
     // document external: never grant this exception to a local proxy page.
-    if (['BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].includes(channel?.provider)) {
+    if (['Streamonsport', 'BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].includes(channel?.provider)) {
       try {
         const target = new URL(channel.embedUrl, window.location.href);
         if (/^https?:$/.test(target.protocol) && target.origin !== window.location.origin) {
@@ -5611,6 +5613,11 @@
     tvFrameResizeObserver = null;
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     const video = document.querySelector('#noctra-tv-video');
     if (video) {
       try { video.pause(); } catch {}
@@ -7125,6 +7132,11 @@
     try { tvVideoEventsController?.abort?.(); } catch {}
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     tvVideoEventsController = null;
     window.clearTimeout(tvWaitingStatusTimer);
     tvWaitingStatusTimer = 0;
@@ -7365,7 +7377,7 @@
       const liveWatchVipBridge = (channel.vipPlayback || channel.provider === 'LiveWatch') && /\/api\/tv\/livewatch\/(?:embed\/|vip\/[^/]+\/embed(?:$|[?#]))/.test(String(url));
       const wiTvPreparedBridge = channel.provider === 'WiTV' && /\/api\/tv\/embed\//.test(String(url));
       const wiTvWebFrame = channel.provider === 'WiTV';
-      const untrackedWebFrame = ['DaddyLive', 'BrigitteTV', 'Xtemus', 'Streamed', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
+      const untrackedWebFrame = ['DaddyLive', 'Streamonsport', 'BrigitteTV', 'Xtemus', 'Streamed', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
       const loadedLabel = channel.provider === 'OHA' && options.compatPage
         ? 'OHA · lecteur chargé · démarrage du média…'
         : wiTvPreparedBridge
@@ -7791,6 +7803,10 @@
       try { instance?.destroy?.(); } catch {}
     }
     tvSafeExtras.hls.clear();
+    for (const player of (tvSafeExtras.shaka?.values?.() || [])) {
+      try { void player?.destroy?.().catch?.(() => undefined); } catch {}
+    }
+    tvSafeExtras.shaka?.clear?.();
     document.querySelectorAll('[data-tv-safe-multi-video]').forEach(video => {
       try { video.pause(); } catch {}
       video.removeAttribute('src');
@@ -7813,12 +7829,19 @@
       frame.src = 'about:blank';
     }
     // Le lecteur principal resterait sinon comme un flux supplémentaire caché
-    // (2 cases = 3 téléchargements). On suspend uniquement le réseau HLS courant
+    // (2 cases = 3 téléchargements). On suspend uniquement le réseau HLS/Shaka courant
     // pendant le Multiview, sans détruire ni résoudre un autre serveur.
     if (tvHls && tvState.currentPlaybackType === 'stream' && !tvSafeExtras.mainHlsSuspended) {
       try {
         tvHls.stopLoad();
         tvSafeExtras.mainHlsSuspended = true;
+      } catch {}
+    }
+    if (tvShaka && tvState.currentPlaybackType === 'stream' && !tvSafeExtras.mainShakaSuspended) {
+      try {
+        tvSafeExtras.mainShakaStreamUrl = String(tvState.currentStreamUrl || '');
+        tvSafeExtras.mainShakaSuspended = true;
+        void tvShaka.unload?.().catch?.(() => undefined);
       } catch {}
     }
   }
@@ -7831,6 +7854,11 @@
       try { tvHls.startLoad(-1); } catch {}
     }
     tvSafeExtras.mainHlsSuspended = false;
+    if (tvShaka && tvSafeExtras.mainShakaSuspended && tvSafeExtras.mainShakaStreamUrl) {
+      try { void tvShaka.load?.(tvSafeExtras.mainShakaStreamUrl).catch?.(() => undefined); } catch {}
+    }
+    tvSafeExtras.mainShakaSuspended = false;
+    tvSafeExtras.mainShakaStreamUrl = '';
     if (video && tvSafeExtras.mainMutedBeforeMulti !== null) video.muted = Boolean(tvSafeExtras.mainMutedBeforeMulti);
     if (video && shouldResume) window.setTimeout(() => void video.play().catch(() => undefined), 60);
     if (frame && tvSafeExtras.mainEmbedSrc) frame.src = tvSafeExtras.mainEmbedSrc;
@@ -7944,6 +7972,9 @@
     const instance = tvSafeExtras.hls.get(key);
     try { instance?.destroy?.(); } catch {}
     tvSafeExtras.hls.delete(key);
+    const shakaPlayer = tvSafeExtras.shaka?.get?.(key);
+    try { void shakaPlayer?.destroy?.().catch?.(() => undefined); } catch {}
+    tvSafeExtras.shaka?.delete?.(key);
     const tile = [...document.querySelectorAll('[data-tv-safe-multi-tile]')].find(node => node.dataset.tvSafeMultiTile === key);
     const video = tile?.querySelector('video');
     if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
@@ -8543,6 +8574,11 @@
     try { tvVideoEventsController?.abort?.(); } catch {}
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     tvVideoEventsController = new AbortController();
     const startSignal = tvVideoEventsController.signal;
     await tvShakaCleanup;
@@ -9783,12 +9819,30 @@
         // rafraîchir, il partait avec ~7,5 s (diagnostic 200.0.122) malgré
         // rebufferingGoal. Shaka télécharge déjà pendant que la vidéo est en
         // pause : on attend 15 s de réserve (20 s d'attente au plus) avant play().
+        // 200.0.152 : dès que le 1er segment est en mémoire (>= 3 s), on ouvre
+        // segmentPrefetchLimit à 2 pour précharger le suivant pendant la pause ;
+        // si la fenêtre live du fournisseur plafonne à 1 segment (>= 5 s) sans
+        // progresser pendant 2,2 s, on démarre immédiatement au lieu de figer 20 s.
         const startupWaitStarted = performance.now();
+        let startupLastBuffered = tvBufferedAhead(video);
+        let startupLastGrowthAt = startupWaitStarted;
+        let startupPrefetchBoosted = false;
         setTvPlaybackStatus(`Préchargement du direct · ${TV_SHAKA_STARTUP_RESERVE} s…`, 'loading');
         await new Promise(resolve => {
           const check = () => {
             if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return resolve();
             if (tvBufferedAhead(video) >= TV_SHAKA_STARTUP_RESERVE || performance.now() - startupWaitStarted >= TV_SHAKA_STARTUP_WAIT_MS) return resolve();
+            const currentBuffered = tvBufferedAhead(video);
+            const now = performance.now();
+            if (currentBuffered > startupLastBuffered + 0.25) {
+              startupLastBuffered = currentBuffered;
+              startupLastGrowthAt = now;
+            }
+            if (!startupPrefetchBoosted && currentBuffered >= 3) {
+              startupPrefetchBoosted = true;
+              try { player.configure({ streaming: { segmentPrefetchLimit: 2 } }); } catch {}
+            }
+            if (currentBuffered >= 5 && now - startupLastGrowthAt >= 2_200) return resolve();
             window.setTimeout(check, 250);
           };
           check();
@@ -9980,7 +10034,7 @@
       setTvPlaybackStatus(`${provider} · aucun lecteur propre disponible · secours manuels uniquement`, 'error');
       return;
     }
-    if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1) {
+    if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1 && !options[initialOptionIndex]?.verified) {
       setTvPlaybackStatus('Vérification rapide des serveurs… · choix manuel disponible', 'loading');
       initialOptionIndex = await window.NoctraServerChoice.choose({ ...channel, sourceId: tvActiveSourceId() }, options, initialOptionIndex, {
         signal: tvResolverController.signal,
@@ -13480,7 +13534,10 @@
 
     const tvExternal = event.target.closest('[data-tv-open-external]');
     if (tvExternal?.dataset.tvOpenExternal) {
-      if (tvExternal.tagName !== 'A') window.open(tvExternal.dataset.tvOpenExternal, '_blank', 'noopener,noreferrer');
+      const targetUrl = String(tvExternal.dataset.tvOpenExternal || '').trim();
+      if (tvExternal.tagName !== 'A' && (/^https?:\/\//i.test(targetUrl) || targetUrl.startsWith('/'))) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      }
       return;
     }
 

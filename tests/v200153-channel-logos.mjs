@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-// 200.0.151 : logos des chaînes. Second référentiel (tv-logo/tv-logos, PNG), famille des
+// 200.0.153 : logos des chaînes. Second référentiel (tv-logo/tv-logos, PNG), famille des
 // chaînes numérotées (« C+Live 11 », « AMAZON PRIME 3 ») et logo de secours essayé par le
 // serveur, pour le site comme pour les applis (une seule adresse de logo par chaîne).
 const server = (await readFile(new URL('../server.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
@@ -11,7 +11,7 @@ const code = [
   between('function normalizedIdentifier(', '\n}\n') + '\n}\n',
   between('function tvLogoIdentityKeys(', 'function tvLogoChannelIdKey('),
   between('function tvLogoChannelIdKey(', 'function shareTvLogosAcrossDuplicateNames('),
-  between('// 200.0.151 : second référentiel de logos', 'async function iptvOrgProgramme(')
+  between('// 200.0.153 : second référentiel de logos', 'async function iptvOrgProgramme(')
 ].join('\n');
 const R = 'https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/';
 const paths = ['countries/france/canal-plus-fr.png', 'countries/france/canal-plus-sport-fr.png', 'countries/france/hd/canal-plus-sport-hd-fr.png',
@@ -62,4 +62,4 @@ assert.match(server, /logo: tvPublicImageUrl\(item\.logo, item\.secondaryLogo \?
 assert.match(server, /\.\.\.\(alternate && alternate !== normalized \? \{ a: alternate \} : \{\}\)/);
 assert.match(server, /if \(payload\?\.a\) alternate = safeTvRemoteUrl\(String\(payload\.a\)\)\.toString\(\)/);
 assert.match(server, /if \(reference\.alternate\) \{[\s\S]*?fetchTvLogoAsset\(\{ \.\.\.reference, headers: \{ \.\.\.reference\.headers, referer: `\$\{origin\}\/` \} \}, reference\.alternate\)/);
-console.log('200.0.151 logos des chaînes (tv-logos, familles, logo de secours) : OK');
+console.log('200.0.153 logos des chaînes (tv-logos, familles, logo de secours) : OK');

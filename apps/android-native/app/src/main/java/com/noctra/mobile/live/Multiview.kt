@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -782,7 +783,8 @@ fun MultiviewCastSheet(channels: List<LiveChannel>, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { ChromecastBrowser.start(); RemotePlayback.refresh() }
+    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { ChromecastBrowser.stop() } }
+    LaunchedEffect(Unit) { RemotePlayback.refresh() }
     fun startCast(message: String, action: suspend () -> Unit) {
         busy = message
         error = null

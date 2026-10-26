@@ -1,4 +1,4 @@
-# Version actuelle : 200.0.151 — logos des chaînes
+# Version actuelle : 200.0.153 — logos et ordre des chaînes
 
 « Continuer à regarder » montrait 12 titres au plus, partout. Le serveur renvoie maintenant tous les titres commencés (60 au plus). Le carrousel en garde 10 à 12, et la rangée « Autres titres à reprendre » affiche les autres : Noctra TV, iOS 2.17.9, Android 1.9.4 et site web. Validation : `npm run test:v200150`.
 

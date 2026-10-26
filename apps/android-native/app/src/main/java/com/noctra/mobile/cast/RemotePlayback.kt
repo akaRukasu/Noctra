@@ -204,7 +204,7 @@ fun LiveCastSheet(channel: LiveChannel, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var remote by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { } }
+    DisposableEffect(Unit) { ChromecastBrowser.start(); onDispose { ChromecastBrowser.stop() } }
     LaunchedEffect(Unit) { RemotePlayback.refresh() }
     NoctraSheet(onDismiss) {
         if (remote && RemotePlayback.active != null) RemotePanel()

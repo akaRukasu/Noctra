@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.151",
+  "version": "200.0.153",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -103,7 +103,9 @@
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
     "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:channel-logos": "node tests/native-channel-logos.mjs",
-    "test:v200151": "node tests/v200151-channel-logos.mjs && node tests/channel-natural-order.mjs && node tests/native-channel-logos.mjs && npm run test:v200150",
+    "test:v200153": "node tests/v200153-channel-logos.mjs && node tests/channel-natural-order.mjs && node tests/native-channel-logos.mjs && npm run test:v200152",
+    "test:v200152": "node tests/v200151-audit-optimizations.mjs && npm run test:v200150",
+    "test:v200151": "node tests/v200151-audit-optimizations.mjs && npm run test:v200150",
     "test:v200150": "node tests/v200150-resume-all.mjs && npm run test:v200148",
     "test:v200148": "node tests/orsay-samsung-2014.mjs && npm run test:v200147",
     "test:v200147": "node tests/tv-multiview-site-players.mjs && npm run test:v200146",
