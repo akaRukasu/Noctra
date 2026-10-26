@@ -35,5 +35,5 @@ assert.match(activity, /settings\.setSafeBrowsingEnabled\(false\)/);
 assert.match(activity, /option\.page = source\.optString\("page", ""\);/);
 assert.match(activity, /getHost\(\)\.toLowerCase\(\)\.contains\("livewatch\."\)/, 'jamais la page publique LiveWatch');
 assert.match(await read('apps/scripts/build-androidtv.mjs'), /const noctraRevision = 71;/);
-assert.match(await read('apps/androidtv/web/tv-native.js'), /var VERSION = '1\.1\.51';/);
+assert.match(await read('apps/androidtv/web/tv-native.js'), /var VERSION = '1\.1\.(5[1-9]|[6-9]\d)';/, 'interface 1.1.51 ou plus récente');
 console.log('Noctra TV 1.1.51 / noctra.71 : multiview avec les lecteurs des sites (flux repéré, lecture native) : OK');
