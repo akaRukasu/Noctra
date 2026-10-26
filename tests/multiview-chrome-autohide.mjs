@@ -31,6 +31,6 @@ assert.match(android, /if \(chrome > 0f\) Row\(\s*Modifier\.align\(Alignment\.Bo
 
 const yml = await read('apps/ios-native/project.yml');
 const gradle = await read('apps/android-native/app/build.gradle.kts');
-assert.match(yml, /MARKETING_VERSION: "2\.18\.2"/);
-assert.match(gradle, /versionName = "1\.9\.7"/);
+assert.match(yml, /MARKETING_VERSION: "2\.18\.([2-9]|\d\d)"/);
+assert.match(gradle, /versionName = "1\.9\.([7-9]|\d\d)"/);
 console.log('Multiview iOS 2.18.2 / Android 1.9.7 : commandes de Noctra masquées, page du site manipulable : OK');

@@ -1142,26 +1142,36 @@ struct LiveWebView: UIViewRepresentable {
 
     /// Vignette du multiview : la vidéo qui joue (dans la page ou un de ses cadres) remplit la
     /// vignette ; publicités, bulles, boutons et logos du site sont masqués. Tant qu'aucune
-    /// vidéo ne joue, la page reste entière (bouton Lecture du site). __noctraFocus(false) :
-    /// page entière (menu de la vignette).
+    /// vidéo ne joue, la page reste entière (bouton Lecture du site). La vidéo passe dans la couche
+    /// supérieure du navigateur, sur fond noir : aucune fenêtre du site, même forcée, ne la recouvre.
+    /// Vidéos des composants (shadow DOM) comprises. __noctraFocus(false) : page entière (menu de la vignette).
     static let focusScript = """
     (function(){if(window.__noctraFocus)return;
-    var on=true,main=null,styled=false,seen=0,child=null,childAt=0;
+    var on=true,main=null,saved=null,pop=false,path=[],roots=[],seen=0,child=null,childAt=0;
     function R(){return document.documentElement}
     var CSS='html.noctra-focus,html.noctra-focus body{background:#000!important;overflow:hidden!important}'
     +'html.noctra-focus body *{visibility:hidden!important}'
     +'html.noctra-focus .noctra-path{transform:none!important;-webkit-transform:none!important;filter:none!important;perspective:none!important;contain:none!important;will-change:auto!important;clip-path:none!important}'
-    +'html.noctra-focus .noctra-main{visibility:visible!important;position:fixed!important;left:0!important;top:0!important;right:auto!important;bottom:auto!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;transform:none!important;-webkit-transform:none!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important;opacity:1!important}';
-    function style(){if(styled)return;styled=true;var s=document.createElement('style');s.textContent=CSS;(document.head||R()).appendChild(s)}
-    function clear(){var n=document.querySelectorAll('.noctra-main,.noctra-path');for(var i=0;i<n.length;i++){n[i].classList.remove('noctra-main');n[i].classList.remove('noctra-path')}main=null;if(R())R().classList.remove('noctra-focus')}
+    +'html.noctra-focus .noctra-main{visibility:visible!important;position:fixed!important;left:0!important;top:0!important;right:auto!important;bottom:auto!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;transform:none!important;-webkit-transform:none!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important;opacity:1!important}'
+    +'.noctra-main::backdrop{background:#000!important}';
+    var LOOK=[['visibility','visible'],['display','block'],['position','fixed'],['left','0'],['top','0'],['right','auto'],['bottom','auto'],['width','100vw'],['height','100vh'],['max-width','none'],['max-height','none'],['min-width','0'],['min-height','0'],['margin','0'],['padding','0'],['border','0'],['transform','none'],['filter','none'],['clip-path','none'],['z-index','2147483647'],['background','#000'],['object-fit','contain'],['opacity','1']];
+    function style(root){if(roots.indexOf(root)>=0)return;roots.push(root);var s=document.createElement('style');if(root===document){s.textContent=CSS;(document.head||R()).appendChild(s)}else{s.textContent='.noctra-main::backdrop{background:#000!important}';root.appendChild(s)}}
+    function up(n){return n.parentElement||(n.parentNode&&n.parentNode.host)||null}
+    function show(el){for(var i=0;i<LOOK.length;i++)el.style.setProperty(LOOK[i][0],LOOK[i][1],'important')}
+    function lift(el){if(!el.showPopover)return;try{if(!el.hasAttribute('popover')){el.setAttribute('popover','manual');pop=true}if(!el.matches(':popover-open'))el.showPopover()}catch(e){if(pop){el.removeAttribute('popover');pop=false}}}
+    function clear(){if(main){try{if(main.matches(':popover-open'))main.hidePopover()}catch(e){}if(pop)main.removeAttribute('popover');if(saved===null)main.removeAttribute('style');else main.setAttribute('style',saved);main.classList.remove('noctra-main')}
+    for(var i=0;i<path.length;i++)path[i].classList.remove('noctra-path');path=[];main=null;pop=false;if(R())R().classList.remove('noctra-focus')}
     function report(){if(window.parent!==window){try{parent.postMessage({type:'noctra-focus-here'},'*')}catch(e){}}}
-    function set(el){if(main!==el){clear();style();main=el;el.classList.add('noctra-main');for(var p=el.parentElement;p&&p!==R();p=p.parentElement)p.classList.add('noctra-path');if(el.tagName==='VIDEO'){try{el.controls=false}catch(e){}}}R().classList.add('noctra-focus');seen=Date.now();report()}
-    function video(){var best=null,area=0,list=document.getElementsByTagName('video');for(var i=0;i<list.length;i++){var v=list[i];if(v.paused||v.ended||v.readyState<2)continue;var r=v.getBoundingClientRect(),a=r.width*r.height+(v.videoWidth||0)*(v.videoHeight||0);if((r.width>=80||v.videoWidth>=320)&&a>area){area=a;best=v}}return best}
+    function set(el){if(main!==el){clear();style(document);var r=el.getRootNode&&el.getRootNode();if(r&&r!==document&&r.host)style(r);main=el;saved=el.getAttribute('style');el.classList.add('noctra-main');for(var p=up(el);p&&p!==R();p=up(p)){p.classList.add('noctra-path');path.push(p)}if(el.tagName==='VIDEO'){try{el.controls=false}catch(e){}}}
+    show(el);lift(el);R().classList.add('noctra-focus');seen=Date.now();report()}
+    function find(root,tag,out,deep,d){var l=root.querySelectorAll(tag),i;for(i=0;i<l.length;i++)out.push(l[i]);if(!deep||d>3)return out;var a=root.querySelectorAll('*');for(i=0;i<a.length;i++)if(a[i].shadowRoot)find(a[i].shadowRoot,tag,out,deep,d+1);return out}
+    function pick(list){var best=null,area=0;for(var i=0;i<list.length;i++){var v=list[i];if(v.paused||v.ended||v.readyState<2)continue;var r=v.getBoundingClientRect(),a=r.width*r.height+(v.videoWidth||0)*(v.videoHeight||0);if(v===main)a+=1e9;if((r.width>=80||v.videoWidth>=320||v===main)&&a>area){area=a;best=v}}return best}
+    function video(){return pick(find(document,'video',[],false,0))||pick(find(document,'video',[],true,0))}
     function check(){if(!R())return;if(!on){if(main)clear();return}var v=video();if(v){set(v);return}
-    if(child&&Date.now()-childAt<5000&&R().contains(child)){set(child);return}
+    if(child&&Date.now()-childAt<5000&&child.isConnected){set(child);return}
     if(main&&Date.now()-seen>6000)clear()}
     addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;
-    if(d.type==='noctra-focus-here'){var f=document.getElementsByTagName('iframe');for(var i=0;i<f.length;i++){if(f[i].contentWindow===e.source){child=f[i];childAt=Date.now();check();break}}}
+    if(d.type==='noctra-focus-here'){var f=find(document,'iframe',[],true,0);for(var i=0;i<f.length;i++){if(f[i].contentWindow===e.source){child=f[i];childAt=Date.now();check();break}}}
     else if(d.type==='noctra-focus')window.__noctraFocus(!!d.on)},true);
     window.__noctraFocus=function(value){on=value;for(var i=0;i<frames.length;i++){try{frames[i].postMessage({type:'noctra-focus',on:value},'*')}catch(e){}}check()};
     document.addEventListener('playing',function(){setTimeout(check,60)},true);
