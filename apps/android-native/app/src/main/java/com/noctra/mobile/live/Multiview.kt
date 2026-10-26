@@ -346,7 +346,7 @@ class MultiviewTile(val channel: LiveChannel) {
     }
 
     /** Vidéo seule ou page entière du site (tous ses cadres). */
-    fun setFullPage(value: Boolean) {
+    fun showFullPage(value: Boolean) {
         fullPage = value
         webView?.evaluateJavascript("window.__noctraFocus&&window.__noctraFocus(${!value})", null)
     }
@@ -643,7 +643,7 @@ fun MultiviewScreen() {
                         SettingRow("Mettre en avant avec le son", onClick = { MultiviewStore.solo(tile); menu = null })
                         SettingRow(if (MultiviewStore.featured == tile.id) "Revenir à la grille" else "Mettre en avant", onClick = { MultiviewStore.feature(tile); menu = null })
                     }
-                    if (tile.web != null) SettingRow(if (tile.fullPage) "Vidéo seule (masquer le site)" else "Afficher toute la page du site", onClick = { tile.setFullPage(!tile.fullPage); menu = null })
+                    if (tile.web != null) SettingRow(if (tile.fullPage) "Vidéo seule (masquer le site)" else "Afficher toute la page du site", onClick = { tile.showFullPage(!tile.fullPage); menu = null })
                     if (tile.count > 1) SettingRow("Serveur suivant (${tile.count})", onClick = { tile.next(); menu = null })
                     if (tile.status?.contains("réessayer") == true) SettingRow("Réessayer", onClick = { tile.retry(); menu = null })
                     SettingRow("Retirer cette chaîne", tint = Theme.orange, onClick = { MultiviewStore.remove(tile); menu = null })
