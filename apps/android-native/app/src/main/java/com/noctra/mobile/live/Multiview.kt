@@ -5,6 +5,7 @@ import android.net.Uri
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -597,12 +598,23 @@ fun MultiviewScreen() {
     var menu by remember { mutableStateOf<MultiviewTile?>(null) }
     var adding by remember { mutableStateOf(false) }
     var casting by remember { mutableStateOf(false) }
+    // Commandes de Noctra (barre, noms, « ⋯ ») : masquées après 4 s, un toucher les ramène.
+    var chrome by remember { mutableStateOf(true) }
+    var poked by remember { mutableIntStateOf(0) }
+    val poke: () -> Unit = { chrome = true; poked++ }
+    val sheet = menu != null || adding || casting
+    LaunchedEffect(poked, sheet) {
+        chrome = true
+        if (!sheet) { delay(4_000); chrome = false }
+    }
+    val chromeAlpha by animateFloatAsState(if (chrome) 1f else 0f, label = "chrome")
     ImmersiveEffect()
     // Retour : quitte d'abord le plein écran d'une vignette, puis le multiview.
     BackHandler { if (MultiviewStore.zoomed != null) MultiviewStore.grid() else MultiviewStore.close() }
     // Écran plein : les touches ne passent pas aux onglets en dessous.
-    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().padding(top = 52.dp)) {
+    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { poke() } }) {
+        // Les vignettes prennent tout l'écran : la barre passe au-dessus et s'efface.
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val frames = multiviewLayout(maxWidth, maxHeight)
             MultiviewStore.tiles.forEachIndexed { index, tile ->
                 val frame = frames.getOrNull(index) ?: return@forEachIndexed
@@ -610,15 +622,20 @@ fun MultiviewScreen() {
                     // Vignette masquée (une autre en plein écran) : elle continue sans prendre de place.
                     val hidden = frame.width == 0.dp
                     val base = Modifier.offset(frame.x, frame.y).size(if (hidden) 1.dp else frame.width, if (hidden) 1.dp else frame.height).alpha(if (hidden) 0f else 1f)
-                    // Lecteur de site : les touches vont à la page (bouton Lecture) ; menu par le bouton « ⋯ ».
-                    MultiviewTileView(tile, if (tile.web != null) base else base.pointerInput(tile.id, hidden) { if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { menu = tile }) },
-                        onMenu = { menu = tile })
+                    // Lecteur de site : les touches vont à la page (bouton Lecture) tant que la vidéo n'est pas lancée ;
+                    // en « vidéo seule », un toucher ramène les commandes comme sur les autres vignettes.
+                    val touch = tile.web == null || (tile.playing && !tile.fullPage)
+                    MultiviewTileView(tile, base, chrome = chromeAlpha, onMenu = { if (chrome) { menu = tile } else poke() },
+                        gestures = if (!touch) null else Modifier.pointerInput(tile.id, hidden) {
+                            if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { if (chrome) { menu = tile } else poke() })
+                        })
                 }
             }
         }
-        Row(
+        if (chromeAlpha > 0f) Row(
             Modifier.align(Alignment.TopCenter).safeDrawingPadding().padding(horizontal = 10.dp, vertical = 4.dp).fillMaxWidth()
-                .glass(CircleShape, Color(0x99000000)).padding(horizontal = 6.dp),
+                .alpha(chromeAlpha).glass(CircleShape, Color(0x99000000)).padding(horizontal = 6.dp)
+                .pointerInput(Unit) { detectTapGestures { poke() } },
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { MultiviewStore.close() }) { Icon(Icons.Filled.Close, "Fermer le multiview", tint = Color.White) }
@@ -657,7 +674,7 @@ fun MultiviewScreen() {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, onMenu: () -> Unit = {}) {
+private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: Float = 1f, onMenu: () -> Unit = {}, gestures: Modifier? = null) {
     val listening = MultiviewStore.audio == tile.id
     val shape = RoundedCornerShape(10.dp)
     Box(
@@ -686,9 +703,13 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, onMenu: (
             update = { view -> if (view.player !== tile.player) view.player = tile.player },
             modifier = Modifier.fillMaxSize()
         )
-        if (web != null) {
+        // Surface transparente au-dessus de la vidéo : toucher = commandes, double toucher = plein écran.
+        if (gestures != null) Box(Modifier.fillMaxSize().then(gestures))
+        // Page du site manipulable (avant la lecture, ou page entière) : le « ⋯ » reste, c'est le seul accès au menu.
+        val menuAlpha = if (gestures == null) 1f else chrome
+        if (web != null && menuAlpha > 0f) {
             Box(
-                Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onMenu)
+                Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).alpha(menuAlpha).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onMenu)
                     .semantics { contentDescription = "Options de ${tile.channel.name}" },
                 contentAlignment = Alignment.Center
             ) { Text("⋯", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
@@ -699,8 +720,8 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, onMenu: (
                 Text(status, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             }
         }
-        Row(
-            Modifier.align(Alignment.BottomStart).padding(6.dp).background(Color(0x99000000), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
+        if (chrome > 0f) Row(
+            Modifier.align(Alignment.BottomStart).padding(6.dp).alpha(chrome).background(Color(0x99000000), CircleShape).padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             if (listening) Icon(Icons.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(12.dp))

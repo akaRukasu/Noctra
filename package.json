@@ -101,6 +101,7 @@
     "test:v200124": "node tests/v200124-shaka-start-behind-live.mjs && npm run test:v200123",
     "test:v200125": "node tests/v200125-shaka-window-link.mjs && npm run test:v200124",
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
+    "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:v200150": "node tests/v200150-resume-all.mjs && npm run test:v200148",
     "test:v200148": "node tests/orsay-samsung-2014.mjs && npm run test:v200147",
     "test:v200147": "node tests/tv-multiview-site-players.mjs && npm run test:v200146",

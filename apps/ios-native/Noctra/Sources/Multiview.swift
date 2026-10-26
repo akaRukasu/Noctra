@@ -283,6 +283,8 @@ final class MultiviewTile: Identifiable {
     @ObservationIgnored private(set) var muted = true
     /// Page du site affichée en entier (sinon : vidéo seule, le reste du site masqué).
     private(set) var fullPage = false
+    /// Appuis pour Noctra (menu, plein écran) : lecteur d'Apple, ou site lancé en « vidéo seule ».
+    var touchable: Bool { web == nil || (playing && !fullPage) }
     @ObservationIgnored private var servers: [LiveServer] = []
     @ObservationIgnored private var index = -1
     @ObservationIgnored private var generation = 0
@@ -525,21 +527,39 @@ struct MultiviewView: View {
     @State private var menuTile: MultiviewTile?
     @State private var adding = false
     @State private var casting = false
+    /// Commandes de Noctra (barre, noms, « … ») : masquées après 4 s, un appui les ramène.
+    @State private var chrome = true
+    @State private var poked = 0
+
+    private var sheetOpen: Bool { menuTile != nil || adding || casting }
+
+    private func poke() {
+        withAnimation(.easeOut(duration: 0.2)) { chrome = true }
+        poked += 1
+    }
+
+    /// Appui sur une vignette : ramène d'abord les commandes, puis ouvre le menu.
+    private func tap(_ tile: MultiviewTile) {
+        if chrome { menuTile = tile } else { poke() }
+    }
 
     var body: some View {
         GeometryReader { geometry in
             let frames = layout(in: geometry.size)
             ZStack(alignment: .topLeading) {
                 Color.black.ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { poke() }
                 ForEach(Array(store.tiles.enumerated()), id: \.element.id) { index, tile in
                     if index < frames.count {
-                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id, menu: { menuTile = tile })
+                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id, chrome: chrome, menu: { tap(tile) })
                             .frame(width: max(1, frames[index].width), height: max(1, frames[index].height))
                             .offset(x: frames[index].minX, y: frames[index].minY)
                             .opacity(frames[index].width > 0 ? 1 : 0)
                             .allowsHitTesting(frames[index].width > 0)
-                            // Lecteur de site : les touches vont à la page (bouton Lecture) ; menu par le bouton « … ».
-                            .modifier(TileGestures(enabled: tile.web == nil, zoom: { store.zoom(tile) }, menu: { menuTile = tile }))
+                            // Lecteur de site : les touches vont à la page (bouton Lecture) tant que la vidéo n'est pas lancée ;
+                            // en « vidéo seule », un appui ramène les commandes comme sur les autres vignettes.
+                            .modifier(TileGestures(enabled: tile.touchable, zoom: { store.zoom(tile) }, menu: { tap(tile) }))
                     }
                 }
             }
@@ -547,7 +567,20 @@ struct MultiviewView: View {
             .animation(Theme.spring, value: store.zoomed)
             .animation(Theme.spring, value: store.tiles.count)
         }
-        .safeAreaInset(edge: .top) { bar }
+        // Les vignettes prennent tout l'écran : la barre passe au-dessus et s'efface.
+        .overlay(alignment: .top) {
+            bar
+                .simultaneousGesture(TapGesture().onEnded { poke() })
+                .padding(.top, 4)
+                .opacity(chrome ? 1 : 0)
+                .allowsHitTesting(chrome)
+        }
+        .task(id: "\(poked)-\(sheetOpen)") {
+            if sheetOpen { chrome = true; return }
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, !sheetOpen else { return }
+            withAnimation(.easeInOut(duration: 0.4)) { chrome = false }
+        }
         .background(Color.black.ignoresSafeArea())
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
@@ -678,6 +711,8 @@ struct MultiviewTileView: View {
     let tile: MultiviewTile
     let listening: Bool
     let featured: Bool
+    /// Commandes visibles (nom de la chaîne, bouton « … ») ; masquées pendant le visionnage.
+    var chrome = true
     /// Vignette d'un lecteur de site : menu par le bouton (les touches vont à la page).
     var menu: (() -> Void)? = nil
 
@@ -690,6 +725,10 @@ struct MultiviewTileView: View {
             } else {
                 MultiviewLayer(player: tile.player)
             }
+            // Surface transparente au-dessus de la vidéo d'un site : les appuis vont à Noctra, pas à la page.
+            if tile.web != nil, tile.touchable {
+                Color.clear.contentShape(Rectangle())
+            }
             if let status = tile.status {
                 VStack(spacing: 6) {
                     if !status.contains("indisponible") && !status.contains("Aucun") { ProgressView().tint(.white) }
@@ -701,7 +740,8 @@ struct MultiviewTileView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if let menu, tile.web != nil {
+            // Page du site manipulable (avant la lecture, ou page entière) : le « … » reste, c'est le seul accès au menu.
+            if let menu, tile.web != nil, chrome || !tile.touchable {
                 Button(action: menu) {
                     Image(systemName: "ellipsis").font(.caption.weight(.bold)).frame(width: 30, height: 30)
                         .background(.black.opacity(0.6), in: Circle())
@@ -721,6 +761,7 @@ struct MultiviewTileView: View {
             .padding(.vertical, 4)
             .background(.black.opacity(0.6), in: Capsule())
             .padding(6)
+            .opacity(chrome ? 1 : 0)
             .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
