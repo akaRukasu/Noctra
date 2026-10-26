@@ -1,6 +1,7 @@
 import AVFoundation
 import Observation
 import SwiftUI
+import UIKit.UIGestureRecognizerSubclass
 import WebKit
 
 /// Multiview : plusieurs chaînes de n'importe quelle source à l'écran, comme sur la version web
@@ -283,8 +284,6 @@ final class MultiviewTile: Identifiable {
     @ObservationIgnored private(set) var muted = true
     /// Page du site affichée en entier (sinon : vidéo seule, le reste du site masqué).
     private(set) var fullPage = false
-    /// Appuis pour Noctra (menu, plein écran) : lecteur d'Apple, ou site lancé en « vidéo seule ».
-    var touchable: Bool { web == nil || (playing && !fullPage) }
     @ObservationIgnored private var servers: [LiveServer] = []
     @ObservationIgnored private var index = -1
     @ObservationIgnored private var generation = 0
@@ -552,14 +551,14 @@ struct MultiviewView: View {
                     .onTapGesture { poke() }
                 ForEach(Array(store.tiles.enumerated()), id: \.element.id) { index, tile in
                     if index < frames.count {
-                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id, chrome: chrome, menu: { tap(tile) })
+                        MultiviewTileView(tile: tile, listening: store.audio == tile.id, featured: store.featured == tile.id, chrome: chrome, menu: { tap(tile) }, touched: { poke() })
                             .frame(width: max(1, frames[index].width), height: max(1, frames[index].height))
                             .offset(x: frames[index].minX, y: frames[index].minY)
                             .opacity(frames[index].width > 0 ? 1 : 0)
                             .allowsHitTesting(frames[index].width > 0)
-                            // Lecteur de site : les touches vont à la page (bouton Lecture) tant que la vidéo n'est pas lancée ;
-                            // en « vidéo seule », un appui ramène les commandes comme sur les autres vignettes.
-                            .modifier(TileGestures(enabled: tile.touchable, zoom: { store.zoom(tile) }, menu: { tap(tile) }))
+                            // Lecteur de site : les touches vont toujours à la page (lecture, son…) et ramènent les commandes ;
+                            // menu par le bouton « … ».
+                            .modifier(TileGestures(enabled: tile.web == nil, zoom: { store.zoom(tile) }, menu: { tap(tile) }))
                     }
                 }
             }
@@ -715,19 +714,20 @@ struct MultiviewTileView: View {
     var chrome = true
     /// Vignette d'un lecteur de site : menu par le bouton (les touches vont à la page).
     var menu: (() -> Void)? = nil
+    /// Toucher sur la page du site (laissé à la page) : ramène les commandes.
+    var touched: (() -> Void)? = nil
 
     var body: some View {
         ZStack {
             if let web = tile.web {
                 LiveWebView(request: web, session: session, onEvent: { [weak tile] state, _, _ in tile?.webEvent(web.id, state: state) },
-                            onCreate: { [weak tile] view in tile?.webView = view }, muted: tile.muted)
+                            onCreate: { [weak tile, touched = touched] view in
+                                tile?.webView = view
+                                if let touched { view.addGestureRecognizer(TouchSpy(touched)) }
+                            }, muted: tile.muted)
                     .id(web.id)
             } else {
                 MultiviewLayer(player: tile.player)
-            }
-            // Surface transparente au-dessus de la vidéo d'un site : les appuis vont à Noctra, pas à la page.
-            if tile.web != nil, tile.touchable {
-                Color.clear.contentShape(Rectangle())
             }
             if let status = tile.status {
                 VStack(spacing: 6) {
@@ -740,8 +740,7 @@ struct MultiviewTileView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            // Page du site manipulable (avant la lecture, ou page entière) : le « … » reste, c'est le seul accès au menu.
-            if let menu, tile.web != nil, chrome || !tile.touchable {
+            if let menu, tile.web != nil, chrome {
                 Button(action: menu) {
                     Image(systemName: "ellipsis").font(.caption.weight(.bold)).frame(width: 30, height: 30)
                         .background(.black.opacity(0.6), in: Circle())
@@ -771,6 +770,26 @@ struct MultiviewTileView: View {
         .accessibilityLabel(tile.channel.name + (listening ? ", écoutée" : "") + (featured ? ", mise en avant" : ""))
         .accessibilityAddTraits(.isButton)
     }
+}
+
+/// Observe les touchers sur la page d'un site sans rien lui retirer (la page reste manipulable).
+private final class TouchSpy: UIGestureRecognizer {
+    private let action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        action()
+        state = .failed
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 }
 
 /// Image d'une vignette (lecteur d'Apple, sans image dans l'image).

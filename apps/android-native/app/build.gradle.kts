@@ -17,8 +17,8 @@ android {
         applicationId = "com.noctra.mobile"
         minSdk = 23
         targetSdk = 35
-        versionCode = 29
-        versionName = "1.9.6"
+        versionCode = 30
+        versionName = "1.9.7"
         vectorDrawables { useSupportLibrary = true }
     }
 

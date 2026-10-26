@@ -9,6 +9,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -622,11 +625,10 @@ fun MultiviewScreen() {
                     // Vignette masquée (une autre en plein écran) : elle continue sans prendre de place.
                     val hidden = frame.width == 0.dp
                     val base = Modifier.offset(frame.x, frame.y).size(if (hidden) 1.dp else frame.width, if (hidden) 1.dp else frame.height).alpha(if (hidden) 0f else 1f)
-                    // Lecteur de site : les touches vont à la page (bouton Lecture) tant que la vidéo n'est pas lancée ;
-                    // en « vidéo seule », un toucher ramène les commandes comme sur les autres vignettes.
-                    val touch = tile.web == null || (tile.playing && !tile.fullPage)
-                    MultiviewTileView(tile, base, chrome = chromeAlpha, onMenu = { if (chrome) { menu = tile } else poke() },
-                        gestures = if (!touch) null else Modifier.pointerInput(tile.id, hidden) {
+                    // Lecteur de site : les touches vont toujours à la page (lecture, son…) et ramènent les commandes ;
+                    // menu par le bouton « ⋯ ».
+                    MultiviewTileView(tile, base, chrome = chromeAlpha, onMenu = { if (chrome) { menu = tile } else poke() }, onTouch = poke,
+                        gestures = if (tile.web != null) null else Modifier.pointerInput(tile.id, hidden) {
                             if (!hidden) detectTapGestures(onDoubleTap = { MultiviewStore.zoom(tile) }, onTap = { if (chrome) { menu = tile } else poke() })
                         })
                 }
@@ -674,7 +676,7 @@ fun MultiviewScreen() {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: Float = 1f, onMenu: () -> Unit = {}, gestures: Modifier? = null) {
+private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: Float = 1f, onMenu: () -> Unit = {}, onTouch: () -> Unit = {}, gestures: Modifier? = null) {
     val listening = MultiviewStore.audio == tile.id
     val shape = RoundedCornerShape(10.dp)
     Box(
@@ -685,7 +687,10 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: F
         val web = tile.web
         if (web != null) {
             androidx.compose.runtime.key(web.id) {
-                LiveWebView(web, Modifier.fillMaxSize(), onEvent = { state, _, _ -> tile.webEvent(web.id, state) }, onCreate = { tile.webView = it }, muted = tile.muted)
+                // Touchers laissés à la page (rien n'est consommé) : ils ramènent seulement les commandes.
+                LiveWebView(web, Modifier.fillMaxSize().pointerInput(Unit) {
+                    awaitEachGesture { awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial); onTouch() }
+                }, onEvent = { state, _, _ -> tile.webEvent(web.id, state) }, onCreate = { tile.webView = it }, muted = tile.muted)
             }
         } else AndroidView(
             factory = { context ->
@@ -703,13 +708,11 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: F
             update = { view -> if (view.player !== tile.player) view.player = tile.player },
             modifier = Modifier.fillMaxSize()
         )
-        // Surface transparente au-dessus de la vidéo : toucher = commandes, double toucher = plein écran.
+        // Lecteur de Noctra : toucher = commandes puis menu, double toucher = plein écran.
         if (gestures != null) Box(Modifier.fillMaxSize().then(gestures))
-        // Page du site manipulable (avant la lecture, ou page entière) : le « ⋯ » reste, c'est le seul accès au menu.
-        val menuAlpha = if (gestures == null) 1f else chrome
-        if (web != null && menuAlpha > 0f) {
+        if (web != null && chrome > 0f) {
             Box(
-                Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).alpha(menuAlpha).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onMenu)
+                Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).alpha(chrome).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onMenu)
                     .semantics { contentDescription = "Options de ${tile.channel.name}" },
                 contentAlignment = Alignment.Center
             ) { Text("⋯", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
