@@ -8,7 +8,10 @@ struct RemoteImage: View {
     let url: URL?
     var contentMode: ContentMode = .fill
     var alignment: Alignment = .center
+    /// Texte affiché si l'image ne peut pas l'être (logo absent, SVG) : initiales d'une chaîne.
+    var fallback: String? = nil
     @State private var loaded: (url: URL, image: UIImage)?
+    @State private var failed: URL?
 
     private var image: UIImage? {
         guard let url else { return nil }
@@ -24,6 +27,13 @@ struct RemoteImage: View {
                         .resizable()
                         .aspectRatio(contentMode: contentMode)
                         .transition(.opacity)
+                } else if let fallback, let url, failed == url || ImagePipeline.shared.failed(url) {
+                    Text(fallback)
+                        .font(.title2.weight(.heavy))
+                        .foregroundStyle(Theme.teal)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if contentMode == .fill {
                     Rectangle().fill(Theme.surface)
                 }
@@ -37,7 +47,7 @@ struct RemoteImage: View {
                     if loaded?.url != url { loaded = (url, hit) }
                     return
                 }
-                guard let image = await ImagePipeline.shared.image(for: url) else { return }
+                guard let image = await ImagePipeline.shared.image(for: url) else { failed = url; return }
                 withAnimation(.easeOut(duration: 0.22)) { loaded = (url, image) }
             }
     }

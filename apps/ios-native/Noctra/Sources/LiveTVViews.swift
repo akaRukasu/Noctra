@@ -767,7 +767,8 @@ struct ChannelGrid: View {
                         ZStack(alignment: .topTrailing) {
                             ZStack {
                                 if let logo = channel.logo, let url = session.noctraURL(logo) {
-                                    RemoteImage(url: url, contentMode: .fit).padding(14)
+                                    // Logo illisible ici (remplacement SVG du serveur) : initiales, comme sans logo.
+                                    RemoteImage(url: url, contentMode: .fit, fallback: String(channel.name.prefix(2)).uppercased()).padding(14)
                                 } else {
                                     Text(String(channel.name.prefix(2)).uppercased())
                                         .font(.title2.weight(.heavy))

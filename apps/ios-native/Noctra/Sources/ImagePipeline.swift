@@ -10,6 +10,8 @@ final class ImagePipeline: @unchecked Sendable {
     private let memory = NSCache<NSURL, UIImage>()
     private let lock = NSLock()
     private var running: [URL: Task<UIImage?, Never>] = [:]
+    /// Images reçues mais illisibles ici (SVG, format inconnu) : pas de nouvel essai à chaque défilement.
+    private var unreadable: Set<URL> = []
     private let session: URLSession
 
     private init() {
@@ -29,12 +31,17 @@ final class ImagePipeline: @unchecked Sendable {
         memory.object(forKey: url as NSURL)
     }
 
+    /// Image déjà reçue sans pouvoir être affichée (ex. logo SVG) : la vue montre son remplacement.
+    func failed(_ url: URL) -> Bool {
+        lock.withLock { unreadable.contains(url) }
+    }
+
     /// Image décodée ; plusieurs vues qui demandent la même image partagent un seul chargement.
     func image(for url: URL, maxPixels: CGFloat = 1600) async -> UIImage? {
         if let image = cached(url) { return image }
         let task: Task<UIImage?, Never> = lock.withLock {
             if let existing = running[url] { return existing }
-            let created = Task.detached(priority: .userInitiated) { [session] () -> UIImage? in
+            let created = Task.detached(priority: .userInitiated) { [session, weak self] () -> UIImage? in
                 // Deux essais : un serveur d'images occupé ne laisse plus de case vide.
                 for attempt in 0..<2 {
                     if attempt > 0 { try? await Task.sleep(for: .milliseconds(700)) }
@@ -47,7 +54,12 @@ final class ImagePipeline: @unchecked Sendable {
                     } else {
                         data = nil
                     }
-                    if let data, let image = ImagePipeline.decode(data, maxPixels: maxPixels) ?? UIImage(data: data) { return image }
+                    if let data {
+                        if let image = ImagePipeline.decode(data, maxPixels: maxPixels) ?? UIImage(data: data) { return image }
+                        // Reçue mais illisible (SVG…) : un second essai donnerait la même chose.
+                        self?.lock.withLock { _ = self?.unreadable.insert(url) }
+                        return nil
+                    }
                     if url.isFileURL { return nil }
                 }
                 return nil
