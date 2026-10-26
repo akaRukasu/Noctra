@@ -608,6 +608,8 @@ fun LiveWebView(
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 // Vignette du multiview : son des vidéos coupé ou non dès le départ, dans tous les cadres.
                 if (muted != null) runCatching { WebViewCompat.addDocumentStartJavaScript(view, "window.__noctraMuted=$muted;", setOf("*")) }
+                // Vidéo seule : la vidéo qui joue remplit la vignette, le reste du site est masqué.
+                if (muted != null) runCatching { WebViewCompat.addDocumentStartJavaScript(view, focusScript, setOf("*")) }
                 runCatching { WebViewCompat.addDocumentStartJavaScript(view, bridgeScript, setOf("*")) }
             }
             view.webViewClient = object : WebViewClient() {
@@ -627,11 +629,11 @@ fun LiveWebView(
 
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     // Sans script de début de document : pont ajouté au plus tôt (page principale).
-                    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) view.evaluateJavascript(bridgeScript, null)
+                    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) { view.evaluateJavascript(bridgeScript, null); if (muted != null) view.evaluateJavascript(focusScript, null) }
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
-                    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) view.evaluateJavascript(bridgeScript, null)
+                    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) { view.evaluateJavascript(bridgeScript, null); if (muted != null) view.evaluateJavascript(focusScript, null) }
                     if (url != null && url != "about:blank") loaded = true
                 }
 
@@ -706,6 +708,36 @@ fun LiveWebView(
         }
     }
 }
+
+/**
+ * Vignette du multiview : la vidéo qui joue (dans la page ou un de ses cadres) remplit la vignette ;
+ * publicités, bulles, boutons et logos du site sont masqués. Tant qu'aucune vidéo ne joue, la page
+ * reste entière (bouton Lecture du site). __noctraFocus(false) : page entière (menu de la vignette).
+ */
+internal val focusScript = """
+(function(){if(window.__noctraFocus)return;
+var on=true,main=null,styled=false,seen=0,child=null,childAt=0;
+function R(){return document.documentElement}
+var CSS='html.noctra-focus,html.noctra-focus body{background:#000!important;overflow:hidden!important}'
++'html.noctra-focus body *{visibility:hidden!important}'
++'html.noctra-focus .noctra-path{transform:none!important;-webkit-transform:none!important;filter:none!important;perspective:none!important;contain:none!important;will-change:auto!important;clip-path:none!important}'
++'html.noctra-focus .noctra-main{visibility:visible!important;position:fixed!important;left:0!important;top:0!important;right:auto!important;bottom:auto!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;transform:none!important;-webkit-transform:none!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important;opacity:1!important}';
+function style(){if(styled)return;styled=true;var s=document.createElement('style');s.textContent=CSS;(document.head||R()).appendChild(s)}
+function clear(){var n=document.querySelectorAll('.noctra-main,.noctra-path');for(var i=0;i<n.length;i++){n[i].classList.remove('noctra-main');n[i].classList.remove('noctra-path')}main=null;if(R())R().classList.remove('noctra-focus')}
+function report(){if(window.parent!==window){try{parent.postMessage({type:'noctra-focus-here'},'*')}catch(e){}}}
+function set(el){if(main!==el){clear();style();main=el;el.classList.add('noctra-main');for(var p=el.parentElement;p&&p!==R();p=p.parentElement)p.classList.add('noctra-path');if(el.tagName==='VIDEO'){try{el.controls=false}catch(e){}}}R().classList.add('noctra-focus');seen=Date.now();report()}
+function video(){var best=null,area=0,list=document.getElementsByTagName('video');for(var i=0;i<list.length;i++){var v=list[i];if(v.paused||v.ended||v.readyState<2)continue;var r=v.getBoundingClientRect(),a=r.width*r.height+(v.videoWidth||0)*(v.videoHeight||0);if((r.width>=80||v.videoWidth>=320)&&a>area){area=a;best=v}}return best}
+function check(){if(!R())return;if(!on){if(main)clear();return}var v=video();if(v){set(v);return}
+if(child&&Date.now()-childAt<5000&&R().contains(child)){set(child);return}
+if(main&&Date.now()-seen>6000)clear()}
+addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;
+if(d.type==='noctra-focus-here'){var f=document.getElementsByTagName('iframe');for(var i=0;i<f.length;i++){if(f[i].contentWindow===e.source){child=f[i];childAt=Date.now();check();break}}}
+else if(d.type==='noctra-focus')window.__noctraFocus(!!d.on)},true);
+window.__noctraFocus=function(value){on=value;for(var i=0;i<frames.length;i++){try{frames[i].postMessage({type:'noctra-focus',on:value},'*')}catch(e){}}check()};
+document.addEventListener('playing',function(){setTimeout(check,60)},true);
+setInterval(check,1500);
+})();
+"""
 
 /** Relais vers l'appli : vidéo lancée (y compris dans les cadres des sites) et messages « noctra-…-state » des ponts du serveur. */
 private val bridgeScript = """

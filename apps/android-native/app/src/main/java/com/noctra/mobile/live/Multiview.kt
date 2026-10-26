@@ -317,6 +317,9 @@ class MultiviewTile(val channel: LiveChannel) {
         private set
     var webView: android.webkit.WebView? = null
     val muted: Boolean get() = volume == 0f
+    /** Page du site affichée en entier (sinon : vidéo seule, le reste du site masqué). */
+    var fullPage by mutableStateOf(false)
+        private set
     private var servers: MutableList<LiveServer> = mutableListOf()
     private var index = -1
     private var generation = 0
@@ -340,6 +343,12 @@ class MultiviewTile(val channel: LiveChannel) {
             index = -1
             next()
         }
+    }
+
+    /** Vidéo seule ou page entière du site (tous ses cadres). */
+    fun setFullPage(value: Boolean) {
+        fullPage = value
+        webView?.evaluateJavascript("window.__noctraFocus&&window.__noctraFocus(${!value})", null)
     }
 
     fun setVolume(value: Float) {
@@ -375,6 +384,7 @@ class MultiviewTile(val channel: LiveChannel) {
         }
         val url = server.pageURL ?: run { next(); return }
         web = WebPlayerRequest(title = channel.name, mode = WebPlayerRequest.Mode.page, url = url, framed = server.framed, sandbox = server.sandbox)
+        fullPage = false
         job = Session.scope.launch {
             delay(40_000)
             // Lecture non signalée : la page reste affichée (bouton Lecture à toucher).
@@ -633,6 +643,7 @@ fun MultiviewScreen() {
                         SettingRow("Mettre en avant avec le son", onClick = { MultiviewStore.solo(tile); menu = null })
                         SettingRow(if (MultiviewStore.featured == tile.id) "Revenir à la grille" else "Mettre en avant", onClick = { MultiviewStore.feature(tile); menu = null })
                     }
+                    if (tile.web != null) SettingRow(if (tile.fullPage) "Vidéo seule (masquer le site)" else "Afficher toute la page du site", onClick = { tile.setFullPage(!tile.fullPage); menu = null })
                     if (tile.count > 1) SettingRow("Serveur suivant (${tile.count})", onClick = { tile.next(); menu = null })
                     if (tile.status?.contains("réessayer") == true) SettingRow("Réessayer", onClick = { tile.retry(); menu = null })
                     SettingRow("Retirer cette chaîne", tint = Theme.orange, onClick = { MultiviewStore.remove(tile); menu = null })

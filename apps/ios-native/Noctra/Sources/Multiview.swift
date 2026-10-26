@@ -281,6 +281,8 @@ final class MultiviewTile: Identifiable {
     private(set) var web: WebPlayerRequest?
     @ObservationIgnored weak var webView: WKWebView?
     @ObservationIgnored private(set) var muted = true
+    /// Page du site affichée en entier (sinon : vidéo seule, le reste du site masqué).
+    private(set) var fullPage = false
     @ObservationIgnored private var servers: [LiveServer] = []
     @ObservationIgnored private var index = -1
     @ObservationIgnored private var generation = 0
@@ -375,6 +377,12 @@ final class MultiviewTile: Identifiable {
         return direct + engine + pages
     }
 
+    /// Vidéo seule ou page entière du site (tous ses cadres).
+    func setFullPage(_ value: Bool) {
+        fullPage = value
+        webView?.evaluateJavaScript("window.__noctraFocus&&window.__noctraFocus(\(!value))") { _, _ in }
+    }
+
     /// Son de la vignette : lecteur d'Apple, et vidéos de la page (tous ses cadres).
     func setMuted(_ value: Bool) {
         muted = value
@@ -410,6 +418,7 @@ final class MultiviewTile: Identifiable {
             return
         }
         web = request
+        fullPage = false
         let page = server.kind == .web
         let channelID = channel.id
         task = Task { [weak self] in
@@ -550,6 +559,7 @@ struct MultiviewView: View {
                     Button("Mettre en avant avec le son") { store.solo(tile) }
                     Button(store.featured == tile.id ? "Revenir à la grille" : "Mettre en avant") { store.feature(tile) }
                 }
+                if tile.web != nil { Button(tile.fullPage ? "Vidéo seule (masquer le site)" : "Afficher toute la page du site") { tile.setFullPage(!tile.fullPage) } }
                 if tile.count > 1 { Button("Serveur suivant (\(tile.count))") { tile.next() } }
                 if tile.status?.contains("réessayer") == true { Button("Réessayer") { tile.retry() } }
                 Button("Retirer cette chaîne", role: .destructive) { store.remove(tile) }
