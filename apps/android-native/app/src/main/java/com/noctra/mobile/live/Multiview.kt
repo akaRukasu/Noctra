@@ -7,7 +7,6 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -557,13 +556,26 @@ private fun multiviewLayout(width: Dp, height: Dp): List<TileFrame> {
         val frames = MutableList(count) { TileFrame(0.dp, 0.dp, 0.dp, 0.dp) }
         val others = (0 until count).filter { it != main }
         if (landscape) {
-            val mainWidth = width * 0.7f
-            frames[main] = TileFrame(0.dp, 0.dp, mainWidth - gap, height)
+            // Grande vignette et vignettes d'à côté en 16:9 (pas de bandes noires), ensemble centré.
             val columns = if (others.size > 4) 2 else 1
             val rows = ceil(others.size / columns.toDouble()).toInt().coerceAtLeast(1)
-            val cellW = (width - mainWidth) / columns
-            val cellH = height / rows
-            others.forEachIndexed { position, index -> frames[index] = TileFrame(mainWidth + cellW * (position % columns), cellH * (position / columns), cellW - gap, cellH - gap) }
+            val mainW = minOf(height * 16f / 9f, width * 0.7f)
+            val mainH = mainW * 9f / 16f
+            var cellW = (width - mainW - gap - gap * (columns - 1)) / columns
+            var cellH = cellW * 9f / 16f
+            if (cellH * rows + gap * (rows - 1) > height) {
+                cellH = (height - gap * (rows - 1)) / rows
+                cellW = cellH * 16f / 9f
+            }
+            val left = maxOf(0.dp, (width - mainW - gap - cellW * columns - gap * (columns - 1)) / 2)
+            val top = (height - cellH * rows - gap * (rows - 1)) / 2
+            frames[main] = TileFrame(left, (height - mainH) / 2, mainW, mainH)
+            others.forEachIndexed { position, index ->
+                val row = position / columns
+                val inRow = if (row == rows - 1) others.size - row * columns else columns
+                val shift = (cellW + gap) * (columns - inRow) / 2
+                frames[index] = TileFrame(left + mainW + gap + shift + (cellW + gap) * (position % columns), top + (cellH + gap) * row, cellW, cellH)
+            }
         } else {
             val mainHeight = minOf(width * 9f / 16f, height * 0.5f)
             val columns = if (others.size > 4) 3 else 2
@@ -680,7 +692,8 @@ private fun MultiviewTileView(tile: MultiviewTile, modifier: Modifier, chrome: F
     val listening = MultiviewStore.audio == tile.id
     val shape = RoundedCornerShape(10.dp)
     Box(
-        modifier.clip(shape).background(Color.Black).border(if (listening) 2.dp else 1.dp, if (listening) Theme.teal else Color.White.copy(alpha = 0.1f), shape)
+        // Sans contour : la chaîne écoutée se reconnaît à l'icône du son, à côté de son nom.
+        modifier.clip(shape).background(Color.Black)
             .semantics { contentDescription = tile.channel.name + if (listening) ", écoutée" else "" },
         contentAlignment = Alignment.Center
     ) {

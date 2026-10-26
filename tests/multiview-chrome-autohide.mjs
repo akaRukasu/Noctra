@@ -29,6 +29,12 @@ assert.match(android, /onTap = \{ if \(chrome\) \{ menu = tile \} else poke\(\) 
 assert.match(android, /if \(web != null && chrome > 0f\) \{/, 'Android : « ⋯ » masqué avec les commandes');
 assert.match(android, /if \(chrome > 0f\) Row\(\s*Modifier\.align\(Alignment\.BottomStart\)/, 'Android : nom de la chaîne masqué');
 
+// iOS 2.18.4 / Android 1.9.9 : vignettes sans contour ; « Mettre en avant » en paysage : grande
+// vignette et vignettes d'à côté en 16:9, ensemble centré (plus de bandes noires dans les vignettes).
+assert.ok(!/stroke\(listening/.test(ios) && !/\.border\(if \(listening\)/.test(android), 'vignettes sans contour');
+assert.match(ios, /let mainW = min\(size\.height \* 16 \/ 9, size\.width \* 0\.7\)[\s\S]*?cellW = cellH \* 16 \/ 9[\s\S]*?width: cellW, height: cellH\)/, 'iOS : mise en avant en 16:9');
+assert.match(android, /val mainW = minOf\(height \* 16f \/ 9f, width \* 0\.7f\)[\s\S]*?cellW = cellH \* 16f \/ 9f[\s\S]*?cellW, cellH\)/, 'Android : mise en avant en 16:9');
+
 const yml = await read('apps/ios-native/project.yml');
 const gradle = await read('apps/android-native/app/build.gradle.kts');
 assert.match(yml, /MARKETING_VERSION: "2\.18\.([2-9]|\d\d)"/);

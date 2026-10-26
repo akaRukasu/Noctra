@@ -648,14 +648,25 @@ struct MultiviewView: View {
             var frames = Array(repeating: CGRect.zero, count: count)
             let others = (0..<count).filter { $0 != main }
             if landscape {
-                let mainWidth = size.width * 0.7
-                frames[main] = CGRect(x: 0, y: 0, width: mainWidth - gap, height: size.height)
+                // Grande vignette et vignettes d'à côté en 16:9 (pas de bandes noires), ensemble centré.
                 let columns = others.count > 4 ? 2 : 1
-                let rows = Int(ceil(Double(others.count) / Double(columns)))
-                let cellW = (size.width - mainWidth) / CGFloat(columns)
-                let cellH = size.height / CGFloat(max(rows, 1))
+                let rows = max(1, Int(ceil(Double(others.count) / Double(columns))))
+                let mainW = min(size.height * 16 / 9, size.width * 0.7)
+                let mainH = mainW * 9 / 16
+                var cellW = (size.width - mainW - gap - gap * CGFloat(columns - 1)) / CGFloat(columns)
+                var cellH = cellW * 9 / 16
+                if cellH * CGFloat(rows) + gap * CGFloat(rows - 1) > size.height {
+                    cellH = (size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
+                    cellW = cellH * 16 / 9
+                }
+                let left = max(0, (size.width - mainW - gap - cellW * CGFloat(columns) - gap * CGFloat(columns - 1)) / 2)
+                let top = (size.height - cellH * CGFloat(rows) - gap * CGFloat(rows - 1)) / 2
+                frames[main] = CGRect(x: left, y: (size.height - mainH) / 2, width: mainW, height: mainH)
                 for (position, index) in others.enumerated() {
-                    frames[index] = CGRect(x: mainWidth + CGFloat(position % columns) * cellW, y: CGFloat(position / columns) * cellH, width: cellW - gap, height: cellH - gap)
+                    let row = position / columns
+                    let inRow = row == rows - 1 ? others.count - row * columns : columns
+                    let shift = (cellW + gap) * CGFloat(columns - inRow) / 2
+                    frames[index] = CGRect(x: left + mainW + gap + shift + (cellW + gap) * CGFloat(position % columns), y: top + (cellH + gap) * CGFloat(row), width: cellW, height: cellH)
                 }
             } else {
                 let mainHeight = min(size.width * 9 / 16, size.height * 0.5)
@@ -763,8 +774,8 @@ struct MultiviewTileView: View {
             .opacity(chrome ? 1 : 0)
             .allowsHitTesting(false)
         }
+        // Sans contour : la chaîne écoutée se reconnaît à l'icône du son, à côté de son nom.
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(listening ? Theme.teal : .white.opacity(0.1), lineWidth: listening ? 2 : 1))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tile.channel.name + (listening ? ", écoutée" : "") + (featured ? ", mise en avant" : ""))
