@@ -174,6 +174,18 @@ enum ChannelNaming {
         return result
     }
 
+    /// Clé de tri : nombres complétés par des zéros (« A LA CARTE 2 » avant « A LA CARTE 10 »).
+    static func sortKey(_ value: String) -> String {
+        var result = ""
+        var digits = ""
+        for character in normalize(value) + " " {
+            if character.isASCII && character.isNumber { digits.append(character); continue }
+            if !digits.isEmpty { result += String(repeating: "0", count: max(0, 6 - digits.count)) + digits; digits = "" }
+            result.append(character)
+        }
+        return String(result.dropLast())
+    }
+
     private static let cleanSteps: [(Pattern, String)] = [
         (Pattern("^\\s*(?:\\[[^\\]]*\\]|\\([^)]*\\))\\s*"), ""),
         (Pattern("^\\s*(?:VIP|4K|HD|FHD)\\s*[:|\\-–]\\s*", caseInsensitive: true), ""),

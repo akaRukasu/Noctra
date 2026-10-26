@@ -133,7 +133,7 @@ class Catalog(val source: String, val sourceId: String, val entries: List<Entry>
                 } else name = ChannelNaming.displayName(builder.names, digits)
                 val groups = builder.groups.entries.sortedByDescending { it.value }.map { it.key }
                 LiveChannel(key, name, builder.logo, ChannelNaming.category(name, groups), builder.country, builder.entries)
-            }.sortedBy { ChannelNaming.normalize(it.name) }
+            }.sortedBy { ChannelNaming.sortKey(it.name) }
             // Numéros : TNT pour les chaînes françaises (1 TF1, 2 France 2…), puis 30, 31…
             val used = HashSet<Int>()
             var next = 30

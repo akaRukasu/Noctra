@@ -165,6 +165,11 @@ object ChannelNaming {
         return result.toString()
     }
 
+    private val sortDigits = Regex("\\d+")
+
+    /** Clé de tri : nombres complétés par des zéros (« A LA CARTE 2 » avant « A LA CARTE 10 »). */
+    fun sortKey(value: String): String = sortDigits.replace(normalize(value)) { it.value.padStart(6, '0') }
+
     private val cleanSteps = listOf(
         Rx("^\\s*(?:\\[[^\\]]*\\]|\\([^)]*\\))\\s*") to "",
         Rx("^\\s*(?:VIP|4K|HD|FHD)\\s*[:|\\-–]\\s*", true) to "",

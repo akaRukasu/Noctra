@@ -5117,22 +5117,143 @@ async function iptvOrgLogoIndex(waitForRefresh = false) {
   return waitForRefresh || !previousMap ? iptvOrgLogoCache.promise : iptvOrgLogoCache;
 }
 
+// 200.0.151 : second référentiel de logos, tv-logo/tv-logos (PNG pour fonds sombres,
+// plus de 10 000 chaînes). Il couvre des chaînes absentes d'iptv-org (RMC Sport Live,
+// Ligue 1+, Multisports, DAZN…) et ses PNG s'affichent partout, y compris sur iPhone
+// qui ne lit pas le SVG. Liste des fichiers gardée sur disque une semaine.
+const tvLogosRepoIndexPath = join(runtimeRoot, 'tv-logos-repo-index.json');
+const tvLogosRepoSchemaVersion = 1;
+const tvLogosRepoCountryRank = { france: 0, belgium: 1, switzerland: 1, luxembourg: 1, canada: 1, international: 2, 'world-europe': 3, 'united-kingdom': 4, 'united-states': 4 };
+let tvLogosRepoCache = { expiresAt: 0, map: null, promise: null };
+let tvLogosRepoDiskChecked = false;
+
+function tvLogosRepoEntry(pathValue) {
+  const match = /^countries\/(.+)\/([^/]+)\.png$/i.exec(String(pathValue || ''));
+  if (!match) return null;
+  const folders = match[1].toLowerCase().split('/');
+  const country = folders[0] === 'nordic' ? (folders[1] || 'nordic') : folders[0];
+  // Suffixe de pays du fichier : « -fr », « -fr-be »…
+  const slug = match[2].toLowerCase().replace(/-(?:(?:fr|nl|de|en|it|ar)-)?[a-z]{2}$/, '');
+  if (!slug) return null;
+  // « canal-plus-sport » est « Canal+ Sport », « ligue-1plus-2 » est « Ligue 1+ 2 ».
+  const plus = slug.replace(/(^|-)plus(?=-|$)/g, '$1+').replace(/(\d)plus(?=-|$)/g, '$1+').replace(/-/g, ' ');
+  const plain = slug.replace(/-/g, ' ');
+  return {
+    path: match[0],
+    country,
+    rank: tvLogosRepoCountryRank[country] ?? 5,
+    hd: folders.includes('hd'),
+    names: plus === plain ? [plain] : [plus, plain]
+  };
+}
+
+function buildTvLogosRepoIndex(paths) {
+  const entries = (Array.isArray(paths) ? paths : []).map(tvLogosRepoEntry).filter(Boolean);
+  entries.sort((left, right) => left.rank - right.rank || Number(left.hd) - Number(right.hd) || left.path.localeCompare(right.path));
+  const index = new Map();
+  for (const entry of entries) {
+    const logo = `https://raw.githubusercontent.com/tv-logo/tv-logos/main/${entry.path.split('/').map(encodeURIComponent).join('/')}`;
+    for (const name of entry.names) {
+      for (const key of tvLogoIdentityKeys(name)) {
+        // Clé d'une seule lettre (« a-tv » donne « a ») : « A+ » prendrait ce logo.
+        if (key.replace(/^compact:/, '').replace(/[^a-z0-9]/g, '').length < 2) continue;
+        if (!index.has(key)) index.set(key, { logo, name, country: entry.country });
+      }
+    }
+  }
+  return index;
+}
+
+async function tvLogosRepoIndex() {
+  if (!tvLogosRepoDiskChecked) {
+    tvLogosRepoDiskChecked = true;
+    try {
+      const saved = JSON.parse(await readFile(tvLogosRepoIndexPath, 'utf8'));
+      if (saved?.version === tvLogosRepoSchemaVersion && Array.isArray(saved.paths) && saved.paths.length) {
+        tvLogosRepoCache = { expiresAt: Number(saved.expiresAt || 0), map: buildTvLogosRepoIndex(saved.paths), promise: null };
+      }
+    } catch {}
+  }
+  if (tvLogosRepoCache.map && tvLogosRepoCache.expiresAt > Date.now()) return tvLogosRepoCache.map;
+  if (!tvLogosRepoCache.promise) {
+    const previous = tvLogosRepoCache.map;
+    tvLogosRepoCache.promise = (async () => {
+      const response = await fetchTvRemote('https://api.github.com/repos/tv-logo/tv-logos/git/trees/main?recursive=1', {
+        signal: AbortSignal.timeout(25_000),
+        headers: { accept: 'application/vnd.github+json', 'user-agent': 'Noctra-Media-Client/151' }
+      });
+      if (!response.ok) throw new Error(`liste tv-logos indisponible (${response.status})`);
+      const payload = await response.json();
+      const paths = (Array.isArray(payload?.tree) ? payload.tree : [])
+        .filter(item => item?.type === 'blob')
+        .map(item => String(item.path || ''))
+        .filter(path => /^countries\/.+\.png$/i.test(path));
+      if (!paths.length) throw new Error('liste tv-logos vide');
+      const expiresAt = Date.now() + 7 * 24 * 60 * 60_000;
+      tvLogosRepoCache = { expiresAt, map: buildTvLogosRepoIndex(paths), promise: null };
+      await mkdir(runtimeRoot, { recursive: true }).catch(() => undefined);
+      await writeFile(tvLogosRepoIndexPath, JSON.stringify({ version: tvLogosRepoSchemaVersion, savedAt: Date.now(), expiresAt, paths })).catch(() => undefined);
+      return tvLogosRepoCache.map;
+    })().catch(error => {
+      tvLogosRepoCache = { expiresAt: Date.now() + 30 * 60_000, map: previous || new Map(), promise: null };
+      console.warn('Noctra TV : logos tv-logos indisponibles.', error?.message || error);
+      return tvLogosRepoCache.map;
+    });
+  }
+  // Liste du disque encore utilisable : l'affichage n'attend pas sa mise à jour.
+  return tvLogosRepoCache.map || tvLogosRepoCache.promise;
+}
+
+// Chaînes d'événements numérotées (« AMAZON PRIME 3 », « C+Live 12 », « RMC Sport 7 ») :
+// sans logo propre, elles prennent celui de leur famille quand il existe.
+const tvLogoFamilyAliases = new Map([
+  ['c live', 'Canal+'], ['canal live', 'Canal+'], ['canal plus live', 'Canal+'],
+  ['amazon prime', 'Prime Video'], ['amazon prime video', 'Prime Video']
+]);
+
+function tvLogoFamilyNames(value) {
+  const name = String(value || '').trim();
+  const family = name.replace(/[\s._-]*\d{1,3}\s*$/, '').trim();
+  if (!family || family === name || !/[a-z]{2}/i.test(family)) return [];
+  const alias = tvLogoFamilyAliases.get(normalizedIdentifier(family));
+  return alias ? [family, alias] : [family];
+}
+
+function tvLogoLookup(index, names) {
+  if (!index?.size) return null;
+  for (const name of names || []) {
+    for (const key of tvLogoIdentityKeys(name)) {
+      const match = index.get(key);
+      if (match) return match;
+    }
+  }
+  return null;
+}
+
 async function enrichTvLogosFromIptvOrg(channels, preferFresh = false, waitForRefresh = false) {
   const metadata = await iptvOrgLogoIndex(waitForRefresh);
   const index = metadata?.map;
-  if (!index?.size) return channels;
+  const repo = await tvLogosRepoIndex().catch(() => null);
+  if (!index?.size && !repo?.size) return channels;
   return (channels || []).map(channel => {
-    let match = [channel?.iptvOrgId, channel?.epgId]
+    let match = !index?.size ? null : [channel?.iptvOrgId, channel?.epgId]
       .map(tvLogoChannelIdKey)
       .filter(Boolean)
       .map(key => index.get(key))
       .find(Boolean) || null;
-    for (const key of tvLogoIdentityKeys(channel?.name)) {
-      if (match) break;
-      match = index.get(key);
-      if (match) break;
+    if (!match) match = tvLogoLookup(index, [channel?.name]);
+    if (!match) {
+      // Autre référentiel, puis famille d'une chaîne numérotée : ils complètent le logo
+      // de la source (logo de secours), ou le précèdent quand la source est peu fiable.
+      const extra = tvLogoLookup(repo, [channel?.name])
+        || tvLogoLookup(index, tvLogoFamilyNames(channel?.name))
+        || tvLogoLookup(repo, tvLogoFamilyNames(channel?.name));
+      if (!extra?.logo || extra.logo === channel?.logo) return channel;
+      if (!channel.logo) return { ...channel, logo: extra.logo };
+      // Sources aux logos peu fiables (LiveWatch, WiTV, OHA) : le référentiel passe devant.
+      if (preferFresh) return { ...channel, logo: extra.logo, secondaryLogo: channel.logo };
+      return channel.secondaryLogo ? channel : { ...channel, secondaryLogo: extra.logo };
     }
-    if (!match) return channel;
     const fallbackLogo = match.logo || '';
     const primaryLogo = preferFresh && fallbackLogo ? fallbackLogo : (channel.logo || fallbackLogo);
     const secondaryLogo = preferFresh && fallbackLogo && channel.logo && channel.logo !== fallbackLogo
@@ -6573,16 +6694,28 @@ function tvFallbackImageUrl(labelValue) {
   return publicPath(`/api/tv/image/${token}`);
 }
 
-function tvPublicImageUrl(urlValue, labelValue = '') {
+function tvPublicImageUrl(urlValue, labelValue = '', alternateValue = '') {
   const raw = String(urlValue || '').trim();
   if (!raw) return tvFallbackImageUrl(labelValue);
   if (!/^https?:\/\//i.test(raw)) return raw;
   try {
     const normalized = safeTvRemoteUrl(raw).toString();
+    // 200.0.151 : second logo essayé par le serveur si le premier ne répond plus.
+    // Les applis iPhone et Android n'ont qu'une adresse par chaîne ; sans lui,
+    // un logo de source mort laissait une case vide.
+    let alternate = '';
+    try {
+      const rawAlternate = String(alternateValue || '').trim();
+      if (/^https?:\/\//i.test(rawAlternate)) alternate = safeTvRemoteUrl(rawAlternate).toString();
+    } catch {}
     // Référence stateless : elle survit aux redémarrages du processus et
     // produit toujours la même URL, ce qui rend enfin le cache navigateur
     // réellement efficace pour les grands catalogues.
-    const token = signedTvImageToken({ u: normalized, n: String(labelValue || '').trim().slice(0, 120) });
+    const token = signedTvImageToken({
+      u: normalized,
+      n: String(labelValue || '').trim().slice(0, 120),
+      ...(alternate && alternate !== normalized ? { a: alternate } : {})
+    });
     return publicPath(`/api/tv/image/${token}`);
   } catch {
     return tvFallbackImageUrl(labelValue);
@@ -6595,7 +6728,7 @@ function decorateTvCatalogImages(catalog) {
     ...item,
     // Lorsqu'une seconde source existe, laisser le premier <img> echouer permet
     // au client de tenter ce vrai logo au lieu de figer un SVG genere prioritaire.
-    logo: tvPublicImageUrl(item.logo, item.secondaryLogo ? '' : item.name),
+    logo: tvPublicImageUrl(item.logo, item.secondaryLogo ? '' : item.name, item.secondaryLogo),
     secondaryLogo: tvPublicImageUrl(item.secondaryLogo),
     image: tvPublicImageUrl(item.image)
   } : item;
@@ -12564,8 +12697,11 @@ function tvImageReference(tokenValue) {
       const rawUrl = String(payload?.u || '').trim();
       if (!rawUrl) return label ? { url: '', label, fallbackOnly: true, headers: {} } : null;
       const url = safeTvRemoteUrl(rawUrl);
+      let alternate = '';
+      try { if (payload?.a) alternate = safeTvRemoteUrl(String(payload.a)).toString(); } catch {}
       return {
         url: url.toString(),
+        alternate,
         label,
         fallbackOnly: false,
         headers: {
@@ -12688,6 +12824,13 @@ async function proxyTvImage(token, req, res) {
     const asset = await fetchTvLogoAsset(reference, reference.url);
     sendTvImage(res, asset.image, asset.contentType, asset.cacheState);
   } catch (error) {
+    if (reference.alternate) {
+      try {
+        const origin = new URL(reference.alternate).origin;
+        const asset = await fetchTvLogoAsset({ ...reference, headers: { ...reference.headers, referer: `${origin}/` } }, reference.alternate);
+        return sendTvImage(res, asset.image, asset.contentType, asset.cacheState);
+      } catch {}
+    }
     if (reference.label) return sendTvFallbackLogo(res, reference.label);
     throw error;
   }
@@ -13440,12 +13583,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.150', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.151', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.150',
+        version: '200.0.151',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

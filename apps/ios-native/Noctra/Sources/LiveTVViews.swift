@@ -161,7 +161,7 @@ struct Catalog: @unchecked Sendable {
             return LiveChannel(id: key, name: name, logo: builder.logo, group: ChannelNaming.category(name: name, groups: groups),
                                country: builder.country, entries: builder.entries)
         }
-        let sortKeys = Dictionary(uniqueKeysWithValues: channels.map { ($0.id, ChannelNaming.normalize($0.name)) })
+        let sortKeys = Dictionary(uniqueKeysWithValues: channels.map { ($0.id, ChannelNaming.sortKey($0.name)) })
         channels.sort { (sortKeys[$0.id] ?? "") < (sortKeys[$1.id] ?? "") }
         // Numéros : TNT pour les chaînes françaises (1 TF1, 2 France 2…), puis 30, 31…
         var used = Set<Int>()

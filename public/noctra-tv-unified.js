@@ -496,7 +496,7 @@
       unified.category = channelCategory(unified);
     });
     // Ordre alphabétique (clé calculée une fois : localeCompare est très lent sur les TV).
-    list.forEach(function (unified) { unified._sort = normalize(unified.name); });
+    list.forEach(function (unified) { unified._sort = sortKey(unified.name); });
     list.sort(function (a, b) { return a._sort < b._sort ? -1 : a._sort > b._sort ? 1 : 0; });
     // Chaîne d'une source → sa chaîne réunie (serveurs des autres sources).
     var byName = {};
@@ -506,6 +506,10 @@
   }
   function normalize(value) {
     return String(value || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  // Clé de tri : nombres complétés (« A LA CARTE 2 » avant « A LA CARTE 10 »), comparaison simple.
+  function sortKey(value) {
+    return normalize(value).replace(/\d+/g, function (digits) { return digits.length >= 6 ? digits : ('000000' + digits).slice(-6); });
   }
 
   // ── Logos officiels (collection tv-logo/tv-logos, logos iptv-org) ──
