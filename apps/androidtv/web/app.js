@@ -531,13 +531,22 @@
     var box = node.closest('.row, .reveal-box') || node;
     var s = scroller.getBoundingClientRect(), b = box.getBoundingClientRect();
     if (b.height > scroller.clientHeight * 0.7) { box = node; b = node.getBoundingClientRect(); }
-    var top = scroller === main ? headerHeight() + 8 : s.top + 20;
+    var top = scroller === main ? (scrolledDown ? 24 : headerHeight() + 8) : s.top + 20;
     // Barre du multiview : les éléments choisis restent au-dessus d'elle.
     var bar = scroller === main && document.getElementById('multibar');
     var bottom = bar ? bar.getBoundingClientRect().top - 16 : s.bottom - 30;
     if (b.top < top) scrollTo(scroller, null, scroller.scrollTop - (top - b.top));
     else if (b.bottom > bottom) scrollTo(scroller, null, scroller.scrollTop + Math.min(b.bottom - bottom, b.top - top));
   }
+  // Menu effacé quand la page descend (comme sur l'Apple TV), revenu en haut
+  // de page ou dès qu'il reprend la main (CSS :focus-within).
+  var scrolledDown = false;
+  main.addEventListener('scroll', function () {
+    var down = main.scrollTop > 60;
+    if (down === scrolledDown) return;
+    scrolledDown = down;
+    document.body.classList.toggle('scrolled', down);
+  }, { passive: true });
   var headerCache = 0;
   function headerHeight() {
     if (!headerCache) headerCache = document.getElementById('top').offsetHeight;
@@ -1267,13 +1276,25 @@
         h('div', { class: 'detail-poster' + (item.Type === 'Episode' ? ' wide' : '') }, poster),
         h('div', { class: 'detail-info' },
           item.Type === 'Episode' ? h('p', { class: 'eyebrow', text: item.SeriesName || '' }) : h('p', { class: 'eyebrow', text: item.Type === 'Series' ? 'SÉRIE' : 'FILM' }),
-          h('h1', { text: item.Name || 'Sans titre' }),
+          titleHeading(item),
           h('div', { class: 'facts' }, facts.map(function (fact) { return h('span', { text: fact }); })),
           item.Genres && item.Genres.length ? h('div', { class: 'genres' }, item.Genres.slice(0, 5).map(function (genre) { return h('span', { text: genre }); })) : null,
           item.Taglines && item.Taglines[0] ? h('p', { class: 'tagline', text: item.Taglines[0] }) : null,
           item.Overview ? h('p', { class: 'overview', text: item.Overview }) : null,
           h('div', { class: 'actions' }, actions),
           extra || null)));
+  }
+  // Titre de la fiche : logo du film ou de la série s'il existe (comme sur
+  // l'Apple TV), sinon le nom ; un épisode garde son propre nom.
+  function titleHeading(item) {
+    var name = item.Name || 'Sans titre';
+    var heading = h('h1', { text: name });
+    var url = item.Type === 'Episode' ? '' : itemLogoUrl(item, 240);
+    if (!url) return heading;
+    var logo = h('img', { class: 'detail-logo', alt: name, decoding: 'async' });
+    logo.addEventListener('load', function () { clear(heading); heading.classList.add('has-logo'); heading.appendChild(logo); });
+    logo.src = url;
+    return heading;
   }
   function flagButtons(item, refresh) {
     var user = item.UserData || {};
@@ -1834,9 +1855,7 @@
   // regarder » (défilement toutes les 8 s, suspendu tant qu'il a le focus),
   // médiathèques en 2 × 2, puis « À suivre » et les derniers ajouts.
   views.home = function (params, alive) {
-    main.appendChild(h('header', { class: 'home-heading' },
-      h('div', null, h('p', { text: 'VOTRE SALLE DE CINÉMA' }), h('h1', null, 'À l’affiche chez vous', h('span', { text: '.' }))),
-      h('span', { class: 'note', text: 'Votre collection. À votre rythme.' })));
+    // Comme sur l'Apple TV : la bannière ouvre l'accueil, sans titre de page.
     var hero = h('div', { class: 'premiere-slot' }, h('section', { class: 'premiere premiere-empty' }));
     var moreResume = h('div');
     var libs = h('div');
@@ -1858,6 +1877,8 @@
     var heroDone = resume.then(function (items) {
       if (!alive()) return;
       clear(hero);
+      // Rien à reprendre : bannière réduite (pas de grand vide sous le menu).
+      if (!items.length) hero.className = 'premiere-slot none';
       hero.appendChild(premiere(items));
       // Au-delà des 12 du carrousel : tous les autres titres commencés.
       if (items.length > 12) add(moreResume, row('Autres titres à reprendre', items.slice(12).map(function (item) { return itemCard(item, 'wide'); })));
@@ -1894,6 +1915,12 @@
     return Promise.all([heroDone, libsDone, rowsDone]);
   };
 
+  // Logo du titre (ou de la série d'un épisode) : bannière de l'accueil et fiches.
+  function itemLogoUrl(item, height) {
+    var logoId = item.ImageTags && item.ImageTags.Logo ? item.Id : item.ParentLogoItemId;
+    var logoTag = item.ImageTags && item.ImageTags.Logo ? item.ImageTags.Logo : item.ParentLogoImageTag;
+    return logoId ? S.jf + '/Items/' + logoId + '/Images/Logo?maxHeight=' + height + '&quality=90' + (logoTag ? '&tag=' + encodeURIComponent(logoTag) : '') : '';
+  }
   function backdropUrl(item, width) {
     if (LITE_UI) width = Math.min(width, 1280);
     if (item.BackdropImageTags && item.BackdropImageTags.length) return S.jf + '/Items/' + item.Id + '/Images/Backdrop?maxWidth=' + width + '&quality=90&tag=' + item.BackdropImageTags[0];
@@ -1925,7 +1952,9 @@
     var label = h('span', { class: 'premiere-label' });
     var title = h('h2');
     var subtitle = h('p', { class: 'premiere-sub' });
-    var count = h('span', { class: 'premiere-count' });
+    // Points de pagination (un par titre), en bas au centre de la bannière.
+    var count = h('span', { class: 'premiere-count', 'aria-hidden': 'true' });
+    if (items.length > 1) items.forEach(function () { count.appendChild(h('i')); });
     var play = h('button', { class: 'btn primary f', 'data-start': true, onclick: function () { playItem(items[index]); } }, icon('play'), 'Reprendre');
     var details = h('button', { class: 'btn f', onclick: function () { openItem(items[index].Id); } }, 'Voir la fiche');
     var prev = h('button', { class: 'round f', 'aria-label': 'Titre précédent', onclick: function () { step(-1); } }, icon('prev'));
@@ -1934,18 +1963,15 @@
     node.appendChild(h('div', { class: 'premiere-shade' }));
     node.appendChild(h('div', { class: 'premiere-copy' },
       h('p', { class: 'eyebrow', text: 'CONTINUER À REGARDER' }), label, title, subtitle,
-      h('div', { class: 'premiere-actions' }, play, details, items.length > 1 ? prev : null, items.length > 1 ? count : null, items.length > 1 ? next : null)));
+      h('div', { class: 'premiere-actions' }, play, details, items.length > 1 ? prev : null, items.length > 1 ? next : null)));
+    if (items.length > 1) node.appendChild(count);
 
-    var copy = node.lastChild;
+    var copy = node.querySelector('.premiere-copy');
     // Image large et logo préparés ensemble (téléchargés et décodés), puis
     // affichés dans la même image que le texte : rien n'apparaît en décalé.
     // Le titre suivant est préparé à l'avance pour un changement immédiat.
     var prepared = {};
-    function logoUrl(item) {
-      var logoId = item.ImageTags && item.ImageTags.Logo ? item.Id : item.ParentLogoItemId;
-      var logoTag = item.ImageTags && item.ImageTags.Logo ? item.ImageTags.Logo : item.ParentLogoImageTag;
-      return logoId ? S.jf + '/Items/' + logoId + '/Images/Logo?maxHeight=160&quality=90' + (logoTag ? '&tag=' + encodeURIComponent(logoTag) : '') : '';
-    }
+    function logoUrl(item) { return itemLogoUrl(item, 160); }
     function loadImage(url, limit) {
       if (!url) return Promise.resolve(null);
       return new Promise(function (resolve) {
@@ -1978,7 +2004,7 @@
     function render() {
       var item = items[index];
       var turn = ++generation;
-      count.textContent = (index + 1) + ' / ' + items.length;
+      Array.prototype.forEach.call(count.children, function (dot, at) { dot.className = at === index ? 'on' : ''; });
       prepare(item).then(function (loaded) {
         if (turn !== generation || !document.body.contains(node)) return;
         show(item, loaded[0], loaded[1]);
