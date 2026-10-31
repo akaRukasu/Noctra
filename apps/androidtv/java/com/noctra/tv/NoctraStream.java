@@ -530,12 +530,15 @@ final class NoctraStream {
         if (!mime.isEmpty()) item.setMimeType(mime);
         if (!live) applyTrackPreferences();
         if (live) {
-            // Vitesse fixe : après une coupure, le lecteur ne rattrape plus le
-            // direct en accélérant (ce qui revidait la réserve). Le point de
-            // départ reste celui prévu par le flux.
+            // Jamais d'accélération : après une coupure, le lecteur ne rattrape
+            // plus le direct en accélérant (ce qui revidait la réserve). Le point
+            // de départ reste celui prévu par le flux.
+            // noctra.80 : léger ralenti permis (97 %, imperceptible) quand la
+            // lecture s'est rapprochée du direct plus que prévu (liste de la
+            // source en retard) : l'avance revient peu à peu, sans saut.
             try {
                 item.setLiveConfiguration(new MediaItem.LiveConfiguration.Builder()
-                    .setMinPlaybackSpeed(1f)
+                    .setMinPlaybackSpeed(0.97f)
                     .setMaxPlaybackSpeed(1f)
                     .build());
             } catch (Throwable ignored) {
@@ -559,9 +562,20 @@ final class NoctraStream {
         int state = player.getPlaybackState();
         if (error != null) {
             if (live && error.errorCode == BEHIND_LIVE_WINDOW && played) {
-                // Trop de retard sur le direct : on revient au bord du direct.
+                // Trop de retard sur le direct : retour dans la fenêtre, avec de
+                // l'avance (au bord du direct, la réserve restait à ~10 s pour le
+                // reste de la séance) : jusqu'à la moitié de la fenêtre derrière
+                // le direct, jamais à moins d'un quart de fenêtre de son début.
                 callback.onStatus(this, "Retour au direct…");
-                player.seekToDefaultPosition();
+                long window = 0;
+                try { window = player.getDuration(); } catch (Exception ignored) { }
+                if (window > 0) {
+                    long margin = Math.max(WINDOW_SAFETY_MS, window / 4);
+                    long back = Math.min(extraOffsetMs, window / 2);
+                    player.seekTo(Math.max(margin, window - back));
+                } else {
+                    player.seekToDefaultPosition();
+                }
                 player.prepare();
                 handler.postDelayed(poll, POLL_MS);
                 return;

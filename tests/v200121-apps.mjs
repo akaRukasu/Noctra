@@ -391,7 +391,7 @@ assert.match(tvApp, /function groupingDetails\(channels\) \{/);
 assert.match(tvApp, /else focusChannelCard\(state\);/);
 assert.match(streamJava, /long target = Math\.max\((WINDOW_SAFETY_MS|margin), position - extraOffsetMs\);/, 'Réserve du direct prise après un blocage, sans quitter la fenêtre');
 assert.doesNotMatch(streamJava, /setTargetOffsetMs/, 'Démarrage au point prévu par le flux');
-assert.match(streamJava, /\.setMinPlaybackSpeed\(1f\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct à vitesse fixe : la réserve reste acquise');
+assert.match(streamJava, /\.setMinPlaybackSpeed\((1f|0\.97f)\)\s*\.setMaxPlaybackSpeed\(1f\)/, 'Direct jamais accéléré : la réserve reste acquise');
 assert.match(streamJava, /private static long extraOffsetMs = 12000;/, 'Réserve agrandie dès le démarrage');
 assert.doesNotMatch(streamJava, /NoctraDns\.plainClient\(\)/, 'Direct : connexion HTTP d’origine');
 assert.match(streamJava, /String diagnostics\(\) \{/, 'Diagnostic du direct');
