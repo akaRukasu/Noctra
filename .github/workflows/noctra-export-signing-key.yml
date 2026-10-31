@@ -1,0 +1,62 @@
+# Export ponctuel de la clé de signature Android gardée dans le cache GitHub,
+# chiffrée avec une clé publique (seule la clé privée correspondante, hors du
+# dépôt, peut la lire) : la clé devient permanente dans les secrets
+# NOCTRA_KEYSTORE_* sans changer la signature des applis installées.
+# Fichier à supprimer une fois l'export fait.
+name: Export clé de signature
+
+on:
+  push:
+    paths:
+      - '.github/workflows/noctra-export-signing-key.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clé de signature (cache)
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.noctra-android-key
+          key: noctra-android-native-signing-v1
+      - name: Chiffrement
+        env:
+          PUBLIC_KEY: |
+            -----BEGIN PUBLIC KEY-----
+            MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAx7tkQGlJhOFCIo6yfATJ
+            0FiVoRE6lx5wiUpI/2cSPs56nNsvZi2hD+OW5YssUK9NdBaJdR2KaRY+LBmu+8HO
+            n0EOCbw1yqLlYkMEiEt42+DRmsBk45WoAR5TUNVdd2fgix1PUtW8EukCH7H/rBNp
+            tRliqO+86oV7/Oi6Gb3AGqfuG1ZY2WQq+OsMog9TCsYwhbjZBPSlNA0vdEbL3ZXo
+            WeHo3dLcpe2gjNud7LNlwrcX4Jdv/L+Zak4rzzY5KFmLPbJvi1QYDWc5XF1NixL7
+            aa+XhF9T4FhsjWyU6TbUiIyls8FS3L/mHE3fw0FX1qh66Khv5+/w9+vGlDk2cqAC
+            X0qmS9BZo6WKHSuyY5zxoqxmkgyrbLnBIkOmmkXagSEWLlrREtkGtwZ27gsSA7Im
+            7XGZJA0M1XOZsNb4eLkCLQmk/QMIKxfKhOCD5jcRZhHrZWbaaooDZ20GpvIadhAJ
+            KXzmY2SfFyejkUECG7qZQzLU76kvwWD9dUfge4Su0679AgMBAAE=
+            -----END PUBLIC KEY-----
+        run: |
+          dir="$HOME/.noctra-android-key"
+          if [ ! -f "$dir/noctra.p12" ] || [ ! -f "$dir/password" ]; then
+            echo "::error::Clé absente du cache."; exit 1
+          fi
+          # Empreinte du certificat (publique) : vérification de la clé exportée.
+          keytool -list -v -keystore "$dir/noctra.p12" -storetype PKCS12 -storepass "$(cat "$dir/password")" | grep -E "SHA256:|Alias"
+          work=$(mktemp -d)
+          printf '%s\n' "$PUBLIC_KEY" > "$work/pub.pem"
+          openssl rand -out "$work/k.bin" 32
+          tar -C "$dir" -czf "$work/key.tgz" noctra.p12 password
+          mkdir -p export
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in "$work/key.tgz" -out export/key.tgz.enc -pass "file:$work/k.bin"
+          openssl pkeyutl -encrypt -pubin -inkey "$work/pub.pem" -pkeyopt rsa_padding_mode:oaep -in "$work/k.bin" -out export/k.bin.enc
+          rm -rf "$work"
+          ls -l export
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-signing-key-encrypted
+          path: export/
+          retention-days: 1
+          if-no-files-found: error
