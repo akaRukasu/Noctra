@@ -14,7 +14,9 @@ const css = await read('apps/androidtv/web/app.css');
 const app = await read('apps/androidtv/web/app.js');
 assert.ok(!/aspect-ratio|\binset:/.test(css), 'CSS compatible Chromium < 88');
 assert.match(css, /body\.scrolled #top \{ transform: translateY\(-110%\); opacity: 0; \}\s*body\.scrolled #top:focus-within \{ transform: none; opacity: 1; \}/);
-assert.match(css, /html\.web-host #nav, html\.lite #nav, html\.web-host \.multibar, html\.lite \.multibar, html\.web-host \.modal, html\.lite \.modal \{ -webkit-backdrop-filter: none; backdrop-filter: none; \}/, 'pas de flou en affichage léger');
+assert.match(css, /html\.web-host \.multibar, html\.lite \.multibar, html\.web-host \.modal, html\.lite \.modal \{ -webkit-backdrop-filter: none; backdrop-filter: none; \}/, 'pas de flou en affichage léger');
+// Menu fixe sans flou (recalculé à chaque image du défilement : saccades).
+assert.ok(!/#nav \{[^}]*backdrop-filter/.test(css), 'menu sans flou');
 assert.match(css, /html\.web-host \.card:focus \.art::after, html\.lite \.card:focus \.art::after/, 'pas de reflet en affichage léger');
 assert.ok(!/home-heading' \}/.test(app), 'accueil sans titre de page');
 // Android TV : APK noctra.72 (révision augmentée), construit seulement par « Noctra Android »
@@ -88,7 +90,7 @@ try {
     assert.equal(layout.current, 1);
     assert.equal(layout.icons, 1, 'onglets en texte, seule la recherche garde son icône');
     assert.equal(layout.heading, false);
-    assert.equal(layout.blur, lite ? 'none' : 'blur(24px) saturate(1.6)', lite ? 'pas de flou (LG, Samsung)' : 'menu translucide flouté');
+    assert.equal(layout.blur, 'none', 'menu sans flou (défilement fluide)');
     // Descendre dans les rangées : le menu s'efface ; l'affiche choisie grandit.
     const card = await page.evaluate(() => { const node = document.querySelector('.row .card'); node.focus(); return true; });
     assert.ok(card);
@@ -98,9 +100,16 @@ try {
     const scrolled = await page.evaluate(() => ({ top: document.getElementById('top').getBoundingClientRect().bottom, scale: getComputedStyle(document.activeElement).transform }));
     assert.ok(scrolled.top <= 0, 'menu effacé en descendant');
     assert.equal(scrolled.scale, 'matrix(1.1, 0, 0, 1.1, 0, 0)', 'affiche choisie agrandie');
-    await page.evaluate(() => document.querySelector('#nav .nav').focus());
-    await page.waitForTimeout(450);
+    // ▲ jusqu'aux boutons de la bannière : la page remonte tout en haut (bannière entière).
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(900);
+    const hero = await page.evaluate(() => ({ inHero: Boolean(document.activeElement.closest('.premiere')), top: document.getElementById('main').scrollTop }));
+    assert.ok(hero.inHero, 'bannière atteinte avant le menu');
+    assert.equal(hero.top, 0, 'bannière entière, pas coupée sous le menu');
+    await page.evaluate(() => { document.getElementById('main').scrollTop = 400; document.querySelector('#nav .nav').focus(); });
+    await page.waitForTimeout(900);
     assert.ok(await page.evaluate(() => document.getElementById('top').getBoundingClientRect().top >= 0), 'menu revenu quand il reprend la main');
+    assert.equal(await page.evaluate(() => document.getElementById('main').scrollTop), 0, 'menu choisi : page en haut');
     // Fiche : plein écran, logo du titre.
     await page.evaluate(() => { document.getElementById('main').scrollTop = 0; document.querySelector('.row .card').click(); });
     await page.waitForFunction(() => document.querySelector('.detail h1.has-logo .detail-logo'), null, { timeout: 10000 });

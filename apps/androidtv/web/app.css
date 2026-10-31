@@ -56,8 +56,9 @@ body.scrolled #top:focus-within { transform: none; opacity: 1; }
 #nav {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; align-items: center; padding: .3rem; border-radius: 99rem;
-  background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6);
-  box-shadow: 0 .5rem 1.6rem rgba(0, 0, 0, .35);
+  /* Matière translucide sans flou : un flou sous un menu fixe se recalcule à
+     chaque image du défilement (saccades sur les projecteurs et boîtiers). */
+  background: rgba(44, 44, 48, .86); box-shadow: 0 .5rem 1.6rem rgba(0, 0, 0, .35);
 }
 #nav .nav { margin-right: .15rem; }
 #nav .nav:last-child { margin-right: 0; }
@@ -170,7 +171,7 @@ body.scrolled #top:focus-within { transform: none; opacity: 1; }
 .card { position: relative; flex: none; width: 9.4rem; transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
 .card .art {
   position: relative; width: 100%; height: 0; padding-bottom: 150%; border-radius: .75rem; overflow: hidden;
-  background: linear-gradient(160deg, #2c2c30, #1c1c1f); box-shadow: 0 .35rem .9rem rgba(0, 0, 0, .35);
+  background: linear-gradient(160deg, #2c2c30, #1c1c1f);
   transition: box-shadow .25s;
 }
 .card .art img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -715,7 +716,7 @@ html.web-host .premiere-ambient, html.lite .premiere-ambient { display: none; }
 html.web-host .premiere-slide, html.lite .premiere-slide { will-change: auto; transition-duration: .35s !important; }
 html.web-host .reveal, html.lite .reveal { animation: none; }
 /* Pas de flou ni de grandes ombres : matières grises opaques, reflet retiré. */
-html.web-host #nav, html.lite #nav, html.web-host .multibar, html.lite .multibar, html.web-host .modal, html.lite .modal { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.web-host .multibar, html.lite .multibar, html.web-host .modal, html.lite .modal { -webkit-backdrop-filter: none; backdrop-filter: none; }
 html.web-host #nav, html.lite #nav { background: #2a2a2e; box-shadow: none; }
 html.web-host .modal, html.lite .modal { background: rgba(0, 0, 0, .86); }
 html.web-host .card .art, html.lite .card .art, html.web-host .lib-tile, html.lite .lib-tile { box-shadow: none; }

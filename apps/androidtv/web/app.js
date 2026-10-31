@@ -526,8 +526,14 @@
       if (r.left < t.left + pad) scrollTo(track, track.scrollLeft - (t.left + pad - r.left), null);
       else if (r.right > t.right - pad) scrollTo(track, track.scrollLeft + r.right - (t.right - pad), null);
     }
+    // Bannière de l'accueil, en-tête d'une fiche ou menu : la page remonte tout
+    // en haut (bannière entière, jamais coupée sous le menu), comme sur l'Apple TV.
+    if (isMenu(node) || (main.contains(node) && node.closest('.premiere-slot, .detail'))) {
+      if (main.scrollTop > 0) scrollTo(main, null, 0);
+      return;
+    }
     var scroller = node.closest('.scroll');
-    if (!scroller || isMenu(node)) return;
+    if (!scroller) return;
     var box = node.closest('.row, .reveal-box') || node;
     var s = scroller.getBoundingClientRect(), b = box.getBoundingClientRect();
     if (b.height > scroller.clientHeight * 0.7) { box = node; b = node.getBoundingClientRect(); }
@@ -547,6 +553,10 @@
     scrolledDown = down;
     document.body.classList.toggle('scrolled', down);
   }, { passive: true });
+  // Menu choisi, par n'importe quel chemin (▲, Retour) : page en haut.
+  document.getElementById('top').addEventListener('focusin', function () {
+    if (main.scrollTop > 0) scrollTo(main, null, 0);
+  });
   var headerCache = 0;
   function headerHeight() {
     if (!headerCache) headerCache = document.getElementById('top').offsetHeight;
