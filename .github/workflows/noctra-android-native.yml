@@ -8,6 +8,10 @@ on:
   push:
     paths:
       - 'apps/android-native/**'
+      # APK Noctra TV (même clé de signature) : interface et construction.
+      - 'apps/androidtv/**'
+      - 'apps/scripts/build-androidtv.mjs'
+      - 'apps/scripts/android-tools.mjs'
       - '.github/workflows/noctra-android-native.yml'
   workflow_dispatch:
 
