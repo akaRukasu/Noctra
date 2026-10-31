@@ -61,3 +61,6 @@ Noctra TV 1.1.54 (Android TV noctra.74, LG webOS) : en remontant vers la banniè
 
 ## 200.0.156
 Noctra TV 1.1.55 (Android TV noctra.75, LG webOS) : les chaînes réunies ne proposent plus de serveur « automatique » (« LiveWatch · automatique ») à découvrir au lancement. Chaque source a 9 s (au lieu de 2,5 s) pour donner ses vrais serveurs, affichés tels quels (« LiveWatch · Basic »…) et vérifiés avant le lancement (16 serveurs au lieu de 12) ; l'avancement est affiché source par source. Une source qui ne répond pas, renvoie une liste vide ou une erreur est retirée ; les entrées automatiques ne restent qu'en dernier recours, quand aucune source n'a répondu. Validation : `npm run test:v200156`.
+
+## 200.0.157
+Noctra TV 1.1.56 (Android TV noctra.76, LG webOS) : lecture des chaînes plus stable. Sur les projecteurs et boîtiers à court de mémoire, Android recrée la page d'accueil pendant la lecture : elle oubliait la chaîne en cours, d'où un menu « Serveurs » vide et plus aucun changement de serveur quand le flux coupait. La chaîne et ses serveurs sont maintenant gardés sur le téléviseur (oubliés à la fermeture du lecteur) et repris après un rechargement. Coupures répétées sans autre serveur déjà vérifié : jusqu'à 4 serveurs sont testés sur le moment et le plus rapide qui répond prend le relais. Validation : `npm run test:v200157`.

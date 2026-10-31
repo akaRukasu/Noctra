@@ -1774,6 +1774,10 @@
   // Événements du lecteur : état (prêt / chargement) et demandes de l'utilisateur.
   function playerEvent(event) {
     if (event.event === 'remoteState') { mobileRemoteState = event; return; }
+    // Accueil rechargé pendant la lecture (projecteur à court de mémoire : la
+    // page est recréée) : chaîne et serveurs repris de la mémoire du téléviseur,
+    // pour le menu « Serveurs » et le changement de serveur en cas d'échec.
+    if (!playback && !vodPlayback) playback = restorePlayback();
     // Générique d'épisode passé à la main (avance rapide) : appris pour la série.
     if (event.event === 'introSkip') { learnIntro(event.seriesId, Number(event.startMs), Number(event.endMs)); return; }
     if (event.event === 'zap') { zap(Number(event.delta) || 0); return; }
@@ -4469,11 +4473,39 @@
     fillPicker(sheet, state, seconds);
   }
 
+  // Chaîne en cours gardée sur le téléviseur : l'accueil peut être rechargé
+  // pendant la lecture (mémoire), le lecteur continue sans lui.
+  var PLAYBACK_STORE = 'noctra-tv-playback-v1';
+  function savePlayback(state) {
+    try {
+      if (!state) { localStorage.removeItem(PLAYBACK_STORE); return; }
+      var options = state.options.map(function (option) {
+        var copy = {};
+        // Sans les éléments d'affichage ni les résultats de test (clés « _ »).
+        Object.keys(option).forEach(function (key) { if (key.charAt(0) !== '_' || key === '_prefix') copy[key] = option[key]; });
+        return copy;
+      });
+      localStorage.setItem(PLAYBACK_STORE, JSON.stringify({
+        at: Date.now(), key: state.key, index: state.index, failed: state.failed, playId: state.playId, startedAt: state.startedAt, options: options,
+        channel: { name: state.channel.name, provider: state.channel.provider || '', group: state.channel.group || '', logo: state.channel.logo || '' },
+        source: state.source ? { id: state.source.id, name: state.source.name } : null
+      }));
+    } catch (error) { /* stockage indisponible */ }
+  }
+  function restorePlayback() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(PLAYBACK_STORE) || 'null');
+      if (!saved || !saved.options || !saved.options.length || Date.now() - saved.at > 12 * 3600000) return null;
+      return { channel: saved.channel, source: saved.source, ctx: null, key: saved.key, options: saved.options, index: saved.index || 0,
+        failed: saved.failed || {}, startedAt: saved.startedAt || 0, renewed: false, list: null, playId: saved.playId, restored: true };
+    } catch (error) { return null; }
+  }
   function playOption(load) {
     var state = playback;
     if (!state) return;
     var option = state.options[state.index];
     if (!option) { playback = null; return; }
+    savePlayback(state);
     // Chaîne réunie : le nom du serveur contient déjà sa source.
     var label = state.channel._entries || option._prefix ? optionLabel(option, state.index) : [state.channel.provider, optionLabel(option, state.index)].filter(Boolean).join(' · ');
     if (optionKind(option) === 'resolve') {
@@ -4500,6 +4532,7 @@
     if (option.streamUrl) {
       var mime = option.mime || (tsTransport(option) || tsTransport(state.channel) ? 'video/mp2t' : '');
       state.playId = playId();
+      savePlayback(state);
       var request = { url: absolute(option.streamUrl), title: state.channel.name, subtitle: label, mime: mime, headers: option.headers || null, epg: epgPayload(state), playSessionId: state.playId };
       // Zapping : même lecteur, nouveau flux.
       if (load) { request.command = 'load'; native('playerCommand', request); return; }
@@ -4510,7 +4543,7 @@
     }
     // Chaîne sans flux direct : le lecteur natif se ferme, le lecteur web s'ouvre.
     // (fermeture de ce lecteur ignorée : nouvel identifiant de lecture).
-    if (load) { state.playId = playId(); native('playerCommand', { command: 'stop' }); }
+    if (load) { state.playId = playId(); savePlayback(state); native('playerCommand', { command: 'stop' }); }
     openEmbed(state, option, label);
   }
   function markFailed(state) {
@@ -4528,6 +4561,7 @@
   // Serveur tombé pendant la lecture : lien neuf du même serveur s'il avait
   // fonctionné, sinon serveur suivant, chargé dans le lecteur ouvert.
   function playerFailed(event) {
+    if (!playback && !vodPlayback) playback = restorePlayback();
     var state = playback;
     if (!state) return;
     var option = state.options[state.index];
@@ -4624,7 +4658,35 @@
     });
     // Le serveur quitté garde la trace de ses coupures (3 en 5 min au moins).
     recordSmooth(state, state.index, 3, 300000);
-    if (best < 0) return;
+    if (best >= 0) { switchServer(state, best); return; }
+    // Aucun autre serveur vérifié (pas encore testé, ou accueil rechargé pendant
+    // la lecture) : jusqu'à 4 sont testés maintenant, le plus rapide qui répond
+    // prend le relais.
+    var untested = [];
+    state.options.forEach(function (option, index) {
+      if (index !== state.index && !state.failed[index] && !option._probeState && optionKind(option) === 'native' && !unavailableHere(option)) untested.push(index);
+    });
+    if (!untested.length) return;
+    state.switchedAt = Date.now();
+    Promise.all(untested.slice(0, 4).map(function (index) {
+      var option = state.options[index];
+      return probeOption(option).then(function (result) {
+        option._probeState = result === 'bad' || result === 'stale' ? 'down' : result;
+        return result === 'up' ? index : -1;
+      }, function () { return -1; });
+    })).then(function (found) {
+      if (playback !== state) return;
+      var chosen = -1;
+      found.forEach(function (index) {
+        if (index < 0) return;
+        var margin = state.options[index]._probeMargin || 0;
+        if (margin && margin < 1.2) return;
+        if (chosen < 0 || margin > (state.options[chosen]._probeMargin || 0)) chosen = index;
+      });
+      if (chosen >= 0) switchServer(state, chosen);
+    });
+  }
+  function switchServer(state, best) {
     state.switchedAt = Date.now();
     native('playerCommand', { command: 'zapping', title: state.channel.name, subtitle: optionLabel(state.options[best], best), epg: epgPayload(state), message: 'Coupures répétées · passage sur ' + optionLabel(state.options[best], best) + '…' });
     state.index = best;
@@ -4672,8 +4734,11 @@
     if (target) focus(target);
   }
   function playerClosed(result) {
+    if (!playback) playback = restorePlayback();
     var state = playback;
     if (!state) return;
+    // Lecteur fermé : la chaîne n'est plus à reprendre après un rechargement.
+    if (result.ok && (!result.playSessionId || !state.playId || result.playSessionId === state.playId)) savePlayback(null);
     // Lecteur d'une chaîne quittée par zapping : fermeture sans conséquence.
     if (result.playSessionId && state.playId && result.playSessionId !== state.playId) return;
     if (result.played) succeeded(state);
