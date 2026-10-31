@@ -312,8 +312,9 @@ assert.match(webHost, /Tous les serveurs en échec : nouvel essai/);
 // Toutes les chaînes : sources réunies, serveurs de toutes les sources classés par fiabilité.
 assert.match(tvApp, /var ALL_SOURCE = \{ id: 'all'/);
 assert.match(tvApp, /if \(channel\._entries\) return unifiedOptions\(channel\);/);
-assert.match(tvApp, /function expandOptions\(options\) \{/);
-assert.match(tvApp, /function serverList\(channel, source, key\) \{/);
+// 1.1.55 : avancement de la recherche des serveurs de chaque source (onProgress).
+assert.match(tvApp, /function expandOptions\(options(, onProgress)?\) \{/);
+assert.match(tvApp, /function serverList\(channel, source, key(, onProgress)?\) \{/);
 assert.match(tvApp, /function channelCountry\(channel\) \{/);
 assert.ok(!tvApp.includes('_frenchGuess') && !tvApp.includes('source._french'), 'Pays déduit de la chaîne, jamais de la source entière');
 assert.match(tvApp, /if \(word === 'sports'\) return 'sport';/);
@@ -447,7 +448,7 @@ assert.match(tvApp, /'Pas de vidéo' : detail === 'stale' \? 'Direct figé'/);
 assert.match(tvApp, /if \(!event\.played\) recordProbe\(option, false\);/);
 assert.match(tvApp, /recordProbe\(option, true\);/);
 assert.match(tvApp, /function launchBest\(state, index\)/);
-assert.match(tvApp, /state\.options\.slice\(0, 12\)/);
+assert.match(tvApp, /state\.options\.slice\(0, (12|16)\)/);
 assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
 assert.match(tvApp, /if \(LITE_UI && \(Date\.now\(\) - lastMove < 4000/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);
