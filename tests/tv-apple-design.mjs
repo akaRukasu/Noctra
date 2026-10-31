@@ -20,7 +20,10 @@ assert.ok(!/home-heading' \}/.test(app), 'accueil sans titre de page');
 // Android TV : APK noctra.72 (révision augmentée), construit seulement par « Noctra Android »
 // avec la clé de toutes ses versions ; « Applications Noctra » le signait avec une clé
 // temporaire (« Application non installée » sur le téléviseur).
-assert.match(await read('apps/scripts/build-androidtv.mjs'), /const noctraRevision = 72;/);
+const tvBuild = await read('apps/scripts/build-androidtv.mjs');
+assert.match(tvBuild, /const noctraRevision = (7[3-9]|[89]\d|\d{3});/);
+// Ajout du serveur (premier lancement) : délai de Jellyfin porté de 3,5 s à 20 s.
+assert.match(tvBuild, /'const-wide\/high16 v0, 0x400c000000000000L    # 3\.5',\s*'const-wide\/high16 v0, 0x4034000000000000L    # 20\.0'/);
 const appsWorkflow = await read('.github/workflows/noctra-apps.yml');
 assert.ok(!/build-androidtv\.mjs/.test(appsWorkflow), 'pas d\'APK Android TV signé autrement');
 assert.match(await read('.github/workflows/noctra-android-native.yml'), /- 'apps\/androidtv\/\*\*'/);

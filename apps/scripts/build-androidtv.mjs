@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 72;
+const noctraRevision = 73;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');
@@ -104,6 +104,15 @@ await patch(smali('ui/startup/StartupActivity.smali'), [[
     const-class v2, Lorg/jellyfin/androidtv/ui/startup/fragment/ServerAddFragment;
 
     invoke-virtual {v0, v1, v2, v4, v3}, Landroidx/fragment/app/FragmentTransaction;->add(ILjava/lang/Class;Landroid/os/Bundle;Ljava/lang/String;)Landroidx/fragment/app/FragmentTransaction;`
+]]);
+
+// Vérification du serveur à l'ajout (premier lancement, après une
+// réinstallation) : Jellyfin abandonne si /System/Info/Public ne répond pas en
+// 3,5 s (« Délais de connexion dépassé »), ce qui arrive avec une seedbox
+// chargée alors que l'appli iPhone attend davantage. Délai porté à 20 s.
+await patch(join(decoded, 'smali_classes6', 'org', 'jellyfin', 'sdk', 'discovery', 'RecommendedServerDiscovery.smali'), [[
+  'const-wide/high16 v0, 0x400c000000000000L    # 3.5',
+  'const-wide/high16 v0, 0x4034000000000000L    # 20.0'
 ]]);
 
 // ── 2. Identifiant propre (com.noctra.tv) ─────────────────────────────────
