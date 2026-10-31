@@ -92,63 +92,9 @@ jobs:
           path: dist/apps/Noctra-android.apk
           if-no-files-found: error
 
-  androidtv:
-    name: Noctra TV (Android TV, base Jellyfin)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      # Même clé que le workflow « Noctra Android » (secrets NOCTRA_KEYSTORE_*,
-      # sinon sa clé gardée dans le cache du dépôt) : l'APK s'installe par-dessus
-      # l'appli déjà présente. Jamais de clé créée ici (signature différente :
-      # « Application non installée » sur le téléviseur).
-      - name: Clé de signature (cache de « Noctra Android »)
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.noctra-android-key
-          key: noctra-android-native-signing-v1
-      - name: Clé de signature
-        env:
-          KEYSTORE_BASE64: ${{ secrets.NOCTRA_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.NOCTRA_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.NOCTRA_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.NOCTRA_KEY_PASSWORD }}
-        run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.p12"
-            {
-              echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.p12"
-              echo "NOCTRA_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-              echo "NOCTRA_KEY_ALIAS=$KEY_ALIAS"
-              echo "NOCTRA_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
-            } >> "$GITHUB_ENV"
-            exit 0
-          fi
-          dir="$HOME/.noctra-android-key"
-          if [ ! -f "$dir/noctra.p12" ]; then
-            echo "::error::Clé de signature introuvable : lancez d'abord le workflow « Noctra Android » (il la crée et la garde)."
-            exit 1
-          fi
-          echo "::add-mask::$(cat "$dir/password")"
-          {
-            echo "NOCTRA_KEYSTORE_FILE=$dir/noctra.p12"
-            echo "NOCTRA_KEYSTORE_PASSWORD=$(cat "$dir/password")"
-            echo "NOCTRA_KEY_ALIAS=noctra"
-            echo "NOCTRA_KEY_PASSWORD=$(cat "$dir/password")"
-          } >> "$GITHUB_ENV"
-      - name: APK Noctra TV
-        run: node apps/scripts/build-androidtv.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: noctra-androidtv
-          path: dist/apps/Noctra-androidtv.apk
-          if-no-files-found: error
+  # APK Android TV : construit par le workflow « Noctra Android » seulement, avec
+  # la clé de signature de toutes ses versions (une clé différente ici empêchait
+  # l'installation par-dessus : « Application non installée »).
 
   ios:
     name: iOS (iPhone + iPad)
@@ -176,7 +122,7 @@ jobs:
   release:
     name: Release GitHub
     if: startsWith(github.ref, 'refs/tags/apps-v')
-    needs: [tv, android, androidtv, ios]
+    needs: [tv, android, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -190,7 +136,7 @@ jobs:
           name: Applications Noctra ${{ github.ref_name }}
           files: dist/*
           body: |
-            - **Noctra-androidtv.apk** : Android TV, Google TV, Fire TV, vidéoprojecteurs (appli native, base Jellyfin).
+            - Android TV : APK dans le workflow « Noctra Android » (Artifacts › noctra-androidtv).
             - **Noctra-android.apk** : téléphones et tablettes Android.
             - **Noctra-ios-unsigned.ipa** : iPhone et iPad, à installer avec Sideloadly ou AltStore.
             - **com.noctra.media_…_all.ipk** : téléviseurs LG webOS (mode développeur).

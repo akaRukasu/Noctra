@@ -121,6 +121,8 @@ Sans GitHub, sur n’importe quel PC :
 2. Ouvrez-le. Android demande d’autoriser l’installation d’applications inconnues pour le navigateur ou le gestionnaire de fichiers utilisé.
 
 ### Android TV / Google TV / Fire TV (Noctra TV)
+Sur GitHub, l’APK se télécharge dans le workflow **Noctra Android** › Artifacts › `noctra-androidtv` : toujours signé avec la même clé, il s’installe par-dessus la version précédente (un APK signé avec une autre clé est refusé : « Application non installée »).
+
 Installez `Noctra-androidtv.apk` avec l’une de ces méthodes :
 - Installez l’appli **Downloader** (AFTVnews) sur la TV, puis ouvrez le lien de `Noctra-androidtv.apk`.
 - Utilisez **Send Files to TV** depuis votre téléphone.

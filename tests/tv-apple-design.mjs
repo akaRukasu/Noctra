@@ -17,12 +17,12 @@ assert.match(css, /body\.scrolled #top \{ transform: translateY\(-110%\); opacit
 assert.match(css, /html\.web-host #nav, html\.lite #nav, html\.web-host \.multibar, html\.lite \.multibar, html\.web-host \.modal, html\.lite \.modal \{ -webkit-backdrop-filter: none; backdrop-filter: none; \}/, 'pas de flou en affichage léger');
 assert.match(css, /html\.web-host \.card:focus \.art::after, html\.lite \.card:focus \.art::after/, 'pas de reflet en affichage léger');
 assert.ok(!/home-heading' \}/.test(app), 'accueil sans titre de page');
-// Android TV : APK noctra.72 (révision augmentée) ; « Applications Noctra » signe avec la clé
-// stable de « Noctra Android », jamais une clé créée à la volée (« Application non installée »).
+// Android TV : APK noctra.72 (révision augmentée), construit seulement par « Noctra Android »
+// avec la clé de toutes ses versions ; « Applications Noctra » le signait avec une clé
+// temporaire (« Application non installée » sur le téléviseur).
 assert.match(await read('apps/scripts/build-androidtv.mjs'), /const noctraRevision = 72;/);
 const appsWorkflow = await read('.github/workflows/noctra-apps.yml');
-assert.match(appsWorkflow, /uses: actions\/cache\/restore@v4\s+with:\s+path: ~\/\.noctra-android-key\s+key: noctra-android-native-signing-v1/);
-assert.match(appsWorkflow, /Clé de signature introuvable/);
+assert.ok(!/build-androidtv\.mjs/.test(appsWorkflow), 'pas d\'APK Android TV signé autrement');
 assert.match(await read('.github/workflows/noctra-android-native.yml'), /- 'apps\/androidtv\/\*\*'/);
 assert.match(app, /var top = scroller === main \? \(scrolledDown \? 24 : headerHeight\(\) \+ 8\) : s\.top \+ 20;/);
 
