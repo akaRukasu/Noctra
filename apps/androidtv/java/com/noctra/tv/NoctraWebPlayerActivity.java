@@ -101,6 +101,13 @@ public class NoctraWebPlayerActivity extends Activity {
     static final String EXTRA_HEADERS = "noctra_headers";
     /** Mode allégé dès le départ (nouvel essai après un arrêt du lecteur). */
     static final String EXTRA_LITE = "noctra_lite";
+    /**
+     * Bloqueur de pubs (activé par défaut, réglable dans le menu du compte) :
+     * régies publicitaires et pistage bloqués, fenêtres publicitaires ouvertes
+     * sans être montrées puis refermées (la page les croit ouvertes : l'étape
+     * « publicité » qui débloque la chaîne passe quand même).
+     */
+    static final String EXTRA_ADBLOCK = "noctra_adblock";
     /** Durée d'affichage d'une page ouverte par le lecteur (souvent sa publicité). */
     private static final int TAB_MS = 8000;
     static final String EXTRA_ERROR = "noctra_error";
@@ -138,6 +145,7 @@ public class NoctraWebPlayerActivity extends Activity {
     private final List<WebView> popups = new ArrayList<WebView>();
     private int crashes;
     private boolean lite;
+    private boolean adBlock;
     private int consoleErrors;
     private int blocked;
     private boolean sniff;
@@ -172,7 +180,19 @@ public class NoctraWebPlayerActivity extends Activity {
         "outbrain.com", "revcontent.com", "trafficjunky.net", "yandex.ru", "mc.yandex.ru", "adservice.google.com",
         "acscdn.com", "protrafficinspector.com", "googletagmanager.com", "google-analytics.com", "clarity.ms", "hotjar.com",
         "profitablegatecpm.com", "highperformanceformat.com", "effectiveratecpm.com", "adsco.re", "tsyndicate.com", "realsrv.com",
-        "magsrv.com", "pemsrv.com", "a-mo.net", "dtscout.com", "bidgear.com", "ad-maven.com", "admaven.com", "onclckmn.com"
+        "magsrv.com", "pemsrv.com", "a-mo.net", "dtscout.com", "bidgear.com", "ad-maven.com", "admaven.com", "onclckmn.com",
+        // Bloqueur de pubs : régies courantes des sites de streaming (pop-under,
+        // bannières par-dessus la vidéo, redirections au premier clic).
+        "adsrvr.org", "amazon-adsystem.com", "criteo.com", "criteo.net", "pubmatic.com", "rubiconproject.com", "openx.net",
+        "smartadserver.com", "teads.tv", "outbrainimg.com", "zemanta.com", "adform.net", "moatads.com", "scorecardresearch.com",
+        "quantserve.com", "imasdk.googleapis.com", "pagead2.googlesyndication.com", "tpc.googlesyndication.com",
+        "popmyads.com", "popunder.net", "poptm.com", "pushame.com", "richpush.co", "evadav.com", "galaksion.com",
+        "adspyglass.com", "clickaine.com", "aclickads.com", "admitad.com", "rtmark.net", "trafficstars.com", "tsyndicate.net",
+        "exosrv.com", "exdynsrv.com", "ero-advertising.com", "plugrush.com", "streamads.net", "adxpremium.services",
+        "whos.amung.us", "statcounter.com", "cloudfront-ads.com", "zeroredirect1.com", "zeroredirect2.com", "betterads.co",
+        "lnkpop.com", "displayvertising.com", "bngpt.com", "jads.co", "ad.plus", "vidoomy.com", "aniview.com", "adtelligent.com",
+        "onclickalgo.com", "onclickperformance.com", "onclickmax.com", "onclicksuper.com", "highcpmgate.com", "highcpmrevenuegate.com",
+        "profitablecpmgate.com", "toprevenuegate.com", "revenuecpmgate.com", "displaycontentnetwork.com", "dolohen.com", "acint.net"
     };
 
     /**
@@ -216,6 +236,8 @@ public class NoctraWebPlayerActivity extends Activity {
         source = url;
         sniff = intent.getBooleanExtra(EXTRA_SNIFF, true);
         boolean liteStart = intent.getBooleanExtra(EXTRA_LITE, false);
+        adBlock = intent.getBooleanExtra(EXTRA_ADBLOCK, true);
+        if (adBlock) NoctraWebLog.add(this, "Bloqueur de pubs activé");
         referrer = intent.getStringExtra(EXTRA_REFERRER);
         if (referrer == null || referrer.isEmpty()) referrer = "strict-origin-when-cross-origin";
 
@@ -235,6 +257,7 @@ public class NoctraWebPlayerActivity extends Activity {
         String title = intent.getStringExtra(EXTRA_TITLE);
         String subtitle = intent.getStringExtra(EXTRA_SUBTITLE);
         hint.setText((title == null ? "" : title) + (subtitle == null || subtitle.isEmpty() ? "" : "  ·  " + subtitle)
+            + (adBlock ? "  ·  publicités bloquées" : "")
             + "\n◀ ▲ ▼ ▶ déplacer le curseur · OK cliquer (lecture, plein écran) · OK maintenu : page entière · Retour quitter");
         hint.setTextColor(Color.rgb(242, 246, 244));
         hint.setTextSize(15);
@@ -321,7 +344,7 @@ public class NoctraWebPlayerActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (sniff && !handedOff && isStream(request.getUrl())) handOff(request);
-                if (lite && isAd(request.getUrl())) {
+                if ((lite || adBlock) && isAd(request.getUrl())) {
                     blocked++;
                     String adPath = request.getUrl().getPath() == null ? "" : request.getUrl().getPath().toLowerCase();
                     if (adPath.contains("aclib")) return new WebResourceResponse("text/javascript", "utf-8", new ByteArrayInputStream(ACLIB_STUB.getBytes()));
@@ -430,12 +453,16 @@ public class NoctraWebPlayerActivity extends Activity {
                     WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
                     transport.setWebView(popup);
                     resultMsg.sendToTarget();
-                    if (lite) {
-                        // Mode allégé : onglet publicitaire ouvert sans être montré, puis refermé
-                        // (la page le croit ouvert ; la vidéo reste à l'écran, sans coupure noire).
+                    if (lite || adBlock) {
+                        // Mode allégé ou bloqueur de pubs : onglet publicitaire ouvert sans
+                        // être montré, puis refermé (la page le croit ouvert ; la vidéo reste
+                        // à l'écran, sans coupure noire). Bloqueur seul : la page de l'onglet
+                        // se charge quand même (étape « publicité » qui débloque la chaîne),
+                        // sans images ni son ; mode allégé : sans scripts (mémoire).
                         try {
-                            popup.getSettings().setJavaScriptEnabled(false);
+                            if (lite) popup.getSettings().setJavaScriptEnabled(false);
                             popup.getSettings().setLoadsImagesAutomatically(false);
+                            popup.getSettings().setMediaPlaybackRequiresUserGesture(true);
                         } catch (Throwable ignored) { }
                         ignoredTabs++;
                         if (ignoredTabs <= 3) NoctraWebLog.add(NoctraWebPlayerActivity.this, "Onglet publicitaire ignoré");
@@ -444,7 +471,7 @@ public class NoctraWebPlayerActivity extends Activity {
                             public void run() {
                                 closeWindow(popup);
                             }
-                        }, 2000);
+                        }, lite ? 2000 : 3000);
                         return true;
                     }
                     showTab(popup);

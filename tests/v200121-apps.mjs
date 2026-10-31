@@ -313,8 +313,8 @@ assert.match(webHost, /Tous les serveurs en échec : nouvel essai/);
 assert.match(tvApp, /var ALL_SOURCE = \{ id: 'all'/);
 assert.match(tvApp, /if \(channel\._entries\) return unifiedOptions\(channel\);/);
 // 1.1.55 : avancement de la recherche des serveurs de chaque source (onProgress).
-assert.match(tvApp, /function expandOptions\(options(, onProgress)?\) \{/);
-assert.match(tvApp, /function serverList\(channel, source, key(, onProgress)?\) \{/);
+assert.match(tvApp, /function expandOptions\(options(, onProgress(, onLate)?)?\) \{/);
+assert.match(tvApp, /function serverList\(channel, source, key(, onProgress(, onLate)?)?\) \{/);
 assert.match(tvApp, /function channelCountry\(channel\) \{/);
 assert.ok(!tvApp.includes('_frenchGuess') && !tvApp.includes('source._french'), 'Pays déduit de la chaîne, jamais de la source entière');
 assert.match(tvApp, /if \(word === 'sports'\) return 'sport';/);
@@ -401,7 +401,7 @@ assert.match(await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.
 assert.match(streamJava, /private static final int\[\]\[\] CAPS = \{ \{ 1280, 720 \}, \{ 960, 540 \} \};/);
 const compatJava = await read('apps/androidtv/java/com/noctra/tv/NoctraJsCompat.java');
 assert.match(compatJava, /String tag = "<script>" \+ POLYFILL \+ HLS_TUNING \+ "<\/script>";/, 'Lecteurs hls.js : réserve plus grande');
-assert.match(tvApp, /fillPicker\(sheet, playback, trusted \? 2 : 3\);/, 'Fiabilité des serveurs affichée avant le lancement');
+assert.match(tvApp, /fillPicker\(sheet, playback, trusted \? (2 : 3|1 : 2)\);/, 'Fiabilité des serveurs affichée avant le lancement');
 assert.match(tvApp, /function healthText\(option, key, index, provider\) \{/);
 // LG webOS et Samsung Tizen : interface Android TV intégrée au paquet (tv/).
 const buildTv = await read('apps/scripts/build-tv.mjs');

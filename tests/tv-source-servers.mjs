@@ -12,14 +12,15 @@ const code = [
   between('  function optionKind(option) {', '  function optionLabel('),
   between('  var RESOLVE_WAIT_MS = 9000;', '  function serverList('),
   between('  function inheritSource(item, parent) {', '\n  }\n') + '\n  }\n'
-].join('\n').replace('var RESOLVE_WAIT_MS = 9000;', 'var RESOLVE_WAIT_MS = 300;');
+].join('\n').replace('var RESOLVE_WAIT_MS = 9000;', 'var RESOLVE_WAIT_MS = 300;').replace('var RESOLVE_GRACE_MS = 1500;', 'var RESOLVE_GRACE_MS = 80;');
 const answers = {
   '/lw': () => Promise.resolve([{ playbackType: 'stream', streamUrl: '/s/basic', label: 'Basic' }, { playbackType: 'stream', streamUrl: '/s/vip', label: 'VIP' }]),
   '/oha': () => Promise.reject(new Error('502')),
   '/mute': () => new Promise(() => {}),
-  '/empty': () => Promise.resolve([])
+  '/empty': () => Promise.resolve([]),
+  '/slow': () => new Promise(resolve => setTimeout(() => resolve([{ playbackType: 'stream', streamUrl: '/s/slow', label: 'Lent' }]), 200))
 };
-const context = { setTimeout, Promise, resolveOptions: url => answers[url]() };
+const context = { setTimeout, clearTimeout, Promise, resolveOptions: url => answers[url]() };
 vm.createContext(context);
 vm.runInContext(code + '\nglobalThis.expandOptions = expandOptions;', context);
 const auto = (prefix, url) => ({ playbackType: 'resolver', resolveUrl: url, label: prefix + ' · automatique', _prefix: prefix });
@@ -31,9 +32,23 @@ const list = await context.expandOptions([
 assert.deepEqual(Array.from(list, option => option.label), ['TNT · Flux direct', 'LiveWatch · Basic', 'LiveWatch · VIP'], 'vrais serveurs des sources, sources muettes retirées');
 assert.ok(list.every(option => !option.resolveUrl || option.streamUrl), 'aucun serveur « automatique »');
 assert.equal(list[1].renewUrl, '/lw', 'liens renouvelables par la source');
-assert.deepEqual(progress, ['0/4', '1/4', '2/4', '3/4', '4/4'], 'avancement affiché source par source');
+// Source muette : plus attendue (délai de grâce), son avancement arrive après.
+assert.deepEqual(progress, ['0/4', '1/4', '2/4', '3/4'], 'avancement affiché source par source');
 const fallback = await context.expandOptions([auto('OHA', '/oha'), auto('WiTV', '/mute')]);
 assert.deepEqual(Array.from(fallback, option => option.label), ['OHA · automatique', 'WiTV · automatique'], 'aucune source n’a répondu : dernier recours');
+// 1.1.57 : la source la plus lente n'est plus attendue. Une source a répondu :
+// les autres ont encore le délai de grâce, les retardataires arrivent ensuite.
+const late = [];
+const began = Date.now();
+const quick = await context.expandOptions([auto('LiveWatch', '/lw'), auto('Slow', '/slow')], null, items => late.push(...items));
+assert.ok(Date.now() - began < 170, 'lancement sans attendre la source lente');
+assert.deepEqual(Array.from(quick, option => option.label), ['LiveWatch · Basic', 'LiveWatch · VIP']);
+await new Promise(resolve => setTimeout(resolve, 250));
+assert.deepEqual(late.map(option => option.label), ['Slow · Lent'], 'serveurs de la source lente ajoutés ensuite');
+assert.match(app, /var RESOLVE_GRACE_MS = 1500;/);
+assert.match(app, /fillPicker\(sheet, playback, trusted \? 1 : 2\);/);
+assert.match(app, /var deadline = Date\.now\(\) \+ 4000;/);
+assert.match(app, /\}, addLate\)\.then\(function \(options\) \{/);
 assert.match(app, /state\.options\.slice\(0, 16\)\.forEach/, '16 serveurs vérifiés');
 assert.match(app, /sheet\.status\('Serveurs fournis par les sources : ' \+ done \+ ' \/ ' \+ total \+ '…'\)/);
-console.log('Noctra TV 1.1.55 : vrais serveurs des sources (plus de serveur « automatique »), sources muettes retirées : OK');
+console.log('Noctra TV 1.1.57 : vrais serveurs des sources, sources muettes retirées, lancement sans attendre la source la plus lente : OK');

@@ -328,6 +328,13 @@
         toast(S.parallelLoading ? 'Lecteur standard : film chargé sur 4 connexions à la fois.' : 'Lecteur standard : 1 connexion, exactement comme l’appli d’origine (pour comparer).');
       } }, icon('settings'), 'Lecteur standard : ' + (S.parallelLoading ? '4 connexions' : '1 connexion (d’origine)')) : null,
       S.caps.jellyfinPlayer !== false ? h('button', { class: 'btn f', onclick: function () { closeLayer(); speedTest(); } }, icon('live'), 'Tester la connexion') : null,
+      // Bloqueur de pubs des lecteurs web (Android TV) : activé par défaut.
+      S.platform === 'androidtv' && S.caps.webPlayer !== false ? h('button', { class: 'btn f', onclick: function () {
+        var next = !adBlock();
+        try { localStorage.setItem('noctra-tv-adblock', next ? '1' : '0'); } catch (error) { /* stockage indisponible */ }
+        closeLayer();
+        toast(next ? 'Lecteurs web : publicités et fenêtres publicitaires bloquées.' : 'Lecteurs web : publicités autorisées (si un lecteur ne démarre pas avec le bloqueur).');
+      } }, icon('settings'), 'Bloqueur de pubs : ' + (adBlock() ? 'activé' : 'désactivé')) : null,
       document.documentElement.classList.contains('web-host') ? null : h('button', { class: 'btn f', onclick: function () {
         var order = ['auto', 'lite', 'full'];
         var next = order[(order.indexOf(displayMode()) + 1) % order.length];
@@ -496,6 +503,10 @@
   // modestes (2 Go de mémoire ou moins), ou choisi dans le menu du compte.
   // Mêmes animations de navigation, sans flou, dégradés plein écran ni
   // transitions de couleurs et d'ombres.
+  // Bloqueur de pubs des lecteurs web (Android TV) : activé sauf choix contraire.
+  function adBlock() {
+    try { return localStorage.getItem('noctra-tv-adblock') !== '0'; } catch (error) { return true; }
+  }
   function displayMode() {
     try { var mode = localStorage.getItem('noctra-tv-display'); return mode === 'lite' || mode === 'full' ? mode : 'auto'; } catch (error) { return 'auto'; }
   }
@@ -3092,37 +3103,62 @@
   // en même temps) ; une source muette, vide ou en erreur est retirée. Les
   // entrées « automatiques » ne restent qu'en dernier recours, quand aucune
   // source n'a répondu.
+  // 1.1.57 : on n'attend plus la source la plus lente. Dès qu'une source a
+  // donné ses serveurs, les autres ont encore 1,5 s (4 s au plus en tout quand
+  // la chaîne a déjà des flux directs) ; les serveurs des sources plus lentes
+  // sont ajoutés ensuite à la chaîne (onLate : menu « Serveurs », relais).
   var RESOLVE_WAIT_MS = 9000;
-  function expandOptions(options, onProgress) {
+  var RESOLVE_GRACE_MS = 1500;
+  var RESOLVE_DIRECT_MS = 4000;
+  function expandOptions(options, onProgress, onLate) {
     var waiting = options.filter(function (option) { return optionKind(option) === 'resolve'; }).length;
     var answered = 0;
     if (waiting && onProgress) onProgress(0, waiting);
-    return Promise.all(options.map(function (option) {
-      if (optionKind(option) !== 'resolve') return Promise.resolve({ list: [option] });
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, RESOLVE_WAIT_MS); });
-      return Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
-        answered++;
-        if (onProgress) onProgress(answered, waiting);
-        if (!list || !list.length) return { list: [], fallback: option };
-        return { list: list.map(function (item) {
-          item.renewUrl = option.resolveUrl;
-          if (!item.label) item.label = option.label;
-          return inheritSource(item, option);
-        }) };
+    return new Promise(function (resolve) {
+      var results = [], pending = options.length, settled = false, grace = 0, cap = 0;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(grace);
+        clearTimeout(cap);
+        var all = results.reduce(function (list, result) { return result ? list.concat(result.list) : list; }, []);
+        if (all.length) { resolve(all); return; }
+        resolve(results.filter(function (result) { return result && result.fallback; }).map(function (result) { return result.fallback; }));
+      }
+      if (!pending) { finish(); return; }
+      if (waiting < options.length) cap = setTimeout(finish, RESOLVE_DIRECT_MS);
+      options.forEach(function (option, index) {
+        var step;
+        if (optionKind(option) !== 'resolve') step = Promise.resolve({ list: [option], direct: true });
+        else {
+          var timeout = new Promise(function (done) { setTimeout(function () { done(null); }, RESOLVE_WAIT_MS); });
+          step = Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
+            answered++;
+            if (onProgress) onProgress(answered, waiting);
+            if (!list || !list.length) return { list: [], fallback: option };
+            return { list: list.map(function (item) {
+              item.renewUrl = option.resolveUrl;
+              if (!item.label) item.label = option.label;
+              return inheritSource(item, option);
+            }) };
+          });
+        }
+        step.then(function (result) {
+          if (settled) { if (result.list.length && onLate) onLate(result.list); return; }
+          results[index] = result;
+          if (!--pending) { finish(); return; }
+          if (!result.direct && result.list.length && !grace) grace = setTimeout(finish, RESOLVE_GRACE_MS);
+        });
       });
-    })).then(function (results) {
-      var all = results.reduce(function (list, result) { return list.concat(result.list); }, []);
-      if (all.length) return all;
-      return results.filter(function (result) { return result.fallback; }).map(function (result) { return result.fallback; });
     });
   }
-  function serverList(channel, source, key, onProgress) {
+  function serverList(channel, source, key, onProgress, onLate) {
     // Chaîne ouverte depuis une source : ses serveurs et ceux des autres sources
     // qui la proposent, le plus fiable en premier.
     var twin = !channel._entries && source && source.id !== ALL_SOURCE.id ? unifiedTwin(channel) : null;
     var target = twin || channel;
     return channelOptions(target, source).then(function (options) {
-      return target._entries ? expandOptions(options, onProgress) : options;
+      return target._entries ? expandOptions(options, onProgress, onLate) : options;
     }).then(function (options) { return rankOptions(options, key, channel.provider); });
   }
   // Serveurs obtenus d'un serveur « automatique » d'une source réunie : même préfixe.
@@ -4225,24 +4261,38 @@
     var sheet = pickerSheet(channel, 'Recherche des serveurs…', source, ctx);
     openLayer(sheet.node);
     if (channel._entries) sheet.status('Recherche des serveurs de ' + channel._sources.length + ' source' + (channel._sources.length > 1 ? 's' : '') + '…');
+    // Serveurs des sources plus lentes : ajoutés à la chaîne en cours.
+    var state = null, late = [];
+    function addLate(items) {
+      if (!state) { late = late.concat(items); return; }
+      var known = {};
+      state.options.forEach(function (option) { known[(option.streamUrl || option.embedUrl || option.resolveUrl || '') + '|' + option.label] = true; });
+      items.forEach(function (item) {
+        var id = (item.streamUrl || item.embedUrl || item.resolveUrl || '') + '|' + item.label;
+        if (!known[id]) { known[id] = true; state.options.push(item); }
+      });
+      if (playback === state && state.startedAt) savePlayback(state);
+    }
     serverList(channel, source, key, function (done, total) {
       if (document.body.contains(sheet.node)) sheet.status('Serveurs fournis par les sources : ' + done + ' / ' + total + '…');
-    }).then(function (options) {
+    }, addLate).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
-      playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: options, index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
+      playback = state = { channel: channel, source: source, ctx: ctx || null, key: key, options: options, index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
+      if (late.length) { addLate(late); late = []; }
       // Lancement immédiat quand le meilleur serveur est sûr (fiable, ou dernier
       // serveur qui a fonctionné pour cette chaîne) ; sinon 3 s pour en choisir un autre.
       var top = playback.options[0];
       var health = optionHealth(top, key, 0, channel.provider);
       var trusted = health.verdict === 'good' || (rememberedServer(key) === optionLabel(top, 0) && health.verdict !== 'recent-fail');
       // Serveurs affichés avec leur fiabilité ; le meilleur démarre tout seul
-      // (2 s s'il est sûr, 3 s sinon), une touche arrête le compte à rebours.
+      // (1 s s'il est sûr, 2 s sinon : les tests tournent pendant ce temps),
+      // une touche arrête le compte à rebours.
       if (playback.options.length === 1 && !unavailableHere(top)) {
         closeLayer(true);
         playOption();
       } else {
-        fillPicker(sheet, playback, trusted ? 2 : 3);
+        fillPicker(sheet, playback, trusted ? 1 : 2);
       }
     }, function (error) {
       if (document.body.contains(sheet.node)) sheet.status(error.message, true);
@@ -4358,10 +4408,10 @@
       sheet.countdown(seconds, function () {
         if (!document.body.contains(sheet.node)) return;
         // Serveur lancé : le premier vérifié « en ligne », sans attendre au-delà
-        // de 6 s les tests en cours. Les serveurs placés avant lui doivent avoir
+        // de 4 s les tests en cours. Les serveurs placés avant lui doivent avoir
         // fini leur test (un meilleur serveur pourrait encore répondre).
         // Sans serveur vérifié : le premier qui n'est ni hors ligne ni en échec.
-        var deadline = Date.now() + 6000;
+        var deadline = Date.now() + 4000;
         sheet.status('Vérification des serveurs…');
         function usable(option, index) { return !state.failed[index] && option._probeState !== 'down' && !unavailableHere(option); }
         // Parmi les serveurs vérifiés : le mieux classé (fiabilité, type, rapidité).
@@ -4828,7 +4878,7 @@
     // vers le lecteur natif échouait et faisait changer de lecteur trop vite).
     // Les lecteurs préparés par le serveur Noctra transmettent toujours leur flux.
     var sniff = Boolean(option.sniff) && !option.noSniff && !mode.noSniff;
-    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: sniff, lite: lite })) {
+    if (S.caps.webPlayer !== false && native('webPlayer', { url: url, title: state.channel.name, subtitle: label, compat: Boolean(option.compatPage), sandbox: frame.sandbox, referrer: frame.referrer, sniff: sniff, lite: lite, adblock: adBlock() })) {
       webPlayback = { state: state, option: option };
       return;
     }
