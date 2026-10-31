@@ -11,6 +11,14 @@ try { playwright = require('playwright'); } catch { playwright = require(join(pr
 // changement de serveur, y compris après un rechargement de l'accueil pendant la
 // lecture (projecteur à court de mémoire : page recréée, chaîne oubliée, menu vide).
 const web = new URL('../apps/androidtv/web/', import.meta.url).pathname;
+// Android TV noctra.77 : plus d'avance sur le direct (marge de fenêtre 4 s), reprise
+// après une erreur passagère à la même position (avance gardée), fenêtre et retard
+// affichés dans le diagnostic.
+const streamJava = await readFile(new URL('../apps/androidtv/java/com/noctra/tv/NoctraStream.java', import.meta.url), 'utf8');
+assert.match(streamJava, /private static final long WINDOW_SAFETY_MS = 4000;/);
+assert.match(streamJava, /softRetries\+\+;\s*callback\.onStatus\(this, "Reprise du flux…"\);\s*try \{\s*player\.prepare\(\);/, 'reprise sans retour au bord du direct');
+assert.match(streamJava, /\.append\(" · fenêtre "\)\.append\(window \/ 1000\)\.append\(" s · retard "\)/);
+assert.match(await readFile(new URL('../apps/scripts/build-androidtv.mjs', import.meta.url), 'utf8'), /const noctraRevision = (7[7-9]|[89]\d|\d{3});/);
 const types = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.svg': 'image/svg+xml' };
 const json = (res, body) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const server = createServer(async (req, res) => {

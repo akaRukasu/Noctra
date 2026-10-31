@@ -160,7 +160,10 @@ final class NoctraStream {
     // jamais s'approcher à moins de 8 s du début de la fenêtre du direct
     // (segments bientôt effacés). Vitesse fixe : l'avance reste acquise.
     private static long extraOffsetMs = 12000;
-    private static final long WINDOW_SAFETY_MS = 8000;
+    // Marge au début de la fenêtre du direct (segments encore listés par la
+    // source) : 4 s suffisent ; à 8 s, une source à fenêtre courte ne laissait
+    // presque aucune réserve (0 à 2 s : coupure au moindre segment en retard).
+    private static final long WINDOW_SAFETY_MS = 4000;
     private boolean reserveApplied;
     // Mise en mémoire qui suit ce recul : pas un blocage.
     private boolean reserveSeeking;
@@ -353,6 +356,15 @@ final class NoctraStream {
         StringBuilder text = new StringBuilder();
         try {
             if (player != null) text.append("Réserve ").append(Math.max(0, player.getTotalBufferedDuration()) / 1000).append(" s");
+            // Direct : longueur de la fenêtre publiée par la source et retard sur
+            // le direct (la réserve ne peut pas dépasser ce retard).
+            if (player != null && live) {
+                long window = player.getDuration();
+                long position = player.getCurrentPosition();
+                if (window > 0 && position >= 0 && position <= window) {
+                    text.append(" · fenêtre ").append(window / 1000).append(" s · retard ").append((window - position) / 1000).append(" s");
+                }
+            }
         } catch (Throwable ignored) {
         }
         String reception = NoctraCleanDataSource.receptionSummary();
@@ -552,11 +564,12 @@ final class NoctraStream {
             }
             // Erreur passagère d'un direct qui fonctionnait : nouvel essai dans
             // le même lecteur (image conservée) avant de tout reconstruire.
+            // Reprise à la même position : l'avance prise sur le direct (réserve)
+            // est gardée ; position sortie de la fenêtre : retour au direct (ci-dessus).
             if (live && played && softRetries < MAX_SOFT_RETRIES) {
                 softRetries++;
                 callback.onStatus(this, "Reprise du flux…");
                 try {
-                    player.seekToDefaultPosition();
                     player.prepare();
                     player.setPlayWhenReady(playWhenReady);
                 } catch (Exception ignored) {
