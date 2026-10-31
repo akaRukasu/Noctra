@@ -53,10 +53,12 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.p12"
+            # Alias par défaut : noctra (seuls NOCTRA_KEYSTORE_BASE64 et
+            # NOCTRA_KEYSTORE_PASSWORD sont nécessaires).
             {
               echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.p12"
               echo "NOCTRA_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-              echo "NOCTRA_KEY_ALIAS=$KEY_ALIAS"
+              echo "NOCTRA_KEY_ALIAS=${KEY_ALIAS:-noctra}"
               echo "NOCTRA_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
             } >> "$GITHUB_ENV"
             echo "::notice::APK signé avec la clé NOCTRA_KEYSTORE_*."
