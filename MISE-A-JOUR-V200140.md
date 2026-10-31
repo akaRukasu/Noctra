@@ -58,3 +58,6 @@ Noctra TV 1.1.53 (Android TV, LG webOS, Samsung Tizen, Samsung 2014) à la mani�
 
 ## 200.0.155
 Noctra TV 1.1.54 (Android TV noctra.74, LG webOS) : en remontant vers la bannière de l'accueil, l'en-tête d'une fiche ou le menu, la page remonte tout en haut (bannière entière, plus coupée sous le menu). Défilement plus fluide : menu sans flou (il se recalculait à chaque image), affiches sans ombre au repos (l'affiche choisie garde la sienne). Android TV noctra.73 : l'ajout du serveur après une réinstallation attend 20 s au lieu de 3,5 s (« Délais de connexion dépassé » avec la seedbox).
+
+## 200.0.156
+Noctra TV 1.1.55 (Android TV noctra.75, LG webOS) : les chaînes réunies ne proposent plus de serveur « automatique » (« LiveWatch · automatique ») à découvrir au lancement. Chaque source a 9 s (au lieu de 2,5 s) pour donner ses vrais serveurs, affichés tels quels (« LiveWatch · Basic »…) et vérifiés avant le lancement (16 serveurs au lieu de 12) ; l'avancement est affiché source par source. Une source qui ne répond pas, renvoie une liste vide ou une erreur est retirée ; les entrées automatiques ne restent qu'en dernier recours, quand aucune source n'a répondu. Validation : `npm run test:v200156`.

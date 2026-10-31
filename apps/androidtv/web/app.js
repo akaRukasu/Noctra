@@ -3082,31 +3082,43 @@
       return lists.reduce(function (all, list) { return all.concat(list); }, []);
     });
   }
-  // Chaîne réunie : les serveurs « automatiques » de chaque source sont
-  // demandés tout de suite (2,5 s au plus chacun, la fenêtre s'ouvre sans les
-  // attendre davantage) ; un serveur qui ne répond pas à temps reste proposé
-  // et sera résolu puis testé pendant le compte à rebours.
-  function expandOptions(options) {
+  // Chaîne réunie : on ne propose que les vrais serveurs fournis par chaque
+  // source (« LiveWatch · Basic »…), jamais un serveur « automatique » à
+  // découvrir au lancement. Chaque source a 9 s pour donner sa liste (toutes
+  // en même temps) ; une source muette, vide ou en erreur est retirée. Les
+  // entrées « automatiques » ne restent qu'en dernier recours, quand aucune
+  // source n'a répondu.
+  var RESOLVE_WAIT_MS = 9000;
+  function expandOptions(options, onProgress) {
+    var waiting = options.filter(function (option) { return optionKind(option) === 'resolve'; }).length;
+    var answered = 0;
+    if (waiting && onProgress) onProgress(0, waiting);
     return Promise.all(options.map(function (option) {
-      if (optionKind(option) !== 'resolve') return Promise.resolve([option]);
-      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 2500); });
+      if (optionKind(option) !== 'resolve') return Promise.resolve({ list: [option] });
+      var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, RESOLVE_WAIT_MS); });
       return Promise.race([resolveOptions(option.resolveUrl).then(function (list) { return list; }, function () { return null; }), timeout]).then(function (list) {
-        if (!list || !list.length) return [option];
-        return list.map(function (item) {
+        answered++;
+        if (onProgress) onProgress(answered, waiting);
+        if (!list || !list.length) return { list: [], fallback: option };
+        return { list: list.map(function (item) {
           item.renewUrl = option.resolveUrl;
           if (!item.label) item.label = option.label;
           return inheritSource(item, option);
-        });
+        }) };
       });
-    })).then(function (lists) { return lists.reduce(function (all, list) { return all.concat(list); }, []); });
+    })).then(function (results) {
+      var all = results.reduce(function (list, result) { return list.concat(result.list); }, []);
+      if (all.length) return all;
+      return results.filter(function (result) { return result.fallback; }).map(function (result) { return result.fallback; });
+    });
   }
-  function serverList(channel, source, key) {
+  function serverList(channel, source, key, onProgress) {
     // Chaîne ouverte depuis une source : ses serveurs et ceux des autres sources
     // qui la proposent, le plus fiable en premier.
     var twin = !channel._entries && source && source.id !== ALL_SOURCE.id ? unifiedTwin(channel) : null;
     var target = twin || channel;
     return channelOptions(target, source).then(function (options) {
-      return target._entries ? expandOptions(options) : options;
+      return target._entries ? expandOptions(options, onProgress) : options;
     }).then(function (options) { return rankOptions(options, key, channel.provider); });
   }
   // Serveurs obtenus d'un serveur « automatique » d'une source réunie : même préfixe.
@@ -4209,7 +4221,9 @@
     var sheet = pickerSheet(channel, 'Recherche des serveurs…', source, ctx);
     openLayer(sheet.node);
     if (channel._entries) sheet.status('Recherche des serveurs de ' + channel._sources.length + ' source' + (channel._sources.length > 1 ? 's' : '') + '…');
-    serverList(channel, source, key).then(function (options) {
+    serverList(channel, source, key, function (done, total) {
+      if (document.body.contains(sheet.node)) sheet.status('Serveurs fournis par les sources : ' + done + ' / ' + total + '…');
+    }).then(function (options) {
       if (!document.body.contains(sheet.node)) return;
       if (!options.length) { sheet.status('Aucun flux disponible pour cette chaîne.', true); return; }
       playback = { channel: channel, source: source, ctx: ctx || null, key: key, options: options, index: 0, failed: {}, startedAt: 0, renewed: false, list: list || null, playId: playId() };
@@ -4381,12 +4395,12 @@
     else sheet.status('Choisissez un serveur.');
     if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
   }
-  // Vérification des serveurs dès l'ouverture de la fenêtre : les 12 premiers,
-  // 6 à la fois, dans l'ordre de la liste.
+  // Vérification des serveurs dès l'ouverture de la fenêtre : les 16 premiers
+  // (les sources donnent chacune plusieurs serveurs), 6 à la fois, dans l'ordre.
   function probeServers(sheet, state) {
     var probes = { pending: {}, onSettled: null };
     var queue = [];
-    state.options.slice(0, 12).forEach(function (option, index) {
+    state.options.slice(0, 16).forEach(function (option, index) {
       if (state.failed[index] || !option._probe || unavailableHere(option)) return;
       var kind = optionKind(option);
       if (kind === 'web' || (kind === 'native' && option.headers)) return;
