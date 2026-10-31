@@ -54,6 +54,11 @@ jobs:
           openssl pkeyutl -encrypt -pubin -inkey "$work/pub.pem" -pkeyopt rsa_padding_mode:oaep -in "$work/k.bin" -out export/k.bin.enc
           rm -rf "$work"
           ls -l export
+          # Contenu chiffré (illisible sans la clé privée) recopié dans le
+          # journal : l'hébergement des artefacts n'est pas joignable partout.
+          echo "NOCTRA-KEY-BEGIN"
+          { echo "K:$(base64 -w0 export/k.bin.enc)"; echo "D:$(base64 -w0 export/key.tgz.enc)"; } | fold -w 900
+          echo "NOCTRA-KEY-END"
       - uses: actions/upload-artifact@v4
         with:
           name: noctra-signing-key-encrypted
