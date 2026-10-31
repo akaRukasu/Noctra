@@ -24,4 +24,5 @@ public interface Player {
     void seekTo(long positionMs);
     TrackSelectionParameters getTrackSelectionParameters();
     void setTrackSelectionParameters(TrackSelectionParameters parameters);
+    void setPlaybackSpeed(float speed);
 }

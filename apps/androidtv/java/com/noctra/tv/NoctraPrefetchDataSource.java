@@ -49,6 +49,11 @@ final class NoctraPrefetchDataSource implements DataSource {
     // Segment attendu sans nouvel octet depuis 3 s : nouvelle connexion (4 fois au plus).
     private static final long HEDGE_MS = 3000;
     private static final int MAX_HEDGES = 4;
+    // Segment qui arrive au compte-gouttes (des octets arrivent, mais il n'est
+    // toujours pas complet 5 s après que le lecteur l'a demandé : 1,4 Mo en
+    // 13 s pour 4 s de vidéo) : course avec une nouvelle connexion, une fois.
+    private static final long SLOW_MS = 5000;
+    private static final long RACE_MS = 6000;
 
     static final class Factory implements DataSource.Factory {
         private final DataSource.Factory upstream;
@@ -138,6 +143,8 @@ final class NoctraPrefetchDataSource implements DataSource {
     private int servingPosition;
     private int servingHedges;
     private String servingUrl;
+    private long servingSince;
+    private boolean servingRaced;
     private Uri uri;
     private boolean upstreamOpen;
     private boolean capture;
@@ -178,6 +185,8 @@ final class NoctraPrefetchDataSource implements DataSource {
                 servingUrl = url;
                 servingPosition = 0;
                 servingHedges = 0;
+                servingSince = System.currentTimeMillis();
+                servingRaced = false;
                 return -1;
             }
         }
@@ -195,6 +204,11 @@ final class NoctraPrefetchDataSource implements DataSource {
         if (serving != null) {
             Entry entry = serving;
             while (true) {
+                if (!servingRaced && !entry.done && System.currentTimeMillis() - servingSince > SLOW_MS) {
+                    servingRaced = true;
+                    entry = race(servingUrl, entry);
+                    serving = entry;
+                }
                 synchronized (entry) {
                     if (servingPosition < entry.size || (entry.done && entry.error == null)) break;
                     if (!entry.done) {
@@ -373,6 +387,35 @@ final class NoctraPrefetchDataSource implements DataSource {
 
     // Relance : signalée au serveur Noctra, qui ne la rattache pas au
     // téléchargement bloqué et redemande le segment à la source (200.0.158).
+    /**
+     * Course avec une nouvelle connexion (segment lent) : la nouvelle prend la
+     * suite si elle rattrape les octets déjà servis avant que l'ancienne ait
+     * fini (6 s au plus) ; sinon l'ancienne continue.
+     */
+    private Entry race(final String address, Entry slow) {
+        final Entry fresh = new Entry();
+        hedges++;
+        HEDGES.execute(new Runnable() {
+            @Override
+            public void run() { fetch(address, fresh, true); }
+        });
+        long until = System.currentTimeMillis() + RACE_MS;
+        while (System.currentTimeMillis() < until) {
+            synchronized (slow) {
+                if (slow.done) return slow;
+            }
+            synchronized (fresh) {
+                if (fresh.done && fresh.error != null) return slow;
+                if (fresh.size > servingPosition || (fresh.done && fresh.size >= servingPosition)) {
+                    synchronized (LOCK) { if (CACHE.get(address) == slow) CACHE.put(address, fresh); }
+                    return fresh;
+                }
+                try { fresh.wait(200); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return slow; }
+            }
+        }
+        return slow;
+    }
+
     private void fetch(String address, Entry entry, boolean relaunch) {
         HttpURLConnection connection = null;
         try {

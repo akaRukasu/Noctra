@@ -165,6 +165,16 @@ final class NoctraStream {
     // presque aucune réserve (0 à 2 s : coupure au moindre segment en retard).
     private static final long WINDOW_SAFETY_MS = 4000;
     private boolean reserveApplied;
+    // noctra.81 : retard visé sur le direct (la réserve ne peut pas le dépasser) :
+    // 12 s de plus que le recul de départ, sans quitter les trois quarts de la
+    // fenêtre. En dessous, lecture à 97 % (imperceptible) jusqu'à le retrouver :
+    // la source qui met 13 s pour un segment ne coupe plus l'image.
+    private boolean slowed;
+    private boolean speedBroken;
+    // Bord du direct : dernière avancée (retard qui remonte d'un coup = la
+    // source a publié de nouveaux segments). Figé longtemps : liste en retard.
+    private long lastRetard = -1;
+    private long edgeMovedAt;
     // Mise en mémoire qui suit ce recul : pas un blocage.
     private boolean reserveSeeking;
 
@@ -195,6 +205,29 @@ final class NoctraStream {
             qualityCap = 0;
             stableSince = 0;
             applyMaxVideoSize();
+        }
+    }
+
+    /** Retard sur le direct ramené vers l'objectif par un léger ralenti (jamais d'accélération). */
+    private void keepLiveDistance(long now) {
+        try {
+            long window = player.getDuration();
+            long position = player.getCurrentPosition();
+            if (window <= 0 || position < 0 || position > window) return;
+            long retard = window - position;
+            if (lastRetard < 0 || retard > lastRetard + 800) edgeMovedAt = now;
+            lastRetard = retard;
+            if (speedBroken) return;
+            long goal = Math.min(window - Math.max(WINDOW_SAFETY_MS, window / 4), 12000 + extraOffsetMs);
+            if (!slowed && retard < goal - 3000) {
+                player.setPlaybackSpeed(0.97f);
+                slowed = true;
+            } else if (slowed && retard >= goal) {
+                player.setPlaybackSpeed(1f);
+                slowed = false;
+            }
+        } catch (Throwable error) {
+            speedBroken = true;
         }
     }
 
@@ -368,6 +401,9 @@ final class NoctraStream {
                 if (window > 0 && position >= 0 && position <= window) {
                     text.append(" · fenêtre ").append(window / 1000).append(" s · retard ").append((window - position) / 1000).append(" s");
                 }
+                if (slowed) text.append(" · ralenti 97 %");
+                long frozen = edgeMovedAt > 0 ? System.currentTimeMillis() - edgeMovedAt : 0;
+                if (frozen > 10000) text.append(" · liste figée depuis ").append(frozen / 1000).append(" s");
             }
         } catch (Throwable ignored) {
         }
@@ -468,6 +504,9 @@ final class NoctraStream {
         closePlayer();
         ready = false;
         reserveApplied = false;
+        slowed = false;
+        lastRetard = -1;
+        edgeMovedAt = 0;
         startedAt = System.currentTimeMillis();
         bufferingSince = 0;
         // Flux repéré dans une page web : même identité que la page (sinon refus).
@@ -609,7 +648,10 @@ final class NoctraStream {
             }
             bufferingSince = 0;
             edgeSought = false;
-            if (live) noteStable(now);
+            if (live) {
+                noteStable(now);
+                keepLiveDistance(now);
+            }
             if (!live) positionMs();
             if ((reconnects > 0 || softRetries > 0) && now - readySince > STABLE_MS) {
                 reconnects = 0;
