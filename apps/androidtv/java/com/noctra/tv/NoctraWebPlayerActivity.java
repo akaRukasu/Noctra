@@ -146,6 +146,7 @@ public class NoctraWebPlayerActivity extends Activity {
     private int crashes;
     private boolean lite;
     private boolean adBlock;
+    private int cleanedPages;
     private int consoleErrors;
     private int blocked;
     private boolean sniff;
@@ -354,6 +355,8 @@ public class NoctraWebPlayerActivity extends Activity {
                 if (local != null) return local;
                 WebResourceResponse adaptedResponse = compat ? compatFetch(request) : null;
                 if (adaptedResponse != null) return adaptedResponse;
+                WebResourceResponse cleaned = adBlock && !lite && !compat ? adblockFetch(request) : null;
+                if (cleaned != null) return cleaned;
                 WebResourceResponse probed = probePlaylist(request);
                 if (probed != null) return probed;
                 return viaSecureDns(request);
@@ -606,10 +609,94 @@ public class NoctraWebPlayerActivity extends Activity {
         return fetch(request, blocked ? NoctraDns.client() : NoctraDns.plainClient(), MODE_PROBE);
     }
 
+    /**
+     * Bloqueur de pubs : page d'un lecteur (cadre, ou page ouverte en entier)
+     * téléchargée par l'appli pour y placer en tête le script de nettoyage
+     * (adblock.js : fausses notifications et voiles publicitaires retirés).
+     * Refus, défi anti-robots ou erreur : la WebView refait la requête seule.
+     */
+    private WebResourceResponse adblockFetch(WebResourceRequest request) {
+        Uri url = request.getUrl();
+        String scheme = url.getScheme();
+        String host = url.getHost();
+        if (host == null || !("https".equals(scheme) || "http".equals(scheme)) || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+        if (host.equalsIgnoreCase(noctraHost) || url.toString().startsWith(appBase)) return null;
+        if (request.isForMainFrame() && !(direct && sameHost(url, Uri.parse(source)))) return null;
+        Map<String, String> sent = request.getRequestHeaders();
+        String accept = "";
+        if (sent != null) {
+            for (Map.Entry<String, String> entry : sent.entrySet()) {
+                if (entry.getKey() == null || entry.getValue() == null) continue;
+                if (entry.getKey().equalsIgnoreCase("Accept")) accept = entry.getValue().toLowerCase();
+                if (entry.getKey().equalsIgnoreCase("Range")) return null;
+            }
+        }
+        // Pages seulement (cadres) : ni scripts, ni données, ni médias.
+        if (!request.isForMainFrame() && !accept.contains("text/html")) return null;
+        if (adblockScript() == null) return null;
+        return fetch(request, NoctraDns.blocked(host) ? NoctraDns.client() : NoctraDns.plainClient(), MODE_ADBLOCK);
+    }
+
+    private static volatile byte[] adblockTag;
+    /** Script de nettoyage (assets noctra-tv/adblock.js) dans sa balise, ASCII. */
+    private byte[] adblockScript() {
+        if (adblockTag != null) return adblockTag;
+        try {
+            InputStream input = getAssets().open("noctra-tv/adblock.js");
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            readInto(input, buffer, 256 * 1024);
+            String code = new String(buffer.toByteArray(), "UTF-8").replace("</script", "<\\/script");
+            adblockTag = ("<script>" + code + "</script>").getBytes("UTF-8");
+        } catch (Throwable error) {
+            return null;
+        }
+        return adblockTag;
+    }
+
+    /** Page avec le script de nettoyage placé juste après <head> (ou au tout début). */
+    static byte[] injectAfterHead(byte[] page, byte[] tag) {
+        String text;
+        try { text = new String(page, "ISO-8859-1"); } catch (Throwable error) { return page; }
+        String lower = text.length() > 65536 ? text.substring(0, 65536).toLowerCase() : text.toLowerCase();
+        int at = 0;
+        int head = lower.indexOf("<head");
+        if (head >= 0 && (head + 5 >= lower.length() || lower.charAt(head + 5) == '>' || Character.isWhitespace(lower.charAt(head + 5)))) {
+            int close = lower.indexOf('>', head);
+            if (close > 0) at = close + 1;
+        } else {
+            int html = lower.indexOf("<html");
+            if (html >= 0) {
+                int close = lower.indexOf('>', html);
+                if (close > 0) at = close + 1;
+            } else {
+                // Doctype gardé en premier (sinon page en mode de compatibilité).
+                int doctype = lower.indexOf("<!doctype");
+                if (doctype >= 0) {
+                    int close = lower.indexOf('>', doctype);
+                    if (close > 0) at = close + 1;
+                }
+            }
+        }
+        byte[] result = new byte[page.length + tag.length];
+        System.arraycopy(page, 0, result, 0, at);
+        System.arraycopy(tag, 0, result, at, tag.length);
+        System.arraycopy(page, at, result, at + tag.length, page.length - at);
+        return result;
+    }
+
+    private static void dropScriptPolicy(Map<String, String> headers) {
+        // Politique de sécurité des scripts : le script ajouté n'y figure pas.
+        for (String name : new ArrayList<String>(headers.keySet())) {
+            String lower = name.toLowerCase();
+            if (lower.equals("content-security-policy") || lower.equals("content-security-policy-report-only")) headers.remove(name);
+        }
+    }
+
     /** Requête faite par OkHttp (cookies de la WebView conservés) ; probe : liste HLS reconnue à son contenu. */
     private static final int MODE_PROXY = 0;
     private static final int MODE_PROBE = 1;
     private static final int MODE_COMPAT = 2;
+    private static final int MODE_ADBLOCK = 3;
 
     private WebResourceResponse fetch(WebResourceRequest request, okhttp3.OkHttpClient client, int mode) {
         boolean probe = mode != MODE_PROXY && sniff && !handedOff;
@@ -656,9 +743,31 @@ public class NoctraWebPlayerActivity extends Activity {
             InputStream stream = body == null ? new ByteArrayInputStream(new byte[0]) : body.byteStream();
             // Refus, défi anti-robots (Cloudflare…), erreur : la WebView refait la
             // requête elle-même (son identité de navigateur est acceptée).
-            if (mode == MODE_COMPAT && (code == 403 || code == 429 || code == 503 || response.header("cf-mitigated") != null)) {
+            if ((mode == MODE_COMPAT || mode == MODE_ADBLOCK) && (code == 403 || code == 429 || code == 503 || response.header("cf-mitigated") != null)) {
                 response.close();
                 return null;
+            }
+            if (mode == MODE_ADBLOCK) {
+                String lowerMime = mime.toLowerCase();
+                if (code >= 400 || !(lowerMime.equals("text/html") || lowerMime.equals("application/xhtml+xml"))) {
+                    return new WebResourceResponse(mime, charset, code, reason, headers, stream);
+                }
+                java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                if (!readInto(stream, buffer, 4 * 1024 * 1024)) {
+                    return new WebResourceResponse(mime, charset, code, reason, headers,
+                        new java.io.SequenceInputStream(new ByteArrayInputStream(buffer.toByteArray()), stream));
+                }
+                byte[] page = buffer.toByteArray();
+                // Page redirigée : adresses relatives résolues depuis sa vraie adresse.
+                String finalUrl = null;
+                try { finalUrl = response.request().url().toString(); } catch (Throwable ignored) { }
+                if (finalUrl != null && !finalUrl.equals(address)) {
+                    String text = new String(page, charset == null ? "UTF-8" : charset);
+                    page = NoctraJsCompat.base(text, finalUrl).getBytes(charset == null ? "UTF-8" : charset);
+                }
+                dropScriptPolicy(headers);
+                if (cleanedPages++ < 4) NoctraWebLog.add(this, "Bloqueur de pubs : page nettoyée (" + host + ")");
+                return new WebResourceResponse(mime, charset, code, reason, headers, new ByteArrayInputStream(injectAfterHead(page, adblockScript())));
             }
             if (mode == MODE_COMPAT && code < 400) {
                 String lowerMime = mime.toLowerCase();
@@ -699,6 +808,9 @@ public class NoctraWebPlayerActivity extends Activity {
                         String finalUrl = null;
                         try { finalUrl = response.request().url().toString(); } catch (Throwable ignored) { }
                         if (page && finalUrl != null && !finalUrl.equals(address)) result = NoctraJsCompat.base(result, finalUrl);
+                        if (page && adBlock && !lite && adblockScript() != null) {
+                            result = new String(injectAfterHead(result.getBytes("UTF-8"), adblockScript()), "UTF-8");
+                        }
                         if (page) {
                             // Politique de sécurité des scripts intégrés : leur empreinte change.
                             headers.remove("Content-Security-Policy");
