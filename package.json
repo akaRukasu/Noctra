@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.160",
+  "version": "200.0.161",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -103,6 +103,7 @@
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
     "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:channel-logos": "node tests/native-channel-logos.mjs",
+    "test:v200161": "node tests/tv-late-servers.mjs && npm run test:v200159",
     "test:v200159": "node tests/tv-adblock-overlays.mjs && node tests/androidtv-live-offset.mjs && node tests/v200159-tv-adblock-launch.mjs && npm run test:v200158",
     "test:v200158": "node tests/v200158-stuck-segment.mjs && npm run test:v200157",
     "test:v200157": "node tests/tv-player-servers-reload.mjs && npm run test:v200156",

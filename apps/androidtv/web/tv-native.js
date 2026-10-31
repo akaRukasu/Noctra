@@ -28,7 +28,7 @@
   document.documentElement.classList.add('host-' + platform);
   var ORSAY = platform === 'orsay' ? window.NoctraOrsay || null : null;
 
-  var VERSION = '1.1.58';
+  var VERSION = '1.1.59';
   var DEVICE_NAME = platform === 'webos' ? 'LG webOS' : platform === 'tizen' ? 'Samsung Tizen' : ORSAY ? ORSAY.deviceName : 'Navigateur';
   // Interface servie par le serveur Noctra (/tv-app/), ou intégrée à l'appli
   // (fichiers locaux, ?server=adresse du serveur choisi dans le lanceur).

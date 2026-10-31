@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 83;
+const noctraRevision = 84;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');

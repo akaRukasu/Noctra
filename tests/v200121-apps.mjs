@@ -294,7 +294,7 @@ assert.match(tvApp, /function openStoredChannel\(entry\) \{/);
 assert.match(tvApp, /if \(favoriteMode\) \{ toggleFavorite\(channel, source, ctx\); refreshFavoriteMarks\(channel, source\); \}/);
 assert.match(tvApp, /favorite = h\('button', \{ class: 'btn f picker-fav'/);
 // Santé des serveurs, vérification pendant le compte à rebours, moteur web ancien.
-assert.match(tvApp, /var HEALTH_KEY = 'noctra-tv-health-v2';/);
+assert.match(tvApp, /var HEALTH_KEY = 'noctra-tv-health-v[23]';/);
 assert.match(tvApp, /function probeOption\(option\) \{/);
 assert.match(tvApp, /if \(event\.event === 'live'\)/);
 assert.match(tvApp, /native\('updateWebEngine'\)/);
@@ -448,7 +448,7 @@ assert.match(tvApp, /'Pas de vidéo' : detail === 'stale' \? 'Direct figé'/);
 assert.match(tvApp, /if \(!event\.played\) recordProbe\(option, false\);/);
 assert.match(tvApp, /recordProbe\(option, true\);/);
 assert.match(tvApp, /function launchBest\(state, index\)/);
-assert.match(tvApp, /state\.options\.slice\(0, (12|16)\)/);
+assert.match(tvApp, /state\.options\.slice\(0, (12|16)\)|if \(index < 16\) enqueue\(index, 16\)/);
 assert.match(tvApp, /var probes = probeServers\(sheet, state\);/);
 assert.match(tvApp, /if \(LITE_UI && \(Date\.now\(\) - lastMove < 4000/);
 assert.match(webHost, /xhrSetup: token \? function \(xhr, address\) \{/);

@@ -10,9 +10,9 @@ const app = await readFile(new URL('../apps/androidtv/web/app.js', import.meta.u
 function between(a, b) { const start = app.indexOf(a), end = app.indexOf(b, start + a.length); assert(start >= 0 && end > start, a); return app.slice(start, end); }
 const code = [
   between('  function optionKind(option) {', '  function optionLabel('),
-  between('  var RESOLVE_WAIT_MS = 9000;', '  function serverList('),
+  between('  var RESOLVE_WAIT_MS = 20000;', '  function serverList('),
   between('  function inheritSource(item, parent) {', '\n  }\n') + '\n  }\n'
-].join('\n').replace('var RESOLVE_WAIT_MS = 9000;', 'var RESOLVE_WAIT_MS = 300;').replace('var RESOLVE_GRACE_MS = 1500;', 'var RESOLVE_GRACE_MS = 80;');
+].join('\n').replace('var RESOLVE_WAIT_MS = 20000;', 'var RESOLVE_WAIT_MS = 300;').replace('var RESOLVE_GRACE_MS = 1500;', 'var RESOLVE_GRACE_MS = 80;');
 const answers = {
   '/lw': () => Promise.resolve([{ playbackType: 'stream', streamUrl: '/s/basic', label: 'Basic' }, { playbackType: 'stream', streamUrl: '/s/vip', label: 'VIP' }]),
   '/oha': () => Promise.reject(new Error('502')),
@@ -49,6 +49,13 @@ assert.match(app, /var RESOLVE_GRACE_MS = 1500;/);
 assert.match(app, /fillPicker\(sheet, playback, trusted \? 1 : 2\);/);
 assert.match(app, /var deadline = Date\.now\(\) \+ 4000;/);
 assert.match(app, /\}, addLate\)\.then\(function \(options\) \{/);
-assert.match(app, /state\.options\.slice\(0, 16\)\.forEach/, '16 serveurs vérifiés');
+assert.match(app, /state\.options\.forEach\(function \(option, index\) \{ if \(index < 16\) enqueue\(index, 16\); \}\);/, '16 serveurs vérifiés');
+// 1.1.59 : test raté refait une fois, jamais compté comme un échec de lecture ;
+// serveurs des sources lentes ajoutés à la fenêtre ouverte (et vérifiés).
+assert.match(app, /if \(detail !== 'down'\) return detail;\s*return later\(800\)\.then\(function \(\) \{ return probeOption\(option\); \}\);/);
+assert.ok(!/recordHealth\(state, index, false\)/.test(app), 'test de disponibilité hors de l’historique');
+assert.match(app, /var HEALTH_KEY = 'noctra-tv-health-v3';/);
+assert.match(app, /if \(state\.options\.length > from\) addPickerRows\(sheet, state, from\);/);
+assert.match(app, /return target\._entries \|\| resolvers \? expandOptions\(options, onProgress, onLate\) : options;/);
 assert.match(app, /sheet\.status\('Serveurs fournis par les sources : ' \+ done \+ ' \/ ' \+ total \+ '…'\)/);
-console.log('Noctra TV 1.1.57 : vrais serveurs des sources, sources muettes retirées, lancement sans attendre la source la plus lente : OK');
+console.log('Noctra TV 1.1.59 : vrais serveurs des sources (20 s par source), sources muettes retirées, tests refaits hors historique : OK');

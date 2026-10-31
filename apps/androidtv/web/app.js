@@ -3107,7 +3107,10 @@
   // donné ses serveurs, les autres ont encore 1,5 s (4 s au plus en tout quand
   // la chaîne a déjà des flux directs) ; les serveurs des sources plus lentes
   // sont ajoutés ensuite à la chaîne (onLate : menu « Serveurs », relais).
-  var RESOLVE_WAIT_MS = 9000;
+  // 1.1.59 : 20 s par source (certaines mettent plus de 9 s à donner leurs
+  // serveurs, qui étaient alors remplacés par « Source · automatique ») ; les
+  // retardataires s'ajoutent à la fenêtre des serveurs déjà ouverte.
+  var RESOLVE_WAIT_MS = 20000;
   var RESOLVE_GRACE_MS = 1500;
   var RESOLVE_DIRECT_MS = 4000;
   function expandOptions(options, onProgress, onLate) {
@@ -3158,7 +3161,10 @@
     var twin = !channel._entries && source && source.id !== ALL_SOURCE.id ? unifiedTwin(channel) : null;
     var target = twin || channel;
     return channelOptions(target, source).then(function (options) {
-      return target._entries ? expandOptions(options, onProgress, onLate) : options;
+      // Serveurs « automatiques » d'une source : remplacés par les vrais
+      // serveurs qu'elle fournit, chaîne réunie ou non.
+      var resolvers = options.some(function (option) { return optionKind(option) === 'resolve'; });
+      return target._entries || resolvers ? expandOptions(options, onProgress, onLate) : options;
     }).then(function (options) { return rankOptions(options, key, channel.provider); });
   }
   // Serveurs obtenus d'un serveur « automatique » d'une source réunie : même préfixe.
@@ -3904,8 +3910,12 @@
   // le serveur après les autres ; un serveur fiable passe devant.
   // v2 : historique remis à zéro (échecs dus aux flux MPEG-TS mal reconnus
   // sur LG/Samsung, qui écartaient à tort Northlive, Movix et RénéVéo).
-  var HEALTH_KEY = 'noctra-tv-health-v2';
-  try { localStorage.removeItem('noctra-tv-health-v1'); } catch (error) { /* stockage indisponible */ }
+  // v3 (1.1.59) : historique remis à zéro. Les tests de disponibilité (une
+  // seule requête, parfois en échec passager) comptaient comme des échecs de
+  // lecture : des serveurs qui lisent très bien affichaient « 0 réussite ».
+  // Seules les vraies lectures comptent désormais.
+  var HEALTH_KEY = 'noctra-tv-health-v3';
+  try { localStorage.removeItem('noctra-tv-health-v1'); localStorage.removeItem('noctra-tv-health-v2'); } catch (error) { /* stockage indisponible */ }
   var HEALTH_RECENT_MS = 20 * 60000;
   var healthData = null;
   function healthStore() {
@@ -4267,10 +4277,12 @@
       if (!state) { late = late.concat(items); return; }
       var known = {};
       state.options.forEach(function (option) { known[(option.streamUrl || option.embedUrl || option.resolveUrl || '') + '|' + option.label] = true; });
+      var from = state.options.length;
       items.forEach(function (item) {
         var id = (item.streamUrl || item.embedUrl || item.resolveUrl || '') + '|' + item.label;
         if (!known[id]) { known[id] = true; state.options.push(item); }
       });
+      if (state.options.length > from) addPickerRows(sheet, state, from);
       if (playback === state && state.startedAt) savePlayback(state);
     }
     serverList(channel, source, key, function (done, total) {
@@ -4364,37 +4376,53 @@
       }
     };
   }
+  // Ligne d'un serveur dans la fenêtre de choix.
+  function pickerRow(sheet, state, option, index, remembered) {
+    var kind = optionKind(option);
+    var failed = state.failed[index];
+    var tags = [h('span', { class: 'tag ' + kind, text: kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web' })];
+    var health = optionHealth(option, state.key, index, state.channel.provider);
+    if (remembered && optionLabel(option, index) === remembered && health.verdict !== 'recent-fail') tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
+    else if (index === 0 && !failed && !unavailableHere(option)) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
+    if (unavailableHere(option)) tags.push(h('span', { class: 'tag bad', text: 'Indisponible ici' }));
+    if (failed) tags.push(h('span', { class: 'tag bad', text: 'Échec' }));
+    else if (health.verdict === 'recent-fail') tags.push(h('span', { class: 'tag warn', text: 'Échec récent' }));
+    else if (health.verdict === 'unstable') tags.push(h('span', { class: 'tag warn', text: 'Instable' }));
+    else if (health.verdict === 'good') tags.push(h('span', { class: 'tag good', text: 'Fiable' }));
+    // Historique de ce serveur sur ce téléviseur.
+    tags.push(h('span', { class: 'tag stat', text: healthText(option, state.key, index, state.channel.provider).replace(/^(?:Fiable|Instable|Échec récent|Essayé) · /, '') }));
+    // Lecteur web sur un moteur web ancien : risque d'échec annoncé.
+    if (kind === 'web' && engineOutdated()) tags.push(h('span', { class: 'tag warn', text: 'Moteur web ancien' }));
+    var probe = h('span', { class: 'tag probe' });
+    probe.style.display = 'none';
+    tags.push(probe);
+    option._probe = probe;
+    return h('button', { class: 'server f' + (failed ? ' failed' : ''), 'data-index': index, onclick: function () {
+      closeLayer(true);
+      state.index = index;
+      playback = state;
+      playOption();
+    } }, h('b', { text: String(index + 1) }), h('span', { class: 'name', text: optionLabel(option, index) }), h('span', { class: 'tags' }, tags));
+  }
+  // Serveurs d'une source plus lente, arrivés fenêtre ouverte : ajoutés à la
+  // liste (et vérifiés s'il y a un compte à rebours).
+  function addPickerRows(sheet, state, from) {
+    if (!document.body.contains(sheet.node) || sheet.state !== state) return;
+    var remembered = rememberedServer(state.key);
+    for (var index = from; index < state.options.length; index++) {
+      sheet.list.appendChild(pickerRow(sheet, state, state.options[index], index, remembered));
+      if (sheet.probes) sheet.probes.add(index);
+    }
+  }
   function fillPicker(sheet, state, seconds) {
     clear(sheet.list);
+    sheet.state = state;
+    sheet.probes = null;
     var remembered = rememberedServer(state.key);
     var first = -1;
     state.options.forEach(function (option, index) {
-      var kind = optionKind(option);
-      var failed = state.failed[index];
-      if (!failed && first < 0) first = index;
-      var tags = [h('span', { class: 'tag ' + kind, text: kind === 'native' ? 'Lecteur natif' : kind === 'resolve' ? 'Automatique' : option.compatPage ? 'Page web' : 'Lecteur web' })];
-      var health = optionHealth(option, state.key, index, state.channel.provider);
-      if (remembered && optionLabel(option, index) === remembered && health.verdict !== 'recent-fail') tags.push(h('span', { class: 'tag ok', text: 'Dernier utilisé' }));
-      else if (index === 0 && !failed && !unavailableHere(option)) tags.push(h('span', { class: 'tag ok', text: 'Recommandé' }));
-      if (unavailableHere(option)) tags.push(h('span', { class: 'tag bad', text: 'Indisponible ici' }));
-      if (failed) tags.push(h('span', { class: 'tag bad', text: 'Échec' }));
-      else if (health.verdict === 'recent-fail') tags.push(h('span', { class: 'tag warn', text: 'Échec récent' }));
-      else if (health.verdict === 'unstable') tags.push(h('span', { class: 'tag warn', text: 'Instable' }));
-      else if (health.verdict === 'good') tags.push(h('span', { class: 'tag good', text: 'Fiable' }));
-      // Historique de ce serveur sur ce téléviseur.
-      tags.push(h('span', { class: 'tag stat', text: healthText(option, state.key, index, state.channel.provider).replace(/^(?:Fiable|Instable|Échec récent|Essayé) · /, '') }));
-      // Lecteur web sur un moteur web ancien : risque d'échec annoncé.
-      if (kind === 'web' && engineOutdated()) tags.push(h('span', { class: 'tag warn', text: 'Moteur web ancien' }));
-      var probe = h('span', { class: 'tag probe' });
-      probe.style.display = 'none';
-      tags.push(probe);
-      option._probe = probe;
-      sheet.list.appendChild(h('button', { class: 'server f' + (failed ? ' failed' : ''), 'data-index': index, onclick: function () {
-        closeLayer(true);
-        state.index = index;
-        playback = state;
-        playOption();
-      } }, h('b', { text: String(index + 1) }), h('span', { class: 'name', text: optionLabel(option, index) }), h('span', { class: 'tags' }, tags)));
+      if (!state.failed[index] && first < 0) first = index;
+      sheet.list.appendChild(pickerRow(sheet, state, option, index, remembered));
     });
     var target = sheet.list.children[Math.max(0, first)];
     if (target) focus(target);
@@ -4405,6 +4433,7 @@
     }
     else if (seconds) {
       var probes = probeServers(sheet, state);
+      sheet.probes = probes;
       sheet.countdown(seconds, function () {
         if (!document.body.contains(sheet.node)) return;
         // Serveur lancé : le premier vérifié « en ligne », sans attendre au-delà
@@ -4450,26 +4479,43 @@
     if (engineOutdated() && S.engine.package && state.options.some(function (option) { return optionKind(option) === 'web'; })) addEngineButton(sheet.node);
   }
   // Vérification des serveurs dès l'ouverture de la fenêtre : les 16 premiers
-  // (les sources donnent chacune plusieurs serveurs), 6 à la fois, dans l'ordre.
+  // (les sources donnent chacune plusieurs serveurs), 6 à la fois, dans l'ordre ;
+  // ceux des sources plus lentes s'ajoutent ensuite (24 en tout au plus).
+  // 1.1.59 : un test raté est refait une fois (échec passager) et n'est plus
+  // compté comme un échec de lecture dans l'historique du serveur.
   function probeServers(sheet, state) {
     var probes = { pending: {}, onSettled: null };
-    var queue = [];
-    state.options.slice(0, 16).forEach(function (option, index) {
-      if (state.failed[index] || !option._probe || unavailableHere(option)) return;
+    var queue = [], active = 0, queued = 0;
+    function eligible(option, index) {
+      if (state.failed[index] || !option._probe || unavailableHere(option)) return false;
       var kind = optionKind(option);
-      if (kind === 'web' || (kind === 'native' && option.headers)) return;
+      return !(kind === 'web' || (kind === 'native' && option.headers));
+    }
+    function enqueue(index, limit) {
+      var option = state.options[index];
+      if (!option || probes.pending[index] || queued >= limit || !eligible(option, index)) return false;
+      queued++;
       probes.pending[index] = true;
       queue.push(index);
-    });
+      return true;
+    }
+    function test(option) {
+      return probeOption(option).then(function (detail) {
+        if (detail !== 'down') return detail;
+        return later(800).then(function () { return probeOption(option); });
+      });
+    }
     function next() {
       var index = queue.shift();
       if (index === undefined) return;
+      active++;
       var option = state.options[index];
       option._probe.style.display = '';
       option._probe.className = 'tag probe';
       option._probe.textContent = 'Test…';
       var began = Date.now();
-      probeOption(option).then(function (detail) {
+      test(option).then(function (detail) {
+        active--;
         delete probes.pending[index];
         // « Pas de vidéo » et « Direct figé » : hors ligne pour le choix du serveur.
         var result = detail === 'bad' || detail === 'stale' ? 'down' : detail;
@@ -4478,8 +4524,6 @@
         option._probeMs = Date.now() - began;
         if (document.body.contains(sheet.node)) {
           if (result === 'down') {
-            // Hors ligne : compté comme un échec (classé plus bas la prochaine fois).
-            recordHealth(state, index, false);
             var recommended = option._probe.parentNode && option._probe.parentNode.querySelector('.tag.ok');
             if (recommended) recommended.remove();
           }
@@ -4491,6 +4535,10 @@
         next();
       });
     }
+    state.options.forEach(function (option, index) { if (index < 16) enqueue(index, 16); });
+    probes.add = function (index) {
+      if (enqueue(index, 24) && active < 6) next();
+    };
     for (var worker = 0; worker < 6; worker++) next();
     return probes;
   }
