@@ -7914,6 +7914,12 @@ async function proxyLiveWatchVipHlsMediaResource(kindValue, idValue, selectorVal
       res.end(ready.body);
       return;
     }
+  }
+  // 200.0.158 : segment redemandé par l'appli Android TV (bloqué depuis 3 s) :
+  // préchargement abandonné, segment redemandé à la source.
+  const relaunch = String(req?.headers?.['x-noctra-hedge'] || '') === '1';
+  if (relaunch && typeof tvSegmentCache !== 'undefined') tvSegmentCache.abort?.(cacheKey);
+  if (!req?.headers?.range && typeof tvSegmentCache !== 'undefined' && !relaunch) {
     const shared = await tvSegmentCache.attach?.(cacheKey);
     if (req?.aborted || res.destroyed) { shared?.stream.destroy(); return; }
     if (shared) {
@@ -13616,12 +13622,18 @@ function headTvStream(token, res) {
 async function proxyTvStream(token, req, res) {
   const reference = tvReferences.get(String(token || ''));
   if (!reference || reference.expiresAt <= Date.now()) throw new HttpError(410, 'Le lien TV a expiré. Recharge la chaîne.');
+  // 200.0.158 : nouvelle demande de l'appli Android TV pour un segment bloqué
+  // (aucun octet depuis 3 s) : jamais rattachée au téléchargement bloqué.
+  const relaunch = String(req.headers['x-noctra-hedge'] || '') === '1';
   if (reference.meta?.finiteSegment && !req.headers.range) {
     const ready = tvSegmentCache.get(String(token));
     if (ready) {
       res.writeHead(200, { 'content-type': ready.type, 'content-length': String(ready.body.length), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-noctra-relay': 'memory-hit' });
       res.end(ready.body); return;
     }
+  }
+  if (relaunch) tvSegmentCache.abort?.(String(token));
+  if (reference.meta?.finiteSegment && !req.headers.range && !relaunch) {
     // 200.0.110 : un préchargement déjà commencé est partagé en direct
     // (octets déjà reçus puis suivants) au lieu d'être refait depuis le début.
     const shared = await tvSegmentCache.attach?.(String(token));
@@ -13817,12 +13829,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.157', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.158', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.157',
+        version: '200.0.158',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

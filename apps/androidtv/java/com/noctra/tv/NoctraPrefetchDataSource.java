@@ -343,7 +343,7 @@ final class NoctraPrefetchDataSource implements DataSource {
             if (entry == null) continue;
             POOL.execute(new Runnable() {
                 @Override
-                public void run() { fetch(candidate, entry); }
+                public void run() { fetch(candidate, entry, false); }
             });
         }
     }
@@ -356,7 +356,7 @@ final class NoctraPrefetchDataSource implements DataSource {
         }
         HEDGES.execute(new Runnable() {
             @Override
-            public void run() { fetch(address, fresh); }
+            public void run() { fetch(address, fresh, true); }
         });
         // Le premier des deux qui avance sert la suite : l'ancien est gardé
         // s'il reprend avant le nouveau.
@@ -371,7 +371,9 @@ final class NoctraPrefetchDataSource implements DataSource {
         return winner[0] != null && !(stalled.done && stalled.error != null) ? stalled : fresh;
     }
 
-    private void fetch(String address, Entry entry) {
+    // Relance : signalée au serveur Noctra, qui ne la rattache pas au
+    // téléchargement bloqué et redemande le segment à la source (200.0.158).
+    private void fetch(String address, Entry entry, boolean relaunch) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(address).openConnection();
@@ -383,6 +385,7 @@ final class NoctraPrefetchDataSource implements DataSource {
                 if (header.getKey().startsWith("x-noctra-doh")) continue;
                 connection.setRequestProperty(header.getKey(), header.getValue());
             }
+            if (relaunch) connection.setRequestProperty("x-noctra-hedge", "1");
             int status = connection.getResponseCode();
             if (status >= 400) throw new IOException("HTTP " + status);
             InputStream input = connection.getInputStream();

@@ -51,7 +51,7 @@ assert.match(server, /'content-security-policy': "frame-ancestors 'self'"/, 'CSP
 // 3. Mosaïque FFmpeg (SIGKILL de secours) & cache de segments TV (plafond maxAttachMs)
 assert.match(mosaic, /function terminateProcess\(proc\)/, 'Arrêt propre SIGTERM + filet SIGKILL des processus FFmpeg');
 assert.match(mosaic, /proc\.kill\('SIGKILL'\)/, 'Filet SIGKILL contre les processus FFmpeg zombies');
-assert.match(segCache, /async attach\(key, \{ waitMs = 4_500, maxAttachMs = 45_000 \} = \{\}\)/, 'Plafond maximal de durée sur attach()');
+assert.match(segCache, /async attach\(key, \{ waitMs = 4_500, maxAttachMs = 45_000(, stalledMs = 3_000)? \} = \{\}\)/, 'Plafond maximal de durée sur attach()');
 
 // 4. Sonde TV unifiée (Range bytes=0-65535 + annulation du flux) & Multiview Shaka
 assert.match(unified, /Range: 'bytes=0-65535'/, 'Sonde des segments TS limitée aux premiers 64 Ko');

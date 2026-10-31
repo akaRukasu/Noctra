@@ -206,7 +206,11 @@ final class NoctraStream {
             long window = player.getDuration();
             long position = player.getCurrentPosition();
             if (window <= 0 || position <= 0) return;
-            long target = Math.max(WINDOW_SAFETY_MS, position - extraOffsetMs);
+            // Marge au début de la fenêtre : 4 s, et au moins un quart de la
+            // fenêtre (fenêtre de 38 s : 9,5 s). Placée tout au début, la lecture
+            // en sortait au premier segment bloqué (retard 38 s sur 38 s).
+            long margin = Math.max(WINDOW_SAFETY_MS, window / 4);
+            long target = Math.max(margin, position - extraOffsetMs);
             if (target < position - 2000) {
                 reserveSeeking = true;
                 player.seekTo(target);
