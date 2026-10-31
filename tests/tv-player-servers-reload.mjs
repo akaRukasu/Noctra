@@ -84,6 +84,17 @@ try {
   const switched = await page.evaluate(() => window.__native.filter(d => d.command === 'load').pop().url);
   assert.ok(/\/stream\/[ac]$/.test(switched), 'coupures répétées : passage sur un autre serveur vérifié (' + switched + ')');
   assert.ok(await page.evaluate(() => window.__native.some(d => d.command === 'zapping' && /Coupures répétées/.test(d.message))));
+  // 1.1.58 : coupures répétées juste après ce changement : on reste (5 min) ;
+  // source figée (« liste figée ») 1 min plus tard : autre serveur aussitôt.
+  const loads = () => page.evaluate(() => window.__native.filter(d => d.command === 'load').length);
+  const before = await loads();
+  const id2 = await page.evaluate(() => JSON.parse(localStorage.getItem('noctra-tv-playback-v1')).playId);
+  await page.evaluate(id => window.__host.postMessage(JSON.stringify({ type: 'playerEvent', event: 'struggling', playSessionId: id })), id2);
+  await page.waitForTimeout(1500);
+  assert.equal(await loads(), before, 'pas de nouveau changement 5 min durant');
+  await page.evaluate(() => { const real = Date.now; Date.now = () => real() + 60000; });
+  await page.evaluate(id => window.__host.postMessage(JSON.stringify({ type: 'playerEvent', event: 'struggling', frozen: true, playSessionId: id })), id2);
+  await page.waitForFunction(n => window.__native.filter(d => d.command === 'load').length > n, before, { timeout: 15000 });
   // Serveur choisi dans le lecteur : chargé sans repasser par l'accueil.
   await page.evaluate(() => window.__host.postMessage(JSON.stringify({ type: 'playerEvent', event: 'server', index: 2 })));
   await page.waitForTimeout(500);

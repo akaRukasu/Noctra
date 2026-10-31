@@ -796,6 +796,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private boolean reportedLive;
     private final List<Long> liveStalls = new ArrayList<Long>();
     private long struggleSentAt;
+    private long frozenSentAt;
     // Fluidité du serveur en cours, envoyée chaque minute : coupures et temps regardé.
     private int healthStalls;
     private long healthAt;
@@ -1061,6 +1062,20 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     public void onStatus(NoctraStream source, String text) {
         // Ancien flux (chaîne précédente, déjà remplacée) : ignoré.
         if (source != null && source != stream) return;
+        // Source figée pendant une coupure : l'accueil passe sur un autre serveur
+        // tout de suite (sans attendre 3 coupures), 1 fois par minute au plus.
+        if (source != null && !vod && source.takeSourceStuck() && canManage()) {
+            long now = System.currentTimeMillis();
+            if (now - frozenSentAt > 60000) {
+                frozenSentAt = now;
+                try {
+                    JSONObject data = new JSONObject();
+                    data.put("frozen", true);
+                    sendLive("struggling", data);
+                } catch (Exception ignored) {
+                }
+            }
+        }
         if (text == null) {
             status.setVisibility(TextView.GONE);
         } else {

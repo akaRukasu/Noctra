@@ -209,7 +209,10 @@ final class NoctraStream {
     }
 
     /** Retard sur le direct ramené vers l'objectif par un léger ralenti (jamais d'accélération). */
-    private void keepLiveDistance(long now) {
+    // Bord du direct suivi à chaque passage (lecture et coupure) : pendant une
+    // coupure, la fenêtre qui glisse fait remonter le retard ; s'il ne remonte
+    // plus, la source ne publie plus rien.
+    private void trackEdge(long now) {
         try {
             long window = player.getDuration();
             long position = player.getCurrentPosition();
@@ -217,6 +220,31 @@ final class NoctraStream {
             long retard = window - position;
             if (lastRetard < 0 || retard > lastRetard + 800) edgeMovedAt = now;
             lastRetard = retard;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // noctra.83 : coupure de plus de 10 s pendant que la source ne publie plus
+    // rien depuis 15 s (diagnostic « liste figée ») : seul un autre serveur peut
+    // aider. Signalé une fois par coupure au lecteur, qui prévient l'accueil.
+    private static final long STUCK_STALL_MS = 10000;
+    private static final long STUCK_EDGE_MS = 15000;
+    private boolean stuckReported;
+    private boolean stuckPending;
+
+    /** Source figée pendant une coupure (une seule fois par coupure). */
+    boolean takeSourceStuck() {
+        boolean value = stuckPending;
+        stuckPending = false;
+        return value;
+    }
+
+    private void keepLiveDistance(long now) {
+        try {
+            long window = player.getDuration();
+            long position = player.getCurrentPosition();
+            if (window <= 0 || position < 0 || position > window) return;
+            long retard = window - position;
             if (speedBroken) return;
             long goal = Math.min(window - Math.max(WINDOW_SAFETY_MS, window / 4), 12000 + extraOffsetMs);
             if (!slowed && retard < goal - 3000) {
@@ -637,7 +665,9 @@ final class NoctraStream {
             recover("Lecture impossible (" + PlaybackException.getErrorCodeName(error.errorCode) + ").");
             return;
         }
+        if (live) trackEdge(now);
         if (state == Player.STATE_READY) {
+            stuckReported = false;
             if (!ready) {
                 ready = true;
                 played = true;
@@ -670,6 +700,12 @@ final class NoctraStream {
             if (ready) callback.onReadyChanged(this, false);
             ready = false;
             if (bufferingSince == 0) bufferingSince = now;
+            if (live && played && !stuckReported && now - bufferingSince > STUCK_STALL_MS
+                && edgeMovedAt > 0 && now - edgeMovedAt > STUCK_EDGE_MS) {
+                stuckReported = true;
+                stuckPending = true;
+                callback.onStatus(this, "Source figée · recherche d'un autre serveur… " + diagnostics());
+            }
             // Coupure en cours : chiffres affichés pour comprendre d'où elle vient.
             if (played && now - bufferingSince > 1500 && !edgeSought) callback.onStatus(this, "Mise en mémoire… " + diagnostics());
             // Direct bloqué : d'abord un saut au bord du direct (segments récents).

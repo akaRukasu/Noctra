@@ -22,5 +22,19 @@ assert.match(prefetch, /private static final long SLOW_MS = 5000;/);
 assert.match(prefetch, /if \(!servingRaced && !entry\.done && System\.currentTimeMillis\(\) - servingSince > SLOW_MS\) \{/);
 assert.match(prefetch, /if \(fresh\.size > servingPosition \|\| \(fresh\.done && fresh\.size >= servingPosition\)\) \{/);
 assert.match(await readFile(new URL('../apps/androidtv/stubs/androidx/media3/common/Player.java', import.meta.url), 'utf8'), /void setPlaybackSpeed\(float speed\);/);
-assert.match(await readFile(new URL('../apps/scripts/build-androidtv.mjs', import.meta.url), 'utf8'), /const noctraRevision = (8[1-9]|9\d|\d{3});/);
-console.log('Android TV noctra.81 : retard sur le direct tenu (ralenti 97 %), liste figée signalée, segment lent doublé : OK');
+// noctra.83 / Noctra TV 1.1.58 : diagnostic « liste figée depuis 29 s · dernier
+// segment 27,1 s » pendant une coupure : la source ne publie plus rien. Signalé
+// à l'accueil (coupure de 10 s et source figée depuis 15 s), qui passe sur un
+// autre serveur 45 s après le précédent changement au plus tôt (au lieu de 5 min).
+assert.match(stream, /private static final long STUCK_STALL_MS = 10000;/);
+assert.match(stream, /private static final long STUCK_EDGE_MS = 15000;/);
+assert.match(stream, /if \(live\) trackEdge\(now\);\s*if \(state == Player\.STATE_READY\) \{\s*stuckReported = false;/, 'bord du direct suivi aussi pendant les coupures');
+assert.match(stream, /&& edgeMovedAt > 0 && now - edgeMovedAt > STUCK_EDGE_MS\) \{\s*stuckReported = true;\s*stuckPending = true;/);
+const player = await readFile(new URL('../apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java', import.meta.url), 'utf8');
+assert.match(player, /source\.takeSourceStuck\(\) && canManage\(\)/);
+assert.match(player, /data\.put\("frozen", true\);\s*sendLive\("struggling", data\);/);
+const app = await readFile(new URL('../apps/androidtv/web/app.js', import.meta.url), 'utf8');
+assert.match(app, /struggling\(playback, Boolean\(event\.frozen\)\)/);
+assert.match(app, /Date\.now\(\) - state\.switchedAt < \(frozen \? 45000 : 300000\)/);
+assert.match(await readFile(new URL('../apps/scripts/build-androidtv.mjs', import.meta.url), 'utf8'), /const noctraRevision = (8[3-9]|9\d|\d{3});/);
+console.log('Android TV noctra.83 : retard sur le direct tenu, segment lent doublé, source figée → autre serveur : OK');

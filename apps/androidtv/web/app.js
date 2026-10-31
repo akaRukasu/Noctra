@@ -1815,7 +1815,7 @@
     if (event.event === 'server') { pickServer(Number(event.index) || 0); return; }
     if (event.event === 'failed') { playerFailed(event); return; }
     if (event.event === 'liveHealth') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) recordSmooth(playback, playback.index, Number(event.stalls) || 0, Number(event.playedMs) || 0); return; }
-    if (event.event === 'struggling') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) struggling(playback); return; }
+    if (event.event === 'struggling') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) struggling(playback, Boolean(event.frozen)); return; }
     // Direct lancé : serveur fiable pour cette chaîne (historique de santé).
     if (event.event === 'live') { if (playback && (!event.playSessionId || event.playSessionId === playback.playId)) succeeded(playback); return; }
     // Piste choisie dans le lecteur : retenue pour les épisodes suivants.
@@ -4690,9 +4690,11 @@
   // serveur vérifié en ligne, plus rapide au test et sans coupures connues ;
   // au plus une fois toutes les 5 min. Sans meilleur candidat, on reste
   // (le lecteur garde alors plus de réserve à chaque coupure).
-  function struggling(state) {
+  // frozen : la source ne publie plus rien pendant une coupure (« liste figée ») :
+  // changement de serveur permis 45 s après le précédent (au lieu de 5 min).
+  function struggling(state, frozen) {
     var current = state.options[state.index];
-    if (!current || (state.switchedAt && Date.now() - state.switchedAt < 300000)) return;
+    if (!current || (state.switchedAt && Date.now() - state.switchedAt < (frozen ? 45000 : 300000))) return;
     var store = healthStore();
     var currentMargin = current._probeMargin || 0;
     var best = -1, bestScore = Infinity;
