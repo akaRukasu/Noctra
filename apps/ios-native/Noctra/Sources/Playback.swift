@@ -101,8 +101,8 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         guard let controller, let player else { return }
         let bar = PlayerActionsBar()
         bar.attach(to: controller)
-        bar.onSeek = { [weak self] delta in self?.seekBy(delta) }
-        bar.onNext = { [weak self] in self?.playNext() }
+        bar.onSeek = { [weak self] delta in MainActor.assumeIsolated { self?.seekBy(delta) } }
+        bar.onNext = { [weak self] in MainActor.assumeIsolated { self?.playNext() } }
         actionsBar = bar
         shownActions = ""
         actionsObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 10), queue: .main) { [weak self] _ in

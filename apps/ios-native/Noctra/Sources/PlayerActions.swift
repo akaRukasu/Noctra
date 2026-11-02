@@ -205,8 +205,12 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
         noteTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(1500))
             guard !Task.isCancelled else { return }
-            UIView.animate(withDuration: 0.25) { self?.note.alpha = 0 }
+            self?.hideNote()
         }
+    }
+
+    private func hideNote() {
+        UIView.animate(withDuration: 0.25) { self.note.alpha = 0 }
     }
 
     @objc private func tapped() {
