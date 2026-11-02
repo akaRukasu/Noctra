@@ -16,7 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:NoctraUpdaterVersion = '8.4'
+$script:NoctraUpdaterVersion = '8.5'
 $script:LastSshDiagnostic = ''
 
 function Write-Step {
@@ -771,7 +771,7 @@ function Invoke-NoctraDiagnostic {
         $color = if ($line.StartsWith('[OK]')) { 'Green' } elseif ($line.StartsWith('[!!]')) { 'Red' } elseif ($line.StartsWith('[??]')) { 'Yellow' } elseif ($line.StartsWith('==')) { 'Cyan' } else { 'Gray' }
         Write-Host $line -ForegroundColor $color
     }
-    $script:DiagnosticProblems = ($report -split "`r?`n" | Where-Object { $_.StartsWith('[!!]') }).Count
+    $script:DiagnosticProblems = @($report -split "`r?`n" | Where-Object { $_.StartsWith('[!!]') }).Count
     $reportPath = Join-Path $PSScriptRoot ('RAPPORT-NOCTRA-' + (Get-Date -Format 'yyyyMMdd-HHmm') + '.txt')
     try {
         [System.IO.File]::WriteAllText($reportPath, $report.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($true))

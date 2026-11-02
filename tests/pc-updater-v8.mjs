@@ -40,8 +40,10 @@ assert.match(ps1, /fix_local "\$file" JELLYFIN_URL jellyfin \/System\/Info\/Publ
 assert.match(ps1, /awk -v list="\$inodes" 'FNR > 1 && \$4 == "0A"/, 'ports en écoute lus dans /proc/net/tcp');
 assert.match(ps1, /sed -i -E "s#\(\[\/@\.\]\)\$\{OLD_HOST/, 'version web (config.json) corrigée');
 assert.match(ps1, /Noctra n'arrive pas a joindre Jellyfin/);
+// V8.5 : un seul problème restant : « Count » introuvable sous StrictMode (PowerShell 5.1).
+assert.match(ps1, /\$script:DiagnosticProblems = @\(\$report -split/);
 for (const name of ['LANCER-MISE-A-JOUR-NOCTRA-V8.cmd', 'DIAGNOSTIC-NOCTRA-V8.cmd', 'REPARER-NOCTRA-V8.cmd']) {
   const cmd = await readFile(new URL('../ultra/pc-updater/' + name, import.meta.url), 'utf8');
   assert.match(cmd, /\r\n/, name + ' : fins de ligne Windows');
 }
-console.log('Updater PC V8.4 : astra.usbx.me, .env adapté, première installation, diagnostic, réparation (scripts bash valides) : OK');
+console.log('Updater PC V8.5 : astra.usbx.me, .env adapté, première installation, diagnostic, réparation (scripts bash valides) : OK');
