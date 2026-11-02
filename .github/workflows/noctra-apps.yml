@@ -97,7 +97,9 @@ jobs:
   # l'installation par-dessus : « Application non installée »).
 
   ios:
-    name: iOS (iPhone + iPad)
+    # Ancienne appli iOS « interface web » (apps/ios). La vraie appli iPhone/iPad
+    # est l'appli native : workflow « Noctra iOS 26 », Artifacts › noctra-ios26.
+    name: iOS ancienne interface web (pas l'appli native)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,11 +114,11 @@ jobs:
             SYMROOT="$PWD/build" build
           mkdir -p Payload ../../dist/apps
           cp -R build/Release-iphoneos/Noctra.app Payload/
-          zip -qry ../../dist/apps/Noctra-ios-unsigned.ipa Payload
+          zip -qry ../../dist/apps/Noctra-Web-ancienne-interface-ios-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: noctra-ios
-          path: dist/apps/Noctra-ios-unsigned.ipa
+          name: noctra-ios-ancienne-interface-web
+          path: dist/apps/Noctra-Web-ancienne-interface-ios-unsigned.ipa
           if-no-files-found: error
 
   release:
@@ -138,7 +140,8 @@ jobs:
           body: |
             - Android TV : APK dans le workflow « Noctra Android » (Artifacts › noctra-androidtv).
             - **Noctra-android.apk** : téléphones et tablettes Android.
-            - **Noctra-ios-unsigned.ipa** : iPhone et iPad, à installer avec Sideloadly ou AltStore.
+            - iPhone et iPad : la vraie appli est **Noctra-ios26-unsigned.ipa** (workflow « Noctra iOS 26 », Artifacts › noctra-ios26).
+            - **Noctra-Web-ancienne-interface-ios-unsigned.ipa** : ancienne interface web (« Noctra Web », appli séparée).
             - **com.noctra.media_…_all.ipk** : téléviseurs LG webOS (mode développeur).
             - **Noctra.wgt** : téléviseurs Samsung Tizen, à installer avec Apps2Samsung.
 

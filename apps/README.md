@@ -8,7 +8,7 @@ Noctra existe en applications pour :
 | Téléphone et tablette Android | `Noctra-android.apk` (interface web) | fichier APK |
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad (iOS 26) | `Noctra-ios26-unsigned.ipa` (appli native SwiftUI, Liquid Glass) | Sideloadly ou AltStore |
-| iPhone et iPad (iOS 15 à 18) | `Noctra-ios-unsigned.ipa` (interface web) | Sideloadly ou AltStore |
+| iPhone et iPad (iOS 15 à 18) | `Noctra-Web-ancienne-interface-ios-unsigned.ipa` (ancienne interface web, appli séparée « Noctra Web » ; la vraie appli est `Noctra-ios26-unsigned.ipa`) | Sideloadly ou AltStore |
 | Téléviseurs LG (webOS) | `com.noctra.media_1.1.61_all.ipk` (**Noctra TV**) | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
 | Téléviseurs Samsung 2014 (série H, Orsay : UE40H6400…) | `Noctra-Samsung-2014-<version>.zip` (**Noctra TV**, kit) | User App Sync : [guide](samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md) |
@@ -104,7 +104,7 @@ L’interface Noctra utilise des fonctions JavaScript récentes (Chromium 85). S
 Toutes les applis sont construites automatiquement par GitHub Actions (workflow **Applications Noctra**), à chaque modification du dossier `apps/` :
 
 1. Sur GitHub, ouvrez l’onglet **Actions**, puis **Applications Noctra**.
-2. Ouvrez la dernière exécution réussie et téléchargez les **Artifacts** en bas de la page : `noctra-android`, `noctra-ios` et `noctra-tv`.
+2. Ouvrez la dernière exécution réussie et téléchargez les **Artifacts** en bas de la page : `noctra-android`, `noctra-tv` (et `noctra-ios-ancienne-interface-web` pour l'ancienne interface web ; l'appli iPhone native est dans *Noctra iOS 26 › noctra-ios26*).
 
 Pour publier une version dans l’onglet **Releases**, poussez une étiquette. Par exemple : `git tag apps-v1.0.0 && git push origin apps-v1.0.0`.
 
@@ -143,7 +143,7 @@ Ne mettez jamais la clé dans le dépôt.
 ### iPhone et iPad
 Sans compte développeur payant, Apple n’autorise l’installation que par *sideloading*. L’IPA n’est pas signée : l’outil la signe avec votre identifiant Apple.
 1. Installez [Sideloadly](https://sideloadly.io) (Windows/macOS) ou [AltStore](https://altstore.io).
-2. Branchez l’iPhone, glissez `Noctra-ios-unsigned.ipa` dans l’outil et saisissez votre identifiant Apple.
+2. Branchez l’iPhone, glissez `Noctra-ios26-unsigned.ipa` (appli native, workflow « Noctra iOS 26 ») dans l’outil et saisissez votre identifiant Apple.
 3. Sur l’iPhone, ouvrez *Réglages → Général → VPN et gestion de l’appareil* et faites confiance au profil. Sur iOS 16 et plus, activez aussi *Réglages → Confidentialité et sécurité → Mode développeur*.
 
 Avec un identifiant Apple gratuit, la signature expire au bout de 7 jours. AltStore la renouvelle automatiquement. Avec un compte développeur, ouvrez le projet dans Xcode (`cd apps/ios && xcodegen generate && open Noctra.xcodeproj`), choisissez votre équipe et installez directement.

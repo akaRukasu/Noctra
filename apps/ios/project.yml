@@ -23,7 +23,9 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.noctra.app
+        # Identifiant distinct de la vraie appli iOS (apps/ios-native, com.noctra.app) :
+        # cette ancienne interface web ne peut plus la remplacer sur l'iPhone.
+        PRODUCT_BUNDLE_IDENTIFIER: com.noctra.web
         PRODUCT_NAME: Noctra
         INFOPLIST_FILE: Noctra/Info.plist
         GENERATE_INFOPLIST_FILE: NO
