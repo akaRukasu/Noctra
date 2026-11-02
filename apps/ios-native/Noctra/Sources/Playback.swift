@@ -103,6 +103,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         bar.attach(to: controller)
         bar.onSeek = { [weak self] delta in MainActor.assumeIsolated { self?.seekBy(delta) } }
         bar.onNext = { [weak self] in MainActor.assumeIsolated { self?.playNext() } }
+        bar.onSkip = { [weak self] in MainActor.assumeIsolated { self?.skipActive() } }
         actionsBar = bar
         shownActions = ""
         actionsObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 10), queue: .main) { [weak self] _ in
@@ -138,26 +139,19 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
     }
 
     private func refreshActions() {
-        guard let controller, !closed else { return }
+        guard controller != nil, !closed else { return }
         let marker = activeMarker()
         let hasNext = nextEpisode != nil && !syncMode
         actionsBar?.update(canSeek: seekRange() != nil, hasNext: hasNext)
-        // Boutons du lecteur d'Apple (en bas à droite), jamais automatiques.
+        // « Passer… » (marqueur en cours) et « Épisode suivant » au générique de fin : jamais automatiques.
         let key = (marker.map { "\($0.kind)\($0.start)" } ?? "") + (hasNext && marker?.kind == .outro ? "+next" : "")
         guard key != shownActions else { return }
         shownActions = key
-        var actions: [UIAction] = []
-        if let marker {
-            actions.append(UIAction(title: marker.label, image: UIImage(systemName: "forward.fill")) { [weak self] _ in
-                MainActor.assumeIsolated { self?.skip(marker) }
-            })
-        }
-        if hasNext, marker?.kind == .outro {
-            actions.append(UIAction(title: "Épisode suivant", image: UIImage(systemName: "forward.end.fill")) { [weak self] _ in
-                MainActor.assumeIsolated { self?.playNext() }
-            })
-        }
-        controller.contextualActions = actions
+        actionsBar?.updatePills(skipLabel: marker?.label, showNext: hasNext && marker?.kind == .outro)
+    }
+
+    private func skipActive() {
+        if let marker = activeMarker() { skip(marker) }
     }
 
     /// « Passer le générique (de fin) » : fin du marqueur. Générique de fin
@@ -184,7 +178,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         guard let current, let next = nextEpisode, !syncMode, player != nil else { return }
         nextEpisode = nil
         shownActions = ""
-        controller?.contextualActions = []
+        actionsBar?.updatePills(skipLabel: nil, showNext: false)
         let position = positionSeconds
         let previous = report
         let resume = next.resumeSeconds > 5 && (next.progress ?? 0) < 0.9 ? next.resumeSeconds : 0
@@ -649,7 +643,6 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         actionsObserver = nil
         actionsBar?.detach()
         actionsBar = nil
-        controller?.contextualActions = []
         if isLive { finishLiveMeasure() }
         liveResult = nil
         liveSmooth = nil

@@ -104,6 +104,12 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
     private let forward = UIButton(type: .system)
     private let next = UIButton(type: .system)
     private let note = UILabel()
+    /// « Passer le générique (de fin) » et « Épisode suivant » pendant le
+    /// générique : en bas à droite, visibles même commandes masquées.
+    private let pills = UIStackView()
+    private let skipPill = UIButton(type: .system)
+    private let nextPill = UIButton(type: .system)
+    var onSkip: (() -> Void)?
     private var tap: UITapGestureRecognizer?
     private weak var host: UIView?
     private var hideTask: Task<Void, Never>?
@@ -136,6 +142,18 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
         style(back, "gobackward.15", nil, "Reculer de 15 secondes")
         style(forward, "goforward.15", nil, "Avancer de 15 secondes")
         style(next, "forward.end.fill", "Épisode suivant", "Épisode suivant")
+        style(skipPill, "forward.fill", "Passer le générique", "Passer le générique")
+        style(nextPill, "forward.end.fill", "Épisode suivant", "Épisode suivant")
+        skipPill.configuration?.baseBackgroundColor = .white
+        skipPill.tintColor = .black
+        skipPill.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+        nextPill.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
+        skipPill.isHidden = true
+        nextPill.isHidden = true
+        pills.axis = .horizontal
+        pills.spacing = 10
+        pills.translatesAutoresizingMaskIntoConstraints = false
+        [skipPill, nextPill].forEach { pills.addArrangedSubview($0) }
         back.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         forward.addTarget(self, action: #selector(forwardTapped), for: .touchUpInside)
         next.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
@@ -155,13 +173,16 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
         note.isAccessibilityElement = true
         host.addSubview(stack)
         host.addSubview(note)
+        host.addSubview(pills)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             stack.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor, constant: 68),
             note.centerXAnchor.constraint(equalTo: host.centerXAnchor),
             note.centerYAnchor.constraint(equalTo: host.centerYAnchor, constant: -90),
             note.heightAnchor.constraint(equalToConstant: 44),
-            note.widthAnchor.constraint(greaterThanOrEqualToConstant: 150)
+            note.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            pills.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+            pills.bottomAnchor.constraint(equalTo: host.safeAreaLayoutGuide.bottomAnchor, constant: -110)
         ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.cancelsTouchesInView = false
@@ -177,17 +198,34 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
         if next.isHidden == hasNext { next.isHidden = !hasNext }
     }
 
+    /// Bouton du générique en cours (nil : aucun) et « Épisode suivant » à côté.
+    func updatePills(skipLabel: String?, showNext: Bool) {
+        if let skipLabel {
+            if skipPill.configuration?.title != skipLabel {
+                skipPill.configuration?.title = skipLabel
+                skipPill.accessibilityLabel = skipLabel
+            }
+            skipPill.isHidden = false
+        } else if !skipPill.isHidden {
+            skipPill.isHidden = true
+        }
+        if nextPill.isHidden == showNext { nextPill.isHidden = !showNext }
+        host?.bringSubviewToFront(pills)
+    }
+
     func detach() {
         hideTask?.cancel()
         noteTask?.cancel()
         if let tap { host?.removeGestureRecognizer(tap) }
         stack.removeFromSuperview()
         note.removeFromSuperview()
+        pills.removeFromSuperview()
     }
 
     @objc private func backTapped() { seek(-15) }
     @objc private func forwardTapped() { seek(15) }
     @objc private func nextTapped() { onNext?() }
+    @objc private func skipTapped() { onSkip?() }
 
     private func seek(_ delta: Double) {
         show()
@@ -238,6 +276,6 @@ final class PlayerActionsBar: NSObject, UIGestureRecognizerDelegate {
     nonisolated func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     nonisolated func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        MainActor.assumeIsolated { touch.view?.isDescendant(of: stack) != true }
+        MainActor.assumeIsolated { touch.view?.isDescendant(of: stack) != true && touch.view?.isDescendant(of: pills) != true }
     }
 }
