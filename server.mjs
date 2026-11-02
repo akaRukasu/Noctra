@@ -1,3 +1,4 @@
+import './lib/wasm-memory-guard.mjs';
 import { createMediaAutoRefresh } from './lib/media-auto-refresh.mjs';
 import { parseBrigittePlayers, parseBrigitteNativeDocument } from './lib/brigitte-players.mjs';
 import { normalizeProviders, providerFilter, regionalOffers, verifyProviderItems } from './lib/legal-catalog.mjs';
@@ -13972,12 +13973,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.164', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.165', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.164',
+        version: '200.0.165',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

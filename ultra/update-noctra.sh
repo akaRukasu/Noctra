@@ -104,6 +104,34 @@ mv "$APP_DIR" "$BACKUP_DIR"
 mv "$NEW_DIR" "$APP_DIR"
 SWAPPED=1
 
+# 200.0.165 : reglage memoire WebAssembly du service. Sans lui, sur un service
+# a memoire virtuelle limitee, toutes les requetes de Noctra echouent
+# (« fetch failed », « Cannot allocate Wasm memory »). Ajoute dans un fichier
+# complementaire du service (le service lui-meme n'est pas reecrit) ; un
+# NODE_OPTIONS deja present est complete (copie gardee : .avant-wasm).
+ensure_wasm_setting() {
+  local unit="$HOME/.config/systemd/user/$SERVICE_NAME"
+  [[ -f "$unit" ]] || return 0
+  local node_bin
+  node_bin="$(sed -nE 's/^ExecStart=([^[:space:]]+).*/\1/p' "$unit" | head -n 1)"
+  [[ -x "$node_bin" ]] || node_bin="$(command -v node || true)"
+  [[ -n "$node_bin" ]] || return 0
+  "$node_bin" -e "process.exit(process.allowedNodeEnvironmentFlags.has('--disable-wasm-trap-handler')?0:1)" >/dev/null 2>&1 || return 0
+  local dropdir="$unit.d" file
+  if grep -qs -- '--disable-wasm-trap-handler' "$unit" "$dropdir"/*.conf; then return 0; fi
+  if grep -qsE '^Environment="?NODE_OPTIONS=' "$unit" "$dropdir"/*.conf; then
+    for file in "$unit" "$dropdir"/*.conf; do
+      [[ -f "$file" ]] && grep -qE '^Environment="?NODE_OPTIONS=' "$file" || continue
+      cp -p "$file" "$file.avant-wasm" 2>/dev/null || true
+      sed -i -E 's/^(Environment="?NODE_OPTIONS=)/\1--disable-wasm-trap-handler /' "$file" || true
+    done
+  else
+    mkdir -p "$dropdir"
+    printf '[Service]\nEnvironment=NODE_OPTIONS=--disable-wasm-trap-handler\n' > "$dropdir/noctra-memoire-wasm.conf"
+  fi
+  log "Service : reglage memoire WebAssembly ajoute (NODE_OPTIONS=--disable-wasm-trap-handler)."
+}
+ensure_wasm_setting || true
 systemctl --user daemon-reload
 systemctl --user start "$SERVICE_NAME"
 

@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.164 — ±15 s, « Passer le générique (de fin) » et « Épisode suivant » sur tous les lecteurs
+# Version actuelle : 200.0.165 — « Cannot allocate Wasm memory » / « fetch failed » corrigé
+
+Noctra se relance seul avec le réglage mémoire WebAssembly (`--disable-wasm-trap-handler`) s'il manque au service. La mise à jour et l'updater PC l'ajoutent aussi au service, sans le réécrire. Détails : [MISE-A-JOUR-V200165.md](MISE-A-JOUR-V200165.md).
+
+# Historique : 200.0.164 — ±15 s, « Passer le générique (de fin) » et « Épisode suivant » sur tous les lecteurs
 
 Sur Android TV, LG, Samsung (Tizen et 2014), Android, iPhone, iPad et sur le web, les lecteurs ont maintenant des boutons −15 s et +15 s, avec retour visuel quand on appuie plusieurs fois. En direct, ces boutons n'apparaissent que si le flux a une vraie fenêtre de retour. « Passer le générique » et « Passer le générique de fin » s'appuient seulement sur les marqueurs réels : segments Jellyfin, sinon chapitres nommés. Rien n'est automatique et la scène après le générique est conservée. « Épisode suivant » est un bouton distinct. Sources TV : Streamed est passé sur strmfree.st, et une nouvelle source PPV utilise ppv.st. Détails et mise à jour en gardant les données : [MISE-A-JOUR-V200164.md](MISE-A-JOUR-V200164.md).
 

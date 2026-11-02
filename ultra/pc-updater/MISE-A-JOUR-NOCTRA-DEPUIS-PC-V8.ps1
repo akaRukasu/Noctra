@@ -433,8 +433,8 @@ else
 fi
 PORT="$(env_value PORT)"; BASE_URL="$(env_value BASE_URL)"; BASE_URL="${BASE_URL%/}"
 installed="$("$NODE_BIN" -e "process.stdout.write(String(require(process.argv[1]).version||''))" "$APP_DIR/package.json" 2>/dev/null || true)"
-if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.164 | sort -V | head -n 1)" != 200.0.164 ]]; then
-  note "Version $installed : mettre a jour vers 200.0.164 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
+if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.165 | sort -V | head -n 1)" != 200.0.165 ]]; then
+  note "Version $installed : mettre a jour vers 200.0.165 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
 fi
 CLIENT_CONFIG="$APP_DIR/public/client/config.json"
 if [[ -f "$CLIENT_CONFIG" ]]; then
@@ -444,6 +444,15 @@ fi
 title "Service et acces"
 SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME"
 if [[ -f "$SERVICE_FILE" ]]; then ok "Service systemd $SERVICE_NAME"; else bad "Service systemd absent : lancer bash $APP_DIR/ultra/install-ultra.sh"; fi
+# Reglage memoire WebAssembly (sinon "fetch failed" / "Cannot allocate Wasm memory").
+if grep -qs -- '--disable-wasm-trap-handler' "$SERVICE_FILE" "$SERVICE_FILE.d"/*.conf; then
+  ok "Service : reglage memoire WebAssembly present"
+else
+  note "Service : reglage memoire WebAssembly absent du service (Noctra 200.0.165+ se relance seul avec ce reglage ; la reparation l'ajoute au service)"
+fi
+if [[ -s "$APP_DIR/logs/noctra-error.log" ]] && tail -n 30 "$APP_DIR/logs/noctra-error.log" | grep -q 'Cannot allocate Wasm memory'; then
+  bad "Noctra manque de memoire WebAssembly (Jellyfin injoignable, \"fetch failed\") : mettre a jour vers 200.0.165 ou lancer REPARER-NOCTRA-V8.cmd"
+fi
 state="$(systemctl --user is-active "$SERVICE_NAME" 2>/dev/null || true)"; state="${state:-inconnu}"
 if [[ "$state" == active ]]; then ok "Service actif"; else bad "Service $state : systemctl --user restart $SERVICE_NAME (journal : $APP_DIR/logs/noctra-error.log)"; fi
 [[ "$(systemctl --user is-enabled "$SERVICE_NAME" 2>/dev/null || true)" == enabled ]] && ok "Demarrage automatique active" || note "Demarrage automatique non active : systemctl --user enable $SERVICE_NAME"
@@ -695,6 +704,34 @@ if [[ ! -f "$SERVICE_FILE" || ! -f "$NGINX_FILE" ]] || ! grep -q "127.0.0.1:$POR
   log "Service Noctra et proxy Ultra.cc (re)configures..."
   bash "$APP_DIR/ultra/install-ultra.sh"
 fi
+# 200.0.165 : reglage memoire WebAssembly du service. Sans lui, sur un service
+# a memoire virtuelle limitee, toutes les requetes de Noctra echouent
+# ("fetch failed", "Cannot allocate Wasm memory"). Ajoute dans un fichier
+# complementaire du service (le service lui-meme n'est pas reecrit) ; un
+# NODE_OPTIONS deja present est complete (copie gardee : .avant-wasm).
+ensure_wasm_setting() {
+  local unit="$HOME/.config/systemd/user/$SERVICE_NAME"
+  [[ -f "$unit" ]] || return 0
+  local node_bin
+  node_bin="$(sed -nE 's/^ExecStart=([^[:space:]]+).*/\1/p' "$unit" | head -n 1)"
+  [[ -x "$node_bin" ]] || node_bin="$(command -v node || true)"
+  [[ -n "$node_bin" ]] || return 0
+  "$node_bin" -e "process.exit(process.allowedNodeEnvironmentFlags.has('--disable-wasm-trap-handler')?0:1)" >/dev/null 2>&1 || return 0
+  local dropdir="$unit.d" file
+  if grep -qs -- '--disable-wasm-trap-handler' "$unit" "$dropdir"/*.conf; then return 0; fi
+  if grep -qsE '^Environment="?NODE_OPTIONS=' "$unit" "$dropdir"/*.conf; then
+    for file in "$unit" "$dropdir"/*.conf; do
+      [[ -f "$file" ]] && grep -qE '^Environment="?NODE_OPTIONS=' "$file" || continue
+      cp -p "$file" "$file.avant-wasm" 2>/dev/null || true
+      sed -i -E 's/^(Environment="?NODE_OPTIONS=)/\1--disable-wasm-trap-handler /' "$file" || true
+    done
+  else
+    mkdir -p "$dropdir"
+    printf '[Service]\nEnvironment=NODE_OPTIONS=--disable-wasm-trap-handler\n' > "$dropdir/noctra-memoire-wasm.conf"
+  fi
+  log "Service : reglage memoire WebAssembly ajoute (NODE_OPTIONS=--disable-wasm-trap-handler)."
+}
+ensure_wasm_setting || true
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || true
 systemctl --user restart "$SERVICE_NAME"
@@ -1159,10 +1196,41 @@ BASE_URL="$(env_value "$APP_DIR/.env" BASE_URL)"
 PORT="${PORT:-3000}"
 BASE_URL="${BASE_URL%/}"
 SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME"
+# 200.0.165 : reglage memoire WebAssembly du service. Sans lui, sur un service
+# a memoire virtuelle limitee, toutes les requetes de Noctra echouent
+# ("fetch failed", "Cannot allocate Wasm memory"). Ajoute dans un fichier
+# complementaire du service (le service lui-meme n'est pas reecrit) ; un
+# NODE_OPTIONS deja present est complete (copie gardee : .avant-wasm).
+ensure_wasm_setting() {
+  local unit="$HOME/.config/systemd/user/$SERVICE_NAME"
+  [[ -f "$unit" ]] || return 0
+  local node_bin
+  node_bin="$(sed -nE 's/^ExecStart=([^[:space:]]+).*/\1/p' "$unit" | head -n 1)"
+  [[ -x "$node_bin" ]] || node_bin="$(command -v node || true)"
+  [[ -n "$node_bin" ]] || return 0
+  "$node_bin" -e "process.exit(process.allowedNodeEnvironmentFlags.has('--disable-wasm-trap-handler')?0:1)" >/dev/null 2>&1 || return 0
+  local dropdir="$unit.d" file
+  if grep -qs -- '--disable-wasm-trap-handler' "$unit" "$dropdir"/*.conf; then return 0; fi
+  if grep -qsE '^Environment="?NODE_OPTIONS=' "$unit" "$dropdir"/*.conf; then
+    for file in "$unit" "$dropdir"/*.conf; do
+      [[ -f "$file" ]] && grep -qE '^Environment="?NODE_OPTIONS=' "$file" || continue
+      cp -p "$file" "$file.avant-wasm" 2>/dev/null || true
+      sed -i -E 's/^(Environment="?NODE_OPTIONS=)/\1--disable-wasm-trap-handler /' "$file" || true
+    done
+  else
+    mkdir -p "$dropdir"
+    printf '[Service]\nEnvironment=NODE_OPTIONS=--disable-wasm-trap-handler\n' > "$dropdir/noctra-memoire-wasm.conf"
+  fi
+  log "Service : reglage memoire WebAssembly ajoute (NODE_OPTIONS=--disable-wasm-trap-handler)."
+}
 if (( FRESH == 1 )) || [[ ! -f "$SERVICE_FILE" || ! -f "$NGINX_FILE" ]] || ! grep -q "127.0.0.1:$PORT" "$NGINX_FILE" 2>/dev/null; then
   log "Service Noctra et proxy Ultra.cc (re)configures..."
   bash "$APP_DIR/ultra/install-ultra.sh"
+  ensure_wasm_setting || true
+  systemctl --user daemon-reload
+  systemctl --user restart "$SERVICE_NAME"
 else
+  ensure_wasm_setting || true
   systemctl --user daemon-reload
   systemctl --user start "$SERVICE_NAME"
 fi
