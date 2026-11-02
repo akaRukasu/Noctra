@@ -11,6 +11,8 @@ public interface ExoPlayer extends Player {
         public Builder(Context context, RenderersFactory renderersFactory) { }
         public Builder setMediaSourceFactory(MediaSource.Factory factory) { throw new UnsupportedOperationException(); }
         public Builder setLoadControl(LoadControl loadControl) { throw new UnsupportedOperationException(); }
+        public Builder setSeekBackIncrementMs(long seekBackIncrementMs) { throw new UnsupportedOperationException(); }
+        public Builder setSeekForwardIncrementMs(long seekForwardIncrementMs) { throw new UnsupportedOperationException(); }
         public ExoPlayer build() { throw new UnsupportedOperationException(); }
     }
 }

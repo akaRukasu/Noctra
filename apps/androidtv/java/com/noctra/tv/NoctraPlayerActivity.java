@@ -15,6 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.AdapterView;
+import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -78,6 +79,9 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_START_MS = "noctra_start_ms";
     static final String EXTRA_SEGMENTS = "noctra_segments";
     static final String EXTRA_EPISODE = "noctra_episode";
+    /** Épisode suivant (titre affiché) : bouton « Épisode suivant » ; au retour, EXTRA_NEXT. */
+    static final String EXTRA_NEXT_TITLE = "noctra_next_title";
+    static final String EXTRA_NEXT = "noctra_next";
     static final String EXTRA_SERIES_ID = "noctra_series_id";
     static final String EXTRA_POSITION_MS = "noctra_position_ms";
     static final String EXTRA_ENDED = "noctra_ended";
@@ -85,7 +89,8 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     static final String EXTRA_SYNC = "noctra_sync";
     /** Chaîne : {now:{title,start,stop}, next:{title,start}, position, zap} (JSON). */
     static final String EXTRA_EPG = "noctra_epg";
-    private static final long SEEK_STEP_MS = 10000;
+    // Avance et retour rapides : 15 s (commandes, flèches, touches ⏪ ⏩).
+    private static final long SEEK_STEP_MS = 15000;
     private static final long REPORT_MS = 10000;
     static final int RESULT_ERROR = RESULT_FIRST_USER;
 
@@ -106,8 +111,21 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
     private TextView nowView;
     private TextView nextView;
     private TextView statsView;
-    // Génériques (intro, récap, fin) : bouton « Passer » affiché pendant le segment.
-    private TextView skipView;
+    // Génériques (intro, récap, fin) : bouton « Passer le générique » (ou « … de
+    // fin ») pendant le segment marqué ; bouton distinct « Épisode suivant ».
+    private LinearLayout pillBar;
+    private Button skipView;
+    private Button nextButton;
+    private String nextTitle;
+    private boolean nextRequested;
+    private boolean pillsShown;
+    // Retour visuel des sauts de 15 s (cumulés pendant 1,5 s).
+    private TextView seekView;
+    private long seekShownDelta, seekShownAt, lastRepeatSeekAt;
+    private final Runnable hideSeek = new Runnable() {
+        @Override
+        public void run() { if (seekView != null) seekView.setVisibility(View.GONE); }
+    };
     private JSONArray segments;
     private JSONObject activeSegment;
     private boolean episode;
@@ -235,12 +253,14 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
             }
             if (found != activeSegment) {
                 activeSegment = found;
-                if (found == null) skipView.setVisibility(TextView.GONE);
+                if (found == null) skipView.setVisibility(View.GONE);
                 else {
-                    skipView.setText(skipLabel(found) + "  ·  OK");
-                    skipView.setVisibility(TextView.VISIBLE);
+                    skipView.setText(skipLabel(found));
+                    skipView.setContentDescription(skipLabel(found));
+                    skipView.setVisibility(View.VISIBLE);
                 }
             }
+            updatePills();
             if (episode && seriesId != null && lastSkipPosition >= 0 && stream.hasPlayed()) {
                 long jump = position - lastSkipPosition - (now - lastSkipAt);
                 if (jump > 20000 && lastSkipPosition < 10 * 60000L) {
@@ -256,12 +276,42 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         }
     };
 
-    private String skipLabel(JSONObject segment) {
-        String type = segment.optString("type");
-        if ("outro".equals(type)) return episode ? "Épisode suivant" : "Passer le générique";
+    static String skipLabel(String type) {
+        if ("outro".equals(type)) return "Passer le générique de fin";
         if ("recap".equals(type)) return "Passer le récap";
         if ("preview".equals(type)) return "Passer l’aperçu";
-        return "Passer l’intro";
+        return "Passer le générique";
+    }
+
+    private String skipLabel(JSONObject segment) {
+        return skipLabel(segment.optString("type"));
+    }
+
+    /**
+     * Boutons au-dessus des commandes : « Passer… » pendant un segment marqué,
+     * « Épisode suivant » (s'il existe) pendant le générique de fin ou quand les
+     * commandes sont affichées. Apparus commandes fermées : le premier reçoit le
+     * focus (OK l'active, ◀ ▶ passent de l'un à l'autre).
+     */
+    private void updatePills() {
+        if (pillBar == null || finished) return;
+        boolean controls = false;
+        try { controls = playerView.isControllerFullyVisible(); } catch (Throwable ignored) { }
+        boolean outro = activeSegment != null && "outro".equals(activeSegment.optString("type"));
+        boolean next = nextTitle != null && !sync && (outro || controls);
+        nextButton.setVisibility(next ? View.VISIBLE : View.GONE);
+        boolean shown = skipView.getVisibility() == View.VISIBLE || next;
+        pillBar.setVisibility(shown ? View.VISIBLE : View.GONE);
+        if (shown && !pillsShown && !controls) {
+            if (skipView.getVisibility() == View.VISIBLE) skipView.requestFocus();
+            else nextButton.requestFocus();
+        }
+        if (!shown && pillsShown && pillFocused()) playerView.requestFocus();
+        pillsShown = shown;
+    }
+
+    private boolean pillFocused() {
+        return (skipView != null && skipView.isFocused()) || (nextButton != null && nextButton.isFocused());
     }
 
     private void skipSegment() {
@@ -269,11 +319,13 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         if (segment == null || stream == null) return;
         try { segment.put("dismissed", true); } catch (Exception ignored) { }
         activeSegment = null;
-        skipView.setVisibility(TextView.GONE);
+        skipView.setVisibility(View.GONE);
         long end = segment.optLong("endMs");
         long duration = stream.durationMs();
-        if ("outro".equals(segment.optString("type")) && (episode || duration <= 0 || end >= duration - 10000)) {
-            // Fin du titre : l'accueil propose l'épisode suivant.
+        // Générique de fin jusqu'à la toute fin du fichier : fin du titre (l'accueil
+        // propose alors l'épisode suivant). Sinon, saut à la fin du générique :
+        // une scène après le générique reste visible.
+        if ("outro".equals(segment.optString("type")) && duration > 0 && end >= duration - 1500) {
             ended = true;
             finishWith(true, null);
             return;
@@ -281,6 +333,38 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         stream.seek(end);
         lastSkipPosition = end;
         lastSkipAt = System.currentTimeMillis();
+        updatePills();
+    }
+
+    private void playNext() {
+        if (nextTitle == null || stream == null) return;
+        nextRequested = true;
+        ended = true;
+        finishWith(true, null);
+    }
+
+    /** Saut de 15 s (ou plus en cumulé), borné au titre ; lecture ou pause gardée. */
+    private void seekBy(long delta) {
+        if (stream == null) return;
+        long duration = stream.durationMs();
+        long position = stream.positionMs();
+        // Bornes : début et fin du titre (sans repartir dans l'autre sens au bord).
+        long target = Math.max(Math.min(0, position), position + delta);
+        if (duration > 0) target = Math.min(target, Math.max(duration - 1000, position));
+        stream.seek(target);
+        long now = System.currentTimeMillis();
+        // Retour visuel : sauts réellement faits, cumulés sur les appuis répétés.
+        long moved = target - position;
+        seekShownDelta = now - seekShownAt < 1500 && Long.signum(seekShownDelta) == Long.signum(delta) ? seekShownDelta + moved : moved;
+        seekShownAt = now;
+        long seconds = Math.round(Math.abs(seekShownDelta) / 1000.0);
+        String amount = seconds == 0 ? (delta < 0 ? "Début" : "Fin") : (seekShownDelta < 0 ? "−" : "+") + seconds + " s";
+        seekView.setText((delta < 0 ? "⟲  " : "⟳  ") + amount + "   ·   " + clock(target) + (duration > 0 ? " / " + clock(duration) : ""));
+        seekView.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideSeek);
+        handler.postDelayed(hideSeek, 1500);
+        lastSkipPosition = target;
+        lastSkipAt = now;
     }
 
     private void flushLearn() {
@@ -358,17 +442,36 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         bannerParams.setMargins(dp(40), dp(32), dp(40), 0);
         root.addView(banner, bannerParams);
 
-        skipView = text("", 18, Color.rgb(11, 13, 18));
-        skipView.setPadding(dp(26), dp(12), dp(26), dp(12));
-        android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
-        pill.setColor(Color.argb(240, 245, 247, 250));
-        pill.setCornerRadius(dp(40));
-        skipView.setBackground(pill);
-        skipView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        skipView.setVisibility(TextView.GONE);
+        pillBar = new LinearLayout(this);
+        pillBar.setOrientation(LinearLayout.HORIZONTAL);
+        pillBar.setVisibility(View.GONE);
+        skipView = pill("");
+        skipView.setVisibility(View.GONE);
+        skipView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) { skipSegment(); }
+        });
+        nextButton = pill("Épisode suivant");
+        nextButton.setVisibility(View.GONE);
+        nextButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) { playNext(); }
+        });
+        pillBar.addView(skipView);
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gap.leftMargin = dp(14);
+        pillBar.addView(nextButton, gap);
         FrameLayout.LayoutParams skipParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
         skipParams.setMargins(0, 0, dp(48), dp(120));
-        root.addView(skipView, skipParams);
+        root.addView(pillBar, skipParams);
+        seekView = text("", 22, Color.rgb(242, 246, 244));
+        seekView.setPadding(dp(26), dp(12), dp(26), dp(12));
+        seekView.setBackgroundColor(Color.argb(190, 9, 10, 15));
+        seekView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        seekView.setVisibility(View.GONE);
+        root.addView(seekView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        nextTitle = intent.getStringExtra(EXTRA_NEXT_TITLE);
+        if (nextTitle != null) nextButton.setContentDescription("Épisode suivant : " + nextTitle);
         try {
             segments = intent.hasExtra(EXTRA_SEGMENTS) ? new JSONArray(intent.getStringExtra(EXTRA_SEGMENTS)) : null;
         } catch (Exception error) {
@@ -934,14 +1037,41 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        // Bouton « Passer » affiché (commandes fermées) : OK passe le générique.
         int pressed = event.getKeyCode();
-        if (vod && activeSegment != null && skipView.getVisibility() == TextView.VISIBLE
-            && (pressed == KeyEvent.KEYCODE_DPAD_CENTER || pressed == KeyEvent.KEYCODE_ENTER || pressed == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+        if (vod && !sync && stream != null) {
             boolean controls = false;
             try { controls = playerView.isControllerFullyVisible(); } catch (Throwable ignored) { }
-            if (!controls) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) skipSegment();
+            // Bouton « Passer… » / « Épisode suivant » sélectionné : OK l'active,
+            // ◀ ▶ passent de l'un à l'autre, ▲ ▼ ouvrent les commandes.
+            if (pillFocused() && !controls) {
+                if (pressed == KeyEvent.KEYCODE_DPAD_UP || pressed == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) { playerView.requestFocus(); playerView.showController(); }
+                    return true;
+                }
+                boolean both = skipView.getVisibility() == View.VISIBLE && nextButton.getVisibility() == View.VISIBLE;
+                boolean toward = (pressed == KeyEvent.KEYCODE_DPAD_RIGHT && skipView.isFocused()) || (pressed == KeyEvent.KEYCODE_DPAD_LEFT && nextButton.isFocused());
+                if (both && toward) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) (pressed == KeyEvent.KEYCODE_DPAD_RIGHT ? nextButton : skipView).requestFocus();
+                    return true;
+                }
+                if (pressed == KeyEvent.KEYCODE_DPAD_CENTER || pressed == KeyEvent.KEYCODE_ENTER || pressed == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) (skipView.isFocused() ? skipView : nextButton).performClick();
+                    return true;
+                }
+            }
+            // Commandes fermées : ◀ ▶ (et ⏪ ⏩) reculent ou avancent de 15 s, appuis
+            // répétés ou maintenus cumulés (4 sauts par seconde au plus en maintien).
+            boolean left = pressed == KeyEvent.KEYCODE_DPAD_LEFT || pressed == KeyEvent.KEYCODE_MEDIA_REWIND;
+            boolean right = pressed == KeyEvent.KEYCODE_DPAD_RIGHT || pressed == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+            boolean mediaKey = pressed == KeyEvent.KEYCODE_MEDIA_REWIND || pressed == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+            if ((left || right) && (!controls || mediaKey)) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    long now = System.currentTimeMillis();
+                    if (event.getRepeatCount() == 0 || now - lastRepeatSeekAt >= 250) {
+                        lastRepeatSeekAt = now;
+                        seekBy(right ? SEEK_STEP_MS : -SEEK_STEP_MS);
+                    }
+                }
                 return true;
             }
         }
@@ -1054,6 +1184,34 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         return view;
     }
 
+    /** Bouton pilule pour la télécommande : clair quand il a le focus. */
+    private Button pill(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(18);
+        button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        button.setPadding(dp(26), dp(10), dp(26), dp(10));
+        button.setFocusable(true);
+        button.setFocusableInTouchMode(false);
+        android.graphics.drawable.GradientDrawable on = new android.graphics.drawable.GradientDrawable();
+        on.setColor(Color.argb(250, 245, 247, 250));
+        on.setCornerRadius(dp(40));
+        android.graphics.drawable.GradientDrawable off = new android.graphics.drawable.GradientDrawable();
+        off.setColor(Color.argb(200, 20, 22, 32));
+        off.setStroke(dp(2), Color.argb(200, 245, 247, 250));
+        off.setCornerRadius(dp(40));
+        android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
+        states.addState(new int[] { android.R.attr.state_focused }, on);
+        states.addState(new int[] { android.R.attr.state_pressed }, on);
+        states.addState(new int[] {}, off);
+        button.setBackground(states);
+        button.setTextColor(new android.content.res.ColorStateList(
+            new int[][] { new int[] { android.R.attr.state_focused }, new int[] { android.R.attr.state_pressed }, new int[] {} },
+            new int[] { Color.rgb(11, 13, 18), Color.rgb(11, 13, 18), Color.rgb(242, 246, 244) }));
+        return button;
+    }
+
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -1120,6 +1278,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         finished = true;
         handler.removeCallbacks(progress);
         handler.removeCallbacks(skipTick);
+        handler.removeCallbacks(hideSeek);
         handler.removeCallbacks(vodInfo);
         handler.removeCallbacks(liveHealth);
         if (!vod && canManage()) reportLiveHealth();
@@ -1143,6 +1302,7 @@ public class NoctraPlayerActivity extends Activity implements NoctraStream.Callb
         data.putExtra(EXTRA_PLAY_SESSION_ID, playSessionId);
         data.putExtra(EXTRA_POSITION_MS, position);
         data.putExtra(EXTRA_ENDED, ended);
+        data.putExtra(EXTRA_NEXT, nextRequested);
         data.putExtra(EXTRA_PLAYED, stream != null && stream.hasPlayed());
         if (!ok) data.putExtra(EXTRA_ERROR, error);
         setResult(ok ? RESULT_OK : RESULT_ERROR, data);

@@ -920,9 +920,12 @@
   function later(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
   // ── Génériques (intro, récap, générique de fin) ────────────────────
-  // Par ordre de préférence : segments du serveur Jellyfin (extension de
-  // détection, ex. Intro Skipper), chapitres nommés du fichier, puis intro
-  // apprise pour la série (générique passé à la main sur ce téléviseur).
+  // Marqueurs réellement fournis, par ordre de préférence : segments du
+  // serveur Jellyfin (/MediaSegments : extension de détection, ex. Intro
+  // Skipper, ou segments créés depuis les chapitres), puis chapitres nommés du
+  // fichier (« Intro », « Opening », « Générique de fin »…). 1.1.61 : plus de
+  // générique « appris » (sauts faits à la main) : approximatif, il n'est plus
+  // présenté comme un marqueur ; sans marqueur, pas de bouton.
   var INTRO_STORE = 'noctra-tv-intros';
   function learnedIntros() {
     try { var store = JSON.parse(localStorage.getItem(INTRO_STORE) || '{}'); return store && typeof store === 'object' ? store : {}; } catch (error) { return {}; }
@@ -969,13 +972,22 @@
     var details = item.Chapters ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id, { Fields: 'Chapters' }).catch(function () { return item; });
     var all = Promise.all([fromServer, details]).then(function (result) {
       if (result[0].length) return result[0];
-      var chapters = chapterSegments(result[1]);
-      if (chapters.length) return chapters;
-      var learned = item.Type === 'Episode' && learnedIntros()[hexId(item.SeriesId)];
-      return learned ? [{ type: 'intro', startMs: learned.startMs, endMs: learned.endMs, source: 'appris' }] : [];
+      return chapterSegments(result[1]);
     });
     // Jamais plus de 2,5 s d'attente avant la lecture.
     return Promise.race([all, later(2500).then(function () { return []; })]);
+  }
+
+  // Épisode qui suit (même série, ordre de Jellyfin) : bouton « Épisode
+  // suivant » du lecteur. 2,5 s d'attente au plus ; null s'il n'y en a pas.
+  function nextEpisodeOf(item) {
+    if (!item || item.Type !== 'Episode' || !item.SeriesId) return Promise.resolve(null);
+    var load = jf('/Shows/' + item.SeriesId + '/Episodes', { UserId: S.userId, StartItemId: item.Id, Limit: 2 }).then(function (data) {
+      var items = (data && data.Items) || [];
+      var next = items[0] && hexId(items[0].Id) === hexId(item.Id) ? items[1] : null;
+      return next || null;
+    }, function () { return null; });
+    return Promise.race([load, later(2500).then(function () { return null; })]);
   }
 
   // ── Reprise ────────────────────────────────────────────────────────
@@ -1154,13 +1166,10 @@
         toast('Lecteur standard : pas de diagnostic. Menu du compte › Lecteur des films : Noctra.');
       }
       var positionTicks = typeof options.startMs === 'number' ? Math.max(0, Math.round(options.startMs * 10000)) : options.fromStart ? 0 : null;
-      // Génériques connus de Noctra (chapitres, intro apprise) : bouton « Passer »
-      // du lecteur Jellyfin même sans détection sur le serveur.
+      // Génériques marqués dans les chapitres du fichier : bouton « Passer » du
+      // lecteur Jellyfin même sans segments sur le serveur.
       return segmentsFor(item).then(function (segments) {
-        var series = hexId(item.Type === 'Series' ? item.Id : item.SeriesId);
-        var intros = {};
-        if (series && learnedIntros()[series]) intros[series] = learnedIntros()[series];
-        if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks, segments: segments, seriesIntros: intros })) return;
+        if (native('jellyfinPlay', { itemId: item.Id, positionTicks: positionTicks, segments: segments, seriesIntros: {} })) return;
         var fallback = {};
         Object.keys(options).forEach(function (key) { fallback[key] = options[key]; });
         fallback.noctraPlayer = true;
@@ -1169,7 +1178,7 @@
     }
     var load = item.MediaSources ? Promise.resolve(item) : jf('/Users/{userId}/Items/' + item.Id);
     return load.then(function (full) {
-      return segmentsFor(full).then(function (segments) { return { full: full, segments: segments }; });
+      return Promise.all([segmentsFor(full), nextEpisodeOf(full)]).then(function (found) { return { full: full, segments: found[0], next: found[1] }; });
     }).then(function (loaded) {
       var full = loaded.full;
       var source = (full.MediaSources || [])[0];
@@ -1178,7 +1187,7 @@
       var resumeTicks = full.UserData && full.UserData.PlaybackPositionTicks || 0;
       var startMs = typeof options.startMs === 'number' ? options.startMs : options.fromStart ? 0 : Math.floor(resumeTicks / 10000);
       var url = hlsUrl(full, source, playSessionId, pickAudio(full), pickSubtitle(full));
-      vodPlayback = { item: full, playSessionId: playSessionId, sync: Boolean(options.sync) };
+      vodPlayback = { item: full, playSessionId: playSessionId, sync: Boolean(options.sync), next: loaded.next };
       var sent = native('play', {
         sync: Boolean(options.sync),
         url: url, mime: 'application/x-mpegURL', title: itemTitle(full), subtitle: full.Type === 'Episode' ? itemSub(full) : String(full.ProductionYear || ''),
@@ -1192,6 +1201,8 @@
         sourceVideo: (function (video) { return video && video.Codec && video.Width ? video.Codec + ' ' + video.Width + ' ' + (video.Height || 0) : ''; })(streamsOf(full, 'Video')[0]),
         // Génériques : bouton « Passer » ; épisode : générique passé à la main appris pour la série.
         segments: loaded.segments, seriesId: full.Type === 'Episode' ? hexId(full.SeriesId) : '', episode: full.Type === 'Episode',
+        // Épisode suivant : bouton distinct « Épisode suivant » (jamais en groupe SyncPlay).
+        next: loaded.next && !options.sync ? { id: loaded.next.Id, title: itemTitle(loaded.next) + ' · ' + itemSub(loaded.next) } : null,
         // Pistes proposées dans le lecteur (pont web : changement pendant la lecture).
         tracks: {
           audio: streamsOf(full, 'Audio').map(function (stream) { return { index: stream.Index, label: trackLabel(stream), language: stream.Language || '' }; }),
@@ -1222,6 +1233,8 @@
     }
     forget('resume'); forget('nextup'); forget('item:');
     if (!result.ok && result.error) toast(result.error, true);
+    // « Épisode suivant » choisi dans le lecteur : lancé tout de suite.
+    if (entry && result.next && entry.next) { playItem(entry.next); return; }
     if (entry && result.ended && entry.item.Type === 'Episode') { nextEpisode(entry.item); return; }
     if (current && (current.name === 'item' || current.name === 'home') && !layer.firstChild) { remember(current); show(false); }
     // Reprise gardée même sous le seuil de Jellyfin, puis pages relues.

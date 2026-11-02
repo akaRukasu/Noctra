@@ -519,6 +519,8 @@ public class NoctraHomeActivity extends Activity {
                 JSONArray segments = message.optJSONArray("segments");
                 if (segments != null && segments.length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_SEGMENTS, segments.toString());
                 intent.putExtra(NoctraPlayerActivity.EXTRA_EPISODE, message.optBoolean("episode", false));
+                JSONObject next = message.optJSONObject("next");
+                if (next != null && next.optString("title").length() > 0) intent.putExtra(NoctraPlayerActivity.EXTRA_NEXT_TITLE, next.optString("title"));
                 if (message.optString("seriesId").matches("[0-9a-fA-F]{32}")) intent.putExtra(NoctraPlayerActivity.EXTRA_SERIES_ID, message.optString("seriesId"));
                 intent.putExtra(NoctraPlayerActivity.EXTRA_SYNC, message.optBoolean("sync", false));
                 if (!sameOrigin(Uri.parse(message.optString("jellyfin")), jellyfin)) return;
@@ -692,6 +694,7 @@ public class NoctraHomeActivity extends Activity {
             message.put("sync", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_SYNC, false));
             message.put("playSessionId", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_PLAY_SESSION_ID));
             message.put("ended", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_ENDED, false));
+            message.put("next", data != null && data.getBooleanExtra(NoctraPlayerActivity.EXTRA_NEXT, false));
             message.put("positionMs", data == null ? 0 : data.getLongExtra(NoctraPlayerActivity.EXTRA_POSITION_MS, 0));
             message.put("error", data == null ? "" : data.getStringExtra(NoctraPlayerActivity.EXTRA_ERROR));
             send(message);

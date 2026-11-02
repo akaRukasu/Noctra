@@ -695,7 +695,13 @@ body.embed-open #main, body.embed-open #top, body.embed-open .aurora { visibilit
 /* Icônes des boutons du lecteur LG / Samsung (dessinées, sans dépendre des polices du téléviseur). */
 .nw-btn .nw-icon { width: 1.15rem; height: 1.15rem; margin-right: .55rem; vertical-align: -.2rem; flex: none; }
 /* Journal du lecteur LG / Samsung : moteur, erreurs et réponses du serveur (à photographier). */
-.nw-skip { position: absolute; right: 3rem; bottom: 7.5rem; padding: .85rem 1.6rem; border-radius: 99rem; background: rgba(245, 247, 250, .94); color: #0b0d12; font-weight: 800; font-size: 1.05rem; z-index: 4; box-shadow: 0 .5rem 1.6rem rgba(0, 0, 0, .45); }
+/* « Passer le générique (de fin) » et « Épisode suivant » : sélectionnables à
+   la télécommande (blanc = choisi, contour = disponible). */
+.nw-pills { position: absolute; right: 3rem; bottom: 7.5rem; display: flex; gap: .9rem; z-index: 4; }
+.nw-skip { padding: .85rem 1.6rem; border-radius: 99rem; border: 2px solid rgba(245, 247, 250, .85); background: rgba(9, 10, 15, .78); color: #f5f7fa; font: inherit; font-weight: 800; font-size: 1.05rem; box-shadow: 0 .5rem 1.6rem rgba(0, 0, 0, .45); }
+.nw-skip:focus, .nw-skip:hover { background: rgba(245, 247, 250, .96); color: #0b0d12; outline: none; }
+/* Retour des sauts de 15 s (« ⟲ −45 s · 12:30 »), cumulé sur les appuis répétés. */
+.nw-seek-note { position: absolute; left: 50%; top: 42%; transform: translateX(-50%); padding: .7rem 1.4rem; border-radius: .9rem; background: rgba(9, 10, 15, .8); color: #f5f7fa; font-weight: 800; font-size: 1.5rem; z-index: 5; pointer-events: none; }
 .nw-diag { position: absolute; left: 2rem; bottom: 6.5rem; max-width: 60%; padding: .6rem .9rem; border-radius: .7rem; background: rgba(9, 10, 15, .82); color: #e7b96e; font-size: .78rem; line-height: 1.45; white-space: pre-line; z-index: 3; }
 .nw-diag:empty { display: none; }
 

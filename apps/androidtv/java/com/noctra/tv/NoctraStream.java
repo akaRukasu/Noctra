@@ -586,9 +586,14 @@ final class NoctraStream {
             // départ avec 6 s et reprise avec 15 s pour éviter les coupures en série
             // quand le serveur répond par à-coups (seedbox).
             : new DefaultLoadControl.Builder().setBufferDurationsMs(50000, 90000, 6000, 15000).build();
+        // Avance et retour rapides de 15 s (boutons des commandes, touches ⏪ ⏩).
+        // Direct : seulement si la source garde une fenêtre de retour (les
+        // boutons n'apparaissent pas sans elle), sans dépasser le bord du direct.
         ExoPlayer exoPlayer = new ExoPlayer.Builder(context, renderers())
             .setMediaSourceFactory(sources)
             .setLoadControl(buffer)
+            .setSeekBackIncrementMs(15000)
+            .setSeekForwardIncrementMs(15000)
             .build();
         player = exoPlayer;
         applyMaxVideoSize();

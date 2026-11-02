@@ -536,8 +536,12 @@
     subtitles: '<path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7v2h4v-2zm6 0v2h6v-2zm-6-4v2h8V8zm10 0v2h2V8z"/>',
     channels: '<path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/>',
     servers: '<path d="M7 7h11l-3-3 1.4-1.4L21.8 8l-5.4 5.4L15 12l3-3H7zm10 10H6l3 3-1.4 1.4L2.2 16l5.4-5.4L9 12l-3 3h11z"/>',
-    close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/>'
+    close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/>',
+    back15: '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>',
+    fwd15: '<path d="M12 5V2l5 4-5 4V7a5 5 0 1 0 5 5h2a7 7 0 1 1-7-7z"/>'
   };
+  // Avance et retour rapides : 15 s (boutons, flèches, touches ⏪ ⏩).
+  var SEEK_STEP_MS = 15000;
   // ── Lecteur plein écran ──────────────────────────────────────────────
   var Player = {
     node: null, video: null, engine: null, m: null, epg: null,
@@ -555,6 +559,8 @@
       Player.reconnects = 0;
       Player.failure = null;
       Player.pendingSeek = -1;
+      Player.seekTotal = 0;
+      Player.nextChosen = false;
       Player.playSessionId = m.playSessionId || '';
       var video = videoElement({ autoplay: true, playsinline: true });
       Player.video = video;
@@ -578,12 +584,20 @@
       Player.panelTitle = el('h3');
       Player.panelList = el('div', { class: 'nw-list' });
       Player.panel = el('div', { class: 'nw-panel' }, Player.panelTitle, el('p', { class: 'nw-muted', text: 'OK : choisir · Retour : fermer' }), Player.panelList);
-      // Bouton « Passer l'intro / le générique » (OK pendant qu'il est affiché).
-      Player.skipButton = el('div', { class: 'nw-skip' });
+      // « Passer le générique » (ou « … de fin ») pendant un segment marqué, et
+      // bouton distinct « Épisode suivant » : sélectionnables à la télécommande.
+      Player.skipButton = el('button', { class: 'nw-skip', onclick: function () { Player.skip(); } });
       Player.skipButton.style.display = 'none';
+      Player.nextButton = el('button', { class: 'nw-skip nw-next-ep', text: 'Épisode suivant', onclick: function () { Player.playNext(); } });
+      Player.nextButton.style.display = 'none';
+      if (m.next && m.next.title) Player.nextButton.setAttribute('aria-label', 'Épisode suivant : ' + m.next.title);
+      Player.pills = el('div', { class: 'nw-pills' }, Player.skipButton, Player.nextButton);
+      Player.pillsShown = false;
+      Player.seekNote = el('div', { class: 'nw-seek-note', 'aria-live': 'polite' });
+      Player.seekNote.style.display = 'none';
       Player.segment = null;
       Player.skipLearn = null;
-      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.diag, Player.sync, Player.skipButton, Player.controls, Player.panel);
+      Player.node = el('div', { id: 'nw-player', class: 'nw-overlay' }, video, Player.banner, Player.status, Player.diag, Player.sync, Player.pills, Player.seekNote, Player.controls, Player.panel);
       if (!m.sync) Player.sync.style.display = 'none';
       document.body.appendChild(Player.node);
       Player.engine = new Engine(video, function (message) { Player.fail(message); }, function (line) { Player.log(line); });
@@ -753,6 +767,11 @@
       var m = Player.m;
       // Icônes dessinées : les symboles « ⏯ ☰ ⇄ 💬 » manquent dans les polices de certains téléviseurs.
       var list = [{ icon: 'playpause', label: 'Lecture / pause', run: function () { Player.togglePause(); } }];
+      // ±15 s : films et épisodes, direct seulement avec une fenêtre de retour.
+      if (m.vod || Player.liveWindow()) {
+        list.push({ icon: 'back15', label: '−15 s', aria: 'Reculer de 15 secondes', run: function () { Player.seekBy(-SEEK_STEP_MS); } });
+        list.push({ icon: 'fwd15', label: '+15 s', aria: 'Avancer de 15 secondes', run: function () { Player.seekBy(SEEK_STEP_MS); } });
+      }
       if (m.vod && m.tracks && m.tracks.audio && m.tracks.audio.length > 1) list.push({ icon: 'audio', label: 'Audio', run: function () { Player.openPanel('audio'); } });
       if (m.vod && m.tracks && m.tracks.subtitles && m.tracks.subtitles.length) list.push({ icon: 'subtitles', label: 'Sous-titres', run: function () { Player.openPanel('subtitles'); } });
       if (Player.zappable()) list.push({ icon: 'channels', label: 'Chaînes', run: function () { Player.openPanel('channels'); } });
@@ -760,7 +779,7 @@
       list.push({ icon: 'close', label: 'Quitter', run: function () { Player.finish(true, null); } });
       Player.buttons.innerHTML = '';
       list.forEach(function (entry) {
-        var button = el('button', { class: 'nw-btn', onclick: function () { entry.run(); } });
+        var button = el('button', { class: 'nw-btn', 'aria-label': entry.aria || entry.label, onclick: function () { entry.run(); } });
         button.innerHTML = '<svg class="nw-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + PLAYER_ICONS[entry.icon] + '</svg>';
         button.appendChild(document.createTextNode(entry.label));
         Player.buttons.appendChild(button);
@@ -780,16 +799,20 @@
     },
     showControls: function () {
       Player.controlsOpen = true;
+      // Direct : les boutons ±15 s suivent la fenêtre de retour du moment.
+      if (!Player.m.vod) Player.renderButtons();
       Player.controls.classList.add('shown');
       Player.renderTime();
       var first = Player.buttons.firstChild;
       if (first) first.focus();
       Player.showBanner();
+      Player.updatePills();
     },
     hideControls: function () {
       Player.controlsOpen = false;
       Player.controls.classList.remove('shown');
       if (document.activeElement && Player.controls.contains(document.activeElement)) document.activeElement.blur();
+      Player.updatePills();
     },
     togglePause: function () {
       var video = Player.video;
@@ -812,17 +835,41 @@
       (m.segments || []).forEach(function (segment) {
         if (!found && at >= segment.startMs - 500 && at < segment.endMs - 1500) found = segment;
       });
-      if (found === Player.segment) return;
-      Player.segment = found;
-      if (!found || found.dismissed) { Player.skipButton.style.display = 'none'; return; }
-      Player.skipButton.textContent = Player.skipLabel(found) + '  ·  OK';
-      Player.skipButton.style.display = '';
+      if (found !== Player.segment) {
+        Player.segment = found;
+        if (!found || found.dismissed) Player.skipButton.style.display = 'none';
+        else {
+          Player.skipButton.textContent = Player.skipLabel(found);
+          Player.skipButton.setAttribute('aria-label', Player.skipLabel(found));
+          Player.skipButton.style.display = '';
+        }
+      }
+      Player.updatePills();
+    },
+    // « Épisode suivant » : pendant le générique de fin, ou commandes affichées.
+    updatePills: function () {
+      var m = Player.m;
+      if (!m || !Player.pills) return;
+      var outro = Player.segment && !Player.segment.dismissed && Player.segment.type === 'outro';
+      var next = Boolean(m.next && m.next.title && !m.sync && (outro || Player.controlsOpen));
+      Player.nextButton.style.display = next ? '' : 'none';
+      var shown = Player.skipButton.style.display !== 'none' || next;
+      Player.pills.style.display = shown ? '' : 'none';
+      // Apparus commandes fermées : le premier bouton reçoit le focus (OK l'active).
+      if (shown && !Player.pillsShown && !Player.controlsOpen && !Player.panelMode) {
+        (Player.skipButton.style.display !== 'none' ? Player.skipButton : Player.nextButton).focus();
+      }
+      if (!shown && Player.pillFocused()) document.activeElement.blur();
+      Player.pillsShown = shown;
+    },
+    pillFocused: function () {
+      return Boolean(Player.pills && document.activeElement && Player.pills.contains(document.activeElement));
     },
     skipLabel: function (segment) {
-      if (segment.type === 'outro') return Player.m.episode ? 'Épisode suivant' : 'Passer le générique';
+      if (segment.type === 'outro') return 'Passer le générique de fin';
       if (segment.type === 'recap') return 'Passer le récap';
       if (segment.type === 'preview') return 'Passer l’aperçu';
-      return 'Passer l’intro';
+      return 'Passer le générique';
     },
     skip: function () {
       var segment = Player.segment, video = Player.video;
@@ -831,12 +878,29 @@
       Player.segment = null;
       Player.skipButton.style.display = 'none';
       var duration = video.duration && isFinite(video.duration) ? video.duration * 1000 : 0;
-      // Générique de fin jusqu'au bout : fin du titre (épisode suivant proposé).
-      if (segment.type === 'outro' && (Player.m.episode || !duration || segment.endMs >= duration - 10000)) { Player.finish(true, null, false, true); return; }
+      // Générique de fin jusqu'à la toute fin du fichier : fin du titre (l'accueil
+      // propose l'épisode suivant). Sinon saut à la fin du générique : une scène
+      // après le générique reste visible.
+      if (segment.type === 'outro' && duration && segment.endMs >= duration - 1500) { Player.finish(true, null, false, true); return; }
       Player.skipping = true;
       try { video.currentTime = segment.endMs / 1000; } catch (error) { /* position refusée */ }
       setTimeout(function () { Player.skipping = false; }, 1500);
       if (Player.report) Player.report.progress(segment.endMs, video.paused);
+      Player.updatePills();
+    },
+    playNext: function () {
+      if (!Player.m || !Player.m.next) return;
+      Player.nextChosen = true;
+      Player.finish(true, null, false, true);
+    },
+    // Direct : fenêtre de retour (plage déplaçable) d'au moins 30 s, sinon null.
+    liveWindow: function () {
+      var video = Player.video;
+      if (!video || !Player.m || Player.m.vod || !video.seekable || !video.seekable.length) return null;
+      try {
+        var start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
+        return end - start >= 30 ? { start: start * 1000, end: end * 1000 } : null;
+      } catch (error) { return null; }
     },
     // Avance rapide de plus de 20 s dans les 10 premières minutes d'un épisode :
     // générique passé à la main, appris pour la série (bouton aux épisodes suivants).
@@ -863,10 +927,26 @@
     seekBy: function (deltaMs) {
       var video = Player.video;
       if (!video) return;
+      var live = !Player.m.vod;
+      var range = live ? Player.liveWindow() : null;
+      if (live && !range) return;
       if (Player.pendingSeek < 0) Player.pendingSeek = Player.position();
+      if (Player.seekNote.style.display === 'none') Player.seekTotal = 0;
       var duration = video.duration && isFinite(video.duration) ? video.duration * 1000 : 0;
-      Player.pendingSeek = Math.max(0, Player.pendingSeek + deltaMs);
-      if (duration) Player.pendingSeek = Math.min(Player.pendingSeek, duration - 1000);
+      var before = Player.pendingSeek;
+      // Bornes : début et fin du titre, ou de la fenêtre du direct (sans jamais
+      // repartir dans l'autre sens quand la position est déjà au bord).
+      var low = range ? Math.min(range.start + 2000, before) : 0;
+      var high = range ? Math.max(range.end - 3000, before) : duration ? Math.max(duration - 1000, before) : Infinity;
+      Player.pendingSeek = Math.min(high, Math.max(low, Player.pendingSeek + deltaMs));
+      // Retour visuel : sauts cumulés (« −45 s »), même aux limites du titre.
+      Player.seekTotal = (Player.seekTotal || 0) + (Player.pendingSeek - before);
+      var total = Math.round(Player.seekTotal / 1000);
+      Player.seekNote.textContent = (deltaMs < 0 ? '⟲ ' : '⟳ ') + (total ? (total < 0 ? '−' : '+') + Math.abs(total) + ' s' : deltaMs < 0 ? 'Début' : live ? 'En direct' : 'Fin')
+        + (live ? '' : ' · ' + clock(Player.pendingSeek / 1000));
+      Player.seekNote.style.display = '';
+      clearTimeout(Player.seekNoteTimer);
+      Player.seekNoteTimer = setTimeout(function () { if (Player.seekNote) Player.seekNote.style.display = 'none'; }, 1800);
       Player.controls.classList.add('shown');
       Player.renderTime();
       clearTimeout(Player.seekTimer);
@@ -875,7 +955,6 @@
         Player.pendingSeek = -1;
         if (target < 0) return;
         if (Player.m.sync) { Player.event('user', 'seek', target); Player.syncLabel('aller à ' + clock(target / 1000)); return; }
-        Player.learnSkip(video.currentTime * 1000, target);
         try { video.currentTime = target / 1000; } catch (error) { /* position refusée */ }
         if (!Player.controlsOpen) setTimeout(function () { if (!Player.controlsOpen && Player.controls) Player.controls.classList.remove('shown'); }, 1500);
       }, 700);
@@ -1021,17 +1100,28 @@
         return true;
       }
       if (is(event, 'stop')) { Player.finish(true, null); return true; }
+      // Bouton « Passer… » / « Épisode suivant » sélectionné : OK l'active, ◀ ▶
+      // vont de l'un à l'autre (sinon reculent ou avancent de 15 s), ▲ ▼ ouvrent
+      // les commandes.
+      if (Player.pillFocused() && !Player.controlsOpen) {
+        var pills = [Player.skipButton, Player.nextButton].filter(function (node) { return node.style.display !== 'none'; });
+        var pill = pills.indexOf(document.activeElement);
+        if (is(event, 'enter')) { document.activeElement.click(); return true; }
+        if (is(event, 'right') && pill >= 0 && pill < pills.length - 1) { pills[pill + 1].focus(); return true; }
+        if (is(event, 'left') && pill > 0) { pills[pill - 1].focus(); return true; }
+        if (is(event, 'up') || is(event, 'down')) { document.activeElement.blur(); Player.showControls(); return true; }
+        if (m.vod && (is(event, 'left') || is(event, 'right'))) { Player.seekBy(is(event, 'right') ? SEEK_STEP_MS : -SEEK_STEP_MS); return true; }
+      }
       // Barre de commandes : ◀ ▶ entre les boutons, OK, Retour ou ▲ la ferment.
       if (Player.controlsOpen) {
         var buttons = Array.prototype.slice.call(Player.buttons.children);
         var index = buttons.indexOf(document.activeElement);
-        if (is(event, 'left')) { if (index > 0) buttons[index - 1].focus(); else if (m.vod) Player.seekBy(-10000); return true; }
-        if (is(event, 'right')) { if (index >= 0 && index < buttons.length - 1) buttons[index + 1].focus(); else if (m.vod) Player.seekBy(10000); return true; }
+        if (is(event, 'left')) { if (index > 0) buttons[index - 1].focus(); else if (m.vod) Player.seekBy(-SEEK_STEP_MS); return true; }
+        if (is(event, 'right')) { if (index >= 0 && index < buttons.length - 1) buttons[index + 1].focus(); else if (m.vod) Player.seekBy(SEEK_STEP_MS); return true; }
         if (is(event, 'enter')) { if (index >= 0) buttons[index].click(); else buttons[0].focus(); return true; }
         if (is(event, 'back') || is(event, 'up')) { Player.hideControls(); return true; }
         if (is(event, 'down')) return true;
       }
-      if (is(event, 'enter') && Player.segment && !Player.segment.dismissed && Player.skipButton.style.display !== 'none') { Player.skip(); return true; }
       if (is(event, 'back')) { Player.finish(true, null); return true; }
       if (is(event, 'playPause') || is(event, 'play') || is(event, 'pause')) {
         if (is(event, 'play') && !video.paused && !m.sync) return true;
@@ -1039,7 +1129,7 @@
         Player.togglePause();
         return true;
       }
-      if (is(event, 'forward') || is(event, 'rewind')) { if (m.vod) Player.seekBy(is(event, 'forward') ? 30000 : -30000); return true; }
+      if (is(event, 'forward') || is(event, 'rewind')) { Player.seekBy(is(event, 'forward') ? SEEK_STEP_MS : -SEEK_STEP_MS); return true; }
       if (is(event, 'info')) { Player.showBanner(); return true; }
       if (Player.zappable()) {
         var delta = is(event, 'up') || is(event, 'chUp') ? -1 : is(event, 'down') || is(event, 'chDown') ? 1 : 0;
@@ -1070,7 +1160,7 @@
         if (Player.typed && is(event, 'enter')) { clearTimeout(Player.numberTimer); Player.sendNumber(); return true; }
       }
       if (Player.managed() && is(event, 'right')) { Player.openPanel('servers'); return true; }
-      if (m.vod && (is(event, 'left') || is(event, 'right'))) { Player.seekBy(is(event, 'right') ? 10000 : -10000); return true; }
+      if (m.vod && (is(event, 'left') || is(event, 'right'))) { Player.seekBy(is(event, 'right') ? SEEK_STEP_MS : -SEEK_STEP_MS); return true; }
       if (is(event, 'enter') || is(event, 'up') || is(event, 'down')) { Player.showControls(); return true; }
       return true;
     },
@@ -1092,7 +1182,7 @@
       var m = Player.m, video = Player.video;
       var position = Player.position();
       if (ended && video && video.duration && isFinite(video.duration)) position = Math.floor(video.duration * 1000);
-      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer, Player.endTimer, Player.numberTimer].forEach(clearTimeout);
+      [Player.stallTimer, Player.failTimer, Player.bannerTimer, Player.seekTimer, Player.zapTimer, Player.endTimer, Player.numberTimer, Player.seekNoteTimer].forEach(clearTimeout);
       Player.typed = '';
       Player.endTimer = 0;
       clearInterval(Player.progressTimer);
@@ -1107,7 +1197,7 @@
       if (!silent) {
         send({
           type: 'playerClosed', ok: ok, played: Player.played, vod: Boolean(m.vod), sync: Boolean(m.sync),
-          playSessionId: Player.playSessionId, ended: Boolean(ended), positionMs: position, error: ok ? '' : (error || 'Lecture impossible.')
+          playSessionId: Player.playSessionId, ended: Boolean(ended), next: Boolean(Player.nextChosen), positionMs: position, error: ok ? '' : (error || 'Lecture impossible.')
         });
       }
     }

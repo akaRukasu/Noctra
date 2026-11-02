@@ -79,7 +79,10 @@ assert.equal((await readFile(join(built.kitDir, 'serveur/Installer-Noctra-Samsun
 if (acorn) {
   for (const [name, content] of files) if (name.endsWith('.js')) acorn.parse(content.toString('utf8'), { ecmaVersion: 5, sourceType: 'script' });
 } else {
-  for (const [name, content] of files) if (name.endsWith('.js')) assert.ok(!/=>|\bconst\s|\blet\s|`|\bclass\s+\w/.test(content.toString('utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')), 'ES5 : ' + name);
+  for (const [name, content] of files) if (name.endsWith('.js')) assert.ok(!/=>|\bconst\s|\blet\s|`|\bclass\s+\w/.test(content.toString('utf8')
+    // Chaînes retirées d'abord (un « ` » ou un « // » dans un texte n'est pas du code).
+    .replace(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g, "''")
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')), 'ES5 : ' + name);
 }
 
 // ── 3. Style ────────────────────────────────────────────────────────────
@@ -352,7 +355,7 @@ try {
   await page.waitForTimeout(100);
   assert.ok(requests.some(r => r.method === 'DELETE' && r.path === '/noctra/api/tv/mosaic/aaaaaaaaaaaaaaaaaaaaaaaa'), 'relais arrêté à la fermeture');
 
-  // Film : reprise à 1 min (départ du lecteur), avance de 10 s (▶), jeton Jellyfin dans l'adresse.
+  // Film : reprise à 1 min (départ du lecteur), avance de 15 s (▶), jeton Jellyfin dans l'adresse.
   await page.evaluate(() => { window.__fromHost.length = 0; window.__av.calls.length = 0; });
   await send({ action: 'play', vod: true, url: origin + '/jellyfin/Videos/item1/master.m3u8?MediaSourceId=s1', title: 'Film 1', startMs: 60000, itemId: 'item1', mediaSourceId: 's1', playSessionId: 'v1', jellyfin: true });
   await page.waitForFunction(() => window.__av.calls.some(c => c[0] === 'play'), null, { timeout: 15000 });
@@ -363,8 +366,8 @@ try {
   await key(5);
   await page.waitForTimeout(1000);
   av = await page.evaluate(() => window.__av.calls.filter(c => c[0] === 'forward'));
-  // Position visée = position au moment de l'appui + 10 s (le lecteur simulé avance 5 fois plus vite).
-  assert.ok(av[0] && av[0][1] >= 5 && av[0][1] <= 10, 'avance vers +10 s : ' + JSON.stringify(av));
+  // Position visée = position au moment de l'appui + 15 s (le lecteur simulé avance 5 fois plus vite).
+  assert.ok(av[0] && av[0][1] >= 10 && av[0][1] <= 15, 'avance vers +15 s : ' + JSON.stringify(av));
   await key(74);
   await page.waitForTimeout(100);
   assert.ok(await page.evaluate(() => window.__av.calls.some(c => c[0] === 'pause')), 'Pause');
