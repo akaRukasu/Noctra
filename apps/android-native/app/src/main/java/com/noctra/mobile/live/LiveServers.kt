@@ -561,6 +561,13 @@ object LiveServerFactory {
         return head.contains("<html") || head.contains("<!doctype") || head.startsWith("{")
     }
 
+    /** Message d'erreur JSON de Noctra ({"error": "…"}), raccourci pour la liste des serveurs. */
+    fun noctraReason(body: ByteArray): String? {
+        val text = runCatching { (com.noctra.mobile.core.Json.parseMap(String(body, 0, minOf(body.size, 16_384), Charsets.UTF_8))?.get("error") as? String)?.trim() }.getOrNull()
+        if (text.isNullOrEmpty()) return null
+        return if (text.length > 160) text.take(157) + "…" else text
+    }
+
     private fun statusNote(code: Int): String = when (code) {
         401, 403 -> "accès refusé ($code)"
         404, 410 -> "lien expiré ($code)"
@@ -593,7 +600,11 @@ object LiveServerFactory {
             Fetch.TimedOut -> return result(LiveServer.Probe.late, "pas de réponse en 12 s", LiveServer.Format.unknown)
             Fetch.Failed -> return result(LiveServer.Probe.down, "serveur injoignable", LiveServer.Format.unknown)
             is Fetch.Done -> {
-                if (first.status >= 400) return result(LiveServer.Probe.down, statusNote(first.status), LiveServer.Format.unknown)
+                if (first.status >= 400) {
+                    // Réponse de Noctra : son message dit pourquoi (refus du fournisseur, session VIP à reconnecter…).
+                    val reason = if (Session.isNoctraOrigin(url)) noctraReason(first.data) else null
+                    return result(LiveServer.Probe.down, reason?.let { "${statusNote(first.status)} · $it" } ?: statusNote(first.status), LiveServer.Format.unknown)
+                }
                 data = first.data
                 finalUrl = first.url
             }

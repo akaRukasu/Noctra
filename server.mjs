@@ -13691,6 +13691,17 @@ function rememberTvPlaylist(token, text) {
   while (tvPlaylistMemory.size > 64) tvPlaylistMemory.delete(tvPlaylistMemory.keys().next().value);
 }
 
+// 200.0.165 : refus du fournisseur distingué d'une panne de Noctra (les applis
+// affichent ce message dans la liste des serveurs, à côté du code).
+function tvUpstreamError(status, provider, url) {
+  let host = '';
+  try { host = new URL(String(url)).hostname; } catch {}
+  const who = provider || host || 'Le fournisseur';
+  if (status === 401 || status === 403) return new HttpError(status, `${who} refuse ce flux au serveur Noctra (${status}) : refus du fournisseur, essaie un autre serveur.`);
+  if (status === 404 || status === 410) return new HttpError(status, `${who} : lien du flux expiré (${status}), recharge la chaîne.`);
+  return new HttpError(status, `Flux TV indisponible chez ${who} (${status}).`);
+}
+
 function refreshTvPlaylistDetached(token, reference, url, headers, provider) {
   const entry = tvPlaylistMemory.get(token);
   if (entry.flight) return entry.flight;
@@ -13698,7 +13709,7 @@ function refreshTvPlaylistDetached(token, reference, url, headers, provider) {
     const response = await fetchTvRemoteUntilHeaders(url, { headers, signal: AbortSignal.timeout(30_000) }, 18_000);
     if (!response.ok) {
       try { await response.body?.cancel?.(); } catch {}
-      throw new HttpError(response.status, `Flux TV indisponible (${response.status}).`);
+      throw tvUpstreamError(response.status, provider, url);
     }
     const finalUrl = response.url || url.toString();
     const rewritten = await rewriteProxiedTvPlaylist(response, reference, url, finalUrl, token, provider);
@@ -13833,7 +13844,7 @@ async function proxyTvStream(token, req, res) {
     const response = await fetchTvRemoteUntilHeaders(url, { headers, signal: controller.signal }, 18_000);
     if (!response.ok && response.status !== 206) {
       try { await response.body?.cancel?.(); } catch {}
-      throw new HttpError(response.status, `Flux TV indisponible (${response.status}).`);
+      throw tvUpstreamError(response.status, provider, url);
     }
     const contentType = response.headers.get('content-type') || '';
     const finalUrl = response.url || url.toString();

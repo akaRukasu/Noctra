@@ -103,7 +103,7 @@
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
     "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:channel-logos": "node tests/native-channel-logos.mjs",
-    "test:v200165": "node tests/v200165-wasm-memory-guard.mjs && npm run test:v200164",
+    "test:v200165": "node tests/v200165-wasm-memory-guard.mjs && node tests/v200165-tv-refusal-reasons.mjs && node tests/ios-app-identity.mjs && npm run test:v200164",
     "test:v200164": "node tests/tv-player-skip-controls.mjs && node tests/web-episode-flow-controls.mjs && node tests/v200164-ppv-streamed-sources.mjs && node tests/static-integrity.mjs && npm run test:v200162",
     "test:v200162": "node tests/pc-updater-v8.mjs && node tests/v200162-new-server-domain.mjs && npm run test:v200161",
     "test:v200161": "node tests/tv-late-servers.mjs && npm run test:v200159",

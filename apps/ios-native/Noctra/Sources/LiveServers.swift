@@ -695,7 +695,11 @@ enum LiveServerFactory {
         case .timedOut: return result(.late, "pas de réponse en 12 s", format: .unknown)
         case .failed: return result(.down, "serveur injoignable", format: .unknown)
         case .done(let body, let answer):
-            guard answer.statusCode < 400 else { return result(.down, statusNote(answer.statusCode), format: .unknown) }
+            guard answer.statusCode < 400 else {
+                // Réponse de Noctra : son message dit pourquoi (refus du fournisseur, session VIP à reconnecter…).
+                let reason = session.isNoctraOrigin(url) ? noctraReason(body) : nil
+                return result(.down, reason.map { "\(statusNote(answer.statusCode)) · \($0)" } ?? statusNote(answer.statusCode), format: .unknown)
+            }
             data = body
             response = answer
         }
@@ -828,6 +832,13 @@ enum LiveServerFactory {
             }
             return ProbeResult(state: .up, ms: ms(), note: "page en ligne")
         }
+    }
+
+    /// Message d'erreur JSON de Noctra ({"error": "…"}), raccourci pour la liste des serveurs.
+    nonisolated static func noctraReason(_ body: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: body.prefix(16_384)) as? [String: Any],
+              let text = (object["error"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return text.count > 160 ? String(text.prefix(157)) + "…" : text
     }
 
     nonisolated private static func statusNote(_ code: Int) -> String {
