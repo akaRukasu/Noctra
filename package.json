@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.165",
+  "version": "200.0.166",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",

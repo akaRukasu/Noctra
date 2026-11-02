@@ -1,4 +1,13 @@
-# Noctra 200.0.165 — « Cannot allocate Wasm memory » / « fetch failed » corrigé
+# Noctra 200.0.165 / 200.0.166 — « Cannot allocate Wasm memory » corrigé, serveurs TV refusés expliqués
+
+## 200.0.166 — serveurs TV en erreur (401 / 403)
+
+Les serveurs Vavoo (403), LiveWatch VIP et NorthTV VIP (401) n'affichaient que « accès refusé ». Le serveur Noctra précise maintenant la cause, et les applis iOS 2.18.10 et Android 1.9.15 l'affichent dans la liste des serveurs :
+- « Movix refuse ce flux au serveur Noctra (403) : refus du fournisseur » : le fournisseur refuse la seedbox. Ce n'est pas une panne de Noctra : essayez un autre serveur.
+- Pour LiveWatch VIP : le message de Noctra (aucun compte VIP connecté, session de l'ancien site à reconnecter…). Il se règle dans TV en direct › Accès TV.
+
+Le diagnostic de l'updater PC indique si le compte LiveWatch VIP et les accès Movix / Northlive sont enregistrés (présence seulement, aucune clé affichée), et si la seedbox joint Movix, LiveWatch et Northlive.
+
 
 Serveur seulement : les applis (Noctra TV 1.1.61, Android 1.9.14, iOS 2.18.9) ne changent pas. Toutes les nouveautés de [200.0.164](MISE-A-JOUR-V200164.md) sont incluses.
 

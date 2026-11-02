@@ -433,8 +433,8 @@ else
 fi
 PORT="$(env_value PORT)"; BASE_URL="$(env_value BASE_URL)"; BASE_URL="${BASE_URL%/}"
 installed="$("$NODE_BIN" -e "process.stdout.write(String(require(process.argv[1]).version||''))" "$APP_DIR/package.json" 2>/dev/null || true)"
-if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.165 | sort -V | head -n 1)" != 200.0.165 ]]; then
-  note "Version $installed : mettre a jour vers 200.0.165 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
+if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.166 | sort -V | head -n 1)" != 200.0.166 ]]; then
+  note "Version $installed : mettre a jour vers 200.0.166 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
 fi
 CLIENT_CONFIG="$APP_DIR/public/client/config.json"
 if [[ -f "$CLIENT_CONFIG" ]]; then
@@ -537,6 +537,27 @@ title "Mises a jour et relais"
 if systemctl --user list-timers --all 2>/dev/null | grep -q noctra-autoupdate; then ok "Mise a jour automatique (branche production) active"; else info "Mise a jour automatique non installee (facultative)"; fi
 relay="$(systemctl --user is-active noctra-relais-tv.service 2>/dev/null || true)"
 [[ "$relay" == active ]] && ok "Relais Samsung 2014 actif" || info "Relais Samsung 2014 : ${relay:-absent} (seulement pour la TV Samsung 2014)"
+
+title "TV en direct (acces enregistres, fournisseurs vus depuis la seedbox)"
+# Presence seulement : aucune cle ni session n'est affichee.
+RUNTIME="$APP_DIR/runtime"
+if [[ -s "$RUNTIME/livewatch-session.json" ]]; then ok "Compte LiveWatch VIP enregistre dans Noctra"; else note "Aucun compte LiveWatch VIP enregistre : serveurs LiveWatch VIP refuses (401) tant qu'il n'est pas connecte (TV en direct > Acces TV)"; fi
+if [[ -s "$RUNTIME/tv-provider-keys.json" ]]; then
+  for key in movix northlive; do
+    if grep -qE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" "$RUNTIME/tv-provider-keys.json"; then ok "Acces $key enregistre"; else note "Acces $key non enregistre (Acces TV)"; fi
+  done
+else
+  note "Aucun acces Movix / Northlive enregistre (Acces TV)"
+fi
+for site in https://api.movix.college/api/livetv/manifest https://livewatch.icu/ https://northlive.lol/; do
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 -A 'Mozilla/5.0' "$site" 2>/dev/null || true)"
+  host="${site#https://}"; host="${host%%/*}"
+  case "$code" in
+    2??|3??) ok "Fournisseur joignable depuis la seedbox : $host ($code)" ;;
+    401|403) note "Fournisseur $host refuse la seedbox ($code) : refus du fournisseur (adresse IP du serveur), pas une panne de Noctra" ;;
+    *) note "Fournisseur $host : reponse ${code:-aucune}" ;;
+  esac
+done
 
 title "Derniers messages d'erreur de Noctra"
 if [[ -s "$APP_DIR/logs/noctra-error.log" ]]; then
