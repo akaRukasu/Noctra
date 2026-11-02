@@ -61,14 +61,24 @@
     return false;
   }
 
+  // Serveur déplacé (seedbox merlion.usbx.me → astra.usbx.me) : l'adresse
+  // gardée est corrigée d'elle-même.
+  function movedServer(url) {
+    return String(url || '').replace(/([\/.@])merlion\.usbx\.me(?=$|[\/:?#])/i, '$1astra.usbx.me');
+  }
+
   function loadState() {
     // Android et iOS transmettent le serveur mémorisé par l'appli.
     if (params.server !== undefined) {
-      return { url: params.server || '', auto: params.auto !== '0', skipAuto: params.manual === '1' };
+      return { url: movedServer(params.server || ''), auto: params.auto !== '0', skipAuto: params.manual === '1' };
     }
     try {
       var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved && typeof saved.url === 'string') return { url: saved.url, auto: saved.auto !== false };
+      if (saved && typeof saved.url === 'string') {
+        var url = movedServer(saved.url);
+        if (url !== saved.url) saveState(url, saved.auto !== false);
+        return { url: url, auto: saved.auto !== false };
+      }
     } catch (error) {}
     return { url: '', auto: true };
   }

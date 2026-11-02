@@ -2,7 +2,7 @@
 
 Noctra TV est l’appli **Jellyfin pour Android TV** (projet officiel [jellyfin-androidtv](https://github.com/jellyfin/jellyfin-androidtv), version 0.19.10), adaptée pour Noctra :
 
-- **Serveur intégré.** Au démarrage, l’appli se connecte seule à `https://akarukasu.merlion.usbx.me/jellyfin` et ouvre directement la page d’authentification. Il n’y a plus d’adresse à saisir à la télécommande.
+- **Serveur intégré.** Au démarrage, l’appli se connecte seule à `https://akarukasu.astra.usbx.me/jellyfin` et ouvre directement la page d’authentification. Il n’y a plus d’adresse à saisir à la télécommande.
 - **Marque Noctra.** Nom, icône, bannière du lanceur Android TV et logo sont ceux de Noctra.
 - **Identifiant `com.noctra.tv`.** L’appli s’installe à côté de l’appli Jellyfin officielle, sans conflit.
 
@@ -50,7 +50,7 @@ Les téléchargements et l’administration de Noctra ne sont pas proposés sur 
 
 ### Fonctionnement de l’accueil Noctra
 
-- `web/` contient l’interface de l’accueil (HTML, CSS et JavaScript ES2017 sans dépendance, pensés pour la télécommande). Pour la fluidité, la navigation cherche d’abord les voisins directs. Elle fait au plus un déplacement par image affichée, défile instantanément quand une touche reste enfoncée et ajoute les longues listes par petits paquets. L’appli l’embarque et la sert elle-même à l’adresse `https://akarukasu.merlion.usbx.me/noctra/tv-app/`. Elle partage donc l’origine de l’API Noctra et de Jellyfin, et rien n’est à installer sur le serveur.
+- `web/` contient l’interface de l’accueil (HTML, CSS et JavaScript ES2017 sans dépendance, pensés pour la télécommande). Pour la fluidité, la navigation cherche d’abord les voisins directs. Elle fait au plus un déplacement par image affichée, défile instantanément quand une touche reste enfoncée et ajoute les longues listes par petits paquets. L’appli l’embarque et la sert elle-même à l’adresse `https://akarukasu.astra.usbx.me/noctra/tv-app/`. Elle partage donc l’origine de l’API Noctra et de Jellyfin, et rien n’est à installer sur le serveur.
 - `java/com/noctra/tv/` contient les écrans ajoutés à l’appli :
   - `NoctraHomeActivity` : WebView de l’accueil, avec un canal `MessagePort` réservé à la page principale (les lecteurs web des chaînes n’y ont pas accès) ;
   - `NoctraStream` : lecture d’une chaîne avec ExoPlayer, avec tampon, reprises et reconnexions ;

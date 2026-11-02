@@ -58,8 +58,8 @@ const launcher = await read('apps/shared/launcher/launcher.js');
 const normalizeSource = launcher.slice(launcher.indexOf('  function normalize(value) {'), launcher.indexOf('  function describe(url)'));
 const context = {};
 vm.runInNewContext(`${normalizeSource}\nthis.normalize = normalize; this.valid = valid;`, context);
-assert.deepEqual({ ...context.normalize('akarukasu.merlion.usbx.me/noctra/client/index.html') },
-  { url: 'https://akarukasu.merlion.usbx.me/noctra', explicitScheme: false });
+assert.deepEqual({ ...context.normalize('akarukasu.astra.usbx.me/noctra/client/index.html') },
+  { url: 'https://akarukasu.astra.usbx.me/noctra', explicitScheme: false });
 assert.equal(context.normalize(' HTTP://192.168.1.20:3000//noctra/ ').url, 'http://192.168.1.20:3000/noctra');
 assert.equal(context.normalize('https://serveur.fr/noctra/health?x=1').url, 'https://serveur.fr/noctra');
 assert.ok(context.valid('https://serveur.fr/noctra'));
@@ -125,7 +125,7 @@ const androidtv = await read('apps/scripts/build-androidtv.mjs');
 assert.match(androidtv, /sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'/, 'APK Jellyfin vérifié');
 assert.match(androidtv, /const-string v5, "server_address"/, 'Adresse du serveur transmise à l’écran « Ajouter un serveur »');
 assert.match(androidtv, /const-class v2, Lorg\/jellyfin\/androidtv\/ui\/startup\/fragment\/ServerAddFragment;/);
-assert.match(androidtv, /'https:\/\/akarukasu\.merlion\.usbx\.me\/jellyfin'/);
+assert.match(androidtv, /'https:\/\/akarukasu\.astra\.usbx\.me\/jellyfin'/);
 assert.match(androidtv, /\['package="org\.jellyfin\.androidtv"', `package="\$\{packageName\}"`\]/);
 assert.match(androidtv, /android:authorities="org\.jellyfin\.androidtv\.\$\{name\}"/);
 assert.match(androidtv, /if \(count !== expected\) throw new Error/, 'Chaque modification est vérifiée');
@@ -144,7 +144,7 @@ assert.match(androidtv, /invoke-static \{v0\}, Lcom\/noctra\/tv\/NoctraRouting;-
 assert.match(androidtv, /activity\('NoctraHomeActivity'\) \+ activity\('NoctraPlayerActivity'\) \+ activity\('NoctraMultiviewActivity'\)/);
 assert.match(androidtv, /android:exported="false"/, 'Écrans Noctra non exportés');
 assert.match(androidtv, /'assets', 'noctra-tv'/);
-assert.match(androidtv, /'https:\/\/akarukasu\.merlion\.usbx\.me\/noctra'/);
+assert.match(androidtv, /'https:\/\/akarukasu\.astra\.usbx\.me\/noctra'/);
 const routing = await read('apps/androidtv/java/com/noctra/tv/NoctraRouting.java');
 assert.match(routing, /intent\.hasExtra\("ItemId"\)/);
 assert.match(routing, /return NoctraHomeActivity\.class;/);

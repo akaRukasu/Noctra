@@ -24,7 +24,7 @@ import java.util.UUID
  * Jeton gardé dans le stockage chiffré, le reste dans les réglages de l'appli.
  */
 object Session {
-    const val defaultServer = "https://akarukasu.merlion.usbx.me"
+    const val defaultServer = "https://akarukasu.astra.usbx.me"
 
     /** Même compte Jellyfin (identifiants avec ou sans tirets, sans tenir compte de la casse). */
     fun sameUser(a: String?, b: String?): Boolean =
@@ -56,7 +56,15 @@ object Session {
     val isSignedIn: Boolean get() = token != null && userId != null && jellyfinBase.isNotEmpty()
     val lastServer: String get() = Prefs.string("noctra.server") ?: defaultServer
 
+    /** Serveur déplacé (seedbox merlion.usbx.me → astra.usbx.me) : adresse gardée corrigée. */
+    private fun moved(value: String?): String? = value?.replace(".merlion.usbx.me", ".astra.usbx.me")
+
     fun init(context: Context) {
+        for (key in listOf("noctra.server", "noctra.jellyfin", "noctra.noctra")) {
+            val saved = Prefs.string(key)
+            val fixed = moved(saved)
+            if (saved != null && fixed != saved) Prefs.set(key, fixed)
+        }
         jellyfinBase = Prefs.string("noctra.jellyfin") ?: ""
         noctraBase = Prefs.string("noctra.noctra") ?: ""
         userId = Prefs.string("noctra.userId")

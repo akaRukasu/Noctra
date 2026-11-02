@@ -22,8 +22,8 @@ import { existsSync } from 'node:fs';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { alignZip, appsRoot, listFiles, prepareTools, repoRoot, run, signApk, step, toolsDir } from './android-tools.mjs';
 
-const serverUrl = (process.env.NOCTRA_JELLYFIN_URL || 'https://akarukasu.merlion.usbx.me/jellyfin').replace(/\/+$/, '');
-const noctraUrl = (process.env.NOCTRA_URL || 'https://akarukasu.merlion.usbx.me/noctra').replace(/\/+$/, '');
+const serverUrl = (process.env.NOCTRA_JELLYFIN_URL || 'https://akarukasu.astra.usbx.me/jellyfin').replace(/\/+$/, '');
+const noctraUrl = (process.env.NOCTRA_URL || 'https://akarukasu.astra.usbx.me/noctra').replace(/\/+$/, '');
 const packageName = 'com.noctra.tv';
 const appName = 'Noctra';
 const minSdk = 24;
@@ -32,7 +32,7 @@ const base = {
   url: 'https://github.com/jellyfin/jellyfin-androidtv/releases/download/v0.19.10/jellyfin-androidtv-v0.19.10-release.apk',
   sha256: '8510a517c99927076082917f41bf306dd7a2546c59d492dd11bde18d6e2e4628'
 };
-const noctraRevision = 84;
+const noctraRevision = 85;
 const versionName = `${base.version}-noctra.${noctraRevision}`;
 
 const work = join(repoRoot, 'dist', 'androidtv-build');

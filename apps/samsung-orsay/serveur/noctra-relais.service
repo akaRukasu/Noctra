@@ -10,7 +10,7 @@ Wants=network-online.target
 
 [Service]
 User=pi
-ExecStart=/usr/bin/node /home/pi/Noctra-Samsung-2014/serveur/noctra-samsung2014.mjs relais --serveur https://akarukasu.merlion.usbx.me/noctra --port 8095
+ExecStart=/usr/bin/node /home/pi/Noctra-Samsung-2014/serveur/noctra-samsung2014.mjs relais --serveur https://akarukasu.astra.usbx.me/noctra --port 8095
 Restart=always
 RestartSec=5
 

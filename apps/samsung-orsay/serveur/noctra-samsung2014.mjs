@@ -40,7 +40,7 @@ function option(name, fallback) {
   const index = args.indexOf('--' + name);
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 }
-const DEFAULT_SERVER = 'https://akarukasu.merlion.usbx.me/noctra';
+const DEFAULT_SERVER = 'https://akarukasu.astra.usbx.me/noctra';
 
 function addresses() {
   const list = [];

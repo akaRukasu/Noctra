@@ -40,7 +40,39 @@ const discoveryFeedbackPath = join(runtimeRoot, 'discovery-feedback.json');
 const defaultTvEpgUrl = 'https://xmltvfr.fr/xmltv/xmltv_fr.xml.gz';
 
 const envPath = process.env.CONFIG_FILE || join(projectRoot, '.env');
-const envText = await readFile(envPath, 'utf8').catch(() => '');
+let envText = await readFile(envPath, 'utf8').catch(() => '');
+// 200.0.162 : seedbox déplacée de merlion.usbx.me vers astra.usbx.me. Les
+// adresses de l'ancien serveur (Jellyfin, qBittorrent, Radarr, Sonarr,
+// Jellyseerr…) sont remplacées au démarrage, sans intervention : .env réécrit,
+// l'original gardé à côté (.env.avant-astra). Autres déplacements :
+// NOCTRA_HOST_MOVES="ancien.usbx.me=nouveau.usbx.me,…".
+const hostMoves = String(process.env.NOCTRA_HOST_MOVES || 'merlion.usbx.me=astra.usbx.me')
+  .split(',').map(pair => pair.split('=').map(part => part.trim().toLowerCase()))
+  .filter(([from, to]) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(from || '') && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(to || '') && from !== to);
+function movedHost(value) {
+  let next = String(value);
+  for (const [from, to] of hostMoves) {
+    const escaped = from.replace(/[.]/g, '\\.');
+    next = next.replace(new RegExp(`(^|[/@.:=\\s'"])${escaped}(?=$|[/:?#\\s'"])`, 'gi'), (_, lead) => lead + to);
+  }
+  return next;
+}
+if (envText && hostMoves.length) {
+  const movedText = movedHost(envText);
+  if (movedText !== envText) {
+    try {
+      await writeFile(`${envPath}.avant-astra`, envText, { flag: 'wx', mode: 0o600 }).catch(error => { if (error?.code !== 'EEXIST') throw error; });
+      await writeFile(envPath, movedText, { mode: 0o600 });
+      console.log('[Noctra] Nouveau domaine du serveur appliqué dans .env (copie : .env.avant-astra).');
+    } catch (error) {
+      console.warn(`[Noctra] .env non réécrit (${error?.code || error?.message}) : nouveau domaine appliqué pour cette exécution.`);
+    }
+    envText = movedText;
+  }
+}
+for (const key of Object.keys(process.env)) {
+  if (/_URL$/.test(key) && process.env[key] && hostMoves.length) process.env[key] = movedHost(process.env[key]);
+}
 for (const line of envText.split(/\r?\n/)) {
   const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
   if (match && !process.env[match[1]]) {
@@ -13829,12 +13861,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.161', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.162', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.161',
+        version: '200.0.162',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),

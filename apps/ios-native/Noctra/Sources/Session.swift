@@ -26,7 +26,7 @@ enum NoctraError: LocalizedError {
 @MainActor
 @Observable
 final class Session {
-    static let defaultServer = "https://akarukasu.merlion.usbx.me"
+    static let defaultServer = "https://akarukasu.astra.usbx.me"
 
     /// Même compte Jellyfin (identifiants avec ou sans tirets, sans tenir compte de la casse).
     nonisolated static func sameUser(_ a: String?, _ b: String?) -> Bool {
@@ -49,6 +49,13 @@ final class Session {
 
     init() {
         let defaults = UserDefaults.standard
+        // Serveur déplacé (seedbox merlion.usbx.me → astra.usbx.me) : adresses gardées corrigées.
+        for key in ["noctra.server", "noctra.jellyfin", "noctra.noctra"] {
+            if let saved = defaults.string(forKey: key) {
+                let fixed = saved.replacingOccurrences(of: ".merlion.usbx.me", with: ".astra.usbx.me")
+                if fixed != saved { defaults.set(fixed, forKey: key) }
+            }
+        }
         jellyfinBase = defaults.string(forKey: "noctra.jellyfin") ?? ""
         noctraBase = defaults.string(forKey: "noctra.noctra") ?? ""
         userId = defaults.string(forKey: "noctra.userId")

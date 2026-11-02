@@ -70,7 +70,7 @@ L'appli installée par le réseau reste sur le téléviseur après une mise hors
 ## 6. Premier lancement
 
 1. Ouvrez **Noctra** depuis le Smart Hub.
-2. L'appli vérifie le serveur Noctra (`https://akarukasu.merlion.usbx.me/noctra`).
+2. L'appli vérifie le serveur Noctra (`https://akarukasu.astra.usbx.me/noctra`).
    - **Si l'écran de connexion Jellyfin s'affiche**, tout va bien. Passez à l'étape 3.
    - **Si « Connexion sécurisée impossible » s'affiche avec « Utiliser HTTP »**, le téléviseur refuse le certificat, mais le serveur répond aussi en HTTP simple. « Utiliser HTTP » marche sans aucun autre appareil. Les échanges ne sont alors pas chiffrés : connectez-vous avec Quick Connect plutôt qu'avec votre mot de passe. Le relais local (chapitre 7) reste la solution chiffrée.
    - **Si « Connexion impossible » s'affiche** avec un message sur la connexion sécurisée (HTTPS), le téléviseur refuse le certificat et le serveur ne répond pas en HTTP (redirection vers HTTPS chez l'hébergeur). Suivez le chapitre 7 (relais sur la seedbox), puis revenez ici.
@@ -82,12 +82,12 @@ L'appli installée par le réseau reste sur le téléviseur après une mise hors
 Le téléviseur parle en HTTP simple à un relais qui tourne sur la seedbox. Ce relais transmet tout en HTTPS au serveur Noctra et à Jellyfin, sur la même machine. Il ne relaie que vers votre serveur. Les échanges entre le téléviseur et la seedbox ne sont pas chiffrés : connectez-vous avec Quick Connect, et limitez l'accès à votre box (étape 4).
 
 1. Mettez le serveur Noctra à jour en **200.0.148** ou plus récent (`noctra-update`, comme d'habitude).
-2. En SSH sur la seedbox (`ssh akarukasu@merlion.usbx.me`), dans le dossier de Noctra :
+2. En SSH sur la seedbox (`ssh akarukasu@astra.usbx.me`), dans le dossier de Noctra :
    ```bash
    bash ultra/install-relais-samsung2014.sh
    ```
    Le script choisit un port libre de votre slot (`app-ports free`), installe le service `noctra-relais-tv` (relancé tout seul), puis affiche l'adresse à saisir sur le téléviseur, par exemple `169.150.243.3:12345`. Pour imposer un port : `bash ultra/install-relais-samsung2014.sh 12345`.
-3. **Vérifiez l'accès depuis Internet** : sur un téléphone en 4G (Wi-Fi coupé), ouvrez `http://merlion.usbx.me:<port>/noctra/health`. Un texte contenant « Noctra » doit s'afficher. Sinon, ce port n'est pas ouvert : relancez le script avec un autre port de `app-ports free`.
+3. **Vérifiez l'accès depuis Internet** : sur un téléphone en 4G (Wi-Fi coupé), ouvrez `http://astra.usbx.me:<port>/noctra/health`. Un texte contenant « Noctra » doit s'afficher. Sinon, ce port n'est pas ouvert : relancez le script avec un autre port de `app-ports free`.
 4. **Conseillé** : limitez l'accès à votre box. Depuis un appareil de la maison, notez votre adresse publique sur <https://ifconfig.me>, puis lancez `bash ultra/install-relais-samsung2014.sh <port> --autoriser <adresse>`. Si votre box change d'adresse, relancez cette commande avec la nouvelle.
 5. Sur le téléviseur, dans Noctra : **Utiliser un relais local**, OK sur le champ, puis saisissez `169.150.243.3:<port>` avec les chiffres de la télécommande (le « . » et le « : » sont sur le clavier à l'écran). Validez.
 

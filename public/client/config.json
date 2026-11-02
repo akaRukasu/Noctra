@@ -33,7 +33,7 @@
   "servers": [
     {
       "name": "Noctra",
-      "url": "https://akarukasu.merlion.usbx.me/jellyfin"
+      "url": "https://akarukasu.astra.usbx.me/jellyfin"
     }
   ],
   "plugins": [

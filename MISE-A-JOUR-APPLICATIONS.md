@@ -23,7 +23,7 @@ Installation, compatibilité et construction : [apps/README.md](apps/README.md).
 
 ## Noctra TV : appli native pour Android TV
 Sur vidéoprojecteur, l’interface web complète dans une WebView restait lente, la page de connexion revenait et la lecture ne démarrait pas. Android TV a donc désormais sa propre appli, **Noctra TV** (`Noctra-androidtv.apk`). C’est l’appli officielle Jellyfin pour Android TV (0.19.10, GPL-2.0), adaptée pour Noctra :
-- le serveur `https://akarukasu.merlion.usbx.me/jellyfin` est intégré : au démarrage, l’appli se connecte seule et ouvre directement la page d’authentification ;
+- le serveur `https://akarukasu.astra.usbx.me/jellyfin` est intégré : au démarrage, l’appli se connecte seule et ouvre directement la page d’authentification ;
 - nom, icône, bannière et logo sont ceux de Noctra ;
 - l’identifiant `com.noctra.tv` permet de l’installer à côté de l’appli Jellyfin officielle ;
 - l’interface est native, et la lecture passe par le lecteur vidéo d’Android (ExoPlayer).
@@ -44,7 +44,7 @@ Le script `apps/scripts/build-androidtv.mjs` la construit sans SDK Android. Il v
 - `replaceChildren` (Chromium 86) est complété.
 - Dans les applis, une erreur des scripts Noctra s’affiche à l’écran avec la version du moteur. L’écran de connexion affiche aussi cette version.
 
-**Connexion directe.** Au premier lancement, l’appli ouvre directement `https://akarukasu.merlion.usbx.me/noctra` et arrive sur la page de connexion Jellyfin, sans saisie à la télécommande. Les lancements suivants se connectent immédiatement. L’écran de saisie n’apparaît que si le serveur est injoignable.
+**Connexion directe.** Au premier lancement, l’appli ouvre directement `https://akarukasu.astra.usbx.me/noctra` et arrive sur la page de connexion Jellyfin, sans saisie à la télécommande. Les lancements suivants se connectent immédiatement. L’écran de saisie n’apparaît que si le serveur est injoignable.
 
 ## Validation
 - Nouveau test `tests/v200121-apps.mjs`, lancé par `npm run test:v200121` qui enchaîne aussi les tests 120 à 108. Il couvre la position du pont, la syntaxe compatible avec les anciens téléviseurs, la sonde `/health`, la normalisation des adresses, la structure des paquets `.ipk` et `.wgt`, ainsi que les manifestes Android, Tizen, webOS et iOS.
