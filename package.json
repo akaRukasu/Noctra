@@ -103,7 +103,7 @@
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
     "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:channel-logos": "node tests/native-channel-logos.mjs",
-    "test:v200162": "node tests/v200162-new-server-domain.mjs && npm run test:v200161",
+    "test:v200162": "node tests/pc-updater-v8.mjs && node tests/v200162-new-server-domain.mjs && npm run test:v200161",
     "test:v200161": "node tests/tv-late-servers.mjs && npm run test:v200159",
     "test:v200159": "node tests/tv-adblock-overlays.mjs && node tests/androidtv-live-offset.mjs && node tests/v200159-tv-adblock-launch.mjs && npm run test:v200158",
     "test:v200158": "node tests/v200158-stuck-segment.mjs && npm run test:v200157",
