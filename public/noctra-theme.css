@@ -23682,3 +23682,32 @@ html body.noctra-ready #noctra-panel[data-noctra-panel-kind="requests"] > .noctr
     pointer-events: auto !important;
   }
 }
+
+/* Noctra 200.0.164 : −15 s / +15 s du direct (fenêtre de retour réelle seulement). */
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek {
+  width: auto !important;
+  min-width: 58px !important;
+  background: rgba(14, 16, 26, .78) !important;
+  color: #fff !important;
+  font-weight: 800 !important;
+}
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek:hover,
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek:focus-visible {
+  background: #f5f7fa !important;
+  color: #0b0d12 !important;
+}
+.noctra-tv-seek-note {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: rgba(9, 10, 15, .82);
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.25rem;
+  pointer-events: none;
+}
+.noctra-tv-seek-note[hidden] { display: none; }

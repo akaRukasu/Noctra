@@ -228,7 +228,7 @@ assert.match(webPlayer, /public boolean onCreateWindow\(WebView view, boolean is
 assert.match(webPlayer, /text\.contains\("X-Frame-Options"\) \|\| text\.contains\("frame-ancestors"\)/);
 assert.match(webPlayer, /public void onReceivedHttpError/);
 // Contenu du serveur : lecteur Jellyfin (pistes audio, sous-titres), retour à Noctra à sa fermeture.
-assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks, segments: segments, seriesIntros: intros \}\)/);
+assert.match(tvApp, /native\('jellyfinPlay', \{ itemId: item\.Id, positionTicks: positionTicks, segments: segments, seriesIntros: \{\} \}\)/);
 assert.match(androidtv, /\.method public closePlayer\(\)V/);
 assert.match(androidtv, /:cond_0\n\$\{fragmentActivity\(overlay\)\}\$\{closeCheck\('noctra_jellyfin_screens'\)\}/, 'Retour à Noctra après le contrôle « navigating » (épisode suivant)');
 assert.match(androidtv, /Lcom\/noctra\/tv\/NoctraPlayback;->close\(Landroid\/app\/Activity;\)Z/);
@@ -541,7 +541,7 @@ assert.match(tvApp, /function chapterSegments\(item\)/);
 assert.match(tvApp, /function learnIntro\(seriesId, startMs, endMs\)/);
 assert.match(tvApp, /event\.event === 'introSkip'/);
 assert.match(webHost, /skip: function \(\)/);
-assert.match(webHost, /'Épisode suivant' : 'Passer le générique'/);
+assert.match(webHost, /return 'Passer le générique de fin';/);
 assert.match(webHost, /event: 'introSkip'/);
 const playerJava = await read('apps/androidtv/java/com/noctra/tv/NoctraPlayerActivity.java');
 assert.match(playerJava, /private void skipSegment\(\)/);

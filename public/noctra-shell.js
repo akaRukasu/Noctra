@@ -5534,7 +5534,7 @@
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
   // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
-  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'strmfree.st', 'www.strmfree.st', 'ppv.st', 'www.ppv.st', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;
@@ -5959,6 +5959,11 @@
       button.hidden = !available;
       button.disabled = !available;
     }
+    const seekWindow = available && tvLiveSeekWindow(video);
+    document.querySelectorAll('[data-tv-seek]').forEach(seek => {
+      seek.hidden = !seekWindow;
+      seek.disabled = !seekWindow;
+    });
     if (!available) {
       if (button) button.dataset.state = 'idle';
       refreshTvDesktopLiveState(video);
@@ -6088,6 +6093,55 @@
       const pipDisabled = !tvPictureInPictureSupported(video);
       if (pip.disabled !== pipDisabled) pip.disabled = pipDisabled;
     }
+  }
+
+  // Fenêtre de retour du direct (seekable) d'au moins 30 s, sinon null.
+  function tvLiveSeekWindow(video = document.querySelector('#noctra-tv-video')) {
+    try {
+      const ranges = video?.seekable;
+      if (!ranges?.length) return null;
+      const start = ranges.start(0);
+      const end = ranges.end(ranges.length - 1);
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 30 ? { start, end } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  let tvSeekNoteTotal = 0;
+  let tvSeekNoteAt = 0;
+  let tvSeekNoteTimer = 0;
+  // −15 s / +15 s dans la fenêtre du direct (lecture ou pause gardée), retour visuel cumulé.
+  function seekTvLive(deltaSeconds) {
+    const video = document.querySelector('#noctra-tv-video');
+    const range = tvLiveSeekWindow(video);
+    if (!video || video.hidden || !range) return false;
+    const position = Number(video.currentTime) || 0;
+    const low = Math.min(range.start + 2, position);
+    const high = Math.max(range.end - 3, position);
+    const target = Math.min(high, Math.max(low, position + deltaSeconds));
+    try { video.currentTime = target; } catch { return false; }
+    const now = Date.now();
+    const moved = target - position;
+    tvSeekNoteTotal = now - tvSeekNoteAt < 1500 && (tvSeekNoteTotal < 0) === (deltaSeconds < 0) ? tvSeekNoteTotal + moved : moved;
+    tvSeekNoteAt = now;
+    const seconds = Math.round(Math.abs(tvSeekNoteTotal));
+    const screen = video.closest('.noctra-tv-screen');
+    let note = screen?.querySelector('.noctra-tv-seek-note');
+    if (screen && !note) {
+      note = document.createElement('div');
+      note.className = 'noctra-tv-seek-note';
+      note.setAttribute('aria-live', 'polite');
+      screen.appendChild(note);
+    }
+    if (note) {
+      note.textContent = (deltaSeconds < 0 ? '⟲ ' : '⟳ ') + (seconds ? `${tvSeekNoteTotal < 0 ? '−' : '+'}${seconds} s` : deltaSeconds < 0 ? 'Début' : 'En direct');
+      note.hidden = false;
+      window.clearTimeout(tvSeekNoteTimer);
+      tvSeekNoteTimer = window.setTimeout(() => { note.hidden = true; }, 1500);
+    }
+    window.requestAnimationFrame(refreshTvLiveEdgeControl);
+    return true;
   }
 
   function returnTvToLiveEdge() {
@@ -6889,6 +6943,8 @@
                 <iframe id="noctra-tv-embed" title="Lecteur TV intégré" hidden allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen loading="eager" referrerpolicy="strict-origin-when-cross-origin"></iframe>
                 <div class="noctra-tv-screen-brand"><span></span><strong>NOCTRA LIVE</strong></div>
                 <div class="noctra-tv-screen-tools" role="toolbar" aria-label="Contrôles du lecteur TV">
+                  <button class="noctra-tv-live-edge noctra-tv-seek" type="button" data-tv-seek="-15" aria-label="Reculer de 15 secondes" title="Reculer de 15 secondes" hidden><span>−15 s</span></button>
+                  <button class="noctra-tv-live-edge noctra-tv-seek" type="button" data-tv-seek="15" aria-label="Avancer de 15 secondes" title="Avancer de 15 secondes" hidden><span>+15 s</span></button>
                   <button class="noctra-tv-live-edge" type="button" data-tv-live-edge data-state="idle" aria-label="Revenir au direct" title="Revenir au direct" hidden>${icons.live}<span>Direct</span></button>
                   <button class="noctra-tv-safe-tools-launcher" type="button" data-tv-safe-tools-launcher aria-label="Outils TV" title="Outils TV">${icons.tools}</button>
                   <button class="noctra-tv-screen-fullscreen" type="button" data-tv-screen-fullscreen aria-label="Plein écran" title="Plein écran">${icons.fullscreen}</button>
@@ -7533,6 +7589,21 @@
       liveEdgeButton.hidden = true;
       liveEdgeButton.innerHTML = `${icons.live}<span>Direct</span>`;
       toolbar.insertBefore(liveEdgeButton, toolbar.firstChild);
+    }
+    // ±15 s du direct (affichés seulement avec une fenêtre de retour réelle).
+    if (!toolbar.querySelector('[data-tv-seek]')) {
+      for (const step of [-15, 15]) {
+        const seek = document.createElement('button');
+        seek.type = 'button';
+        seek.className = 'noctra-tv-live-edge noctra-tv-seek';
+        seek.dataset.tvSeek = String(step);
+        seek.hidden = true;
+        const label = step < 0 ? 'Reculer de 15 secondes' : 'Avancer de 15 secondes';
+        seek.setAttribute('aria-label', label);
+        seek.title = label;
+        seek.innerHTML = `<span>${step < 0 ? '−15 s' : '+15 s'}</span>`;
+        toolbar.insertBefore(seek, liveEdgeButton);
+      }
     }
     let hud = screen.querySelector('[data-tv-safe-status-hud]');
     if (!hud) {
@@ -13421,6 +13492,12 @@
 
     if (event.target.closest('[data-tv-live-edge]')) {
       returnTvToLiveEdge();
+      return;
+    }
+
+    const tvSeekButton = event.target.closest('[data-tv-seek]');
+    if (tvSeekButton) {
+      seekTvLive(Number(tvSeekButton.dataset.tvSeek) || 0);
       return;
     }
 

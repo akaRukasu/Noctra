@@ -5614,7 +5614,7 @@ function decodeTvWrappedUrl(value) {
 
 function normalizeTvSourceType(value) {
   const type = String(value || 'auto').toLocaleLowerCase('en');
-  return ['auto', 'playlist', 'json', 'livewatch', 'witv', 'oha', 'fstv', 'dlstreams', 'streamsports99', 'streamed', 'volkamax', 'alternative', 'daddylive', 'brigitte', 'portal'].includes(type) ? type : 'auto';
+  return ['auto', 'playlist', 'json', 'livewatch', 'witv', 'oha', 'fstv', 'dlstreams', 'streamsports99', 'streamed', 'ppv', 'volkamax', 'alternative', 'daddylive', 'brigitte', 'portal'].includes(type) ? type : 'auto';
 }
 
 function optionalTvRemoteUrl(value) {
@@ -6450,7 +6450,10 @@ const complementaryTvBuiltInSources = [
   { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · source Kool actuelle', url: 'https://kool.ws/live', type: 'oha', provider: 'OHA' },
   { id: 'streamsports99-live-tv', name: 'StreamSports99 TV', section: 'channels', description: 'Chaînes internationales · pays et programmes Live TV', url: 'https://streamsports99.su/live-tv', type: 'streamsports99', provider: 'StreamSports99' },
   { id: 'dlstreams-sports', name: 'DLStreams', section: 'sports', description: 'Programme sportif public · lecteurs intégrés DLStreams', url: 'https://dlstreams.st/', type: 'dlstreams', provider: 'DLStreams' },
-  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · streamed.pk', url: 'https://streamed.pk/', type: 'streamed', provider: 'Streamed' },
+  // 200.0.164 : streamed.pk ne publie plus rien ; adresse actuelle strmfree.st
+  // (anciennes adresses essayées ensuite), et PPV (ppv.st) en source à part.
+  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree.st', url: 'https://strmfree.st/', type: 'streamed', provider: 'Streamed' },
+  { id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · ppv.st', url: 'https://ppv.st/', type: 'ppv', provider: 'PPV' },
   { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · catégories et chaînes sportives', url: 'https://bzh.lat/', type: 'volkamax', provider: 'Volkamax' },
   { id: 'daddylive-sports', name: 'DaddyLive', section: 'sports', description: 'Programme sportif · lecteurs DaddyLive intégrés', url: 'https://dlive.sx/', type: 'daddylive', provider: 'DaddyLive' },
   { id: 'brigitte-sports', name: 'Streamonsport', section: 'sports', description: 'Programme Streamonsport · lecteur du fournisseur', url: 'https://choc2foot.biz/', type: 'brigitte', provider: 'Streamonsport' },
@@ -11089,7 +11092,11 @@ function streamedMatchChannel(item, baseUrl, fallbackGroup = 'Sports') {
   }, baseUrl, group);
 }
 
-async function fetchStreamedJson(urlValue, root, allowMirror = true) {
+// Adresses de Streamed, de la plus récente à la plus ancienne : en cas d'échec
+// (hôte injoignable, erreur, page HTML au lieu du JSON), l'adresse suivante.
+const STREAMED_HOSTS = ['strmfree.st', 'streamed.pk', 'streamed.st'];
+
+async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = []) {
   try {
   const response = await fetchTvRemote(urlValue, {
     signal: AbortSignal.timeout(allowMirror ? 6_000 : 8_000),
@@ -11106,9 +11113,12 @@ async function fetchStreamedJson(urlValue, root, allowMirror = true) {
   try { return JSON.parse(text); } catch { throw new HttpError(502, 'Catalogue Streamed invalide.'); }
   } catch (error) {
     const target = new URL(urlValue);
-    if (!allowMirror || !['streamed.pk','streamed.st'].includes(target.hostname)) throw error;
-    target.hostname = target.hostname === 'streamed.pk' ? 'streamed.st' : 'streamed.pk';
-    return fetchStreamedJson(target.href, target.origin+'/', false);
+    if (!allowMirror || !STREAMED_HOSTS.includes(target.hostname)) throw error;
+    const seen = [...tried, target.hostname];
+    const nextHost = STREAMED_HOSTS.find(host => !seen.includes(host));
+    if (!nextHost) throw error;
+    target.hostname = nextHost;
+    return fetchStreamedJson(target.href, target.origin + '/', seen.length + 1 < STREAMED_HOSTS.length, seen);
   }
 
 }
@@ -11175,7 +11185,7 @@ async function resolveStreamedReference(reference) {
   return {options};
 }
 
-async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
+async function tvCatalogFromStreamed(rootValue = 'https://strmfree.st/') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `streamed::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -11211,6 +11221,106 @@ async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
       : 'Aucun événement Streamed public exploitable n’est actuellement publié.'
   };
   tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
+  return value;
+}
+
+// ── PPV (ppv.st) : programme public /api/streams ──────────────────────────
+// Réponse lue de façon tolérante : { streams: [ { category, streams: [...] } ] }
+// ou liste directe. Chaque événement : nom, image, début / fin (secondes),
+// lecteur intégré (iframe) ou page /live/<uri_name>.
+const PPV_HOSTS = ['ppv.st', 'ppv.to'];
+
+function ppvEvents(payload) {
+  const groups = Array.isArray(payload) ? payload : Array.isArray(payload?.streams) ? payload.streams : Array.isArray(payload?.data) ? payload.data : [];
+  const out = [];
+  for (const group of groups) {
+    if (!group || typeof group !== 'object') continue;
+    const inner = Array.isArray(group.streams) ? group.streams : null;
+    if (inner) inner.forEach(event => out.push({ event, category: String(group.category || group.name || '').trim() }));
+    else out.push({ event: group, category: String(group.category_name || group.category || '').trim() });
+  }
+  return out;
+}
+
+function ppvChannel(event, category, root) {
+  if (!event || typeof event !== 'object') return null;
+  const name = String(event.name || event.title || '').replace(/\s+/g, ' ').trim();
+  const slug = String(event.uri_name || event.slug || '').trim().replace(/^\/+/, '');
+  let embed = String(event.iframe || event.embed || event.embedUrl || '').trim();
+  if (embed && !/^https?:\/\//i.test(embed)) { try { embed = new URL(embed, root).toString(); } catch { embed = ''; } }
+  const page = slug ? new URL(`/live/${slug.split('/').map(encodeURIComponent).join('/')}`, root).toString() : '';
+  if (!name || (!embed && !page)) return null;
+  const now = Date.now() / 1000;
+  const start = Number(event.starts_at || event.start || 0) || 0;
+  const end = Number(event.ends_at || event.end || 0) || 0;
+  const always = Boolean(event.always_live || event.alwaysLive);
+  // Événement terminé depuis plus d'une heure : retiré.
+  if (!always && end && end < now - 3600) return null;
+  const group = String(event.category_name || category || 'Sports').replace(/[-_]+/g, ' ').trim() || 'Sports';
+  const channel = normalizeTvChannel({
+    name,
+    embed_url: embed || page,
+    group,
+    category: group,
+    provider: 'PPV',
+    description: [start ? new Date(start * 1000).toISOString() : '', event.tag ? String(event.tag) : ''].filter(Boolean).join(' · '),
+    logo: event.poster || event.image || '',
+    is_live: always || (start && start <= now && (!end || end >= now))
+  }, root, group);
+  if (!channel) return null;
+  return { ...channel, externalUrl: page || embed, playbackType: 'embed', compatPage: true, streamKind: embed ? 'PPV · lecteur intégré' : 'PPV · page de l’événement' };
+}
+
+async function tvCatalogFromPpv(rootValue = 'https://ppv.st/') {
+  const root = safeTvRemoteUrl(rootValue).toString();
+  const cacheKey = `ppv::${root}`;
+  const cached = tvCatalogCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const first = new URL(root);
+  const hosts = [first.hostname, ...PPV_HOSTS.filter(host => host !== first.hostname)];
+  let payload = null;
+  let base = root;
+  let lastError = null;
+  for (const host of hosts) {
+    const target = new URL('/api/streams', root);
+    target.hostname = host;
+    try {
+      const response = await fetchTvRemote(target.toString(), {
+        signal: AbortSignal.timeout(8_000),
+        headers: {
+          accept: 'application/json,text/plain;q=0.9,*/*;q=0.4',
+          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36',
+          referer: target.origin + '/'
+        }
+      });
+      if (!response.ok) throw new HttpError(response.status, `API PPV indisponible (${response.status}).`);
+      const text = await response.text();
+      if (text.length > 6 * 1024 * 1024) throw new HttpError(413, 'Programme PPV trop volumineux.');
+      payload = JSON.parse(text);
+      base = target.origin + '/';
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  const seen = new Set();
+  const channels = [];
+  for (const { event, category } of payload ? ppvEvents(payload) : []) {
+    const channel = ppvChannel(event, category, base);
+    if (!channel || seen.has(channel.id)) continue;
+    seen.add(channel.id);
+    channels.push(channel);
+  }
+  const value = {
+    name: 'PPV',
+    sourceType: 'ppv',
+    groups: [],
+    channels,
+    count: channels.length,
+    warning: channels.length ? '' : payload ? 'Aucun événement PPV public n’est actuellement publié.' : `PPV ne répond pas${lastError?.message ? ` (${lastError.message})` : ''}.`
+  };
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (channels.length ? 60_000 : 20_000), value });
   return value;
 }
 
@@ -12722,6 +12832,7 @@ async function tvCatalogBySource(sourceId, options = {}) {
   else if (source.id === 'streamsports99-live-tv') catalog = await tvCatalogFromStreamSports99LiveTv(source.url);
   else if (source.type === 'streamsports99') catalog = await tvCatalogFromStreamSports99(source.url);
   else if (source.type === 'streamed') catalog = await tvCatalogFromStreamed(source.url);
+  else if (source.type === 'ppv') catalog = await tvCatalogFromPpv(source.url);
   else if (source.type === 'volkamax') catalog = await tvCatalogFromVolkamax(source.url);
   else if (source.type === 'alternative') catalog = await tvCatalogFromAlternative(source.url);
   else catalog = await tvCatalogFromUrl(source.url, source.name, {

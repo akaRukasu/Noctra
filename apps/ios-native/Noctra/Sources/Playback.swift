@@ -65,6 +65,158 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
                           subtitleIndex: resolved.chosenSubtitle, burned: resolved.burned)
         showSubtitles(resolved.subtitles, alternate: resolved.alternate)
         attachTrackMenu()
+        loadMarkers(item, session: session, sync: sync)
+    }
+
+    // MARK: Génériques, ±15 s, épisode suivant
+
+    /// Génériques marqués du titre (segments du serveur, chapitres nommés).
+    private var markers: [MediaMarker] = []
+    private var dismissedMarkers: Set<MediaMarker> = []
+    /// Épisode qui suit : « Épisode suivant », distinct du saut du générique de fin.
+    private var nextEpisode: BaseItem?
+    private var markersTask: Task<Void, Never>?
+    private var actionsObserver: Any?
+    private var actionsBar: PlayerActionsBar?
+    private var shownActions = ""
+
+    private func loadMarkers(_ item: BaseItem, session: Session, sync: Bool) {
+        markers = []
+        dismissedMarkers = []
+        nextEpisode = nil
+        markersTask?.cancel()
+        markersTask = Task { [weak self] in
+            let found = await Markers.load(item, session: session)
+            guard let self, !Task.isCancelled, self.current?.item.id == item.id else { return }
+            self.markers = found
+            let next = sync ? nil : await Markers.nextEpisode(item, session: session)
+            guard !Task.isCancelled, self.current?.item.id == item.id else { return }
+            self.nextEpisode = next
+            self.refreshActions()
+        }
+    }
+
+    /// Boutons ±15 s et « Épisode suivant » posés sur le lecteur, relus deux fois par seconde.
+    private func attachActions() {
+        guard let controller, let player else { return }
+        let bar = PlayerActionsBar()
+        bar.attach(to: controller)
+        bar.onSeek = { [weak self] delta in self?.seekBy(delta) }
+        bar.onNext = { [weak self] in self?.playNext() }
+        actionsBar = bar
+        shownActions = ""
+        actionsObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 10), queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshActions() }
+        }
+    }
+
+    /// Bornes des sauts : le titre (jusqu'à 1 s de la fin), ou la fenêtre du direct (≥ 30 s).
+    private func seekRange() -> ClosedRange<Double>? {
+        guard let item = player?.currentItem else { return nil }
+        if isLive {
+            guard let range = item.seekableTimeRanges.last?.timeRangeValue, range.duration.seconds.isFinite, range.duration.seconds >= 30 else { return nil }
+            return range.start.seconds + 2 ... range.end.seconds - 3
+        }
+        let length = item.duration.seconds
+        guard length.isFinite, length > 2 else { return nil }
+        return 0 ... length - 1
+    }
+
+    /// −15 s / +15 s, en gardant lecture ou pause. Renvoie le déplacement réel.
+    private func seekBy(_ delta: Double) -> Double? {
+        guard let player, let range = seekRange() else { return nil }
+        let position = positionSeconds
+        let low = min(range.lowerBound, position), high = max(range.upperBound, position)
+        let target = min(high, max(low, position + delta))
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        return target - position
+    }
+
+    private func activeMarker() -> MediaMarker? {
+        let position = positionSeconds
+        return markers.first { !dismissedMarkers.contains($0) && $0.covers(position) }
+    }
+
+    private func refreshActions() {
+        guard let controller, !closed else { return }
+        let marker = activeMarker()
+        let hasNext = nextEpisode != nil && !syncMode
+        actionsBar?.update(canSeek: seekRange() != nil, hasNext: hasNext)
+        // Boutons du lecteur d'Apple (en bas à droite), jamais automatiques.
+        let key = (marker.map { "\($0.kind)\($0.start)" } ?? "") + (hasNext && marker?.kind == .outro ? "+next" : "")
+        guard key != shownActions else { return }
+        shownActions = key
+        var actions: [UIAction] = []
+        if let marker {
+            actions.append(UIAction(title: marker.label, image: UIImage(systemName: "forward.fill")) { [weak self] _ in
+                MainActor.assumeIsolated { self?.skip(marker) }
+            })
+        }
+        if hasNext, marker?.kind == .outro {
+            actions.append(UIAction(title: "Épisode suivant", image: UIImage(systemName: "forward.end.fill")) { [weak self] _ in
+                MainActor.assumeIsolated { self?.playNext() }
+            })
+        }
+        controller.contextualActions = actions
+    }
+
+    /// « Passer le générique (de fin) » : fin du marqueur. Générique de fin
+    /// jusqu'à la toute fin du fichier : fin du titre. Sinon, la scène après le
+    /// générique reste visible.
+    private func skip(_ marker: MediaMarker) {
+        guard let player else { return }
+        dismissedMarkers.insert(marker)
+        let length = player.currentItem?.duration.seconds ?? 0
+        if marker.kind == .outro, length.isFinite, length > 0, marker.end >= length - 1.5 {
+            closeFromPlayer()
+            return
+        }
+        player.seek(to: CMTime(seconds: marker.end, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        refreshActions()
+    }
+
+    /// Fin du titre demandée depuis le lecteur : suivi envoyé, lecteur refermé
+    /// (close sans « notify » referme aussi l'écran du lecteur).
+    private func closeFromPlayer() { close(notify: false) }
+
+    /// « Épisode suivant » : suivi de ce titre envoyé, épisode suivant lu dans le même lecteur.
+    func playNext() {
+        guard let current, let next = nextEpisode, !syncMode, player != nil else { return }
+        nextEpisode = nil
+        shownActions = ""
+        controller?.contextualActions = []
+        let position = positionSeconds
+        let previous = report
+        let resume = next.resumeSeconds > 5 && (next.progress ?? 0) < 0.9 ? next.resumeSeconds : 0
+        Task {
+            guard let resolved = try? await resolve(next, session: current.session, audioIndex: nil, subtitleIndex: nil) else {
+                SyncPlayManager.shared.announce("Épisode suivant indisponible pour le moment.")
+                return
+            }
+            guard !self.closed, self.current?.item.id == current.item.id else { return }
+            if let previous {
+                await self.send("/Sessions/Playing/Stopped", previous, position: position, paused: false)
+                if previous.playMethod != "DirectPlay" {
+                    _ = try? await previous.session.data("DELETE", "/Videos/ActiveEncodings", ["deviceId": previous.session.deviceId, "playSessionId": previous.playSessionId])
+                }
+                NotificationCenter.default.post(name: .noctraPlaybackEnded, object: nil)
+            }
+            let title = [next.seriesName, next.episodeLabel, next.name].compactMap { $0 }.joined(separator: " · ")
+            let report = Report(session: current.session, itemId: next.id, mediaSourceId: resolved.source.id, playSessionId: resolved.playSession, playMethod: resolved.method)
+            self.report = report
+            self.syncItemId = next.id
+            self.lastMediaURL = resolved.url
+            self.lastMediaIsDirect = resolved.method == "DirectPlay"
+            self.lastSubtitleURL = resolved.subtitles
+            self.current = Current(item: next, session: current.session, title: title, sourceId: resolved.source.id,
+                                   streams: resolved.source.mediaStreams ?? [], audioIndex: resolved.audioIndex,
+                                   subtitleIndex: resolved.chosenSubtitle, burned: resolved.burned)
+            self.load([(resolved.url, current.session.authHeaders)], index: 0, title: title, startSeconds: resume)
+            await self.send("/Sessions/Playing", report, position: resume, paused: false)
+            self.showSubtitles(resolved.subtitles, alternate: resolved.alternate)
+            self.attachTrackMenu()
+            self.loadMarkers(next, session: current.session, sync: false)
+        }
     }
 
     /// Flux choisi par le serveur pour les pistes demandées.
@@ -379,6 +531,7 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         self.controller = controller
 
         load(urls, index: 0, title: title, startSeconds: startSeconds)
+        attachActions()
         Self.topViewController()?.present(controller, animated: true) {
             if !sync { player.play() }
         }
@@ -488,6 +641,15 @@ final class PlaybackManager: NSObject, AVPlayerViewControllerDelegate {
         trackMenu?.detach()
         trackMenu = nil
         current = nil
+        markersTask?.cancel()
+        markersTask = nil
+        markers = []
+        nextEpisode = nil
+        if let actionsObserver, let player { player.removeTimeObserver(actionsObserver) }
+        actionsObserver = nil
+        actionsBar?.detach()
+        actionsBar = nil
+        controller?.contextualActions = []
         if isLive { finishLiveMeasure() }
         liveResult = nil
         liveSmooth = nil

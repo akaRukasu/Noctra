@@ -43,6 +43,8 @@ import okhttp3.Request
 import java.io.File
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.roundToLong
+import kotlin.math.sign
 
 /** Suivi de lecture envoyé à Jellyfin (reprise, « vu »). */
 data class PlaybackReport(val itemId: String, val mediaSourceId: String, val playSessionId: String, val playMethod: String)
@@ -102,6 +104,82 @@ object PlaybackManager {
 
     val positionSeconds: Double get() = (player?.currentPosition ?: 0L) / 1000.0
 
+    /** Génériques marqués du titre en cours (segments du serveur, chapitres nommés). */
+    var markers by mutableStateOf<List<MediaMarker>>(emptyList())
+        private set
+    /** Boutons « Passer… » déjà utilisés pour ce titre. */
+    var dismissedMarkers by mutableStateOf<Set<MediaMarker>>(emptySet())
+        private set
+    /** Épisode qui suit (bouton « Épisode suivant », distinct du saut du générique de fin). */
+    var nextEpisode by mutableStateOf<BaseItem?>(null)
+        private set
+    /** Retour visuel des sauts de 15 s (« ⟳ +45 s · 12:30 / 42:00 »), cumulé. */
+    var seekNote by mutableStateOf<String?>(null)
+        private set
+    private var markersFor: String? = null
+    private var markersJob: Job? = null
+    private var seekNoteTotal = 0L
+    private var seekNoteAt = 0L
+    private var seekNoteJob: Job? = null
+    private var quietSeekUntil = 0L
+
+    /** Marqueur en cours à cette position (pas encore passé), ou null. */
+    fun activeMarker(positionMs: Long): MediaMarker? = markers.firstOrNull { it !in dismissedMarkers && it.covers(positionMs) }
+
+    /**
+     * « Passer le générique (de fin) » : fin du marqueur. Générique de fin jusqu'à
+     * la toute fin du fichier : fin du titre. Sinon la scène après le générique
+     * reste visible. Jamais automatique.
+     */
+    fun skip(marker: MediaMarker) {
+        val exo = player ?: return
+        dismissedMarkers = dismissedMarkers + marker
+        val duration = exo.duration.takeIf { it > 0 } ?: 0L
+        if (marker.type == MediaMarker.Type.outro && duration > 0 && marker.endMs >= duration - 1500) { close(notify = true); return }
+        quietSeekUntil = System.currentTimeMillis() + 800
+        exo.seekTo(marker.endMs)
+        report?.let { finished -> Session.scope.launch { send("/Sessions/Playing/Progress", finished, marker.endMs / 1000.0, !exo.isPlaying) } }
+    }
+
+    /** « Épisode suivant » : fin de ce titre (suivi envoyé), lecture de l'épisode suivant. */
+    fun playNext() {
+        val next = nextEpisode ?: return
+        nextEpisode = null
+        val resume = next.resumeSeconds.takeIf { it > 5 && (next.progress ?: 0.0) < 0.9 } ?: 0.0
+        Session.scope.launch {
+            try { play(next, startSeconds = resume) } catch (failure: Exception) { Notices.announce("Épisode suivant indisponible : ${failure.message}") }
+        }
+    }
+
+    private fun loadMarkers(item: BaseItem, sync: Boolean) {
+        if (markersFor != item.id) { markers = emptyList(); dismissedMarkers = emptySet(); nextEpisode = null }
+        markersFor = item.id
+        markersJob?.cancel()
+        markersJob = Session.scope.launch {
+            val found = Markers.load(item)
+            if (currentItemId == item.id) markers = found
+            val next = if (sync) null else Markers.nextEpisode(item)
+            if (currentItemId == item.id) nextEpisode = next
+        }
+    }
+
+    private fun noteSeek(delta: Long, position: Long, duration: Long) {
+        val now = System.currentTimeMillis()
+        if (delta == 0L || abs(delta) > 16_000 || now < quietSeekUntil || now < commandUntil) return
+        seekNoteTotal = if (now - seekNoteAt < 1500 && seekNoteTotal.sign == delta.sign) seekNoteTotal + delta else delta
+        seekNoteAt = now
+        val seconds = (abs(seekNoteTotal) / 1000.0).roundToLong()
+        seekNote = (if (delta < 0) "⟲  −" else "⟳  +") + seconds + " s  ·  " + clock(position) + if (duration > 0) " / " + clock(duration) else ""
+        seekNoteJob?.cancel()
+        seekNoteJob = Session.scope.launch { delay(1500); seekNote = null }
+    }
+
+    private fun clock(ms: Long): String {
+        val total = maxOf(0L, ms / 1000)
+        val h = total / 3600; val m = total / 60 % 60; val sec = total % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    }
+
     // MARK: Films et épisodes
 
     suspend fun play(item: BaseItem, audioIndex: Int? = null, subtitleIndex: Int? = null, startSeconds: Double, sync: Boolean = false) {
@@ -159,6 +237,7 @@ object PlaybackManager {
         val burned = source.mediaStreams.firstOrNull { it.index == chosen && it.type == "Subtitle" }?.deliveryMethod == "Encode"
         subtitles = choices
         if (burned) { this.subtitleIndex = chosen; burnedIndex = chosen; subtitleJob?.cancel(); cues = emptyList(); subtitleText = "" } else { burnedIndex = -1; selectSubtitle(chosen) }
+        loadMarkers(item, sync)
     }
 
     /** Pistes du titre en cours : langues, sous-titres incrustés par le serveur (image). */
@@ -260,6 +339,7 @@ object PlaybackManager {
         present(Uri.fromFile(file), entry.playerTitle, if (entry.position > 5) entry.position else 0.0, report, false, emptyMap(), null)
         offlineId = entry.id
         currentItemId = entry.id
+        markersJob?.cancel(); markersFor = null; markers = emptyList(); dismissedMarkers = emptySet(); nextEpisode = null
         subtitles = entry.subtitles.mapNotNull { sub -> OfflineStore.subtitleFile(entry, sub.index)?.let { SubtitleChoice(sub.index, sub.label, it.absolutePath, null) } }
         selectSubtitle(subtitle ?: entry.subtitleChoice ?: -1)
     }
@@ -274,8 +354,9 @@ object PlaybackManager {
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, network)))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
-            .setSeekBackIncrementMs(10_000)
-            .setSeekForwardIncrementMs(30_000)
+            // ±15 s (boutons du lecteur) ; en direct, seulement avec une fenêtre de retour.
+            .setSeekBackIncrementMs(15_000)
+            .setSeekForwardIncrementMs(15_000)
             .build()
     }
 
@@ -309,6 +390,10 @@ object PlaybackManager {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (!syncMode || System.currentTimeMillis() < commandUntil) return
                 if (isPlaying) SyncPlayManager.requestUnpause() else if (exo.playbackState == Player.STATE_READY) SyncPlayManager.requestPause()
+            }
+
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) noteSeek(newPosition.positionMs - oldPosition.positionMs, newPosition.positionMs, exo.duration)
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -345,6 +430,10 @@ object PlaybackManager {
     fun close(notify: Boolean = true) {
         val exo = player ?: run { presented = false; return }
         progressJob?.cancel()
+        markersJob?.cancel()
+        // Titre refermé (pas un simple changement de piste) : boutons proposés à nouveau.
+        if (notify) markersFor = null
+        seekNote = null
         subtitleJob?.cancel()
         val position = exo.currentPosition / 1000.0
         val duration = exo.duration.takeIf { it > 0 }?.div(1000.0) ?: 0.0

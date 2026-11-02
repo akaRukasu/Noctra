@@ -4887,7 +4887,7 @@
   // Cadre du lecteur web configuré exactement comme sur PC (configureTvIframe) :
   // certains lecteurs refusent tout bac à sable, d'autres n'acceptent pas de
   // référent ; les pages tierces préparées par Noctra restent isolées.
-  var TRUSTED_EMBED_HOSTS = ['livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119'];
+  var TRUSTED_EMBED_HOSTS = ['livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'strmfree.st', 'www.strmfree.st', 'ppv.st', 'www.ppv.st', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119'];
   var DEFAULT_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
   function frameConfig(channel, option, url) {
     var provider = option.provider || channel.provider || '';

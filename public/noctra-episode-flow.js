@@ -1,13 +1,17 @@
-/* Noctra 200.0.128 — génériques et enchaînement des épisodes, comme Noctra TV.
-   - Bouton « Passer l'intro / le récap / l'aperçu / le générique » pendant le
-     segment. Temps, dans l'ordre : segments du serveur Jellyfin (extension de
-     détection, ex. Intro Skipper), chapitres nommés du fichier (« Opening »,
-     « Générique », « Credits »…), puis générique appris pour la série : un saut
-     en avant de 20 s à 3 min 20 dans les 10 premières minutes d'un épisode est
-     retenu dans ce navigateur et propose le bouton aux épisodes suivants.
-   - « À suivre » : au générique de fin (ou 30 s avant la fin), l'épisode
-     suivant est présenté (image, titre, résumé) et démarre seul après 10 s ;
-     « Lire maintenant » ou « Plus tard » (la lecture s'arrête à la fin).
+/* Noctra 200.0.164 — génériques et enchaînement des épisodes, comme Noctra TV.
+   - « Passer le générique », « Passer le générique de fin », « Passer le
+     récap / l'aperçu » pendant le segment, jamais automatiques. Temps, dans
+     l'ordre : segments du serveur Jellyfin (extension de détection, ex. Intro
+     Skipper), puis chapitres nommés du fichier (« Opening », « Générique »,
+     « Credits »…). Sans marqueur fiable : pas de bouton (plus de générique
+     « appris » des avances manuelles). Le générique de fin passé, la scène
+     après le générique reste visible.
+   - « Épisode suivant » : bouton distinct (commandes affichées), et carte
+     « À suivre » au générique de fin (ou 30 s avant la fin) : l'épisode
+     suivant démarre seul après 10 s ; « Lire maintenant » ou « Plus tard »
+     (la lecture s'arrête à la fin).
+   - ±15 s : sauts du lecteur Jellyfin réglés à 15 s (si l'utilisateur ne les a
+     pas déjà réglés), retour visuel cumulé des appuis répétés.
    - Transition : l'image et le titre de l'épisode suivant couvrent l'écran le
      temps du chargement, puis s'effacent dès la première image.
    Séries et animés (épisodes) ; films : « Passer le générique » seulement.
@@ -16,7 +20,6 @@
 (() => {
   'use strict';
 
-  const INTRO_STORE = 'noctra-web-intros-v1';
   const COUNTDOWN_SECONDS = 10;
   const SEGMENT_TYPES = { Intro: 'intro', Outro: 'outro', Recap: 'recap', Preview: 'preview' };
   let webpackRequire = null;
@@ -84,7 +87,6 @@
     return Number.isFinite(seconds) ? seconds * 1000 : 0;
   }
 
-  function hexId(id) { return String(id || '').replace(/-/g, '').toLowerCase(); }
 
   function api() {
     const client = window.ApiClient;
@@ -95,40 +97,7 @@
     try { return String(window.ApiClient?.getCurrentUserId?.() || ''); } catch { return ''; }
   }
 
-  // ── Génériques appris (passés à la main) ──
-  function learnedIntros() {
-    try {
-      const store = JSON.parse(localStorage.getItem(INTRO_STORE) || '{}');
-      return store && typeof store === 'object' && !Array.isArray(store) ? store : {};
-    } catch {
-      return {};
-    }
-  }
-
-  function learnIntro(seriesId, startMs, endMs) {
-    const key = hexId(seriesId);
-    if (!/^[0-9a-f]{32}$/.test(key) || !(endMs - startMs >= 20_000 && endMs - startMs <= 200_000) || startMs > 10 * 60_000) return;
-    const store = learnedIntros();
-    const old = store[key];
-    // Même générique qu'avant (fin à moins de 30 s près) : moyenne ; sinon remplacé.
-    if (old && Math.abs(old.endMs - endMs) < 30_000) {
-      const n = Math.min(old.n || 1, 4);
-      store[key] = {
-        startMs: Math.round((Math.min(old.startMs, startMs) * 2 + (old.startMs * n + startMs) / (n + 1)) / 3),
-        endMs: Math.round((old.endMs * n + endMs) / (n + 1)),
-        n: n + 1,
-        at: Date.now()
-      };
-    } else {
-      store[key] = { startMs: Math.round(startMs), endMs: Math.round(endMs), n: 1, at: Date.now() };
-    }
-    const keys = Object.keys(store);
-    if (keys.length > 300) {
-      keys.sort((a, b) => (store[a].at || 0) - (store[b].at || 0)).slice(0, keys.length - 300).forEach(old => { delete store[old]; });
-    }
-    try { localStorage.setItem(INTRO_STORE, JSON.stringify(store)); } catch {}
-  }
-
+  // ── Génériques : chapitres nommés du fichier ──
   function chapterSegments(item) {
     const chapters = (item?.Chapters || []).filter(chapter => typeof chapter.StartPositionTicks === 'number')
       .sort((a, b) => a.StartPositionTicks - b.StartPositionTicks);
@@ -160,10 +129,7 @@
       : client.getJSON(client.getUrl(`Users/${uid}/Items/${item.Id}`, { Fields: 'Chapters' })).catch(() => item);
     const [server, full] = await Promise.all([fromServer, details]);
     if (server.length) return server;
-    const chapters = chapterSegments(full);
-    if (chapters.length) return chapters;
-    const learned = item.Type === 'Episode' && learnedIntros()[hexId(item.SeriesId)];
-    return learned ? [{ type: 'intro', startMs: learned.startMs, endMs: learned.endMs, source: 'appris' }] : [];
+    return chapterSegments(full);
   }
 
   // ── Épisode suivant ──
@@ -238,10 +204,10 @@
 
   // ── Bouton « Passer » ──
   function skipLabel(segment) {
-    if (segment.type === 'outro') return state?.item?.Type === 'Episode' && state?.next ? 'Épisode suivant' : 'Passer le générique';
+    if (segment.type === 'outro') return 'Passer le générique de fin';
     if (segment.type === 'recap') return 'Passer le récap';
     if (segment.type === 'preview') return 'Passer l’aperçu';
-    return 'Passer l’intro';
+    return 'Passer le générique';
   }
 
   function hideSkip() {
@@ -277,14 +243,10 @@
     segment.dismissed = true;
     state.segment = null;
     hideSkip();
-    const duration = durationMs(state.item, manager);
-    // Générique de fin d'un épisode : épisode suivant tout de suite.
-    if (segment.type === 'outro' && state.item?.Type === 'Episode' && state.next) { playNext(); return; }
-    if (segment.type === 'outro' && (!duration || segment.endMs >= duration - 10_000)) {
-      try { manager?.stop?.(player); } catch {}
-      return;
-    }
+    // Fin du segment (générique de fin jusqu'au bout du fichier : fin du titre,
+    // puis l'enchaînement habituel). Jamais l'épisode suivant directement.
     state.skipping = Date.now();
+    state.skipTarget = segment.endMs;
     if (manager && player) {
       try { manager.seek(Math.round(segment.endMs * 10_000), player); return; } catch {}
     }
@@ -293,12 +255,11 @@
 
   function updateSkip(at) {
     if (!state?.segments?.length) { if (state) state.segment = null; hideSkip(); return; }
-    // Générique de fin d'un épisode suivi d'un autre : la carte « À suivre »
-    // s'en charge (« Lire maintenant »), pas de second bouton au même endroit.
-    const upNextHandlesOutro = state.item?.Type === 'Episode' && Boolean(state.next);
+    // « Passer le générique de fin » et « Épisode suivant » restent distincts :
+    // les deux sont proposés au générique de fin.
     let found = null;
     for (const segment of state.segments) {
-      if (segment.dismissed || (segment.type === 'outro' && upNextHandlesOutro)) continue;
+      if (segment.dismissed) continue;
       if (at >= segment.startMs - 500 && at < segment.endMs - 1_500) { found = segment; break; }
     }
     if (found === state.segment) return;
@@ -307,10 +268,90 @@
     else hideSkip();
   }
 
+  // ── « Épisode suivant » (bouton distinct, avec les commandes du lecteur) ──
+  let nextButton = null;
+  function osdVisible() {
+    const osd = document.querySelector('.videoOsdBottom');
+    return Boolean(osd && !osd.classList.contains('videoOsdBottom-hidden') && !osd.classList.contains('hide'));
+  }
+  function updateNextButton() {
+    const show = Boolean(state?.next && state.item?.Type === 'Episode' && !state.advancing && !upNext && osdVisible());
+    if (!show) {
+      if (nextButton) { nextButton.dataset.visible = 'false'; nextButton.tabIndex = -1; }
+      return;
+    }
+    if (!nextButton) {
+      nextButton = element('button', 'noctra-next-episode');
+      nextButton.type = 'button';
+      nextButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        playNext();
+      });
+    }
+    if (nextButton.parentNode !== host()) host().appendChild(nextButton);
+    const label = `Épisode suivant : ${episodeLabel(state.next)}`;
+    if (nextButton.getAttribute('aria-label') !== label) {
+      nextButton.innerHTML = '';
+      nextButton.appendChild(element('span', '', 'Épisode suivant'));
+      nextButton.appendChild(element('i', 'noctra-skip-segment-icon', '⏭'));
+      nextButton.setAttribute('aria-label', label);
+      nextButton.title = label;
+    }
+    nextButton.dataset.visible = 'true';
+    nextButton.tabIndex = 0;
+  }
+
+  // ── ±15 s ──
+  // Sauts du lecteur Jellyfin à 15 s, une fois par utilisateur et seulement
+  // s'ils n'ont jamais été réglés (un choix de l'utilisateur est conservé).
+  const SKIP_STEP_MS = 15_000;
+  function applySkipLengths() {
+    let settings = null;
+    try { settings = requireJellyfin()?.(82885) || null; } catch { settings = null; }
+    const uid = userId();
+    if (!settings || typeof settings.get !== 'function' || typeof settings.skipForwardLength !== 'function' || !uid) return;
+    const flag = `noctra-skip15-v1-${uid}`;
+    try { if (localStorage.getItem(flag)) return; } catch { return; }
+    try {
+      const unset = value => value === undefined || value === null || value === '';
+      if (unset(settings.get('skipForwardLength'))) settings.skipForwardLength(SKIP_STEP_MS);
+      if (unset(settings.get('skipBackLength'))) settings.skipBackLength(SKIP_STEP_MS);
+      localStorage.setItem(flag, '1');
+    } catch {}
+  }
+
+  // Retour visuel des sauts (« ⟳ +45 s »), cumulé sur les appuis répétés.
+  let seekNote = null;
+  let seekNoteTimer = 0;
+  let seekTotal = 0;
+  let seekAt = 0;
+  function noteSeek(fromMs, toMs) {
+    const delta = toMs - fromMs;
+    // Saut de « Passer le générique » : pas un saut de 15 s.
+    if (state?.skipping && Date.now() - state.skipping < 2_000 && Math.abs(toMs - (state.skipTarget || 0)) < 1_500) return;
+    // Sauts des boutons (pas de 15 s, ou réglage de l'utilisateur), pas la barre de progression.
+    if (Math.abs(delta) < 1_000 || Math.abs(delta) > 61_000) return;
+    const now = Date.now();
+    seekTotal = now - seekAt < 1_500 && (seekTotal < 0) === (delta < 0) ? seekTotal + delta : delta;
+    seekAt = now;
+    if (!seekNote) {
+      seekNote = element('div', 'noctra-seek-note');
+      seekNote.setAttribute('aria-live', 'polite');
+    }
+    if (seekNote.parentNode !== host()) host().appendChild(seekNote);
+    const seconds = Math.round(Math.abs(seekTotal) / 1000);
+    seekNote.textContent = `${delta < 0 ? '⟲' : '⟳'} ${seekTotal < 0 ? '−' : '+'}${seconds} s`;
+    seekNote.dataset.visible = 'true';
+    window.clearTimeout(seekNoteTimer);
+    seekNoteTimer = window.setTimeout(() => { if (seekNote) seekNote.dataset.visible = 'false'; }, 1_500);
+  }
+
   // ── « À suivre » ──
   function closeUpNext() {
     if (!upNext) return;
     window.clearInterval(upNext.timer);
+    document.body.classList.remove('noctra-up-next-open');
     upNext.node.dataset.visible = 'false';
     const node = upNext.node;
     window.setTimeout(() => node.remove(), 450);
@@ -379,6 +420,8 @@
     };
     tick();
     upNext = { node, timer: 0 };
+    document.body.classList.add('noctra-up-next-open');
+    updateNextButton();
     requestAnimationFrame(() => { node.dataset.visible = 'true'; play.focus({ preventScroll: true }); });
     upNext.timer = window.setInterval(() => {
       if (!video || video.paused) return;
@@ -459,9 +502,7 @@
       stopAtEnd: false,
       advancing: false,
       skipping: 0,
-      lastMs: 0,
-      learn: null,
-      learnTimer: 0
+      lastMs: 0
     };
     hideSkip();
     closeUpNext();
@@ -482,30 +523,6 @@
     document.body.classList.toggle('noctra-episode-flow', Boolean(manager));
   }
 
-  // Générique passé à la main (saut en avant), appris pour la série.
-  function noteSeek(fromMs, toMs) {
-    if (!state || state.item?.Type !== 'Episode' || !state.item.SeriesId) return;
-    if (state.skipping && Date.now() - state.skipping < 2_000) return;
-    const jump = toMs - fromMs;
-    if (!(jump >= 20_000 && jump <= 200_000) || fromMs > 10 * 60_000) return;
-    const now = Date.now();
-    const learn = state.learn;
-    // Plusieurs sauts rapprochés (avance rapide) : un seul générique.
-    if (learn && now - learn.at < 8_000 && Math.abs(fromMs - learn.endMs) < 6_000) learn.endMs = toMs;
-    else { flushLearn(); state.learn = { startMs: fromMs, endMs: toMs }; }
-    state.learn.at = now;
-    window.clearTimeout(state.learnTimer);
-    state.learnTimer = window.setTimeout(flushLearn, 8_000);
-  }
-
-  function flushLearn() {
-    if (!state?.learn) return;
-    const learn = state.learn;
-    state.learn = null;
-    window.clearTimeout(state.learnTimer);
-    learnIntro(state.item?.SeriesId, learn.startMs, learn.endMs);
-  }
-
   function onTime() {
     const manager = playbackManager();
     const item = currentItem(manager);
@@ -519,6 +536,7 @@
     const at = positionMs(manager);
     if (!video?.seeking) state.lastMs = at;
     updateSkip(at);
+    updateNextButton();
     if (state.item.Type !== 'Episode' || !state.next) return;
     const duration = durationMs(state.item, manager);
     if (!duration) return;
@@ -541,15 +559,17 @@
     videoController = null;
     video = next;
     if (!video) {
-      flushLearn();
       hideSkip();
+      updateNextButton();
       closeUpNext();
       document.body.classList.remove('noctra-episode-flow');
       state = null;
+      updateNextButton();
       return;
     }
     videoController = new AbortController();
     const signal = videoController.signal;
+    applySkipLengths();
     let seekFrom = 0;
     video.addEventListener('timeupdate', onTime, { signal });
     video.addEventListener('seeking', () => { seekFrom = state?.lastMs || 0; }, { signal });
@@ -593,5 +613,5 @@
   document.addEventListener('visibilitychange', scan);
 
   // Accès pour les tests et le diagnostic.
-  window.NoctraEpisodeFlow = { version: '200.0.128', chapterSegments, learnIntro, learnedIntros, episodeLabel };
+  window.NoctraEpisodeFlow = { version: '200.0.164', chapterSegments, episodeLabel, skipLabel };
 })();

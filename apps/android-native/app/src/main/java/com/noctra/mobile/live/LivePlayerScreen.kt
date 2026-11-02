@@ -60,6 +60,8 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
@@ -313,9 +315,18 @@ private fun Controls(pageMode: Boolean, poke: () -> Unit, zap: (Int) -> Unit, co
         }
         Spacer(Modifier.weight(1f))
         if (!pageMode) {
+            // ±15 s seulement quand le flux a une vraie fenêtre de retour (relue chaque seconde).
+            val window by androidx.compose.runtime.produceState(0L, model.player, model.engineMode) {
+                while (true) { value = model.liveWindowMs(); delay(1000) }
+            }
+            model.seekNote?.let { note ->
+                Text(note, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp))
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                 CircleButton(Icons.Filled.SkipPrevious, "Chaîne précédente", size = 52.dp) { zap(-1) }
+                if (window > 0) CircleButton(Icons.Filled.FastRewind, "Reculer de 15 secondes", size = 52.dp) { model.seekLive(-15_000); poke() }
                 CircleButton(if (model.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, if (model.paused) "Lecture" else "Pause", size = 68.dp) { model.togglePause(); poke() }
+                if (window > 0) CircleButton(Icons.Filled.FastForward, "Avancer de 15 secondes", size = 52.dp) { model.seekLive(15_000); poke() }
                 CircleButton(Icons.Filled.SkipNext, "Chaîne suivante", size = 52.dp) { zap(1) }
             }
             Spacer(Modifier.weight(1f))

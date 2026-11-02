@@ -13,6 +13,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -309,6 +310,8 @@ object LivePlayerModel {
         val exo = ExoPlayer.Builder(app, renderers)
             .setAudioAttributes(androidx.media3.common.AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
+            .setSeekBackIncrementMs(15_000)
+            .setSeekForwardIncrementMs(15_000)
             .build()
         player = exo
         return exo
@@ -492,6 +495,40 @@ object LivePlayerModel {
     }
 
     // MARK: Commandes
+
+    /** Fenêtre de retour du direct (ms), si le flux en a une d'au moins 30 s ; sinon 0. */
+    fun liveWindowMs(): Long {
+        if (engineMode) return 0
+        val exo = player ?: return 0
+        if (!exo.isCurrentMediaItemSeekable || exo.currentTimeline.isEmpty) return 0
+        val window = exo.currentTimeline.getWindow(exo.currentMediaItemIndex, Timeline.Window())
+        return if (window.durationMs != C.TIME_UNSET && window.durationMs >= 30_000) window.durationMs else 0
+    }
+
+    /** Retour visuel des sauts de 15 s en direct (« ⟲ −30 s »), cumulé. */
+    var seekNote by mutableStateOf<String?>(null)
+        private set
+    private var seekTotal = 0L
+    private var seekAt = 0L
+    private var seekNoteJob: Job? = null
+
+    /** −15 s / +15 s dans la fenêtre du direct (jamais au-delà de ses bords). */
+    fun seekLive(delta: Long) {
+        val exo = player ?: return
+        val window = liveWindowMs()
+        if (window <= 0) return
+        val position = exo.currentPosition
+        val target = maxOf(minOf(0L, position), minOf(position + delta, maxOf(window - 3000, position)))
+        exo.seekTo(target)
+        val now = System.currentTimeMillis()
+        val moved = target - position
+        seekTotal = if (now - seekAt < 1500 && (seekTotal < 0) == (delta < 0)) seekTotal + moved else moved
+        seekAt = now
+        val seconds = Math.round(Math.abs(seekTotal) / 1000.0)
+        seekNote = (if (delta < 0) "⟲  " else "⟳  ") + if (seconds == 0L) (if (delta < 0) "Début" else "En direct") else (if (seekTotal < 0) "−" else "+") + seconds + " s"
+        seekNoteJob?.cancel()
+        seekNoteJob = Session.scope.launch { delay(1500); seekNote = null }
+    }
 
     fun togglePause() {
         if (engineMode) {

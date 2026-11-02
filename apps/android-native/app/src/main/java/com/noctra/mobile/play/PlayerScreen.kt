@@ -12,6 +12,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +61,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -119,11 +127,17 @@ fun PlayerScreen() {
     val exo = PlaybackManager.player ?: return
     var controls by remember { mutableStateOf(true) }
     var subtitleMenu by remember { mutableStateOf(false) }
+    // Générique en cours (bouton « Passer… »), relu à chaque image de sous-titres.
+    var marker by remember { mutableStateOf<MediaMarker?>(null) }
+    // Boutons ±15 s de Media3 : jamais au-delà de la dernière seconde du titre.
+    val bounded = remember(exo) { BoundedSeekPlayer(exo) }
     ImmersiveEffect()
     BackHandler { PlaybackManager.close() }
     LaunchedEffect(exo) {
         while (true) {
             PlaybackManager.refreshSubtitle()
+            val active = PlaybackManager.activeMarker(exo.currentPosition)
+            if (active != marker) marker = active
             val size = exo.videoSize
             if (size.width > 0 && size.height > 0) Pip.aspect = Rational(size.width, size.height).coerceAspect()
             delay(120)
@@ -134,7 +148,7 @@ fun PlayerScreen() {
             factory = { context ->
                 PlayerView(context).apply {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    player = exo
+                    player = bounded
                     keepScreenOn = true
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setShowSubtitleButton(false)
@@ -146,7 +160,7 @@ fun PlayerScreen() {
                 }
             },
             update = { view ->
-                if (view.player !== exo) view.player = exo
+                if (view.player !== bounded) view.player = bounded
                 view.useController = !Pip.active
                 view.controllerShowTimeoutMs = if (subtitleMenu) 0 else 4000
                 if (subtitleMenu) view.showController()
@@ -154,6 +168,24 @@ fun PlayerScreen() {
             modifier = Modifier.fillMaxSize()
         )
         SubtitleLayer(PlaybackManager.subtitleText, PlaybackManager.subtitleStatus)
+        // Retour des sauts de 15 s, cumulé sur les appuis répétés.
+        PlaybackManager.seekNote?.takeIf { !Pip.active }?.let { note ->
+            Text(note, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center).padding(bottom = 140.dp).background(Color(0xCC09090F), RoundedCornerShape(14.dp)).padding(horizontal = 18.dp, vertical = 10.dp))
+        }
+        // « Passer le générique (de fin) » et « Épisode suivant » (distincts, jamais automatiques).
+        val current = marker
+        val next = PlaybackManager.nextEpisode
+        val showNext = next != null && !PlaybackManager.syncMode && (current?.type == MediaMarker.Type.outro || controls)
+        if (!Pip.active && (current != null || showNext)) {
+            Row(
+                Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(end = 20.dp, bottom = if (controls) 120.dp else 36.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (current != null) PlayerPill(current.label, primary = true) { PlaybackManager.skip(current) }
+                if (showNext && next != null) PlayerPill("Épisode suivant", primary = current == null, description = "Épisode suivant : " + listOfNotNull(next.episodeLabel, next.name).joinToString(" · ")) { PlaybackManager.playNext() }
+            }
+        }
         AnimatedVisibility((controls || subtitleMenu) && !Pip.active, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
             Column(Modifier.fillMaxWidth().safeDrawingPadding().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent))).padding(horizontal = 16.dp, vertical = 10.dp)) {
               Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -194,6 +226,32 @@ fun PlayerScreen() {
               Text(PlaybackManager.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp))
             }
         }
+    }
+}
+
+/** Bouton du lecteur au-dessus de la vidéo (blanc : principal ou sélectionné à la télécommande). */
+@Composable
+private fun PlayerPill(label: String, primary: Boolean, description: String = label, action: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val filled = primary || focused
+    Text(
+        label, color = if (filled) Color(0xFF0B0D12) else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .background(if (filled) Color(0xF2F5F7FA) else Color(0xB309090F), RoundedCornerShape(50))
+            .border(2.dp, Color(0xD9F5F7FA), RoundedCornerShape(50))
+            .clickable(interactionSource = interaction, indication = null, onClickLabel = description, onClick = action)
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+    )
+}
+
+/** ±15 s bornés : l'avance s'arrête une seconde avant la fin (pas de fermeture du titre). */
+@OptIn(UnstableApi::class)
+private class BoundedSeekPlayer(player: Player) : ForwardingPlayer(player) {
+    override fun seekForward() {
+        val length = duration
+        if (isCurrentMediaItemDynamic || length == C.TIME_UNSET || length <= 0) { super.seekForward(); return }
+        seekTo(minOf(currentPosition + seekForwardIncrement, maxOf(length - 1000, currentPosition)))
     }
 }
 
