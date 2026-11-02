@@ -54,6 +54,39 @@ Rien n'est effacé : comptes, historique de lecture, reprises, favoris, « vu »
 6. **Samsung 2014** : relancer « Installer sur le televiseur.cmd » du kit.
 7. **Samsung Tizen** et **web** : aucune action, l'interface est servie par le serveur.
 
+## Matrice des résultats (niveau de vérification réel)
+
+Légende : **N** = navigateur Chromium automatisé avec une vraie vidéo et un lecteur ou serveur simulé ; **C** = compilation (CI GitHub ou locale) ; **A** = analyse du code ou test statique ; **—** = sans objet. Rien n'a été vérifié sur un appareil réel ni sur un émulateur : cet environnement n'en a pas.
+
+| Fonction | Android TV | LG / Tizen | Samsung 2014 | Android | iOS | Web / PWA |
+|---|---|---|---|---|---|---|
+| ±15 s titres (boutons, touches, appuis répétés, bornes, pause gardée) | C (APK construit) + A | **N** | **N** (moteur commun) + A | C + A | C + A | **N** (retour visuel, réglage gardé) |
+| ±15 s en direct seulement avec une fenêtre de retour | A (Media3) | **N** (avec et sans fenêtre) | A | C + A | C + A | A |
+| « Passer le générique » / « … de fin » (segments, chapitres, sans marqueur) | C + A | **N** | A | C + A | C + A | **N** (segments, chapitres, sans marqueur) |
+| Scène après le générique gardée, aucun saut automatique | C + A | **N** | A | C + A | C + A | **N** |
+| « Épisode suivant » distinct (≠ passer le générique ≠ lecture auto) | C + A | **N** | A | C + A | C + A | **N** |
+| Lecture directe / transcodage | A (même lecteur) | A | A | A | A | A |
+| Reprise de position | A | **N** (départ à 30 s) | **N** (AVPlay simulé, 60 s) | A | A | — |
+| Sources Streamed (strmfree.st) et PPV (ppv.st) | — | — | — | — | — | réponses simulées ; sites réels injoignables ici |
+| Autres fonctions (accueil, médiathèques, demandes, TV, multiview, cast, Arr…) | tests existants inchangés | idem | **N** (test Samsung 2014 complet) | idem | idem | idem |
+
+Suite complète (289 tests), lancée avant et après les modifications :
+- **Nouveaux tests** : `tv-player-skip-controls`, `web-episode-flow-controls` et `v200164-ppv-streamed-sources` réussissent.
+- **Une seule régression** : `v200137` vérifiait un numéro anti-cache figé. Le test a été corrigé.
+- **Tests corrigés en passant** : `static-integrity` (HLS 1.7.3, cache PWA) et le faux positif ES5 du test Samsung 2014.
+- **157 anciens tests échouent comme avant** : 97 vérifient le numéro d'une ancienne version, 14 dépassent le délai (réseau externe) et 46 visent du code remplacé depuis. Aucun ne vient de cette version.
+
+## Limites et points à valider sur appareil
+
+- **Appareils** : aucun appareil réel ni émulateur n'était disponible, et le serveur n'était pas joignable depuis cet environnement. À vérifier à la main :
+  - les télécommandes LG, Samsung et Android TV ;
+  - le lecteur Media3 (Android) et AVPlayer (iOS) ;
+  - le transcodage réel par Jellyfin.
+- **Marqueurs** : les boutons « Passer le générique » n'apparaissent que si Jellyfin fournit des segments ou si le fichier a des chapitres nommés. Pour en obtenir sur toute la médiathèque, installez dans Jellyfin le greffon de détection des génériques (« Intro Skipper », il crée des MediaSegments), puis lancez son analyse. Sans marqueur, aucun bouton ne s'affiche, et c'est voulu.
+- **iOS** : les boutons ±10 s d'Apple restent dans le lecteur système (leur durée ne peut pas être changée sur iPhone). Les boutons Noctra ±15 s sont ajoutés en haut à gauche.
+- **Streamed / PPV** : `strmfree.st` et `ppv.st` étaient bloqués par le réseau de cet environnement. Le format attendu (API Streamed `/api/matches/…`, PPV `/api/streams`) est lu de façon tolérante, mais il n'a pas pu être confirmé sur les vrais sites. Si une source affiche « ne répond pas », le message donne la cause.
+- **Archive 200.0.163** : elle n'a pas pu être lue (fichier sur votre PC). Les corrections connues sont reportées : `NODE_OPTIONS`, adresses du client web, nouveau domaine. Les réglages de Radarr, Sonarr et qBittorrent sont sur le serveur et cette version n'y touche pas.
+
 ## Vérification
 
 `node tests/tv-player-skip-controls.mjs`, `node tests/web-episode-flow-controls.mjs`, `node tests/v200164-ppv-streamed-sources.mjs`, `node tests/orsay-samsung-2014.mjs`, `npm run test:apps`.
