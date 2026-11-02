@@ -10,12 +10,13 @@ param(
     [switch]$SkipKeySetup,
     [switch]$ResetSshKey,
     [string]$EnvFile = '',
-    [switch]$Diagnostic
+    [switch]$Diagnostic,
+    [switch]$Repair
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:NoctraUpdaterVersion = '8.0'
+$script:NoctraUpdaterVersion = '8.2'
 $script:LastSshDiagnostic = ''
 
 function Write-Step {
@@ -421,7 +422,7 @@ if [[ -f "$ENV_FILE" ]]; then
   perms="$(stat -c %a "$ENV_FILE" 2>/dev/null)"
   ok ".env present (droits $perms)"
   [[ "$perms" == "600" ]] || note ".env lisible par d'autres comptes : chmod 600 $ENV_FILE"
-  if grep -qiE "([/@.])${OLD_HOST//./\\.}" "$ENV_FILE"; then bad ".env contient encore l'ancien serveur ($OLD_HOST) : il sera corrige au prochain demarrage de Noctra 200.0.162+"; else ok ".env sans adresse de l'ancien serveur"; fi
+  if grep -qiE "([/@.])${OLD_HOST//./\\.}" "$ENV_FILE"; then bad ".env contient encore l'ancien serveur ($OLD_HOST) : corrige par la reparation (REPARER-NOCTRA-V8.cmd) ou la mise a jour"; else ok ".env sans adresse de l'ancien serveur"; fi
   for key in PORT BASE_URL JELLYFIN_URL JELLYFIN_API_KEY QBITTORRENT_URL QBITTORRENT_USERNAME QBITTORRENT_PASSWORD SONARR_URL SONARR_API_KEY RADARR_URL RADARR_API_KEY PROWLARR_URL PROWLARR_API_KEY JELLYSEERR_URL JELLYSEERR_API_KEY TMDB_API_KEY; do
     if [[ -n "$(env_value "$key")" ]]; then info "$key : renseigne"; else
       case "$key" in PORT|BASE_URL|JELLYFIN_URL|JELLYFIN_API_KEY) bad "$key manquant dans .env";; *) note "$key vide : la fonction correspondante sera indisponible";; esac
@@ -510,6 +511,148 @@ printf '\nBilan : %d OK, %d a verifier, %d probleme(s).\n' "$OK" "$WARN" "$BAD"
 (( BAD == 0 ))
 '@
 
+# V8.1 : reparation sur place (sans nouvelle version), proposee apres le
+# diagnostic ou lancee seule (-Repair).
+$script:RepairScript = @'
+#!/usr/bin/env bash
+# Noctra - reparation sur place (V8.1), sans nouvelle version : .env adapte au
+# serveur (ancien domaine, port qBittorrent, port de Noctra), service et proxy
+# Ultra.cc recrees s'ils manquent, redemarrage et test /health. Copie du .env
+# d'origine gardee (.env.avant-reparation-<date>).
+set -Eeuo pipefail
+APP_DIR="${NOCTRA_APP_DIR:-$HOME/apps/noctra}"
+SERVICE_NAME="${NOCTRA_SERVICE_NAME:-noctra.service}"
+OLD_HOST="${NOCTRA_OLD_HOST:-merlion.usbx.me}"
+NEW_HOST="${NOCTRA_NEW_HOST:-astra.usbx.me}"
+NGINX_FILE="$HOME/.apps/nginx/proxy.d/noctra.conf"
+log()  { printf '\033[1;36m[Noctra]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[Noctra]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[Erreur]\033[0m %s\n' "$*" >&2; exit 1; }
+env_value() {
+  local file="$1" key="$2"
+  sed -nE "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*['\"]?([^'\"]*)['\"]?[[:space:]]*$/\\1/p" "$file" | tail -n 1
+}
+
+set_env_value() {
+  local file="$1" key="$2" value="$3"
+  if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$file"; then
+    sed -i -E "s#^([[:space:]]*${key}[[:space:]]*=[[:space:]]*).*#\\1${value}#" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+# .env adapte au serveur actuel (sans jamais afficher les cles ni mots de passe).
+repair_env() {
+  local file="$1" old_escaped
+  sed -i 's/\r$//; 1s/^\xEF\xBB\xBF//' "$file"
+  old_escaped="${OLD_HOST//./\\.}"
+  if [[ -n "$OLD_HOST" && "$OLD_HOST" != "$NEW_HOST" ]] && grep -qiE "([/@.]|//)${old_escaped}" "$file"; then
+    sed -i -E "s#([/@.])${old_escaped}([/:?\"' ]|$)#\\1${NEW_HOST}\\2#gI" "$file"
+    log "Adresses de l'ancien serveur ($OLD_HOST) remplacees par $NEW_HOST."
+  fi
+  # qBittorrent joint en local : port de son interface web sur CE serveur.
+  local qb_conf="$HOME/.config/qBittorrent/qBittorrent.conf" qb_port current
+  if [[ -f "$qb_conf" ]]; then
+    qb_port="$(sed -nE 's/^WebUI\\Port=([0-9]+).*/\1/p' "$qb_conf" | tail -n 1)"
+    current="$(env_value "$file" QBITTORRENT_URL)"
+    if [[ -n "$qb_port" && "$current" =~ ^http://(127\.0\.0\.1|localhost):([0-9]+)(/.*)?$ ]]; then
+      local old_port="${BASH_REMATCH[2]}" host="${BASH_REMATCH[1]}" path="${BASH_REMATCH[3]:-}"
+      if [[ "$old_port" != "$qb_port" ]]; then
+        set_env_value "$file" QBITTORRENT_URL "http://${host}:${qb_port}${path}"
+        log "qBittorrent : port local $old_port -> $qb_port."
+      fi
+    fi
+  fi
+  chmod 600 "$file"
+}
+
+# Port de Noctra : garde s'il est libre ; occupe par un autre programme (seedbox
+# deplacee, port deja pris sur ce serveur) : un port attribue libre (app-ports).
+port_in_use() { timeout 1 bash -c "</dev/tcp/127.0.0.1/$1" >/dev/null 2>&1; }
+choose_port() {
+  local file="$1" port candidate
+  port="$(env_value "$file" PORT)"
+  [[ -n "$port" ]] || return 0
+  port_in_use "$port" || return 0
+  if command -v app-ports >/dev/null 2>&1; then
+    for candidate in $(app-ports free 2>/dev/null | grep -oE '\b[0-9]{5}\b'); do
+      [[ "$candidate" == "$port" ]] && continue
+      port_in_use "$candidate" && continue
+      set_env_value "$file" PORT "$candidate"
+      log "Port de Noctra $port deja utilise sur ce serveur : $candidate utilise."
+      return 0
+    done
+  fi
+  warn "Le port $port est deja utilise sur ce serveur ; choisis-en un autre (commande app-ports free) dans le .env si Noctra ne demarre pas."
+}
+
+[[ -f "$APP_DIR/.env" ]] || fail "Noctra n'est pas installe dans $APP_DIR : lancer la mise a jour (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd)."
+if [[ -d "$HOME/.nvm/versions/node" ]]; then
+  NODE_BIN="$(find "$HOME/.nvm/versions/node" -mindepth 3 -maxdepth 3 -type f -path '*/bin/node' -perm -u+x 2>/dev/null | sort -V | tail -n 1)"
+  [[ -n "$NODE_BIN" ]] && export PATH="$(dirname "$NODE_BIN"):$PATH"
+fi
+command -v node >/dev/null 2>&1 || fail "Node.js est introuvable."
+cp -p "$APP_DIR/.env" "$APP_DIR/.env.avant-reparation-$(date +%Y%m%d-%H%M%S)"
+repair_env "$APP_DIR/.env"
+if ! systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  choose_port "$APP_DIR/.env"
+fi
+PORT="$(env_value "$APP_DIR/.env" PORT)"
+BASE_URL="$(env_value "$APP_DIR/.env" BASE_URL)"
+PORT="${PORT:-3000}"
+BASE_URL="${BASE_URL%/}"
+SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME"
+if [[ ! -f "$SERVICE_FILE" || ! -f "$NGINX_FILE" ]] || ! grep -q "127.0.0.1:$PORT" "$NGINX_FILE" 2>/dev/null; then
+  log "Service Noctra et proxy Ultra.cc (re)configures..."
+  bash "$APP_DIR/ultra/install-ultra.sh"
+fi
+systemctl --user daemon-reload
+systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+systemctl --user restart "$SERVICE_NAME"
+HEALTH_URL="http://127.0.0.1:${PORT}${BASE_URL}/health"
+log "Verification du service : $HEALTH_URL"
+for _ in {1..30}; do
+  if curl --silent --fail --max-time 3 "$HEALTH_URL" | grep -q '"status":"ok"'; then
+    log "Reparation terminee : Noctra repond."
+    exit 0
+  fi
+  sleep 1
+done
+tail -n 15 "$APP_DIR/logs/noctra-error.log" 2>/dev/null | sed 's/^/  | /' >&2 || true
+fail "Noctra ne repond toujours pas apres la reparation."
+'@
+
+function Invoke-NoctraRepair {
+    param([string]$Target)
+    Write-Step 'Reparation : adresses du nouveau serveur, port qBittorrent, service et proxy Ultra.cc'
+    $tempRepair = Join-Path ([System.IO.Path]::GetTempPath()) ('noctra-repair-' + [guid]::NewGuid().ToString('N') + '.sh')
+    try {
+        [System.IO.File]::WriteAllText($tempRepair, $script:RepairScript.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+        $scpPath = (Get-Command 'scp.exe' -ErrorAction Stop).Source
+        $upload = Invoke-NativeQuiet -FilePath $scpPath -TimeoutSeconds 60 -Arguments @(
+            '-q', '-P', [string]$SshPort, '-i', $IdentityFile,
+            '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
+            $tempRepair, "${Target}:~/noctra-repair.sh")
+        if ($upload.ExitCode -ne 0) { Stop-WithError "Envoi de la reparation refuse (code $($upload.ExitCode)). $($upload.StdErr)" }
+    }
+    finally {
+        Remove-Item -LiteralPath $tempRepair -Force -ErrorAction SilentlyContinue
+    }
+    $command = "NOCTRA_OLD_HOST=$OldRemoteHost NOCTRA_NEW_HOST=$RemoteHost bash " + '$HOME/noctra-repair.sh; status=$?; rm -f $HOME/noctra-repair.sh; exit $status'
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & ssh.exe -p $SshPort -i $IdentityFile -o 'IdentitiesOnly=yes' -o 'BatchMode=yes' -o 'StrictHostKeyChecking=accept-new' $Target $command
+        $repairExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($repairExitCode -ne 0) { Write-Host "La reparation n'a pas abouti (code $repairExitCode) : voir le diagnostic ci-dessous." -ForegroundColor Yellow }
+    else { Write-Host 'Reparation terminee.' -ForegroundColor Green }
+}
+
 function Invoke-NoctraDiagnostic {
     param([string]$Target)
     Write-Step 'Diagnostic du serveur (Node.js, installation, service, Jellyfin, qBittorrent, Sonarr, Radarr...)'
@@ -540,6 +683,7 @@ function Invoke-NoctraDiagnostic {
         $color = if ($line.StartsWith('[OK]')) { 'Green' } elseif ($line.StartsWith('[!!]')) { 'Red' } elseif ($line.StartsWith('[??]')) { 'Yellow' } elseif ($line.StartsWith('==')) { 'Cyan' } else { 'Gray' }
         Write-Host $line -ForegroundColor $color
     }
+    $script:DiagnosticProblems = ($report -split "`r?`n" | Where-Object { $_.StartsWith('[!!]') }).Count
     $reportPath = Join-Path $PSScriptRoot ('RAPPORT-NOCTRA-' + (Get-Date -Format 'yyyyMMdd-HHmm') + '.txt')
     try {
         [System.IO.File]::WriteAllText($reportPath, $report.Replace("`n", "`r`n"), [System.Text.UTF8Encoding]::new($true))
@@ -561,10 +705,23 @@ try {
 
     Write-Host "[Noctra Updater PC v$script:NoctraUpdaterVersion]" -ForegroundColor DarkCyan
 
-    if ($Diagnostic) {
+    if ($Diagnostic -or $Repair) {
         $sshTarget = "${RemoteUser}@${RemoteHost}"
         Ensure-NoctraSshKey -Target $sshTarget -KeyFile $IdentityFile
+        $script:DiagnosticProblems = 0
+        if ($Repair) {
+            Invoke-NoctraRepair -Target $sshTarget
+            Invoke-NoctraDiagnostic -Target $sshTarget
+            exit 0
+        }
         Invoke-NoctraDiagnostic -Target $sshTarget
+        if ($script:DiagnosticProblems -gt 0) {
+            $answer = Read-Host "`n$($script:DiagnosticProblems) probleme(s). Reparer automatiquement maintenant (adresses du nouveau serveur, port qBittorrent, service et proxy) ? (O/N)"
+            if ($answer -match '^(o|oui|y|yes)$') {
+                Invoke-NoctraRepair -Target $sshTarget
+                Invoke-NoctraDiagnostic -Target $sshTarget
+            }
+        }
         exit 0
     }
     Write-Step "Recherche de la version Noctra la plus recente dans : $DownloadsPath"
@@ -755,24 +912,24 @@ repair_env() {
   chmod 600 "$file"
 }
 
-# Port de Noctra libre sur ce serveur (premiere installation) : ports attribues
-# par Ultra.cc (app-ports), sinon port non utilise.
+# Port de Noctra : garde s'il est libre ; occupe par un autre programme (seedbox
+# deplacee, port deja pris sur ce serveur) : un port attribue libre (app-ports).
+port_in_use() { timeout 1 bash -c "</dev/tcp/127.0.0.1/$1" >/dev/null 2>&1; }
 choose_port() {
-  local file="$1" port free=""
+  local file="$1" port candidate
   port="$(env_value "$file" PORT)"
+  [[ -n "$port" ]] || return 0
+  port_in_use "$port" || return 0
   if command -v app-ports >/dev/null 2>&1; then
-    free="$(app-ports free 2>/dev/null | grep -oE '\b[0-9]{5}\b' || true)"
+    for candidate in $(app-ports free 2>/dev/null | grep -oE '\b[0-9]{5}\b'); do
+      [[ "$candidate" == "$port" ]] && continue
+      port_in_use "$candidate" && continue
+      set_env_value "$file" PORT "$candidate"
+      log "Port de Noctra $port deja utilise sur ce serveur : $candidate utilise."
+      return 0
+    done
   fi
-  if [[ -n "$free" ]]; then
-    if ! grep -qx "$port" <<<"$free"; then
-      local next
-      next="$(head -n 1 <<<"$free")"
-      set_env_value "$file" PORT "$next"
-      log "Port de Noctra $port indisponible sur ce serveur : $next utilise."
-    fi
-  elif [[ -n "$port" ]] && command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -qE "[:.]${port}\b"; then
-    warn "Le port $port semble deja utilise sur ce serveur ; choisis-en un autre dans le .env si Noctra ne demarre pas."
-  fi
+  warn "Le port $port est deja utilise sur ce serveur ; choisis-en un autre (commande app-ports free) dans le .env si Noctra ne demarre pas."
 }
 
 command -v unzip >/dev/null 2>&1 || fail "unzip est introuvable sur la seedbox."
@@ -830,7 +987,10 @@ else
   cp "$APP_DIR/.env" "$NEW_DIR/.env"
 fi
 repair_env "$NEW_DIR/.env"
-(( FRESH == 1 )) && choose_port "$NEW_DIR/.env"
+# Premiere installation, ou Noctra arrete (seedbox deplacee) : port verifie.
+if (( FRESH == 1 )) || ! systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  choose_port "$NEW_DIR/.env"
+fi
 
 if (( FRESH == 0 )); then
   for keep in runtime logs; do

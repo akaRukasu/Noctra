@@ -15,7 +15,7 @@ assert.match(ps1, /\[string\]\$RemoteHost = 'astra\.usbx\.me'/);
 assert.match(ps1, /\$remoteScript\.Replace\("`r`n", "`n"\)/);
 const dir = await mkdtemp(join(tmpdir(), 'noctra-pc-updater-'));
 try {
-  for (const [name, marker] of [['update', "$remoteScript = @'"], ['diagnostic', "$script:DiagnosticScript = @'"]]) {
+  for (const [name, marker] of [['update', "$remoteScript = @'"], ['diagnostic', "$script:DiagnosticScript = @'"], ['repair', "$script:RepairScript = @'"]]) {
     const start = ps1.indexOf(marker);
     assert.ok(start > 0, marker);
     const body = ps1.slice(start + marker.length, ps1.indexOf("\n'@", start)).replace(/^\n/, '');
@@ -27,8 +27,13 @@ try {
 assert.match(ps1, /repair_env "\$NEW_DIR\/\.env"/);
 assert.match(ps1, /qb_port="\$\(sed -nE 's\/\^WebUI\\\\Port=/);
 assert.match(ps1, /bash "\$APP_DIR\/ultra\/install-ultra\.sh"/);
-for (const name of ['LANCER-MISE-A-JOUR-NOCTRA-V8.cmd', 'DIAGNOSTIC-NOCTRA-V8.cmd']) {
+// V8.2 : réparation sur place (sans nouvelle version), proposée après le diagnostic.
+assert.match(ps1, /\$script:RepairScript = @'/);
+assert.match(ps1, /cp -p "\$APP_DIR\/\.env" "\$APP_DIR\/\.env\.avant-reparation-/, 'copie du .env avant réparation');
+assert.match(ps1, /Reparer automatiquement maintenant/);
+assert.match(ps1, /port_in_use "\$port" \|\| return 0/, 'port gardé s’il est libre');
+for (const name of ['LANCER-MISE-A-JOUR-NOCTRA-V8.cmd', 'DIAGNOSTIC-NOCTRA-V8.cmd', 'REPARER-NOCTRA-V8.cmd']) {
   const cmd = await readFile(new URL('../ultra/pc-updater/' + name, import.meta.url), 'utf8');
   assert.match(cmd, /\r\n/, name + ' : fins de ligne Windows');
 }
-console.log('Updater PC V8 : astra.usbx.me, .env adapté, première installation, diagnostic (scripts bash valides) : OK');
+console.log('Updater PC V8.2 : astra.usbx.me, .env adapté, première installation, diagnostic, réparation (scripts bash valides) : OK');
