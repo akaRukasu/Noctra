@@ -89,6 +89,6 @@ const version = (pkg.match(/"version": "(200\.0\.\d+)"/) || [])[1];
 assert.ok(version);
 assert.ok(shell.includes(`const NOCTRA_BUILD_VERSION = '${version}';`));
 assert.equal((server.match(new RegExp(`'${version.replace(/\./g, '\\.')}'`, 'g')) || []).length, 2);
-assert.ok(!html.includes('v=200.136') && html.includes('noctra-shell.js?v=200.137'));
+assert.ok(!html.includes('v=200.136') && Number((html.match(/noctra-shell\.js\?v=200\.(\d+)/) || [])[1]) >= 137, 'shell au moins 200.137');
 
 console.log('v200.0.137 : LiveWatch relayé (comptes, requêtes refusées, diagnostic) et bascule de serveur patiente : OK');
