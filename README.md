@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.162 — nouveau domaine du serveur (akarukasu.astra.usbx.me), appliqué sans intervention
+# Version actuelle : 200.0.164 — ±15 s, « Passer le générique (de fin) » et « Épisode suivant » sur tous les lecteurs
+
+Sur Android TV, LG, Samsung (Tizen et 2014), Android, iPhone, iPad et sur le web, les lecteurs ont maintenant des boutons −15 s et +15 s, avec retour visuel quand on appuie plusieurs fois. En direct, ces boutons n'apparaissent que si le flux a une vraie fenêtre de retour. « Passer le générique » et « Passer le générique de fin » s'appuient seulement sur les marqueurs réels : segments Jellyfin, sinon chapitres nommés. Rien n'est automatique et la scène après le générique est conservée. « Épisode suivant » est un bouton distinct. Sources TV : Streamed est passé sur strmfree.st, et une nouvelle source PPV utilise ppv.st. Détails et mise à jour en gardant les données : [MISE-A-JOUR-V200164.md](MISE-A-JOUR-V200164.md).
+
+# Historique : 200.0.162 — nouveau domaine du serveur (akarukasu.astra.usbx.me), appliqué sans intervention
 
 « Continuer à regarder » montrait 12 titres au plus, partout. Le serveur renvoie maintenant tous les titres commencés (60 au plus). Le carrousel en garde 10 à 12, et la rangée « Autres titres à reprendre » affiche les autres : Noctra TV, iOS 2.17.9, Android 1.9.4 et site web. Validation : `npm run test:v200150`.
 

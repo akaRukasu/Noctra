@@ -44,7 +44,7 @@ assert.ok(serviceWorker.includes(`noctra-shell-v200-r${cacheRevision}`), 'Le cac
 assert.ok(serviceWorker.includes('noctra.webmanifest?v=182'), 'Le service worker doit précharger le manifeste courant.');
 assert.ok(manifest.icons.every(icon => !icon.src || icon.src.includes('?v=182')), 'Les icônes du manifeste doivent utiliser le cache-buster courant.');
 assert.ok(theme.includes('Noctra V54 — centre TV enrichi, lecteurs iframe fiables, WiTV/OHA'), 'Le marqueur de version v54 doit être présent.');
-assert.ok(server.includes('livewatch.top/api/v1/public/all'), 'Les sources LiveWatch intégrées doivent être présentes.');
+assert.ok(server.includes('${liveWatchOrigin}/api/v1/public/all'), 'Les sources LiveWatch intégrées doivent être présentes.');
 assert.ok(shell.includes('data-tv-section'), 'Le centre TV doit fournir ses sous-menus.');
 assert.ok(shell.includes('data-noctra="users" data-admin-dock'), 'La gestion des utilisateurs doit être intégrée au dock administrateur.');
 assert.ok(!shell.includes('noctra-users-shortcut'), 'Le raccourci Utilisateurs flottant ne doit plus être injecté.');
@@ -64,9 +64,10 @@ assert.ok(shell.includes('arrCenterState'), 'L’interface Arr Center doit être
 assert.ok(shell.includes('activateTrackerAvailability'), 'Les cartes doivent vérifier Prowlarr progressivement.');
 assert.ok(theme.includes('.noctra-arr-grid'), 'Le centre Arr doit être responsive.');
 
-assert.ok(shell.includes("appPath('/vendor/hls.min.js?v=182')"), 'Le lecteur TV doit charger HLS.js depuis Noctra.');
+assert.ok(shell.includes("appPath('/vendor/hls.min.js?v=1.7.3')"), 'Le lecteur TV doit charger HLS.js depuis Noctra.');
 assert.ok(hlsVendor.length > 500_000, 'Le bundle HLS.js local doit être livré avec Noctra.');
-assert.ok(serviceWorker.includes('./vendor/hls.min.js?v=182'), 'Le lecteur HLS local doit être inclus dans le cache PWA.');
+assert.ok(serviceWorker.includes('./vendor/hls.min.js?v=1.7.3'), 'Le lecteur HLS local doit être inclus dans le cache PWA (même version que le shell).');
+assert.ok(!serviceWorker.includes('ignoreSearch'), 'Le cache PWA ne doit pas servir une ancienne version d’un fichier.');
 assert.ok(server.includes('/api/tv/catalog'), 'Le catalogue TV doit être exposé.');
 assert.ok(server.includes('/api/tv/stream/'), 'Le proxy sécurisé des flux TV doit être exposé.');
 assert.ok(shell.includes('openTv'), 'Le client doit intégrer le centre TV.');

@@ -433,8 +433,8 @@ else
 fi
 PORT="$(env_value PORT)"; BASE_URL="$(env_value BASE_URL)"; BASE_URL="${BASE_URL%/}"
 installed="$("$NODE_BIN" -e "process.stdout.write(String(require(process.argv[1]).version||''))" "$APP_DIR/package.json" 2>/dev/null || true)"
-if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.162 | sort -V | head -n 1)" != 200.0.162 ]]; then
-  note "Version $installed : mettre a jour vers 200.0.162 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
+if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.164 | sort -V | head -n 1)" != 200.0.164 ]]; then
+  note "Version $installed : mettre a jour vers 200.0.164 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
 fi
 CLIENT_CONFIG="$APP_DIR/public/client/config.json"
 if [[ -f "$CLIENT_CONFIG" ]]; then
