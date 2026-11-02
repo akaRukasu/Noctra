@@ -32,8 +32,16 @@ assert.match(ps1, /\$script:RepairScript = @'/);
 assert.match(ps1, /cp -p "\$APP_DIR\/\.env" "\$APP_DIR\/\.env\.avant-reparation-/, 'copie du .env avant réparation');
 assert.match(ps1, /Reparer automatiquement maintenant/);
 assert.match(ps1, /port_in_use "\$port" \|\| return 0/, 'port gardé s’il est libre');
+// V8.4 : « fetch failed » partout (Noctra n'arrive pas à joindre Jellyfin) :
+// adresse publique injoignable par Noctra remplacée par l'adresse locale du
+// même service (ports écoutés par ses programmes, lus dans /proc).
+assert.equal((ps1.match(/fix_services "\$(NEW_DIR|APP_DIR)\/\.env"/g) || []).length, 2, 'mise à jour et réparation');
+assert.match(ps1, /fix_local "\$file" JELLYFIN_URL jellyfin \/System\/Info\/Public '' \/jellyfin ''/);
+assert.match(ps1, /awk -v list="\$inodes" 'FNR > 1 && \$4 == "0A"/, 'ports en écoute lus dans /proc/net/tcp');
+assert.match(ps1, /sed -i -E "s#\(\[\/@\.\]\)\$\{OLD_HOST/, 'version web (config.json) corrigée');
+assert.match(ps1, /Noctra n'arrive pas a joindre Jellyfin/);
 for (const name of ['LANCER-MISE-A-JOUR-NOCTRA-V8.cmd', 'DIAGNOSTIC-NOCTRA-V8.cmd', 'REPARER-NOCTRA-V8.cmd']) {
   const cmd = await readFile(new URL('../ultra/pc-updater/' + name, import.meta.url), 'utf8');
   assert.match(cmd, /\r\n/, name + ' : fins de ligne Windows');
 }
-console.log('Updater PC V8.2 : astra.usbx.me, .env adapté, première installation, diagnostic, réparation (scripts bash valides) : OK');
+console.log('Updater PC V8.4 : astra.usbx.me, .env adapté, première installation, diagnostic, réparation (scripts bash valides) : OK');

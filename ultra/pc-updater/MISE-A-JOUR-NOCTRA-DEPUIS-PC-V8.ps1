@@ -16,7 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:NoctraUpdaterVersion = '8.2'
+$script:NoctraUpdaterVersion = '8.4'
 $script:LastSshDiagnostic = ''
 
 function Write-Step {
@@ -432,6 +432,14 @@ else
   bad ".env absent ($ENV_FILE)"
 fi
 PORT="$(env_value PORT)"; BASE_URL="$(env_value BASE_URL)"; BASE_URL="${BASE_URL%/}"
+installed="$("$NODE_BIN" -e "process.stdout.write(String(require(process.argv[1]).version||''))" "$APP_DIR/package.json" 2>/dev/null || true)"
+if [[ -n "$installed" ]] && [[ "$(printf '%s\n%s\n' "$installed" 200.0.162 | sort -V | head -n 1)" != 200.0.162 ]]; then
+  note "Version $installed : mettre a jour vers 200.0.162 ou plus (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd) pour les dernieres corrections"
+fi
+CLIENT_CONFIG="$APP_DIR/public/client/config.json"
+if [[ -f "$CLIENT_CONFIG" ]]; then
+  if grep -qi "${OLD_HOST//./\\.}" "$CLIENT_CONFIG"; then bad "Version web : elle cherche encore Jellyfin sur l'ancien serveur ($OLD_HOST) : lancer la reparation"; else ok "Version web : adresse de Jellyfin a jour"; fi
+fi
 
 title "Service et acces"
 SERVICE_FILE="$HOME/.config/systemd/user/$SERVICE_NAME"
@@ -452,14 +460,35 @@ fi
 PUBLIC="https://$(whoami).${NEW_HOST}${BASE_URL}/health"
 http "$PUBLIC"
 if [[ "$CODE" == 200 && "$BODY" == *'"status":"ok"'* ]]; then ok "Noctra repond depuis Internet ($PUBLIC)"; else bad "Noctra ne repond pas depuis Internet ($PUBLIC, code $CODE)"; fi
+WEB="https://$(whoami).${NEW_HOST}${BASE_URL}/client/index.html"
+http "$WEB"
+if [[ "$CODE" == 200 ]]; then ok "Version web accessible ($WEB)"; else bad "Version web inaccessible ($WEB, code $CODE)"; fi
+# Fonctions de Noctra activees d'apres sa configuration (ce que la version web affiche).
+if [[ -n "$PORT" ]]; then
+  http "http://127.0.0.1:${PORT}${BASE_URL}/api/config"
+  if [[ "$CODE" == 200 ]]; then
+    for feature in jellyfin downloads sonarr radarr prowlarr jellyseerr discovery tmdb files; do
+      value="$(json_field "configured.$feature")"
+      case "$feature" in
+        jellyfin) label="Jellyfin (bibliotheque)";; downloads) label="Telechargements (qBittorrent)";; sonarr) label="Series (Sonarr)";; radarr) label="Films (Radarr)";;
+        prowlarr) label="Recherche de torrents (Prowlarr)";; jellyseerr) label="Demandes (Jellyseerr)";; discovery) label="Decouvrir";; tmdb) label="Fiches TMDB";; files) label="Fichiers";;
+      esac
+      if [[ "$value" == true ]]; then info "Fonction active : $label"; else note "Fonction desactivee : $label (reglage manquant dans .env)"; fi
+    done
+  fi
+fi
 
 title "Services utilises par Noctra"
 JF="$(env_value JELLYFIN_URL)"; JF="${JF%/}"
 if [[ -n "$JF" ]]; then
+  if grep -qi "${OLD_HOST//./\\.}" <<<"$JF"; then bad "JELLYFIN_URL pointe encore sur l'ancien serveur ($JF) : lancer la reparation"; fi
   http "$JF/System/Info/Public"
   jf_up=0
   if [[ "$CODE" == 200 ]]; then jf_up=1; ok "Jellyfin joignable : $(json_field ServerName) $(json_field Version) ($JF)"; else bad "Jellyfin injoignable ($JF, code $CODE)"; fi
   key="$(env_value JELLYFIN_API_KEY)"
+  # Requete faite comme Noctra (Node.js) : cause exacte d'un "fetch failed".
+  jf_node="$("$NODE_BIN" -e 'fetch(process.argv[1],{signal:AbortSignal.timeout(10000)}).then(r=>console.log("HTTP "+r.status)).catch(e=>console.log("ERR "+((e.cause&&(e.cause.code||e.cause.message))||e.message)))' "$JF/System/Info/Public" 2>/dev/null)"
+  if [[ "$jf_node" == "HTTP 200" ]]; then ok "Jellyfin joint par Noctra (Node.js)"; else bad "Noctra n'arrive pas a joindre Jellyfin ($jf_node) : c'est le \"fetch failed\" de la version web ; lancer la reparation (adresse locale)"; fi
   if [[ -n "$key" && "$jf_up" == 1 ]]; then
     http -H "Authorization: MediaBrowser Token=\"$key\"" "$JF/System/Info"
     if [[ "$CODE" == 200 ]]; then ok "Cle d'API Jellyfin acceptee"; else bad "Cle d'API Jellyfin refusee (code $CODE) : en creer une dans Jellyfin > Tableau de bord > Cles d'API"; fi
@@ -587,6 +616,58 @@ choose_port() {
   warn "Le port $port est deja utilise sur ce serveur ; choisis-en un autre (commande app-ports free) dans le .env si Noctra ne demarre pas."
 }
 
+# Service joint par Noctra lui-meme (Node.js, comme Noctra) : code HTTP, ou
+# "ERR <cause>" (ENOTFOUND, ECONNREFUSED, certificat...). C'est cette requete
+# qui affiche "fetch failed" dans la version web quand elle echoue.
+node_fetch() {
+  node -e 'const [u,h]=process.argv.slice(1);fetch(u,{headers:h?JSON.parse(h):{},redirect:"manual",signal:AbortSignal.timeout(10000)}).then(r=>console.log(String(r.status))).catch(e=>console.log("ERR "+((e.cause&&(e.cause.code||e.cause.message))||e.message)))' "$1" "${2:-}" 2>/dev/null || echo "ERR node"
+}
+# Adresse publique injoignable par Noctra : adresse locale du meme service sur
+# la seedbox (port ecoute par son programme, chemin /jellyfin, /sonarr...).
+# Ports TCP ecoutes par MES programmes dont la ligne de commande contient $1
+# (jellyfin, sonarr...) : /proc seulement (ni ss ni root necessaires).
+listen_ports() {
+  local name="$1" pid fd link hex inodes=" "
+  for pid in /proc/[0-9]*; do
+    [[ -O "$pid" ]] || continue
+    tr '\0' ' ' < "$pid/cmdline" 2>/dev/null | grep -qi -- "$name" || continue
+    for fd in "$pid"/fd/*; do
+      link="$(readlink "$fd" 2>/dev/null)" || continue
+      [[ "$link" == socket:\[*\] ]] && inodes+="${link//[^0-9]/} "
+    done
+  done
+  [[ "$inodes" == " " ]] && return 0
+  for hex in $(awk -v list="$inodes" 'FNR > 1 && $4 == "0A" && index(list, " " $10 " ") { n = split($2, a, ":"); print a[n] }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u); do
+    printf '%d\n' "$((16#$hex))"
+  done
+}
+fix_local() {
+  local file="$1" key="$2" proc="$3" probe="$4" header="$5"; shift 5
+  local url status port base candidate
+  url="$(env_value "$file" "$key")"; [[ -n "$url" ]] || return 0
+  url="${url%/}"
+  status="$(node_fetch "$url$probe" "$header")"
+  [[ "$status" =~ ^[23][0-9][0-9]$ ]] && return 0
+  for port in $(listen_ports "$proc"); do
+    for base in "$@"; do
+      candidate="http://127.0.0.1:${port}${base}"
+      if [[ "$(node_fetch "$candidate$probe" "$header")" =~ ^2[0-9][0-9]$ ]]; then
+        set_env_value "$file" "$key" "$candidate"
+        log "$key : $url injoignable par Noctra ($status) -> adresse locale $candidate"
+        return 0
+      fi
+    done
+  done
+  warn "$key : $url injoignable par Noctra ($status), aucune adresse locale trouvee."
+}
+fix_services() {
+  local file="$1"
+  fix_local "$file" JELLYFIN_URL jellyfin /System/Info/Public '' /jellyfin ''
+  fix_local "$file" SONARR_URL sonarr /api/v3/system/status "{\"X-Api-Key\":\"$(env_value "$file" SONARR_API_KEY)\"}" /sonarr ''
+  fix_local "$file" RADARR_URL radarr /api/v3/system/status "{\"X-Api-Key\":\"$(env_value "$file" RADARR_API_KEY)\"}" /radarr ''
+  fix_local "$file" PROWLARR_URL prowlarr /api/v1/system/status "{\"X-Api-Key\":\"$(env_value "$file" PROWLARR_API_KEY)\"}" /prowlarr ''
+}
+
 [[ -f "$APP_DIR/.env" ]] || fail "Noctra n'est pas installe dans $APP_DIR : lancer la mise a jour (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd)."
 if [[ -d "$HOME/.nvm/versions/node" ]]; then
   NODE_BIN="$(find "$HOME/.nvm/versions/node" -mindepth 3 -maxdepth 3 -type f -path '*/bin/node' -perm -u+x 2>/dev/null | sort -V | tail -n 1)"
@@ -595,6 +676,13 @@ fi
 command -v node >/dev/null 2>&1 || fail "Node.js est introuvable."
 cp -p "$APP_DIR/.env" "$APP_DIR/.env.avant-reparation-$(date +%Y%m%d-%H%M%S)"
 repair_env "$APP_DIR/.env"
+# Version web : son adresse de Jellyfin (public/client/config.json) suit aussi.
+fix_services "$APP_DIR/.env"
+CLIENT_CONFIG="$APP_DIR/public/client/config.json"
+if [[ -f "$CLIENT_CONFIG" ]] && grep -qi "${OLD_HOST//./\\.}" "$CLIENT_CONFIG"; then
+  sed -i -E "s#([/@.])${OLD_HOST//./\\.}#\\1${NEW_HOST}#gI" "$CLIENT_CONFIG"
+  log "Version web : adresse de Jellyfin passee sur $NEW_HOST."
+fi
 if ! systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
   choose_port "$APP_DIR/.env"
 fi
@@ -932,6 +1020,58 @@ choose_port() {
   warn "Le port $port est deja utilise sur ce serveur ; choisis-en un autre (commande app-ports free) dans le .env si Noctra ne demarre pas."
 }
 
+# Service joint par Noctra lui-meme (Node.js, comme Noctra) : code HTTP, ou
+# "ERR <cause>" (ENOTFOUND, ECONNREFUSED, certificat...). C'est cette requete
+# qui affiche "fetch failed" dans la version web quand elle echoue.
+node_fetch() {
+  node -e 'const [u,h]=process.argv.slice(1);fetch(u,{headers:h?JSON.parse(h):{},redirect:"manual",signal:AbortSignal.timeout(10000)}).then(r=>console.log(String(r.status))).catch(e=>console.log("ERR "+((e.cause&&(e.cause.code||e.cause.message))||e.message)))' "$1" "${2:-}" 2>/dev/null || echo "ERR node"
+}
+# Adresse publique injoignable par Noctra : adresse locale du meme service sur
+# la seedbox (port ecoute par son programme, chemin /jellyfin, /sonarr...).
+# Ports TCP ecoutes par MES programmes dont la ligne de commande contient $1
+# (jellyfin, sonarr...) : /proc seulement (ni ss ni root necessaires).
+listen_ports() {
+  local name="$1" pid fd link hex inodes=" "
+  for pid in /proc/[0-9]*; do
+    [[ -O "$pid" ]] || continue
+    tr '\0' ' ' < "$pid/cmdline" 2>/dev/null | grep -qi -- "$name" || continue
+    for fd in "$pid"/fd/*; do
+      link="$(readlink "$fd" 2>/dev/null)" || continue
+      [[ "$link" == socket:\[*\] ]] && inodes+="${link//[^0-9]/} "
+    done
+  done
+  [[ "$inodes" == " " ]] && return 0
+  for hex in $(awk -v list="$inodes" 'FNR > 1 && $4 == "0A" && index(list, " " $10 " ") { n = split($2, a, ":"); print a[n] }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u); do
+    printf '%d\n' "$((16#$hex))"
+  done
+}
+fix_local() {
+  local file="$1" key="$2" proc="$3" probe="$4" header="$5"; shift 5
+  local url status port base candidate
+  url="$(env_value "$file" "$key")"; [[ -n "$url" ]] || return 0
+  url="${url%/}"
+  status="$(node_fetch "$url$probe" "$header")"
+  [[ "$status" =~ ^[23][0-9][0-9]$ ]] && return 0
+  for port in $(listen_ports "$proc"); do
+    for base in "$@"; do
+      candidate="http://127.0.0.1:${port}${base}"
+      if [[ "$(node_fetch "$candidate$probe" "$header")" =~ ^2[0-9][0-9]$ ]]; then
+        set_env_value "$file" "$key" "$candidate"
+        log "$key : $url injoignable par Noctra ($status) -> adresse locale $candidate"
+        return 0
+      fi
+    done
+  done
+  warn "$key : $url injoignable par Noctra ($status), aucune adresse locale trouvee."
+}
+fix_services() {
+  local file="$1"
+  fix_local "$file" JELLYFIN_URL jellyfin /System/Info/Public '' /jellyfin ''
+  fix_local "$file" SONARR_URL sonarr /api/v3/system/status "{\"X-Api-Key\":\"$(env_value "$file" SONARR_API_KEY)\"}" /sonarr ''
+  fix_local "$file" RADARR_URL radarr /api/v3/system/status "{\"X-Api-Key\":\"$(env_value "$file" RADARR_API_KEY)\"}" /radarr ''
+  fix_local "$file" PROWLARR_URL prowlarr /api/v1/system/status "{\"X-Api-Key\":\"$(env_value "$file" PROWLARR_API_KEY)\"}" /prowlarr ''
+}
+
 command -v unzip >/dev/null 2>&1 || fail "unzip est introuvable sur la seedbox."
 command -v systemctl >/dev/null 2>&1 || fail "systemctl est introuvable sur la seedbox."
 command -v curl >/dev/null 2>&1 || fail "curl est introuvable sur la seedbox."
@@ -987,6 +1127,7 @@ else
   cp "$APP_DIR/.env" "$NEW_DIR/.env"
 fi
 repair_env "$NEW_DIR/.env"
+fix_services "$NEW_DIR/.env"
 # Premiere installation, ou Noctra arrete (seedbox deplacee) : port verifie.
 if (( FRESH == 1 )) || ! systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
   choose_port "$NEW_DIR/.env"
