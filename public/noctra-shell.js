@@ -327,7 +327,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.166';
+  const NOCTRA_BUILD_VERSION = '200.0.167';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -5534,7 +5534,7 @@
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
   // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
-  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'strmfree.st', 'www.strmfree.st', 'ppv.st', 'www.ppv.st', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'strmfree.st', 'www.strmfree.st', 'ppv.st', 'www.ppv.st', 'strmfree.pk', 'www.strmfree.pk', 'rockylive.st', 'www.rockylive.st', 'tim-streams.com', 'www.tim-streams.com', 'huhu.bz', 'www.huhu.bz', 'kool.ws', 'www.kool.ws', 'vavoo.top', 'www.vavoo.top', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;

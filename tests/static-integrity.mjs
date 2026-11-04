@@ -148,7 +148,7 @@ assert.ok(!shell.includes('livewatch-auth') && !shell.includes('liveWatchSupabas
 assert.ok(theme.includes('Noctra V63 — session LiveWatch VIP partagée sans exposer ses jetons'), 'La couche visuelle VIP v63 doit être présente.');
 assert.ok(server.includes('normalizedJellyseerrDestination') && server.includes('Toujours envoyer à Jellyseerr une destination réellement disponible'), 'Les demandes doivent toujours envoyer un profil qualité encore valide.');
 assert.ok(shell.includes('noctra-request-profile-field') && shell.includes('Choisis la qualité souhaitée'), 'Tous les utilisateurs doivent pouvoir choisir le profil qualité.');
-assert.ok(server.includes('/mediaurl-catalog.json') && server.includes('/mediaurl-resolve.json'), 'OHA doit utiliser son catalogue et son résolveur publics natifs.');
+assert.ok(server.includes('const legacy = `/mediaurl-${kind}.json`;') && server.includes('const hub = `/mediahubmx-${kind}.json`;'), 'OHA doit utiliser son catalogue et son résolveur publics natifs (MediaHubMX, puis MediaURL).');
 assert.ok(server.includes('/api/tv/oha/resolve/') && shell.includes('playTvResolvedOption'), 'Les serveurs OHA doivent être lisibles et sélectionnables dans le lecteur natif.');
 assert.ok(shell.includes('data-tv-mobile-view') && shell.includes('data-tv-zap'), 'La TV v64 doit proposer les vues mobiles et le zapping précédent/suivant.');
 assert.ok(theme.includes('Noctra V64 — demandes fiables et centre TV natif multi-plateforme'), 'La couche visuelle v64 doit être présente.');
@@ -173,7 +173,7 @@ assert.ok(shell.includes('tvPlaybackSequence') && shell.includes('benignTvPlayIn
 assert.ok(server.includes('/api/tv/livewatch/diagnostics') && !shell.includes('data-livewatch-vip-test'), 'Le diagnostic VIP reste disponible côté serveur sans réintroduire le bouton de test retiré de la TV.');
 assert.ok(theme.includes('position: static !important') && theme.includes('#noctra-dock[data-expanded="true"]'), 'Le dock V69/V70 doit neutraliser les anciennes règles absolues/compactes.');
 assert.ok(theme.includes('Noctra V72 — dock totalement statique au survol') && theme.includes('transition: none !important') && theme.includes('animation: none !important'), 'Le dock V72 doit rester totalement statique au survol.');
-assert.ok(server.includes("url: 'https://kool.ws/live'") && server.includes("encodeTvStateReference('oha'"), 'OHA doit utiliser la source publique courante et des références résistantes aux redémarrages.');
+assert.ok(server.includes("url: 'https://huhu.bz/#/channels'") && server.includes("encodeTvStateReference('oha'"), 'OHA doit utiliser la source publique courante et des références résistantes aux redémarrages.');
 assert.ok(server.includes("encodeTvStateReference('witv-page'") && server.includes("encodeTvStateReference('witv-player'"), 'WiTV doit utiliser des références de lecteur résistantes aux redémarrages.');
 const playTvChannelSource = shell.slice(shell.indexOf('async function playTvChannel'), shell.indexOf('function setTvMobileView', shell.indexOf('async function playTvChannel')));
 assert.ok(!shell.includes('upgradeLiveWatchVipPlayback'), 'LiveWatch ne doit pas utiliser un basculement tardif qui interrompt une lecture en cours.');

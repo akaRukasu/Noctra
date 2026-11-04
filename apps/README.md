@@ -9,7 +9,7 @@ Noctra existe en applications pour :
 | Android TV, Google TV, Shield, Fire TV, vidéoprojecteurs | `Noctra-androidtv.apk` (**Noctra TV**, appli native) | fichier APK |
 | iPhone et iPad (iOS 26) | `Noctra-ios26-unsigned.ipa` (appli native SwiftUI, Liquid Glass) | Sideloadly ou AltStore |
 | iPhone et iPad (iOS 15 à 18) | `Noctra-Web-ancienne-interface-ios-unsigned.ipa` (ancienne interface web, appli séparée « Noctra Web » ; la vraie appli est `Noctra-ios26-unsigned.ipa`) | Sideloadly ou AltStore |
-| Téléviseurs LG (webOS) | `com.noctra.media_1.1.61_all.ipk` (**Noctra TV**) | mode développeur LG |
+| Téléviseurs LG (webOS) | `com.noctra.media_1.1.62_all.ipk` (**Noctra TV**) | mode développeur LG |
 | Téléviseurs Samsung (Tizen) | `Noctra.wgt` (**Noctra TV**) | [Apps2Samsung](https://github.com/Apps2Samsung/Apps2Samsung) |
 | Téléviseurs Samsung 2014 (série H, Orsay : UE40H6400…) | `Noctra-Samsung-2014-<version>.zip` (**Noctra TV**, kit) | User App Sync : [guide](samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md) |
 

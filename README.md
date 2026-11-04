@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.166 — serveurs TV refusés expliqués (fournisseur ou accès VIP)
+# Version actuelle : 200.0.167 — sources TV : OHA / Kool sur huhu.bz, kool.ws, vavoo.top, oha.cx (serveurs de chaque miroir), Streamed et PPV sur leurs nouvelles adresses
+
+Détails : [MISE-A-JOUR-V200167.md](MISE-A-JOUR-V200167.md).
+
+# Historique : 200.0.166 — serveurs TV refusés expliqués (fournisseur ou accès VIP)
 
 Les serveurs TV en 401/403 affichent la cause donnée par Noctra (refus du fournisseur, compte LiveWatch VIP à reconnecter) dans iOS 2.18.10 et Android 1.9.15, et le diagnostic de l'updater PC vérifie les accès TV. Détails : [MISE-A-JOUR-V200165.md](MISE-A-JOUR-V200165.md).
 

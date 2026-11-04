@@ -5503,8 +5503,7 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       // revanche conservées lors d'une redirection strictement OHA -> OHA
       // (www/oha.cx), sinon un redirect canonique casserait l'appel
       // signé avant même que le client officiel puisse recevoir sa réponse.
-      const trustedOhaRedirect = /^(?:www\.)?oha\.(?:to|cx)$/i.test(url.hostname)
-        && /^(?:www\.)?oha\.(?:to|cx)$/i.test(nextUrl.hostname);
+      const trustedOhaRedirect = ohaAllowedHost(url.toString()) && ohaAllowedHost(nextUrl.toString());
       // 200.0.134 : redirection vers un sous-domaine LiveWatch (serveur de flux) : session VIP conservée.
       const trustedLiveWatchRedirect = isLiveWatchFamilyHost(url.hostname) && isLiveWatchFamilyHost(nextUrl.hostname);
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
@@ -6448,13 +6447,17 @@ async function proxyLiveWatchVipTokenHttp(tokenValue, req, res, requestUrl) {
 const complementaryTvBuiltInSources = [
   { id: 'fstv-public', name: 'FSTV', section: 'channels', description: 'French Stream TV · catalogue public de chaînes', url: 'https://fstv.rest/', type: 'fstv', provider: 'FSTV' },
   { id: 'witv-public', name: 'WiTV', section: 'channels', description: 'Catalogue public WiTV classé par catégories', url: 'https://witv.football/', type: 'witv', provider: 'WiTV' },
-  { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · source Kool actuelle', url: 'https://kool.ws/live', type: 'oha', provider: 'OHA' },
+  // 200.0.167 : OHA / Kool publié sur plusieurs miroirs (huhu.bz, kool.ws,
+  // vavoo.top, oha.cx), application « #/channels » ; essayés dans cet ordre.
+  { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · huhu.bz (secours : kool.ws, vavoo.top, oha.cx)', url: 'https://huhu.bz/#/channels', type: 'oha', provider: 'OHA' },
   { id: 'streamsports99-live-tv', name: 'StreamSports99 TV', section: 'channels', description: 'Chaînes internationales · pays et programmes Live TV', url: 'https://streamsports99.su/live-tv', type: 'streamsports99', provider: 'StreamSports99' },
   { id: 'dlstreams-sports', name: 'DLStreams', section: 'sports', description: 'Programme sportif public · lecteurs intégrés DLStreams', url: 'https://dlstreams.st/', type: 'dlstreams', provider: 'DLStreams' },
   // 200.0.164 : streamed.pk ne publie plus rien ; adresse actuelle strmfree.st
   // (anciennes adresses essayées ensuite), et PPV (ppv.st) en source à part.
-  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree.st', url: 'https://strmfree.st/', type: 'streamed', provider: 'Streamed' },
-  { id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · ppv.st', url: 'https://ppv.st/', type: 'ppv', provider: 'PPV' },
+  // 200.0.167 : Streamed sur strmfree.pk, PPV sur rockylive.st / tim-streams.com
+  // (chaque source essaie aussi les autres adresses, puis propose le site).
+  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree.pk', url: 'https://strmfree.pk/', type: 'streamed', provider: 'Streamed' },
+  { id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · rockylive.st (secours : tim-streams.com)', url: 'https://rockylive.st/', type: 'ppv', provider: 'PPV' },
   { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · catégories et chaînes sportives', url: 'https://bzh.lat/', type: 'volkamax', provider: 'Volkamax' },
   { id: 'daddylive-sports', name: 'DaddyLive', section: 'sports', description: 'Programme sportif · lecteurs DaddyLive intégrés', url: 'https://dlive.sx/', type: 'daddylive', provider: 'DaddyLive' },
   { id: 'brigitte-sports', name: 'Streamonsport', section: 'sports', description: 'Programme Streamonsport · lecteur du fournisseur', url: 'https://choc2foot.biz/', type: 'brigitte', provider: 'Streamonsport' },
@@ -11095,9 +11098,20 @@ function streamedMatchChannel(item, baseUrl, fallbackGroup = 'Sports') {
 
 // Adresses de Streamed, de la plus récente à la plus ancienne : en cas d'échec
 // (hôte injoignable, erreur, page HTML au lieu du JSON), l'adresse suivante.
-const STREAMED_HOSTS = ['strmfree.st', 'streamed.pk', 'streamed.st'];
+const STREAMED_HOSTS = ['strmfree.pk', 'strmfree.st', 'streamed.pk', 'streamed.st', 'rockylive.st', 'tim-streams.com'];
+// Adresse qui a répondu en dernier : les requêtes suivantes partent d'elle
+// (une adresse morte n'est pas réessayée à chaque rubrique du catalogue).
+let streamedHealthyHost = null;
 
 async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = []) {
+  if (!tried.length && allowMirror && streamedHealthyHost?.expiresAt > Date.now()) {
+    const start = new URL(urlValue);
+    if (STREAMED_HOSTS.includes(start.hostname) && start.hostname !== streamedHealthyHost.host) {
+      start.hostname = streamedHealthyHost.host;
+      urlValue = start.href;
+      root = start.origin + '/';
+    }
+  }
   try {
   const response = await fetchTvRemote(urlValue, {
     signal: AbortSignal.timeout(allowMirror ? 6_000 : 8_000),
@@ -11111,7 +11125,11 @@ async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = [])
   if (!response.ok) throw new HttpError(response.status, `API Streamed indisponible (${response.status}).`);
   const text = await response.text();
   if (text.length > 4 * 1024 * 1024) throw new HttpError(413, 'Catalogue Streamed trop volumineux.');
-  try { return JSON.parse(text); } catch { throw new HttpError(502, 'Catalogue Streamed invalide.'); }
+  let payload;
+  try { payload = JSON.parse(text); } catch { throw new HttpError(502, 'Catalogue Streamed invalide.'); }
+  const answered = new URL(urlValue).hostname;
+  if (STREAMED_HOSTS.includes(answered)) streamedHealthyHost = { host: answered, expiresAt: Date.now() + 300_000 };
+  return payload;
   } catch (error) {
     const target = new URL(urlValue);
     if (!allowMirror || !STREAMED_HOSTS.includes(target.hostname)) throw error;
@@ -11210,26 +11228,42 @@ async function tvCatalogFromStreamed(rootValue = 'https://strmfree.st/') {
     if (result.status !== 'fulfilled') { failedCount += 1; return; }
     result.value.forEach(channel => map.set(channel.id, channel));
   });
-  const channels = [...map.values()];
+  // Aucune adresse ne répond à l'API : site du fournisseur dans le lecteur web.
+  const unreachable = !map.size && failedCount === endpoints.length;
+  const channels = unreachable ? providerSiteChannels('Streamed', STREAMED_SITES) : [...map.values()];
   const value = {
     name: 'Streamed',
     sourceType: 'streamed',
     groups: [],
     channels,
     count: channels.length,
-    warning: channels.length
-      ? (failedCount ? `${failedCount} rubrique(s) Streamed n’ont pas répondu.` : '')
-      : 'Aucun événement Streamed public exploitable n’est actuellement publié.'
+    warning: unreachable
+      ? `L’API Streamed ne répond sur aucune adresse (${STREAMED_HOSTS.join(', ')}) : site du fournisseur proposé.`
+      : channels.length
+        ? (failedCount ? `${failedCount} rubrique(s) Streamed n’ont pas répondu.` : '')
+        : 'Aucun événement Streamed public exploitable n’est actuellement publié.'
   };
   tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
   return value;
 }
 
-// ── PPV (ppv.st) : programme public /api/streams ──────────────────────────
+// Site du fournisseur, proposé quand aucune de ses adresses ne publie de
+// programme exploitable (lecture dans le lecteur web de Noctra).
+function providerSiteChannels(provider, urls) {
+  return urls.map(url => {
+    const host = new URL(url).hostname;
+    const channel = normalizeTvChannel({ name: `${provider} · site ${host}`, embed_url: url, group: 'Sites du fournisseur', provider, description: 'Programme affiché par le site du fournisseur' }, url, 'Sites du fournisseur');
+    return channel ? { ...channel, externalUrl: url, compatPage: true, streamKind: 'Site du fournisseur' } : null;
+  }).filter(Boolean);
+}
+
+// ── PPV (rockylive.st, tim-streams.com, ppv.st) : programme public /api/streams ──
 // Réponse lue de façon tolérante : { streams: [ { category, streams: [...] } ] }
 // ou liste directe. Chaque événement : nom, image, début / fin (secondes),
 // lecteur intégré (iframe) ou page /live/<uri_name>.
-const PPV_HOSTS = ['ppv.st', 'ppv.to'];
+const PPV_HOSTS = ['rockylive.st', 'tim-streams.com', 'ppv.st', 'ppv.to'];
+const PPV_SITES = ['https://rockylive.st/', 'https://tim-streams.com/'];
+const STREAMED_SITES = ['https://strmfree.pk/'];
 
 function ppvEvents(payload) {
   const groups = Array.isArray(payload) ? payload : Array.isArray(payload?.streams) ? payload.streams : Array.isArray(payload?.data) ? payload.data : [];
@@ -11272,7 +11306,7 @@ function ppvChannel(event, category, root) {
   return { ...channel, externalUrl: page || embed, playbackType: 'embed', compatPage: true, streamKind: embed ? 'PPV · lecteur intégré' : 'PPV · page de l’événement' };
 }
 
-async function tvCatalogFromPpv(rootValue = 'https://ppv.st/') {
+async function tvCatalogFromPpv(rootValue = 'https://rockylive.st/') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `ppv::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -11313,13 +11347,17 @@ async function tvCatalogFromPpv(rootValue = 'https://ppv.st/') {
     seen.add(channel.id);
     channels.push(channel);
   }
+  // Aucune adresse ne répond à l'API : sites du fournisseur dans le lecteur web.
+  if (!payload) channels.push(...providerSiteChannels('PPV', PPV_SITES));
   const value = {
     name: 'PPV',
     sourceType: 'ppv',
     groups: [],
     channels,
     count: channels.length,
-    warning: channels.length ? '' : payload ? 'Aucun événement PPV public n’est actuellement publié.' : `PPV ne répond pas${lastError?.message ? ` (${lastError.message})` : ''}.`
+    warning: payload
+      ? (channels.length ? '' : 'Aucun événement PPV public n’est actuellement publié.')
+      : `L’API PPV ne répond sur aucune adresse (${hosts.join(', ')}${lastError?.message ? ` ; ${lastError.message}` : ''}) : sites du fournisseur proposés.`
   };
   tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (channels.length ? 60_000 : 20_000), value });
   return value;
@@ -11669,7 +11707,7 @@ function ohaChannelIdentity(value) {
 // Le client Kool actuel utilise directement `ids.id` dans /watch?live=<id>.
 const ohaConfirmedPublicRoutes = new Map();
 
-function ohaWatchRouteFromValue(value, rootValue = 'https://oha.cx/live') {
+function ohaWatchRouteFromValue(value, rootValue = 'https://huhu.bz/live') {
   const raw = String(value || '').trim();
   if (!raw) return '';
   try {
@@ -11694,7 +11732,7 @@ function ohaRouteCandidatesFromValue(value, rootValue, keyHint = '', depth = 0, 
     add(raw);
     // Certaines réponses JSON échappent les URLs ou les injectent dans un
     // fragment de texte/JS plutôt que dans un champ URL dédié.
-    for (const match of raw.matchAll(/(?:https?:\/\/(?:www\.)?(?:oha\.cx|kool\.ws|kool\.to)|https?:\/\/185\.254\.196\.78)?\/watch\?live=([a-z0-9_-]{12,128})/gi)) {
+    for (const match of raw.matchAll(/(?:https?:\/\/(?:www\.)?(?:huhu\.bz|oha\.cx|kool\.ws|kool\.to|vavoo\.top)|https?:\/\/185\.254\.196\.78)?\/watch\?live=([a-z0-9_-]{12,128})/gi)) {
       add(new URL(`/watch?live=${match[1]}`, safeTvRemoteUrl(rootValue)).toString());
     }
     if (/^(?:live|watch|route|page|href|external|public|web|slug|hash|token|id)$/i.test(String(keyHint || '')) && /^[a-f0-9]{18,64}$/i.test(raw)) {
@@ -11754,6 +11792,44 @@ function ohaProgramme(epgValue) {
 
 let ohaHealthyRoot = null;
 
+// 200.0.167 : miroirs actuels d'OHA / Kool (même application « #/channels »),
+// dans l'ordre d'essai, puis anciennes adresses gardées en secours.
+const OHA_MIRRORS = ['huhu.bz', 'kool.ws', 'vavoo.top', 'oha.cx'];
+const OHA_LEGACY_HOSTS = ['kool.to', '185.254.196.78', '178.83.5.50'];
+const OHA_HOSTS = [...OHA_MIRRORS, ...OHA_LEGACY_HOSTS].flatMap(host => /^\d/.test(host) ? [host] : [host, `www.${host}`]);
+
+function ohaIsMirror(value) {
+  try { return OHA_MIRRORS.includes(new URL(value).hostname.toLowerCase().replace(/^www\./, '')); } catch { return false; }
+}
+
+// API de catalogue / résolution : « mediahubmx » (Kool, Vavoo, Huhu) ou
+// « mediaurl » (ancien OHA). Les deux sont essayées, la plus probable d'abord.
+function ohaApiEndpoints(rootValue, kind) {
+  const host = new URL(rootValue).hostname.toLowerCase().replace(/^www\./, '');
+  const hub = `/mediahubmx-${kind}.json`;
+  const legacy = `/mediaurl-${kind}.json`;
+  return host === 'oha.cx' ? [legacy, hub] : [hub, legacy];
+}
+
+// Appel JSON d'un miroir : endpoint suivant si celui-ci n'existe pas (404/405)
+// ou ne renvoie pas de JSON.
+async function ohaPostJson(candidateRoot, kind, options, makeError) {
+  let lastError = null;
+  for (const endpointName of ohaApiEndpoints(candidateRoot, kind)) {
+    const response = await fetchTvRemote(new URL(endpointName, candidateRoot).toString(), options);
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch {}
+      lastError = makeError(response.status);
+      if ([404, 405].includes(response.status)) continue;
+      throw lastError;
+    }
+    const text = await response.text();
+    try { return text ? JSON.parse(text) : {}; }
+    catch { lastError = makeError(0, 'réponse non JSON'); }
+  }
+  throw lastError || makeError(0, 'réponse non JSON');
+}
+
 function ohaRootAlternatives(rootValue) {
   const roots = [];
   const add = value => {
@@ -11764,13 +11840,11 @@ function ohaRootAlternatives(rootValue) {
   };
   if (ohaHealthyRoot?.expiresAt > Date.now()) add(ohaHealthyRoot.url);
   add(rootValue);
-  // OHA a migré vers Kool. L'IP reste un secours utile lorsque le DNS du
-  // nouveau domaine est filtré sur la seedbox ; l'ancien domaine vient enfin.
-  add('https://kool.ws/live');
+  // 200.0.167 : miroirs actuels (huhu.bz, kool.ws, vavoo.top, oha.cx), puis
+  // les adresses IP de Kool, utiles si le DNS d'un domaine est filtré.
+  for (const host of OHA_MIRRORS) add(`https://${host}/live`);
   add('http://185.254.196.78/live');
   add('http://178.83.5.50/live');
-  add('http://vavoo.top/live');
-  add('https://oha.cx/live');
   return roots;
 }
 
@@ -11808,29 +11882,22 @@ async function ohaCatalogPage(root, group, cursor = null, timeoutMs = 9_000) {
         signal.addEventListener('abort', onAbort, {once:true});
       });
       signal.throwIfAborted();
-    const endpointName = /(?:^|\.)(?:kool\.ws|vavoo\.top)$|^(?:185\.254\.196\.78|178\.83\.5\.50)$/i.test(new URL(candidateRoot).hostname)
-      ? '/mediahubmx-catalog.json'
-      : '/mediaurl-catalog.json';
-    const endpoint = new URL(endpointName, candidateRoot).toString();
     const origin = new URL(candidateRoot).origin;
-      const response = await fetchTvRemote(endpoint, {
+      const payload = await ohaPostJson(candidateRoot, 'catalog', {
         method: 'POST',
         signal,
         headers: {
           accept: 'application/json, text/plain;q=0.8, */*;q=0.4',
           'content-type': 'application/json; charset=utf-8',
           origin,
-          referer: candidateRoot,
+          referer: `${origin}/`,
           'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36'
         },
         body: JSON.stringify(ohaRequestBody('catalog', { group, cursor }))
-      });
-      if (!response.ok) throw ohaProviderHttpError(response.status, 'catalogue') || new HttpError(response.status, `Catalogue OHA ${group} indisponible (${response.status}).`);
-      const text = await response.text();
-      let payload;
-      try { payload = text ? JSON.parse(text) : {}; }
-      catch { throw new HttpError(502, `Catalogue OHA ${group} : réponse non JSON.`); }
+      }, (status, detail) => status
+        ? ohaProviderHttpError(status, 'catalogue') || new HttpError(status, `Catalogue OHA ${group} indisponible (${status}).`)
+        : new HttpError(502, `Catalogue OHA ${group} : ${detail}.`));
       if (!Array.isArray(payload?.items)) throw new HttpError(502, 'Catalogue OHA : format inattendu.');
       ohaHealthyRoot = {url:candidateRoot, expiresAt:Date.now()+300_000};
       // V79 : si oha.cx redirige sa requête d'API vers un hôte canonique,
@@ -11899,6 +11966,9 @@ function ohaOfficialPageCandidates(rootValue, channelId = '', fallbackUrl = '', 
   // Kool publie actuellement `ids.id` comme identifiant exact de la route.
   // On reconstruit toujours la deep-link sur le miroir testé afin de ne jamais
   // mélanger une route oha.cx obsolète avec les assets/API de kool.ws.
+  // 200.0.167 : miroirs actuels = application « #/channels » (la chaîne y est
+  // ensuite choisie par le pont de Noctra) ; anciennes routes /watch en secours.
+  if (ohaIsMirror(root.toString())) add(new URL('/#/channels', root).toString());
   addWatchId(channelId);
   for (const candidate of routeCandidates) addWatchId(candidate);
   addWatchId(fallbackUrl);
@@ -11907,7 +11977,7 @@ function ohaOfficialPageCandidates(rootValue, channelId = '', fallbackUrl = '', 
 }
 
 async function selectOhaOfficialPage(reference) {
-  const roots = ohaRootAlternatives(reference?.meta?.root || 'https://oha.cx/live');
+  const roots = ohaRootAlternatives(reference?.meta?.root || 'https://huhu.bz/live');
   const channelId = reference?.meta?.channelId || '';
   const fallbackUrl = reference?.meta?.fallbackUrl || '';
   const routeCandidates = Array.isArray(reference?.meta?.routeCandidates) ? reference.meta.routeCandidates : [];
@@ -11923,11 +11993,15 @@ async function selectOhaOfficialPage(reference) {
         if (!response.ok) continue;
         const html = await response.text();
         if (ohaPageLooksMissing(html)) continue;
-        return { url: response.url || candidate, root, htmlChecked: true };
+        // fetch() n'envoie pas le fragment (« #/channels ») : il est remis sur l'adresse finale.
+        const hash = new URL(candidate).hash;
+        const finalUrl = new URL(response.url || candidate);
+        if (hash && !finalUrl.hash) finalUrl.hash = hash;
+        return { url: finalUrl.toString(), root, htmlChecked: true };
       } catch {}
     }
   }
-  return { url: new URL('/', safeTvRemoteUrl(reference?.meta?.root || 'https://oha.cx/live')).toString(), root: reference?.meta?.root || 'https://oha.cx/live', htmlChecked: false };
+  return { url: new URL('/#/channels', safeTvRemoteUrl(reference?.meta?.root || 'https://huhu.bz/live')).toString(), root: reference?.meta?.root || 'https://huhu.bz/live', htmlChecked: false };
 }
 
 function ohaWebFallbackOption(reference, token = '') {
@@ -12083,11 +12157,12 @@ async function validateOhaNativeHlsStream(streamUrlValue, headers = {}, timeoutM
   return true;
 }
 
-async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs = 6_000, signal = null) {
+async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs = 6_000, signal = null, onlyRoot = '') {
   const controller = new AbortController();
   const deadline = AbortSignal.timeout(Math.max(2_500, timeoutMs));
   const attemptSignal = AbortSignal.any([controller.signal, deadline, ...(signal ? [signal] : [])]);
-  const roots = ohaRootAlternatives(reference.meta.root).slice(0, 6);
+  // 200.0.167 : serveur d'un miroir précis (choisi dans la liste) ou course entre miroirs.
+  const roots = onlyRoot ? [onlyRoot] : ohaRootAlternatives(reference.meta.root).slice(0, 6);
   try {
     return await Promise.any(roots.map(async (candidateRoot, rootIndex) => {
       // Un miroir lent ne bloque plus tous les suivants pendant 8 secondes.
@@ -12102,38 +12177,28 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
         attemptSignal.addEventListener('abort', onAbort, { once: true });
       });
       attemptSignal.throwIfAborted();
-      const endpointName = /(?:^|\.)(?:kool\.ws|vavoo\.top)$|^(?:185\.254\.196\.78|178\.83\.5\.50)$/i.test(new URL(candidateRoot).hostname)
-        ? '/mediahubmx-resolve.json'
-        : '/mediaurl-resolve.json';
-      const endpoint = new URL(endpointName, candidateRoot).toString();
       const origin = new URL(candidateRoot).origin;
-      const response = await fetchTvRemote(endpoint, {
+      const payload = await ohaPostJson(candidateRoot, 'resolve', {
         method: 'POST',
         signal: AbortSignal.any([attemptSignal, AbortSignal.timeout(8_000)]),
         headers: {
           accept: 'application/json, text/plain;q=0.8, */*;q=0.5',
           'content-type': 'application/json; charset=utf-8',
           origin,
-          referer: candidateRoot,
+          referer: `${origin}/`,
           'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
           'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87'
         },
         body: JSON.stringify(ohaRequestBody('resolve', { url: candidate.url }))
-      });
-      if (!response.ok) {
-        try { await response.body?.cancel?.(); } catch {}
-        throw ohaProviderHttpError(response.status, `serveur ${index + 1}`) || new HttpError(response.status, `Serveur OHA ${index + 1} indisponible (${response.status}).`);
-      }
-      const text = await response.text();
-      let payload;
-      try { payload = text ? JSON.parse(text) : {}; }
-      catch { throw new HttpError(502, `Serveur OHA ${index + 1} : réponse non JSON.`); }
+      }, (status, detail) => status
+        ? ohaProviderHttpError(status, `serveur ${index + 1}`) || new HttpError(status, `Serveur OHA ${index + 1} indisponible (${status}).`)
+        : new HttpError(502, `Serveur OHA ${index + 1} : ${detail}.`));
       const streamValue = ohaResolvedStreamUrl(payload);
       if (!streamValue) throw new HttpError(422, `Serveur OHA ${index + 1} n'a renvoyé aucun flux vidéo.`);
       const streamUrl = safeTvRemoteUrl(streamValue);
       const nativeHeaders = {
         origin,
-        referer: candidateRoot,
+        referer: `${origin}/`,
         'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87'
       };
       // V108 : un résolveur OHA peut répondre « succès » tout en retournant une
@@ -12150,7 +12215,8 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
         playbackType: 'stream',
         native: true,
         verified: true,
-        serverIndex: index
+        serverIndex: index,
+        mirror: new URL(candidateRoot).hostname.replace(/^www\./, '')
       };
     }));
   } catch (error) {
@@ -12194,7 +12260,54 @@ async function firstSuccessfulOhaCandidate(reference, candidates, signal = null)
   });
 }
 
-async function resolveOhaStreamReference(token, preferredIndex = null) {
+// 200.0.167 : miroirs OHA qui répondent (catalogue public), gardés 5 minutes.
+// Les serveurs d'une chaîne sont proposés sur chacun d'eux.
+let ohaMirrorHealthState = null;
+function ohaHealthyMirrors() {
+  if (ohaMirrorHealthState?.expiresAt > Date.now()) return ohaMirrorHealthState.value;
+  const value = Promise.all(OHA_MIRRORS.map(async host => {
+    const root = `https://${host}/live`;
+    try {
+      const payload = await ohaPostJson(root, 'catalog', {
+        method: 'POST',
+        signal: AbortSignal.timeout(7_000),
+        headers: {
+          accept: 'application/json, text/plain;q=0.8, */*;q=0.4',
+          'content-type': 'application/json; charset=utf-8',
+          origin: `https://${host}`,
+          referer: `https://${host}/`,
+          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36'
+        },
+        body: JSON.stringify(ohaRequestBody('catalog', { group: ohaPublicGroups[0], cursor: null }))
+      }, status => new HttpError(status || 502, `Miroir OHA ${host} indisponible.`));
+      return Array.isArray(payload?.items) ? host : '';
+    } catch { return ''; }
+  })).then(hosts => hosts.filter(Boolean));
+  ohaMirrorHealthState = { value, expiresAt: Date.now() + 300_000 };
+  value.then(hosts => { if (!hosts.length) ohaMirrorHealthState = { value, expiresAt: Date.now() + 30_000 }; });
+  return value;
+}
+
+// Serveurs d'une chaîne : un par serveur OHA et par miroir qui répond
+// (« huhu.bz · HD · Serveur 1 », « kool.ws · HD · Serveur 1 »…) ; sans miroir
+// connu, un par serveur comme avant.
+function ohaServerChoices(candidates, mirrors, resolverPath) {
+  if (!mirrors.length) return candidates.map((candidate, index) => ({
+    index, server: index, label: candidate.label || `Serveur ${index + 1}`,
+    resolveUrl: `${resolverPath}?server=${index}`, playbackType: 'resolver'
+  }));
+  const choices = [];
+  for (const mirror of mirrors) candidates.forEach((candidate, server) => choices.push({
+    index: choices.length, server, mirror,
+    label: `${mirror} · ${candidate.label || `Serveur ${server + 1}`}`,
+    resolveUrl: `${resolverPath}?server=${server}&mirror=${encodeURIComponent(mirror)}`,
+    playbackType: 'resolver'
+  }));
+  return choices;
+}
+
+async function resolveOhaStreamReference(token, preferredIndex = null, preferredMirror = '') {
   const state = decodeTvStateReference(token, 'oha');
   const stored = tvReferences.get(String(token || ''));
   const reference = state ? {
@@ -12207,12 +12320,9 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   if (reference.meta?.kind !== 'oha' || !Array.isArray(reference.meta.candidates) || !reference.meta.candidates.length) throw new HttpError(403, 'Référence OHA invalide.');
   const candidates = reference.meta.candidates;
   const resolverPath = publicPath(`/api/tv/oha/resolve/${encodeURIComponent(String(token || ''))}`);
-  const serverChoices = candidates.map((candidate, index) => ({
-    index,
-    label: candidate.label || `Serveur ${index + 1}`,
-    resolveUrl: `${resolverPath}?server=${index}`,
-    playbackType: 'resolver'
-  }));
+  const mirror = OHA_MIRRORS.includes(String(preferredMirror || '').toLowerCase()) ? String(preferredMirror).toLowerCase() : '';
+  // Santé des miroirs vérifiée en même temps que le premier flux (pas d'attente en plus).
+  const mirrorsPromise = ohaHealthyMirrors().catch(() => []);
   let preferredFailure = '';
   // Le flux natif ne doit pas attendre les sondes HTML des miroirs : les SPA
   // renvoient souvent HTTP 200 même pour une fausse route. L'embed n'est chargé
@@ -12222,7 +12332,7 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   let nativeAttempt = null;
   try {
     nativeAttempt = await (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < candidates.length
-      ? resolveSingleOhaCandidate(reference, candidates[preferredIndex], preferredIndex, 22_000, nativeController.signal)
+      ? resolveSingleOhaCandidate(reference, candidates[preferredIndex], preferredIndex, 22_000, nativeController.signal, mirror ? `https://${mirror}/live` : '')
       : firstSuccessfulOhaCandidate(reference, candidates, nativeController.signal));
   } catch (error) {
     preferredFailure = cleanError(error);
@@ -12232,6 +12342,24 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   }
   const selectedIndex = Number.isInteger(preferredIndex) && candidates[preferredIndex]
     ? preferredIndex : Number(nativeAttempt?.serverIndex ?? 0);
+  // Miroirs qui répondent (au plus 6 s d'attente de plus si la vérification n'est pas finie).
+  const healthy = await Promise.race([mirrorsPromise, delay(6_000).then(() => [])]);
+  const answeredMirror = nativeAttempt?.mirror || mirror;
+  const mirrors = answeredMirror && OHA_MIRRORS.includes(answeredMirror) && !healthy.includes(answeredMirror)
+    ? OHA_MIRRORS.filter(host => host === answeredMirror || healthy.includes(host))
+    : healthy;
+  const serverChoices = ohaServerChoices(candidates, mirrors, resolverPath);
+  // Choix actif : le serveur et le miroir du flux obtenu.
+  const activeChoice = nativeAttempt
+    ? serverChoices.find(choice => choice.server === selectedIndex && (!choice.mirror || choice.mirror === answeredMirror)) || null
+    : null;
+  if (nativeAttempt && activeChoice) {
+    nativeAttempt.label = activeChoice.label;
+    nativeAttempt.serverIndex = activeChoice.index;
+    nativeAttempt.index = activeChoice.index;
+  }
+  // Applis : serveurs des autres miroirs proposés comme serveurs à demander.
+  const otherServers = serverChoices.filter(choice => choice !== activeChoice).map(choice => ({ label: choice.label, resolveUrl: choice.resolveUrl, playbackType: 'resolver', mirror: choice.mirror || '' }));
   const selectedChannelId = candidates[selectedIndex]?.channelId || reference.meta.channelId || '';
   const officialRoot = reference.meta.root;
   const externalUrl = ohaOfficialPageCandidates(officialRoot, selectedChannelId, reference.meta.fallbackUrl, reference.meta.routeCandidates)[0];
@@ -12257,7 +12385,7 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   bridge.manualOnly = true;
 
   if (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < candidates.length) {
-    if (nativeAttempt) return { externalUrl, options: [nativeAttempt, bridge], serverChoices, activeServer: preferredIndex, embeds: [] };
+    if (nativeAttempt) return { externalUrl, options: [nativeAttempt, bridge], serverChoices, activeServer: activeChoice ? activeChoice.index : preferredIndex, embeds: [] };
     throw new HttpError(502, 'Ce serveur OHA ne fournit pas de flux HLS vérifiable. Essaie un autre serveur ou ouvre manuellement le lecteur officiel.');
   }
 
@@ -12265,7 +12393,8 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   // lancé automatiquement pour masquer un échec du résolveur natif.
   return {
     externalUrl,
-    options: nativeAttempt ? [nativeAttempt, bridge] : [bridge],
+    // Sans flux vérifié : lecteur officiel d'abord (comme avant), serveurs des miroirs à essayer ensuite.
+    options: nativeAttempt ? [nativeAttempt, ...otherServers, bridge] : [bridge, ...otherServers],
     serverChoices,
     activeServer: nativeAttempt ? Number(nativeAttempt.serverIndex ?? 0) : null,
     nativeUnavailable: !nativeAttempt,
@@ -12347,7 +12476,7 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
   return value;
 }
 
-async function tvCatalogFromOha(rootValue = 'https://kool.ws/live') {
+async function tvCatalogFromOha(rootValue = 'https://huhu.bz/#/channels') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `oha::native::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -13260,7 +13389,7 @@ async function proxyWiTvEmbed(token, res) {
 }
 
 function ohaAllowedHost(value) {
-  try { return ['kool.ws', 'www.kool.ws', 'kool.to', 'www.kool.to', '185.254.196.78', '178.83.5.50', 'vavoo.top', 'www.vavoo.top', 'oha.cx', 'www.oha.cx'].includes(new URL(value).hostname.toLowerCase()); }
+  try { return OHA_HOSTS.includes(new URL(value).hostname.toLowerCase()); }
   catch { return false; }
 }
 
@@ -13304,7 +13433,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   const encodedToken = encodeURIComponent(String(token));
   const tunnel = publicPath(`/api/tv/oha/http/${encodedToken}`);
   const siteRoot = publicPath(`/api/tv/oha/site/${encodedToken}`);
-  const allowedHosts = ['kool.ws', 'www.kool.ws', 'kool.to', 'www.kool.to', '185.254.196.78', '178.83.5.50', 'vavoo.top', 'www.vavoo.top', 'oha.cx', 'www.oha.cx'];
+  const allowedHosts = OHA_HOSTS;
   const proxiedUrl = value => {
     try {
       const target = new URL(String(value || ''), page);
@@ -13342,7 +13471,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   });
   const siteBase = `${siteRoot}${page.pathname.replace(/[^/]*$/, '')}`;
   const remoteRoute = `${page.pathname || '/'}${page.search || ''}${page.hash || ''}`;
-  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const T=${inlineJson(tunnel)},S=${inlineJson(siteRoot)},O=${inlineJson(page.toString())},PO=${inlineJson(page.origin)},R=${inlineJson(remoteRoute)},CID=${inlineJson(String(targetInfo?.channelId || ''))},CN=${inlineJson(String(targetInfo?.channelName || ''))},NativeURL=window.URL,NO=new NativeURL(location.href).origin,A=new Set(${inlineJson(allowedHosts)}),F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map(),store={getItem:k=>mem.has(String(k))?mem.get(String(k)):null,setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}addEventListener('message',e=>{try{if(e.source!==window&&e.data&&e.data.type==='noctra-oha-state')parent.postMessage(e.data,'*')}catch{}});function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function notifyMedia(u,m){if(!/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/i.test(u.pathname+u.search))return;try{parent.postMessage({type:'noctra-oha-state',state:'media',url:m},'*')}catch{}}function findMedia(v,d=0,k=''){if(d>7||v==null)return'';if(typeof v==='string'){try{const u=new URL(v,O),q=(u.pathname+u.search).toLowerCase();if(/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/.test(q)||(/(?:hls|manifest|playlist|stream|source|file)/i.test(k)&&/^https?:$/.test(u.protocol)))return u.href}catch{}return''}if(Array.isArray(v)){for(const x of v){const f=findMedia(x,d+1,k);if(f)return f}return''}if(typeof v==='object'){for(const key of ['streamUrl','stream_url','hls','hlsUrl','hls_url','file','src','url','link']){if(key in v){const f=findMedia(v[key],d+1,key);if(f)return f}}for(const [key,x] of Object.entries(v)){const f=findMedia(x,d+1,key);if(f)return f}}return''}function map(v,media){try{const raw=String(v);if(/^(?:blob:|data:|about:)/i.test(raw))return raw;const fixed=/^null\//i.test(raw)?PO+raw.slice(4):raw,u=new URL(fixed,O);if(u.pathname.startsWith(T)||u.pathname.startsWith(S))return raw;if(media){const m=A.has(u.hostname.toLowerCase())?(u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href)):T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}if(A.has(u.hostname.toLowerCase()))return u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/oha/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}return String(v)}catch{return v}}function emitResolved(v){try{const u=findMedia(v);if(!u)return;const m=map(u,true);if(m)notifyMedia(new URL(u,O),m)}catch{}}function inspectPayloadText(t){try{const raw=String(t||'').trim();if(!raw)return;if(raw[0]==='{'||raw[0]==='['){emitResolved(JSON.parse(raw));return}const m=raw.match(/https?:\/\/[^\s"'<>]+(?:m3u8?|mpd|mp4)(?:[^\s"'<>]*)?/i);if(m)emitResolved(m[0])}catch{}}function inspectResponse(r){try{const c=String(r?.headers?.get?.('content-type')||'').toLowerCase(),u=String(r?.url||'');if(/(?:mediaurl|mediahubmx)-resolve\.json|\/resolve(?:[/?]|$)/i.test(u))r.clone().text().then(inspectPayloadText).catch(()=>{})}catch{}}window.fetch=async function(input,init){try{let r;if(typeof input==='string'||input instanceof URL){r=await F(map(input,false),Object.assign({credentials:'omit'},init||{}));inspectResponse(r);return r}if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();r=await F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));inspectResponse(r);return r}}}catch{}const r=await F(input,init);inspectResponse(r);return r};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);if(!this.__noctraInspect){this.__noctraInspect=true;this.addEventListener('load',()=>{try{if(this.responseType==='json')emitResolved(this.response);else if(!this.responseType||this.responseType==='text')inspectPayloadText(this.responseText)}catch{}})}return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};let routeRecoveryDone=false;function routeLooksMissing(){try{const text=String(document.body?.innerText||document.documentElement?.innerText||'').replace(/\s+/g,' ').slice(0,5000);return /(?:\bNOT FOUND\b|that route doesn['’]t exist|route doesn['’]t exist|page not found|unknown route)/i.test(text)}catch{return false}}function recoverBrokenRoute(){if(routeRecoveryDone||!routeLooksMissing())return false;routeRecoveryDone=true;try{parent.postMessage({type:'noctra-oha-state',state:'route-fallback',message:'Route OHA expirée · retour au catalogue Live TV'},'*')}catch{};try{history.replaceState({},'','/live');dispatchEvent(new PopStateEvent('popstate'))}catch{}return true}let targetDone=false,targetSearchUsed=false;function normTarget(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\b(?:fhd|uhd|hd|sd|4k)\b/g,' ').replace(/\s+/g,' ').trim()}function chooseTarget(){if(targetDone||(!CID&&!CN)||document.querySelector('video'))return false;const want=normTarget(CN),id=String(CID||'').toLowerCase();let best=null,bestScore=-1;for(const el of document.querySelectorAll('button,a,[role=button],[data-id],[data-channel],[data-channel-id],[data-stream-id],li,article')){if(!(el instanceof HTMLElement))continue;const txt=normTarget(el.innerText||el.textContent||''),attrs=[el.dataset?.id,el.dataset?.channel,el.dataset?.channelId,el.dataset?.streamId,el.getAttribute('href')].filter(Boolean).map(v=>String(v).toLowerCase());let score=0;if(id&&attrs.some(v=>v===id||v.includes(id)))score=120;else if(want&&txt===want)score=100;else if(want&&txt&&txt.includes(want))score=72;else if(want&&txt&&want.includes(txt)&&txt.length>3)score=45;if(score>bestScore){bestScore=score;best=el}}if(best&&bestScore>=70){targetDone=true;try{best.scrollIntoView({block:'center',inline:'nearest'})}catch{};try{best.click()}catch{};return true}if(!targetSearchUsed&&want){const input=document.querySelector('input[type=search],input[placeholder*=search i],input[placeholder*=recher i],input[name*=search i]');if(input){targetSearchUsed=true;try{const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d?.set?.call(input,CN);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));setTimeout(chooseTarget,350)}catch{}}}return false}let targetTimer=0;function scheduleTarget(){if(targetDone)return;clearTimeout(targetTimer);targetTimer=setTimeout(chooseTarget,90)};let playing=false;function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';v.addEventListener('playing',()=>{playing=true;parent.postMessage({type:'noctra-oha-state',state:'playing'},'*')});v.addEventListener('error',()=>parent.postMessage({type:'noctra-oha-state',state:'error'},'*'));}new MutationObserver(()=>{document.querySelectorAll('video').forEach(bind);if(!recoverBrokenRoute())scheduleTarget()}).observe(document.documentElement,{childList:true,subtree:true});addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('video').forEach(bind);scheduleTarget();setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},500);setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},1500);setTimeout(()=>{if(!playing&&!routeRecoveryDone)parent.postMessage({type:'noctra-oha-state',state:'stalled'},'*')},30000)});})();</script>`
+  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const T=${inlineJson(tunnel)},S=${inlineJson(siteRoot)},O=${inlineJson(page.toString())},PO=${inlineJson(page.origin)},R=${inlineJson(remoteRoute)},CID=${inlineJson(String(targetInfo?.channelId || ''))},CN=${inlineJson(String(targetInfo?.channelName || ''))},NativeURL=window.URL,NO=new NativeURL(location.href).origin,A=new Set(${inlineJson(allowedHosts)}),F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map(),store={getItem:k=>mem.has(String(k))?mem.get(String(k)):null,setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}addEventListener('message',e=>{try{if(e.source!==window&&e.data&&e.data.type==='noctra-oha-state')parent.postMessage(e.data,'*')}catch{}});function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function notifyMedia(u,m){if(!/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/i.test(u.pathname+u.search))return;try{parent.postMessage({type:'noctra-oha-state',state:'media',url:m},'*')}catch{}}function findMedia(v,d=0,k=''){if(d>7||v==null)return'';if(typeof v==='string'){try{const u=new URL(v,O),q=(u.pathname+u.search).toLowerCase();if(/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/.test(q)||(/(?:hls|manifest|playlist|stream|source|file)/i.test(k)&&/^https?:$/.test(u.protocol)))return u.href}catch{}return''}if(Array.isArray(v)){for(const x of v){const f=findMedia(x,d+1,k);if(f)return f}return''}if(typeof v==='object'){for(const key of ['streamUrl','stream_url','hls','hlsUrl','hls_url','file','src','url','link']){if(key in v){const f=findMedia(v[key],d+1,key);if(f)return f}}for(const [key,x] of Object.entries(v)){const f=findMedia(x,d+1,key);if(f)return f}}return''}function map(v,media){try{const raw=String(v);if(/^(?:blob:|data:|about:)/i.test(raw))return raw;const fixed=/^null\//i.test(raw)?PO+raw.slice(4):raw,u=new URL(fixed,O);if(u.pathname.startsWith(T)||u.pathname.startsWith(S))return raw;if(media){const m=A.has(u.hostname.toLowerCase())?(u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href)):T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}if(A.has(u.hostname.toLowerCase()))return u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/oha/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}return String(v)}catch{return v}}function emitResolved(v){try{const u=findMedia(v);if(!u)return;const m=map(u,true);if(m)notifyMedia(new URL(u,O),m)}catch{}}function inspectPayloadText(t){try{const raw=String(t||'').trim();if(!raw)return;if(raw[0]==='{'||raw[0]==='['){emitResolved(JSON.parse(raw));return}const m=raw.match(/https?:\/\/[^\s"'<>]+(?:m3u8?|mpd|mp4)(?:[^\s"'<>]*)?/i);if(m)emitResolved(m[0])}catch{}}function inspectResponse(r){try{const c=String(r?.headers?.get?.('content-type')||'').toLowerCase(),u=String(r?.url||'');if(/(?:mediaurl|mediahubmx)-resolve\.json|\/resolve(?:[/?]|$)/i.test(u))r.clone().text().then(inspectPayloadText).catch(()=>{})}catch{}}window.fetch=async function(input,init){try{let r;if(typeof input==='string'||input instanceof URL){r=await F(map(input,false),Object.assign({credentials:'omit'},init||{}));inspectResponse(r);return r}if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();r=await F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));inspectResponse(r);return r}}}catch{}const r=await F(input,init);inspectResponse(r);return r};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);if(!this.__noctraInspect){this.__noctraInspect=true;this.addEventListener('load',()=>{try{if(this.responseType==='json')emitResolved(this.response);else if(!this.responseType||this.responseType==='text')inspectPayloadText(this.responseText)}catch{}})}return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};let routeRecoveryDone=false;function routeLooksMissing(){try{const text=String(document.body?.innerText||document.documentElement?.innerText||'').replace(/\s+/g,' ').slice(0,5000);return /(?:\bNOT FOUND\b|that route doesn['’]t exist|route doesn['’]t exist|page not found|unknown route)/i.test(text)}catch{return false}}function recoverBrokenRoute(){if(routeRecoveryDone||!routeLooksMissing())return false;routeRecoveryDone=true;try{parent.postMessage({type:'noctra-oha-state',state:'route-fallback',message:'Route OHA expirée · retour au catalogue Live TV'},'*')}catch{};try{history.replaceState({},'','/#/channels');dispatchEvent(new PopStateEvent('popstate'));dispatchEvent(new HashChangeEvent('hashchange'))}catch{}return true}let targetDone=false,targetSearchUsed=false;function normTarget(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\b(?:fhd|uhd|hd|sd|4k)\b/g,' ').replace(/\s+/g,' ').trim()}function chooseTarget(){if(targetDone||(!CID&&!CN)||document.querySelector('video'))return false;const want=normTarget(CN),id=String(CID||'').toLowerCase();let best=null,bestScore=-1;for(const el of document.querySelectorAll('button,a,[role=button],[data-id],[data-channel],[data-channel-id],[data-stream-id],li,article')){if(!(el instanceof HTMLElement))continue;const txt=normTarget(el.innerText||el.textContent||''),attrs=[el.dataset?.id,el.dataset?.channel,el.dataset?.channelId,el.dataset?.streamId,el.getAttribute('href')].filter(Boolean).map(v=>String(v).toLowerCase());let score=0;if(id&&attrs.some(v=>v===id||v.includes(id)))score=120;else if(want&&txt===want)score=100;else if(want&&txt&&txt.includes(want))score=72;else if(want&&txt&&want.includes(txt)&&txt.length>3)score=45;if(score>bestScore){bestScore=score;best=el}}if(best&&bestScore>=70){targetDone=true;try{best.scrollIntoView({block:'center',inline:'nearest'})}catch{};try{best.click()}catch{};return true}if(!targetSearchUsed&&want){const input=document.querySelector('input[type=search],input[placeholder*=search i],input[placeholder*=recher i],input[name*=search i]');if(input){targetSearchUsed=true;try{const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d?.set?.call(input,CN);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));setTimeout(chooseTarget,350)}catch{}}}return false}let targetTimer=0;function scheduleTarget(){if(targetDone)return;clearTimeout(targetTimer);targetTimer=setTimeout(chooseTarget,90)};let playing=false;function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';v.addEventListener('playing',()=>{playing=true;parent.postMessage({type:'noctra-oha-state',state:'playing'},'*')});v.addEventListener('error',()=>parent.postMessage({type:'noctra-oha-state',state:'error'},'*'));}new MutationObserver(()=>{document.querySelectorAll('video').forEach(bind);if(!recoverBrokenRoute())scheduleTarget()}).observe(document.documentElement,{childList:true,subtree:true});addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('video').forEach(bind);scheduleTarget();setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},500);setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},1500);setTimeout(()=>{if(!playing&&!routeRecoveryDone)parent.postMessage({type:'noctra-oha-state',state:'stalled'},'*')},30000)});})();</script>`
   // Seed the exact public route before the SPA bundle executes. Previously the
   // bridge always forced /live, which lost the selected channel and could make
   // Kool display a stale or false route after its own navigation.
@@ -13563,7 +13692,7 @@ async function proxyOhaHttp(token, req, res, requestUrl) {
   const method = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? req.method : 'GET';
   if (externalMedia && !['GET', 'HEAD'].includes(method)) throw new HttpError(405, 'Une ressource média OHA externe ne peut être relayée qu’en lecture.');
   const body = ['GET', 'HEAD'].includes(method) ? undefined : await readTvProxyBody(req);
-  const fallbackUrl = state?.fallbackUrl || storedBridge?.meta?.fallbackUrl || state?.root || storedBridge?.meta?.root || 'https://oha.cx/';
+  const fallbackUrl = state?.fallbackUrl || storedBridge?.meta?.fallbackUrl || state?.root || storedBridge?.meta?.root || 'https://huhu.bz/#/channels';
   const rememberedPage = ohaBridgePages.get(String(token))?.pageUrl || fallbackUrl;
   const origin = externalMedia ? new URL(rememberedPage).origin : target.origin;
   const upstreamHeaders = {
@@ -13984,12 +14113,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.166', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.167', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.166',
+        version: '200.0.167',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -14330,7 +14459,7 @@ const server = createServer(async (req, res) => {
       const token = path.split('/').at(-1) || '';
       const serverValue = requestUrl.searchParams.get('server');
       const preferredIndex = serverValue !== null && /^\d+$/.test(serverValue) ? Number(serverValue) : null;
-      return json(res, 200, await resolveOhaStreamReference(token, preferredIndex));
+      return json(res, 200, await resolveOhaStreamReference(token, preferredIndex, requestUrl.searchParams.get('mirror') || ''));
     }
 
     if (path.startsWith('/api/tv/streamsports99/resolve/') && req.method === 'GET') {
