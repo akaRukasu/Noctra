@@ -83,12 +83,10 @@ try {
   await page.click('.noctra-skip-segment');
   await page.waitForFunction(() => document.querySelector('video').currentTime >= 19.5);
   assert.equal(await visible(page, '.noctra-skip-segment'), '');
-  // « Épisode suivant » avec les commandes du lecteur seulement.
-  await page.waitForTimeout(1300);
-  assert.equal(await visible(page, '.noctra-next-episode'), '');
+  // 200.0.168 : plus de bouton « Épisode suivant » à part sur le web, même commandes affichées.
   await page.evaluate(() => document.querySelector('.videoOsdBottom').classList.remove('videoOsdBottom-hidden'));
-  await page.waitForFunction(() => document.querySelector('.noctra-next-episode')?.dataset.visible === 'true', null, { timeout: 3000 });
-  assert.match(await page.evaluate(() => document.querySelector('.noctra-next-episode').getAttribute('aria-label')), /^Épisode suivant : S1 · É2 — Suite$/);
+  await page.waitForTimeout(1300);
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.noctra-next-episode').length), 0);
   // Retour visuel cumulé de sauts de 15 s répétés.
   await page.evaluate(async () => {
     const v = document.querySelector('video');
@@ -106,10 +104,7 @@ try {
   const calls = await page.evaluate(() => window.__calls);
   assert.ok(!calls.some(c => c[0] === 'play' || c[0] === 'stop'), 'passer le générique de fin ne lance pas l’épisode suivant : ' + JSON.stringify(calls));
   assert.ok((await at(page)) < 115, 'scène après le générique visible');
-  // Bouton distinct « Épisode suivant ».
-  await page.waitForFunction(() => document.querySelector('.noctra-next-episode')?.dataset.visible === 'true', null, { timeout: 3000 });
-  await page.click('.noctra-next-episode');
-  await page.waitForFunction(() => window.__calls.some(c => c[0] === 'play' && c[1] === 'e2'));
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.noctra-next-episode').length), 0, 'aucun bouton « Épisode suivant »');
   await page.close();
 
   // 2. Sans segments ni chapitres nommés, réglage ±10/30 de l'utilisateur : rien d'inventé, réglage gardé.
@@ -135,7 +130,7 @@ try {
   await page.waitForTimeout(2500);
   assert.ok((await at(page)) < 106, 'aucun saut automatique');
   await page.close();
-  console.log('Lecteur web : générique, générique de fin, épisode suivant distinct, ±15 s : OK');
+  console.log('Lecteur web : passer le générique, passer le générique de fin, ±15 s, sans bouton « Épisode suivant » : OK');
 } finally {
   await browser.close();
 }

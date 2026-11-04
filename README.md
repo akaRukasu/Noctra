@@ -1,4 +1,8 @@
-# Version actuelle : 200.0.167 — sources TV : OHA / Kool sur huhu.bz, kool.ws, vavoo.top, oha.cx (serveurs de chaque miroir), Streamed et PPV sur leurs nouvelles adresses
+# Version actuelle : 200.0.168 — accueil web : lectures en cours de chaque utilisateur (plus celles d'un autre compte), lecteur web sans bouton « Épisode suivant »
+
+Détails : [MISE-A-JOUR-V200168.md](MISE-A-JOUR-V200168.md).
+
+# Historique : 200.0.167 — sources TV : OHA / Kool sur huhu.bz, kool.ws, vavoo.top, oha.cx (serveurs de chaque miroir), Streamed et PPV sur leurs nouvelles adresses
 
 Détails : [MISE-A-JOUR-V200167.md](MISE-A-JOUR-V200167.md).
 

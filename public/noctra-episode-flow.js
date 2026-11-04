@@ -6,10 +6,10 @@
      « Credits »…). Sans marqueur fiable : pas de bouton (plus de générique
      « appris » des avances manuelles). Le générique de fin passé, la scène
      après le générique reste visible.
-   - « Épisode suivant » : bouton distinct (commandes affichées), et carte
-     « À suivre » au générique de fin (ou 30 s avant la fin) : l'épisode
+   - Carte « À suivre » au générique de fin (ou 30 s avant la fin) : l'épisode
      suivant démarre seul après 10 s ; « Lire maintenant » ou « Plus tard »
-     (la lecture s'arrête à la fin).
+     (la lecture s'arrête à la fin). 200.0.168 : plus de bouton « Épisode
+     suivant » à part sur le web (demandé : seulement passer les génériques).
    - ±15 s : sauts du lecteur Jellyfin réglés à 15 s (si l'utilisateur ne les a
      pas déjà réglés), retour visuel cumulé des appuis répétés.
    - Transition : l'image et le titre de l'épisode suivant couvrent l'écran le
@@ -268,40 +268,6 @@
     else hideSkip();
   }
 
-  // ── « Épisode suivant » (bouton distinct, avec les commandes du lecteur) ──
-  let nextButton = null;
-  function osdVisible() {
-    const osd = document.querySelector('.videoOsdBottom');
-    return Boolean(osd && !osd.classList.contains('videoOsdBottom-hidden') && !osd.classList.contains('hide'));
-  }
-  function updateNextButton() {
-    const show = Boolean(state?.next && state.item?.Type === 'Episode' && !state.advancing && !upNext && osdVisible());
-    if (!show) {
-      if (nextButton) { nextButton.dataset.visible = 'false'; nextButton.tabIndex = -1; }
-      return;
-    }
-    if (!nextButton) {
-      nextButton = element('button', 'noctra-next-episode');
-      nextButton.type = 'button';
-      nextButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        playNext();
-      });
-    }
-    if (nextButton.parentNode !== host()) host().appendChild(nextButton);
-    const label = `Épisode suivant : ${episodeLabel(state.next)}`;
-    if (nextButton.getAttribute('aria-label') !== label) {
-      nextButton.innerHTML = '';
-      nextButton.appendChild(element('span', '', 'Épisode suivant'));
-      nextButton.appendChild(element('i', 'noctra-skip-segment-icon', '⏭'));
-      nextButton.setAttribute('aria-label', label);
-      nextButton.title = label;
-    }
-    nextButton.dataset.visible = 'true';
-    nextButton.tabIndex = 0;
-  }
-
   // ── ±15 s ──
   // Sauts du lecteur Jellyfin à 15 s, une fois par utilisateur et seulement
   // s'ils n'ont jamais été réglés (un choix de l'utilisateur est conservé).
@@ -421,7 +387,6 @@
     tick();
     upNext = { node, timer: 0 };
     document.body.classList.add('noctra-up-next-open');
-    updateNextButton();
     requestAnimationFrame(() => { node.dataset.visible = 'true'; play.focus({ preventScroll: true }); });
     upNext.timer = window.setInterval(() => {
       if (!video || video.paused) return;
@@ -536,7 +501,6 @@
     const at = positionMs(manager);
     if (!video?.seeking) state.lastMs = at;
     updateSkip(at);
-    updateNextButton();
     if (state.item.Type !== 'Episode' || !state.next) return;
     const duration = durationMs(state.item, manager);
     if (!duration) return;
@@ -560,11 +524,9 @@
     video = next;
     if (!video) {
       hideSkip();
-      updateNextButton();
       closeUpNext();
       document.body.classList.remove('noctra-episode-flow');
       state = null;
-      updateNextButton();
       return;
     }
     videoController = new AbortController();

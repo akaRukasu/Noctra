@@ -139,7 +139,7 @@ assert.match(flowJs, /const COUNTDOWN_SECONDS = 10;/);
 assert.match(flowJs, /const trigger = outro \? outro\.startMs : duration - \(duration > 10 \* 60_000 \? 30_000 : 15_000\);/);
 assert.match(flowJs, /for \(const segment of state\.segments\) \{\s*if \(segment\.dismissed\) continue;/, '« Passer le générique de fin » et « Épisode suivant » distincts');
 assert.ok(!/segment\.type === 'outro' && state\.item\?\.Type === 'Episode' && state\.next\) \{ playNext\(\)/.test(flowJs), 'passer le générique de fin ≠ épisode suivant');
-assert.match(flowJs, /function updateNextButton\(\)/);
+assert.ok(!/updateNextButton|noctra-next-episode/.test(flowJs), '200.0.168 : pas de bouton « Épisode suivant » à part sur le web');
 assert.match(flowJs, /const SKIP_STEP_MS = 15_000;/);
 assert.match(flowJs, /if \(state\.nextQueued\) \{\s*state\.advancing = true;/, 'Fin d’épisode : Jellyfin enchaîne, pas de second « suivant »');
 assert.match(flowJs, /state\.stopAtEnd && remaining < 1_200/, '« Plus tard » : arrêt à la fin');

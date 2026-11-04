@@ -327,7 +327,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.167';
+  const NOCTRA_BUILD_VERSION = '200.0.168';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -2206,8 +2206,9 @@
     premiereHomeController?.destroy();
     const container = home.querySelector('.homeSectionsContainer');
     const resumeUser = currentJellyfinUserId();
-    if (premiereResumeCache?.user && resumeUser && premiereResumeCache.user !== resumeUser) premiereResumeCache = null;
-    const cachedResumeItems = premiereResumeCache?.user === resumeUser ? resumeItemsForUser(premiereResumeCache.items) : null;
+    if (premiereResumeCache?.user && premiereResumeCache.user !== resumeUser) premiereResumeCache = null;
+    // Utilisateur pas encore connu : aucune reprise mémorisée (elle pourrait être celle d'un autre compte).
+    const cachedResumeItems = resumeUser && premiereResumeCache?.user === resumeUser ? resumeItemsForUser(premiereResumeCache.items) : null;
     if (cachedResumeItems) reconcileNativeResumeSections(home, cachedResumeItems, resumeUser);
     let resumeItems = cachedResumeItems?.map(premiereResumeData) ?? null;
     // Ne jamais utiliser une rangée native non vérifiée comme reprise : lors d'un
@@ -2442,16 +2443,31 @@
     };
     premiereHomeController = { home, refresh, sync, destroy };
     render(); sync();
-    api('/api/home/resume', { signal: request.signal, timeoutMs: 15000 }).then(payload => {
+    // 200.0.168 : lectures en cours demandées seulement avec le jeton et
+    // l'identifiant de l'utilisateur Jellyfin réellement connecté (jamais avec
+    // le seul cookie, qui peut venir d'un autre compte sur ce navigateur), et
+    // acceptées seulement si elles sont bien les siennes.
+    const waitForJellyfinUser = async () => {
+      for (let attempt = 0; attempt < 40 && !disposed; attempt += 1) {
+        if (jellyfinAccessToken() && currentJellyfinUserId()) return true;
+        await new Promise(resolve => window.setTimeout(resolve, 250));
+      }
+      return Boolean(jellyfinAccessToken() && currentJellyfinUserId());
+    };
+    const loadResume = (tries = 0) => waitForJellyfinUser().then(ready => {
+      if (!ready) throw Object.assign(new Error('Utilisateur Jellyfin pas encore connu.'), { name: 'NoctraUserPending' });
+      return api('/api/home/resume', { signal: request.signal, timeoutMs: 15000 });
+    }).then(payload => {
       if (disposed || !home.isConnected) return;
       const payloadUser = String(payload.userId || '');
       const liveUser = currentJellyfinUserId();
-      if (payloadUser && liveUser && payloadUser !== liveUser) {
+      if (!payloadUser || !liveUser || payloadUser !== liveUser) {
+        // Réponse d'un autre compte : ignorée, nouvel essai avec le bon jeton.
         premiereResumeCache = null;
-        void syncAuthContext(true).finally(() => scheduleHomeEnhancement());
+        void syncAuthContext(true).finally(() => { if (!disposed && home.isConnected && tries < 6) loadResume(tries + 1); });
         return;
       }
-      const resolvedUser = payloadUser || liveUser || resumeUser;
+      const resolvedUser = liveUser;
       const cleanItems = resumeItemsForUser(payload.items || []);
       premiereResumeCache = {user: resolvedUser, items: cleanItems};
       reconcileNativeResumeSections(home, cleanItems, resolvedUser);
@@ -2460,8 +2476,14 @@
       refresh();
     }).catch(error => {
       if (disposed || error.name === 'AbortError') return;
+      // Jellyfin pas encore prêt (ou refus 428 sans jeton) : nouvel essai, sans données d'un autre compte.
+      if ((error.name === 'NoctraUserPending' || error.status === 428) && tries < 6) {
+        window.setTimeout(() => { if (!disposed && home.isConnected) loadResume(tries + 1); }, 2000);
+        return;
+      }
       if (!items.length) text('.noctra-premiere-subtitle', 'Les lectures en cours sont momentanément indisponibles. Revenez sur l’accueil pour réessayer.');
     });
+    loadResume();
   }
 
   function enhanceCinemaHome(home) {

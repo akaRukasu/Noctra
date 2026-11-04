@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'noctra-shell-v200-r167';
+const CACHE_NAME = 'noctra-shell-v200-r168';
 const CORE = [
   './noctra.webmanifest?v=182',
   './noctra-mark.svg?v=182',

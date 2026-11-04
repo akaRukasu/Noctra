@@ -14113,12 +14113,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.167', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.168', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.167',
+        version: '200.0.168',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -14810,6 +14810,10 @@ const server = createServer(async (req, res) => {
 
     if (path === '/api/home/resume' && req.method === 'GET') {
       if (!session?.user?.Id) throw new HttpError(401, 'Connexion requise.');
+      // 200.0.168 : lectures en cours = données personnelles. Jamais d'après le
+      // seul cookie de session : sur un navigateur partagé, il peut appartenir à
+      // la personne connectée avant (ses reprises s'affichaient chez une autre).
+      if (!directRequestToken(req)) throw new HttpError(428, 'Jeton de l’utilisateur Jellyfin requis pour les lectures en cours.');
       // Tous les titres commencés (60 au plus) : les applis en montrent 10 à 12 dans le
       // carrousel et le reste dans la rangée « Autres titres à reprendre ».
       const wanted = Math.min(60, Math.max(1, Number(requestUrl.searchParams.get('limit')) || 60));
