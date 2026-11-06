@@ -14752,8 +14752,10 @@ body[data-noctra-version-mismatch="true"]::before {
 .noctra-request-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 
 @media (max-width: 760px) {
-  .noctra-tv-quality > span { display: none; }
-  .noctra-tv-quality { padding-inline: 7px; }
+  /* 200.0.176 : « Qualité » reste écrit sur téléphone (avant : seul « Auto » restait visible). */
+  /* Ligne entière sur téléphone : « Qualité · Auto · 1080p » lisible, zapping et Caster dessous. */
+  .noctra-tv-quality { flex: 1 1 100%; order: -1; min-width: 0; padding-inline: 11px 7px; }
+  .noctra-tv-quality select { flex: 1 1 auto; width: 100%; min-width: 0; text-overflow: ellipsis; }
   .noctra-request-manager, .noctra-request-quota { align-items: stretch; flex-direction: column; }
   .noctra-request-row-actions { width: 100%; justify-content: flex-start; }
 }

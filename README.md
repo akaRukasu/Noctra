@@ -1,4 +1,8 @@
-# Version actuelle · 200.0.171
+# Version actuelle · 200.0.176
+
+Sur la version web mobile, le direct TV affiche sa qualité : « Qualité · Auto · 1080p », les qualités du flux sur iPhone et iPad (lecteur HLS d'iOS compris), et la définition d'une source à une seule qualité. Détails : [MISE-A-JOUR-V200176.md](MISE-A-JOUR-V200176.md).
+
+# Historique · 200.0.171
 
 Le Web reprend les titres en cours de revisionnage et limite « À suivre » aux séries avec une activité dans les 30 derniers jours.
 

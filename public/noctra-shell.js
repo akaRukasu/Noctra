@@ -180,6 +180,8 @@
   try { tvState.showSports = window.localStorage?.getItem('noctra-tv-sports-visible') === '1'; } catch {}
   let tvFilterTimer = null;
   let tvHls = null;
+  // 200.0.176 : qualités lues dans la liste principale quand iOS lit le flux en HLS natif.
+  let tvNativeQuality = null;
   let tvShaka = null;
   let tvShakaLoader = null;
   let tvShakaCleanup = Promise.resolve();
@@ -327,7 +329,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.175';
+  const NOCTRA_BUILD_VERSION = '200.0.176';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -7436,8 +7438,16 @@
   function resetTvQualitySelector() {
     const wrap = document.querySelector('[data-tv-quality-wrap]');
     const select = document.querySelector('[data-tv-quality]');
-    if (select) select.innerHTML = '<option value="-1">Auto</option>';
-    if (wrap) wrap.hidden = true;
+    tvNativeQuality = null;
+    if (select) {
+      select.innerHTML = '<option value="-1" data-base="Auto">Auto</option>';
+      select.disabled = false;
+    }
+    if (wrap) {
+      wrap.hidden = true;
+      delete wrap.dataset.single;
+      delete wrap.dataset.current;
+    }
   }
 
   function applyTvChannelAutoQuality(hls, automatic = true) {
@@ -7465,10 +7475,16 @@
       width: Number(level?.width || 0)
     })).filter(level => level.height || level.bitrate);
     if (rows.length < 2) {
+      // Une seule qualité : la définition lue reste affichée (refreshTvQualityReadout).
+      wrap.dataset.single = 'true';
       wrap.hidden = true;
+      refreshTvQualityReadout();
       return;
     }
-    select.innerHTML = '<option value="-1">' + (hls._noctraChannelAutoCap >= 0 ? 'Auto stable · 720p max' : 'Auto') + '</option>' + rows
+    delete wrap.dataset.single;
+    select.disabled = false;
+    const autoBase = hls._noctraChannelAutoCap >= 0 ? 'Auto stable · 720p max' : 'Auto';
+    select.innerHTML = `<option value="-1" data-base="${autoBase}">${autoBase}</option>` + rows
       .sort((a, b) => (b.height - a.height) || (b.bitrate - a.bitrate))
       .map(level => {
         const resolution = level.height ? `${level.height}p` : (level.width ? `${level.width}px` : 'Source');
@@ -7477,7 +7493,95 @@
       }).join('');
     select.value = '-1';
     wrap.hidden = false;
+    refreshTvQualityReadout();
     if (tvSafeExtras.menuOpen) refreshTvSafeToolsMenu();
+  }
+
+  // 200.0.176 : définition réellement lue, visible sur PC comme sur mobile
+  // (« Auto · 1080p »), y compris pour une source à une seule qualité et pour
+  // le lecteur HLS natif d'iPhone/iPad.
+  function refreshTvQualityReadout() {
+    const wrap = document.querySelector('[data-tv-quality-wrap]');
+    const select = wrap?.querySelector('[data-tv-quality]');
+    const video = document.querySelector('#noctra-tv-video');
+    if (!wrap || !select || !video) return;
+    const playing = !video.hidden && tvState.currentPlaybackType === 'stream';
+    const height = playing ? Number(video.videoHeight || 0) : 0;
+    const current = height > 0 ? `${height}p` : '';
+    if ((wrap.dataset.current || '') !== current) {
+      if (current) wrap.dataset.current = current;
+      else delete wrap.dataset.current;
+    }
+    const auto = select.querySelector('option[value="-1"]');
+    if (auto) {
+      const base = auto.dataset.base || 'Auto';
+      const label = wrap.dataset.single === 'true' ? (current || 'Source') : (current ? `${base} · ${current}` : base);
+      if (auto.textContent !== label) auto.textContent = label;
+    }
+    if (wrap.dataset.single === 'true') {
+      select.disabled = true;
+      if (wrap.hidden === Boolean(current)) wrap.hidden = !current;
+    }
+  }
+
+  // HLS natif (iPhone/iPad) : le navigateur choisit seul la variante. Noctra lit
+  // la liste principale du flux pour proposer les mêmes qualités qu'avec HLS.js ;
+  // un choix charge la sous-liste de cette qualité, « Auto » la liste principale.
+  function parseTvMasterPlaylist(text, baseUrl) {
+    const lines = String(text || '').split(/\r?\n/).map(line => line.trim());
+    const levels = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!lines[index].startsWith('#EXT-X-STREAM-INF:')) continue;
+      const attributes = lines[index].slice(18);
+      const uri = lines.slice(index + 1).find(line => line && !line.startsWith('#'));
+      if (!uri) continue;
+      const resolution = /(?:^|,)RESOLUTION=(\d+)x(\d+)/i.exec(attributes);
+      const bandwidth = /(?:^|,)(?:AVERAGE-)?BANDWIDTH=(\d+)/i.exec(attributes);
+      let url = '';
+      try { url = new URL(uri, baseUrl).href; } catch { continue; }
+      if (levels.some(level => level.url === url)) continue;
+      levels.push({ url, width: resolution ? Number(resolution[1]) : 0, height: resolution ? Number(resolution[2]) : 0, bitrate: bandwidth ? Number(bandwidth[1]) : 0 });
+    }
+    return levels;
+  }
+
+  async function loadTvNativeQualities(streamUrl, playbackSequence) {
+    let master = '';
+    try { master = new URL(appPath(streamUrl), window.location.href).href; } catch { return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(master, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+      if (!response.ok) return;
+      const text = await response.text();
+      if (playbackSequence !== tvPlaybackSequence || tvHls || tvShaka) return;
+      const levels = parseTvMasterPlaylist(text, response.url || master);
+      tvNativeQuality = { master, levels, sequence: playbackSequence };
+      populateTvQualitySelector({ levels });
+    } catch {
+      // Liste illisible : la définition lue reste affichée par refreshTvQualityReadout.
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  function setTvNativeQuality(value) {
+    const video = document.querySelector('#noctra-tv-video');
+    const select = document.querySelector('[data-tv-quality]');
+    const native = tvNativeQuality;
+    if (!video || !native || native.sequence !== tvPlaybackSequence || tvHls || tvShaka) return false;
+    const level = Number(value);
+    const target = Number.isInteger(level) && level >= 0 ? native.levels[level] : null;
+    if (level >= 0 && !target) return false;
+    const url = target ? target.url : native.master;
+    if (select) select.value = String(target ? level : -1);
+    if (video.currentSrc !== url && video.src !== url) {
+      video.src = url;
+      video.play().catch(() => {});
+    }
+    setTvPlaybackStatus(target ? `Qualité ${select?.selectedOptions?.[0]?.textContent || ''}` : 'Qualité automatique', 'playing');
+    if (tvSafeExtras.menuOpen) refreshTvSafeToolsMenu();
+    return true;
   }
 
 
@@ -7770,6 +7874,7 @@
 
   function setTvSafeQuality(value) {
     const select = tvSafeExtrasPanel()?.querySelector('[data-tv-quality]');
+    if (select && !tvHls && !tvShaka && setTvNativeQuality(value)) { refreshTvSafeToolsMenu(); return; }
     if (!select || (!tvHls && !tvShaka)) return;
     const level = Number(value);
     if (tvShaka) {
@@ -9038,6 +9143,7 @@
       nativeFallbackStarted = true;
       recordTvDiagnostic('native-player-started', { elapsedMs: tvPlaybackElapsedMs(), provider: playbackProvider });
       video.src = streamUrl;
+      void loadTvNativeQualities(streamUrl, playbackSequence);
       if (label) setTvPlaybackStatus(label, 'loading');
       video.play().catch(error => {
         if (playbackSequence !== tvPlaybackSequence || benignTvPlayInterruption(error)) return;
@@ -13962,6 +14068,7 @@
     }
     if (event.target.matches('[data-tv-quality]')) {
       if (tvShaka) { setTvSafeQuality(event.target.value); return; }
+      if (!tvHls && setTvNativeQuality(event.target.value)) return;
       if (tvHls) {
         const level = Number(event.target.value);
         tvHls._noctraContinuity?.release();
@@ -15087,6 +15194,12 @@
   document.addEventListener('pointermove', revealNativePlayerControls, { passive: true, capture: true });
   document.addEventListener('pointerdown', revealNativePlayerControls, { passive: true, capture: true });
   document.addEventListener('touchstart', revealNativePlayerControls, { passive: true, capture: true });
+  // 200.0.176 : la définition affichée suit la variante lue (changement de qualité, ABR).
+  ['resize', 'loadedmetadata', 'emptied'].forEach(type => {
+    document.addEventListener(type, event => {
+      if (event.target?.id === 'noctra-tv-video') refreshTvQualityReadout();
+    }, { passive: true, capture: true });
+  });
   ['loadstart', 'loadedmetadata', 'canplay', 'play', 'playing', 'pause', 'ended', 'emptied', 'abort', 'error'].forEach(type => {
     document.addEventListener(type, event => {
       const target = event.target;
