@@ -1,127 +1,126 @@
-// 200.0.164 / 200.0.167 : Streamed (strmfree.pk, puis les autres adresses) et
-// PPV (rockylive.st, tim-streams.com, puis ppv.st / ppv.to, /api/streams), avec
-// le site du fournisseur proposé si aucune adresse ne répond. Fonctions du
-// serveur exécutées avec des réponses simulées (sites injoignables ici).
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
 const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
-
-function extract(name) {
-  const match = new RegExp(`(?:async )?function ${name}\\(`).exec(server);
-  assert.ok(match, 'fonction ' + name);
-  let depth = 0, i = server.indexOf('{', server.indexOf(')', match.index));
-  // Paramètres par défaut contenant des accolades : aucune ici.
-  for (let j = i; j < server.length; j++) {
-    const c = server[j];
-    if (c === '{') depth++;
-    else if (c === '}' && --depth === 0) return server.slice(match.index, j + 1);
-  }
-  throw new Error('fin introuvable : ' + name);
-}
-const constant = name => { const m = new RegExp(`const ${name} = [^;]+;`).exec(server); assert.ok(m, name); return m[0]; };
-
-assert.match(server, /id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree\.pk', url: 'https:\/\/strmfree\.pk\/'/);
-assert.match(server, /id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · rockylive\.st \(secours : tim-streams\.com\)', url: 'https:\/\/rockylive\.st\/', type: 'ppv'/);
-assert.match(server, /else if \(source\.type === 'ppv'\) catalog = await tvCatalogFromPpv\(source\.url\);/);
-assert.match(server, /'streamed', 'ppv', 'volkamax'/);
-
+const start = server.indexOf('function streamedMatchChannel(');
+const end = server.indexOf('\nasync function ', server.indexOf('async function tvCatalogFromVolkamax(') + 1);
 const calls = [];
-let responder = () => { throw new Error('non simulé'); };
+const references = new Map();
+let respond;
 const context = {
-  URL, AbortSignal, Date, JSON, Number, String, Boolean, Array, Set, Map, Math, encodeURIComponent, console,
-  createHash, calls,
-  HttpError: class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } },
-  issueTvReference: () => 'jeton', tvPublicStreamUrl: token => '/api/tv/stream/' + token,
+  URL, Response, AbortSignal,
+  HttpError: class extends Error { constructor(status, message) { super(message); this.status = status; } },
   tvCatalogCache: new Map(),
-  fetchTvRemote: async (url, options) => { calls.push(url); return responder(url, options); }
+  tvReferences: references,
+  safeTvRemoteUrl(value) {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('URL invalide');
+    return url;
+  },
+  resolveTvUrl: (url, base) => context.safeTvRemoteUrl(new URL(url, base)).href,
+  fetchTvRemote: async url => { calls.push(String(url)); return respond(String(url)); },
+  fetchPublicTvHtml: async url => { calls.push(url); return respond(url); },
+  publicPath: value => value,
+  issueTvReference(url, headers, meta) {
+    const token = String(references.size + 1);
+    references.set(token, { url, headers, meta, expiresAt: Date.now() + 60_000 });
+    return token;
+  },
+  normalizeTvChannel(item) {
+    return item.name && item.embed_url
+      ? { ...item, id: item.name + item.embed_url, embedUrl: item.embed_url, playbackType: 'embed' } : null;
+  },
+  decodeTvHtml: value => value.replaceAll('&amp;', '&'),
+  stripTvHtml: value => value.replace(/<[^>]*>/g, '').trim(),
+  createHash: () => ({ update: value => ({ digest: () => String(value.split('\n').at(-1).split('/').at(-1)) }) })
 };
-vm.createContext(context);
-vm.runInContext([
-  extract('safeTvRemoteUrl'), extract('resolveTvUrl'), extract('normalizeTvChannel'),
-  constant('STREAMED_HOSTS'), 'let streamedHealthyHost = null;', extract('fetchStreamedJson'),
-  constant('PPV_HOSTS'), constant('PPV_SITES'), constant('STREAMED_SITES'), extract('providerSiteChannels'),
-  extract('ppvEvents'), extract('ppvChannel'), extract('tvCatalogFromPpv'),
-  'this.fetchStreamedJson = fetchStreamedJson; this.tvCatalogFromPpv = tvCatalogFromPpv; this.ppvChannel = ppvChannel; this.providerSiteChannels = providerSiteChannels; this.resetHealthy = () => { streamedHealthyHost = null; };'
-].join('\n'), context);
+vm.runInNewContext(server.slice(start, end) + '\nObject.assign(this, { tvCatalogFromStreamed, tvCatalogFromPpv, tvCatalogFromVolkamax, volkamaxExtractEmbedUrl, proxyVolkamaxEmbed });', context);
+const reset = fn => { respond = fn; calls.length = 0; context.tvCatalogCache.clear(); };
+const body = value => Response.json(value);
 
-const plain = value => JSON.parse(JSON.stringify(value));
-const json = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) });
-const html = () => ({ ok: true, status: 200, text: async () => '<!doctype html><title>Parking</title>' });
+assert.match(server, /id: 'volkamax-sports'[^\n]+url: 'https:\/\/volkamax\.club\/'/);
+const streamFree = { streams: [{ id: 'game', name: 'Match A', category: 'soccer', match_timestamp: 1793814300,
+  sources: [{ quality: 'SD', url: 'https://strmfree.st/embed/soccer/game540p', live: false },
+    { quality: 'FHD', url: 'https://strmfree.st/embed/soccer/game1080p', live: true }] }] };
+reset(() => body(streamFree));
+let catalogue = await context.tvCatalogFromStreamed();
+assert.deepEqual(calls, ['https://strmfree.pk/api/v1/streams']);
+assert.equal(catalogue.count, 1);
+assert.equal(catalogue.channels[0].is_live, true);
+let ref = references.get(catalogue.channels[0].resolverUrl.split('/').at(-1));
+assert.equal(ref.meta.kind, 'sports-public-players');
+assert.equal(ref.meta.options.map(item => item.label).join(','), 'FHD,SD');
+assert.equal(ref.meta.options[0].url, 'https://strmfree.pk/embed/soccer/game1080p');
 
-// Streamed : strmfree.pk d'abord ; page HTML ou panne → adresses suivantes dans l'ordre.
-responder = url => url.startsWith('https://strmfree.pk/') ? json([{ id: 'm1' }]) : html();
-assert.deepEqual(plain(await context.fetchStreamedJson('https://strmfree.pk/api/matches/live', 'https://strmfree.pk/')), [{ id: 'm1' }]);
-context.resetHealthy();
-calls.length = 0;
-responder = url => url.startsWith('https://rockylive.st/') ? json([{ id: 'm2' }]) : url.startsWith('https://strmfree.pk/') ? html() : json({}, 503);
-assert.deepEqual(plain(await context.fetchStreamedJson('https://strmfree.pk/api/matches/live', 'https://strmfree.pk/')), [{ id: 'm2' }]);
-assert.deepEqual(calls, ['strmfree.pk', 'strmfree.st', 'streamed.pk', 'streamed.st', 'rockylive.st'].map(host => `https://${host}/api/matches/live`), 'adresses essayées dans l’ordre');
-// Rubrique suivante : directement sur l'adresse qui a répondu.
-calls.length = 0;
-assert.deepEqual(plain(await context.fetchStreamedJson('https://strmfree.pk/api/matches/featured', 'https://strmfree.pk/')), [{ id: 'm2' }]);
-assert.deepEqual(calls, ['https://rockylive.st/api/matches/featured'], 'adresse qui répond retenue');
-context.resetHealthy();
-calls.length = 0;
-responder = () => json({}, 503);
-await assert.rejects(context.fetchStreamedJson('https://strmfree.pk/api/sports', 'https://strmfree.pk/'));
-assert.equal(calls.length, 6, 'chaque adresse une seule fois');
-// Site du fournisseur proposé quand aucune adresse ne répond (lecteur web de Noctra).
-const sites = plain(context.providerSiteChannels('PPV', ['https://rockylive.st/', 'https://tim-streams.com/']));
-assert.deepEqual(sites.map(c => [c.name, c.embedUrl, c.playbackType, c.compatPage]), [
-  ['PPV · site rockylive.st', 'https://rockylive.st/', 'embed', true],
-  ['PPV · site tim-streams.com', 'https://tim-streams.com/', 'embed', true]
-]);
+reset(url => body(url.startsWith('https://strmfree.pk') ? { streams: [{ name: 'Match sans lecteur', sources: [] }] } : streamFree));
+catalogue = await context.tvCatalogFromStreamed();
+assert.deepEqual(calls, ['https://strmfree.pk/api/v1/streams', 'https://strmfree.st/api/v1/streams']);
+assert.match(catalogue.warning, /strmfree\.pk : programme vide/);
+assert.equal(catalogue.count, 1);
 
-// PPV : programme groupé par catégorie, événements en cours / à venir / terminés.
-const now = Math.floor(Date.now() / 1000);
-responder = url => url === 'https://rockylive.st/api/streams' ? json({
-  success: true,
-  streams: [
-    { category: 'Football', streams: [
-      { id: 1, name: 'PSG vs OM', uri_name: 'football/psg-om', poster: 'https://img.example/psg.png', starts_at: now - 600, ends_at: now + 6000, iframe: 'https://embed.example/e/psg' },
-      { id: 2, name: 'Lyon vs Nice', uri_name: 'football/lyon-nice', starts_at: now + 7200, ends_at: now + 14400 },
-      { id: 3, name: 'Ancien match', uri_name: 'football/old', starts_at: now - 20000, ends_at: now - 10000 }
-    ] },
-    { category: '24/7', streams: [{ id: 4, name: 'Chaîne sport 24/7', uri_name: '24-7/sport', always_live: 1, iframe: '/embed/sport' }] }
-  ]
-}) : json({}, 404);
-const catalog = await context.tvCatalogFromPpv('https://rockylive.st/');
-assert.equal(catalog.name, 'PPV');
-assert.deepEqual(plain(catalog.channels.map(c => c.name)), ['PSG vs OM', 'Lyon vs Nice', 'Chaîne sport 24/7'], 'événement terminé retiré');
-const [live, later, always] = catalog.channels;
-assert.equal(live.embedUrl, 'https://embed.example/e/psg');
-assert.equal(live.externalUrl, 'https://rockylive.st/live/football/psg-om');
-assert.equal(live.isLive, true);
-assert.equal(live.group, 'Football');
-assert.equal(live.logo, 'https://img.example/psg.png');
-assert.equal(later.embedUrl, 'https://rockylive.st/live/football/lyon-nice', 'sans lecteur intégré : page de l’événement');
-assert.equal(later.isLive, false);
-assert.equal(always.embedUrl, 'https://rockylive.st/embed/sport', 'adresse relative résolue');
-assert.equal(always.isLive, true);
-assert.ok(catalog.channels.every(c => c.compatPage && c.playbackType === 'embed'));
-assert.equal(catalog.warning, '');
+const rocky = { success: true, events: [{ id: 10, title: 'Rocky Match', league: 'NBA', always_live: true,
+  embed_url: 'https://rockyembed.st/source/fetch.php?full=10', event_url: 'https://rockylive.st/nba/rocky-match-10/' }] };
+reset(() => body(rocky));
+catalogue = await context.tvCatalogFromPpv();
+assert.deepEqual(calls, ['https://rockylive.st/api/events.php?limit=1000']);
+assert.equal(catalogue.channels[0].embedUrl, rocky.events[0].embed_url);
+assert.equal(catalogue.channels[0].externalUrl, rocky.events[0].event_url);
+assert.equal(catalogue.channels[0].group, 'NBA');
 
-// rockylive.st en panne : tim-streams.com, puis ppv.st… essayés ; rien du tout : sites du fournisseur.
-context.tvCatalogCache.clear();
-calls.length = 0;
-responder = url => url === 'https://tim-streams.com/api/streams' ? json([{ name: 'Boxe', uri_name: 'boxe/main', always_live: true }]) : json({}, 502);
-const mirror = await context.tvCatalogFromPpv('https://rockylive.st/');
-assert.deepEqual(calls, ['https://rockylive.st/api/streams', 'https://tim-streams.com/api/streams']);
-assert.deepEqual(plain(mirror.channels.map(c => c.externalUrl)), ['https://tim-streams.com/live/boxe/main']);
-context.tvCatalogCache.clear();
-calls.length = 0;
-responder = () => html();
-const down = await context.tvCatalogFromPpv('https://rockylive.st/');
-assert.deepEqual(calls, ['rockylive.st', 'tim-streams.com', 'ppv.st', 'ppv.to'].map(host => `https://${host}/api/streams`));
-assert.deepEqual(plain(down.channels.map(c => c.embedUrl)), ['https://rockylive.st/', 'https://tim-streams.com/'], 'sites du fournisseur proposés');
-assert.match(down.warning, /^L’API PPV ne répond sur aucune adresse \(rockylive\.st, tim-streams\.com, ppv\.st, ppv\.to/);
+const tim = { genres: [{ id: 1, name: 'Soccer', sub_categories: [{ id: 7, name: 'Champions League' }] }], events: [
+  { name: 'Tim Match', url: 'tim-match', genre: 1, sub_genre: 7, time: '2026-11-04T12:45', streams: [
+    { name: 'VIP', url: 'https://example.org/vip', vip: true },
+    { name: 'Server 1', url: 'https://example.org/public-1' },
+    { name: 'Server 2', url: 'https://example.org/public-2' }
+  ] },
+  { name: 'Tim VIP', url: 'tim-vip', vip: true, streams: [{ url: 'https://example.org/vip' }] }
+] };
+reset(url => body(url.startsWith('https://rockylive.st') ? { success: true, events: [{ title: 'Pas de lecteur' }] } : tim));
+catalogue = await context.tvCatalogFromPpv();
+assert.deepEqual(calls, ['https://rockylive.st/api/events.php?limit=1000', 'https://tim-streams.com/api/live-upcoming']);
+assert.equal(catalogue.count, 1);
+assert.equal(catalogue.channels[0].group, 'Champions League');
+assert.equal(catalogue.channels[0].externalUrl, 'https://tim-streams.com/watch/tim-match');
+ref = references.get(catalogue.channels[0].resolverUrl.split('/').at(-1));
+assert.equal(ref.meta.options.map(item => item.label).join(','), 'Server 1,Server 2');
+assert.match(catalogue.warning, /rockylive\.st : programme vide/);
 
-const shell = await readFile(new URL('../public/noctra-shell.js', import.meta.url), 'utf8');
-const tvApp = await readFile(new URL('../apps/androidtv/web/app.js', import.meta.url), 'utf8');
-for (const [name, text] of [['web', shell], ['TV', tvApp]]) {
-  for (const host of ['strmfree.pk', 'rockylive.st', 'tim-streams.com', 'huhu.bz', 'kool.ws', 'vavoo.top']) assert.ok(text.includes(`'${host}', 'www.${host}'`), `lecteurs intégrés autorisés (${name}) : ${host}`);
-}
-console.log('200.0.167 : Streamed (strmfree.pk puis autres adresses), PPV (rockylive.st, tim-streams.com, ppv.st) et sites du fournisseur en secours : OK');
+reset(url => url.startsWith('https://ppv.st') ? body({ streams: [{ category: 'Sport', streams: [
+  { name: 'Legacy PPV', uri_name: 'legacy', iframe: 'https://example.org/player' }
+] }] }) : new Response('<!doctype html>'));
+catalogue = await context.tvCatalogFromPpv();
+assert.equal(calls.at(-1), 'https://ppv.st/api/streams');
+assert.equal(catalogue.channels[0].name, 'Legacy PPV');
+
+reset(() => new Response('<!doctype html>'));
+catalogue = await context.tvCatalogFromPpv();
+assert.deepEqual(calls, ['https://rockylive.st/api/events.php?limit=1000', 'https://tim-streams.com/api/live-upcoming',
+  'https://ppv.st/api/streams', 'https://ppv.to/api/streams']);
+assert.equal(catalogue.channels.every(item => item.streamKind === 'Site du fournisseur'), true);
+assert.match(catalogue.warning, /non JSON/);
+
+const volkaHtml = '<a href="/ligue-1-streaming-direct">Ligue 1</a><a href="/regarder-la-chaine-test">Canal Test</a>' +
+  '<tr><td>16:00</td><td>Europa League</td><td class="event-title">Match de test</td>' +
+  '<td><a href="/match-streaming-direct" class="event btn">Regarder</a></td><td><img src="/live.gif"></td></tr>';
+reset(url => ({ finalUrl: url, html: url.includes('bzzh.lat') ? volkaHtml : '<a href="/ligue-1-streaming-direct">Ligue 1</a>' }));
+catalogue = await context.tvCatalogFromVolkamax();
+assert.deepEqual(calls, ['https://volkamax.club/', 'https://bzzh.lat/']);
+assert.equal(catalogue.count, 2);
+assert.equal(catalogue.channels[0].name, 'Match de test');
+assert.equal(catalogue.channels[0].group, 'Événements · Europa League');
+assert.equal(catalogue.channels[0].isLive, true);
+assert.match(catalogue.channels[1].externalUrl, /^https:\/\/bzzh\.lat/);
+assert.equal(context.volkamaxExtractEmbedUrl('<script src="/ads.js"></script><img src="/offline.gif">', 'https://bzzh.lat/'), '');
+assert.equal(context.volkamaxExtractEmbedUrl("embeds[0] = '<iframe src=\"https://example.org/player?a=1&amp;b=2\"></iframe>';", 'https://bzzh.lat/'), 'https://example.org/player?a=1&b=2');
+const volkaToken = catalogue.channels[1].embedUrl.split('/').at(-1);
+reset(url => ({ finalUrl: url, html: url.includes('bzzh.lat') ? '<img src="/offline.gif">' : '<iframe src="https://example.org/player"></iframe>' }));
+await context.proxyVolkamaxEmbed(volkaToken, {
+  writeHead(status, headers) {
+    assert.equal(status, 302);
+    assert.equal(headers.location, 'https://example.org/player');
+  },
+  end() {}
+}, true);
+assert.deepEqual(calls, ['https://bzzh.lat/regarder-la-chaine-test', 'https://volkamax.club/regarder-la-chaine-test']);
+console.log('StreamFree, RockyLive, TimStreams, PPV historique et Volkamax : formats, lecteurs et replis OK');

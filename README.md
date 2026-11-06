@@ -1,8 +1,16 @@
-# Version actuelle : 200.0.168 — accueil web : lectures en cours de chaque utilisateur (plus celles d'un autre compte), lecteur web sans bouton « Épisode suivant »
+# Version actuelle · 200.0.171
 
-Détails : [MISE-A-JOUR-V200168.md](MISE-A-JOUR-V200168.md).
+Le Web reprend les titres en cours de revisionnage et limite « À suivre » aux séries avec une activité dans les 30 derniers jours.
 
-# Historique : 200.0.167 — sources TV : OHA / Kool sur huhu.bz, kool.ws, vavoo.top, oha.cx (serveurs de chaque miroir), Streamed et PPV sur leurs nouvelles adresses
+# Historique · 200.0.170
+
+Sur le Web, les états de lecture et « À suivre » sont rattachés à la session Jellyfin active. Le lecteur propose le saut des génériques lorsqu’un segment ou un chapitre les indique.
+
+# Historique · 200.0.169
+
+OHA / Kool réunit les serveurs publiés par les quatre miroirs dans le catalogue France. StreamFree, RockyLive et TimStreams utilisent leurs propres API. Volkamax lit le programme de volkamax.club avec bzzh.lat en secours.
+
+# Historique · 200.0.167
 
 Détails : [MISE-A-JOUR-V200167.md](MISE-A-JOUR-V200167.md).
 

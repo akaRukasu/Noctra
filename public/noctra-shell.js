@@ -327,7 +327,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.168';
+  const NOCTRA_BUILD_VERSION = '200.0.175';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -485,7 +485,8 @@
     if (cached?.promise) return cached.promise;
     const promise = api(path, options)
       .then(value => {
-        apiResponseCache.set(path, { value, expiresAt: Date.now() + ttl });
+        const cacheTtl = value?.retryAfterMs > 0 && path.startsWith('/api/tv/catalog?') ? Math.min(ttl, value.retryAfterMs) : ttl;
+        apiResponseCache.set(path, { value, expiresAt: Date.now() + cacheTtl });
         return value;
       })
       .finally(() => {
@@ -1968,24 +1969,27 @@
 
   const recentEpisodeRepairs = new WeakSet();
   async function repairRecentEpisodeCards(section) {
-    if (recentEpisodeRepairs.has(section) || !window.ApiClient?.getItems) return;
+    const watch = window.NoctraWatchState;
+    const owner = watch?.session();
+    if (!owner?.client.getItems || recentEpisodeRepairs.has(section)) return;
     const cards = [...section.querySelectorAll('.card[data-type="Episode" i][data-id], .card[data-type="Season" i][data-id]')];
-    const userId = window.ApiClient.getCurrentUserId?.();
+    const { client, userId } = owner;
     const tools = homeCarouselCardTools();
-    if (!cards.length || !userId || !tools?.cards?.getCardsHtml) return;
+    if (!cards.length || !tools?.cards?.getCardsHtml) return;
     recentEpisodeRepairs.add(section);
     try {
-      const episodes = await window.ApiClient.getItems(userId, { Ids: cards.map(card => card.dataset.id).join(','), Fields: 'SeriesId', Limit: cards.length });
+      const episodes = await client.getItems(userId, { Ids: cards.map(card => card.dataset.id).join(','), Fields: 'SeriesId', Limit: cards.length });
       const parents = new Map((episodes.Items || []).filter(item => item.SeriesId).map(item => [homeCarouselItemKey(item.Id), item.SeriesId]));
       const ids = [...new Set(parents.values())];
-      if (!ids.length) return;
-      const result = await window.ApiClient.getItems(userId, { Ids: ids.join(','), Fields: 'PrimaryImageAspectRatio,ProductionYear', Limit: ids.length });
+      if (!ids.length || !watch.sameAccount(owner, watch.session())) return;
+      const result = await client.getItems(userId, { Ids: ids.join(','), Fields: 'PrimaryImageAspectRatio,ProductionYear', EnableUserData: true, Limit: ids.length });
       const series = new Map((result.Items || []).filter(item => item.Type === 'Series').map(item => [homeCarouselItemKey(item.Id), item]));
       const activeScroller = section.querySelector('.emby-scroller');
       while (activeScroller && homeCarouselTargets.get(activeScroller)?.until > Date.now()) {
         await new Promise(resolve => window.setTimeout(resolve, 80));
         if (!section.isConnected) return;
       }
+      if (!watch.sameAccount(owner, watch.session())) return;
       const seen = new Set([...section.querySelectorAll('.card[data-type="Series" i]')].map(card => homeCarouselItemKey(card.dataset.id)));
       for (const card of cards) {
         if (!section.contains(card)) continue;
@@ -2037,7 +2041,6 @@
   }
 
   let premiereHomeController = null;
-  let premiereResumeCache = null;
   let premiereVisitIndex = 0;
 
   function premiereCardData(card) {
@@ -2125,70 +2128,14 @@
     return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, logo, resume: action('resume'), visual: action('link') };
   }
 
-  function currentJellyfinUserId() {
-    try { return String(window.ApiClient?.getCurrentUserId?.() || authContext?.user?.id || ''); }
-    catch { return String(authContext?.user?.id || ''); }
-  }
-
-  // Carrousel : 12 titres ; limit Infinity : tous (rangée « Continuer à regarder » de Jellyfin).
-  function resumeItemsForUser(items, limit = 12) {
-    const seen = new Set();
-    return (Array.isArray(items) ? items : []).filter(item => {
-      const id = String(item?.Id || '');
-      const userData = item?.UserData || {};
-      const position = Number(userData.PlaybackPositionTicks || 0);
-      const runtime = Number(item?.RunTimeTicks || 0);
-      const playedPercentage = Number(userData.PlayedPercentage);
-      if (!id || seen.has(id) || userData.Played === true || !(position > 0)) return false;
-      if (Number.isFinite(playedPercentage) && playedPercentage >= 99) return false;
-      if (runtime > 0 && position >= runtime * .99) return false;
-      seen.add(id);
-      return true;
-    }).slice(0, limit);
-  }
-
-  function nativeResumeSections(home) {
-    return [...home.querySelectorAll('.sectionTitle')].map(title => {
-      const label = normalizedText(title.textContent);
-      const section = title.closest('.verticalSection');
-      const isContinueWatching = (label.includes('continuer') && label.includes('regarder')) || label.includes('continue watching');
-      const isResume = label.includes('reprendre la lecture') || label === 'continuer';
-      return section && (isContinueWatching || isResume) ? section : null;
-    }).filter(Boolean);
-  }
-
-  function reconcileNativeResumeSections(home, items, userId = '') {
-    const allowedIds = new Set(resumeItemsForUser(items, Infinity).map(item => String(item.Id)));
-    nativeResumeSections(home).forEach(section => {
-      section.dataset.noctraResumeUser = String(userId || '');
-      section.dataset.noctraResumeSynced = 'true';
-      let visibleCount = 0;
-      section.querySelectorAll('.card[data-id]').forEach(card => {
-        const allowed = allowedIds.has(String(card.dataset.id || ''));
-        card.dataset.noctraResumeState = allowed ? 'allowed' : 'filtered';
-        if (allowed) {
-          visibleCount += 1;
-          if (card.dataset.noctraResumeHidden === 'true') {
-            delete card.dataset.noctraResumeHidden;
-            card.hidden = false;
-            card.removeAttribute('aria-hidden');
-          }
-        } else {
-          card.dataset.noctraResumeHidden = 'true';
-          card.hidden = true;
-          card.setAttribute('aria-hidden', 'true');
-        }
-      });
-      if (visibleCount === 0) {
-        section.dataset.noctraResumeHidden = 'true';
-        section.hidden = true;
-        section.setAttribute('aria-hidden', 'true');
-      } else if (section.dataset.noctraResumeHidden === 'true') {
-        delete section.dataset.noctraResumeHidden;
-        section.hidden = false;
-        section.removeAttribute('aria-hidden');
-      }
-    });
+  function syncHomeWatchAccount() {
+    const watch = window.NoctraWatchState;
+    if (!watch) return;
+    const require = homeWebpackRequire();
+    if (require) {
+      try { watch.bind(window.ApiClient, require(44797).A, require(10736).default); } catch {}
+    }
+    watch.syncAccount();
   }
 
   function premiereHomeCards(home) {
@@ -2202,19 +2149,17 @@
   }
 
   function enhancePremiereHome(home) {
-    if (premiereHomeController?.home === home) { premiereHomeController.refresh(); return; }
+    const watch = window.NoctraWatchState;
+    if (!watch) return;
+    const owner = watch.session();
+    if (premiereHomeController?.home === home && watch.sameAccount(premiereHomeController.owner, owner)) {
+      premiereHomeController.refresh();
+      return;
+    }
     premiereHomeController?.destroy();
     const container = home.querySelector('.homeSectionsContainer');
-    const resumeUser = currentJellyfinUserId();
-    if (premiereResumeCache?.user && premiereResumeCache.user !== resumeUser) premiereResumeCache = null;
-    // Utilisateur pas encore connu : aucune reprise mémorisée (elle pourrait être celle d'un autre compte).
-    const cachedResumeItems = resumeUser && premiereResumeCache?.user === resumeUser ? resumeItemsForUser(premiereResumeCache.items) : null;
-    if (cachedResumeItems) reconcileNativeResumeSections(home, cachedResumeItems, resumeUser);
-    let resumeItems = cachedResumeItems?.map(premiereResumeData) ?? null;
-    // Ne jamais utiliser une rangée native non vérifiée comme reprise : lors d'un
-    // changement de compte, Jellyfin peut conserver quelques cartes de l'ancien DOM.
-    let items = resumeItems ?? [];
-    items.forEach(entry => preloadPremiereLogo(entry.logo));
+    let resumeItems = null;
+    let items = [];
     if (!container) return;
     home.querySelector('.noctra-premiere')?.remove();
     const premiere = document.createElement('section');
@@ -2232,7 +2177,7 @@
     previews.setAttribute('aria-label', 'Choisir un titre à la une');
     premiere.append(previews);
     let index = 0;
-    const request = new AbortController();
+    let request;
     let disposed = false;
     let timer = 0, paused = false, hovering = false, focused = false, visible = true, touchedAt = 0, pressedIndex = -1;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -2435,56 +2380,42 @@
     document.addEventListener('visibilitychange', sync);
     reduced.addEventListener?.('change', sync);
     const destroy = () => {
-      disposed = true; request.abort();
+      disposed = true; request?.abort();
       clearTimeout(timer); cancelAnimationFrame(imageFrame); imageObserver.disconnect(); intersection?.disconnect();
       document.removeEventListener('visibilitychange', sync); reduced.removeEventListener?.('change', sync);
       premiere.remove();
+      homeHeading.remove();
       if (premiereHomeController?.home === home) premiereHomeController = null;
     };
-    premiereHomeController = { home, refresh, sync, destroy };
-    render(); sync();
-    // 200.0.168 : lectures en cours demandées seulement avec le jeton et
-    // l'identifiant de l'utilisateur Jellyfin réellement connecté (jamais avec
-    // le seul cookie, qui peut venir d'un autre compte sur ce navigateur), et
-    // acceptées seulement si elles sont bien les siennes.
-    const waitForJellyfinUser = async () => {
-      for (let attempt = 0; attempt < 40 && !disposed; attempt += 1) {
-        if (jellyfinAccessToken() && currentJellyfinUserId()) return true;
-        await new Promise(resolve => window.setTimeout(resolve, 250));
+    const loadResume = async () => {
+      if (!owner || !watch.sameAccount(owner, watch.session())) return;
+      request?.abort();
+      const currentRequest = request = new AbortController();
+      const active = () => !disposed && home.isConnected && !currentRequest.signal.aborted
+        && watch.sameAccount(owner, watch.session());
+      try {
+        const payload = await api('/api/home/resume', { signal: currentRequest.signal, timeoutMs: 15_000, cache: 'no-store' });
+        if (!active() || String(payload.userId || '') !== String(owner.userId)) return;
+        resumeItems = watch.resumeItems(payload.items, 12).map(premiereResumeData);
+        refresh();
+      } catch {
+        if (active() && !items.length) text('.noctra-premiere-subtitle', 'Les lectures en cours sont momentanément indisponibles. Revenez sur l’accueil pour réessayer.');
       }
-      return Boolean(jellyfinAccessToken() && currentJellyfinUserId());
     };
-    const loadResume = (tries = 0) => waitForJellyfinUser().then(ready => {
-      if (!ready) throw Object.assign(new Error('Utilisateur Jellyfin pas encore connu.'), { name: 'NoctraUserPending' });
-      return api('/api/home/resume', { signal: request.signal, timeoutMs: 15000 });
-    }).then(payload => {
-      if (disposed || !home.isConnected) return;
-      const payloadUser = String(payload.userId || '');
-      const liveUser = currentJellyfinUserId();
-      if (!payloadUser || !liveUser || payloadUser !== liveUser) {
-        // Réponse d'un autre compte : ignorée, nouvel essai avec le bon jeton.
-        premiereResumeCache = null;
-        void syncAuthContext(true).finally(() => { if (!disposed && home.isConnected && tries < 6) loadResume(tries + 1); });
-        return;
-      }
-      const resolvedUser = liveUser;
-      const cleanItems = resumeItemsForUser(payload.items || []);
-      premiereResumeCache = {user: resolvedUser, items: cleanItems};
-      reconcileNativeResumeSections(home, cleanItems, resolvedUser);
-      resumeItems = cleanItems.map(premiereResumeData);
-      resumeItems.forEach(entry => preloadPremiereLogo(entry.logo));
-      refresh();
-    }).catch(error => {
-      if (disposed || error.name === 'AbortError') return;
-      // Jellyfin pas encore prêt (ou refus 428 sans jeton) : nouvel essai, sans données d'un autre compte.
-      if ((error.name === 'NoctraUserPending' || error.status === 428) && tries < 6) {
-        window.setTimeout(() => { if (!disposed && home.isConnected) loadResume(tries + 1); }, 2000);
-        return;
-      }
-      if (!items.length) text('.noctra-premiere-subtitle', 'Les lectures en cours sont momentanément indisponibles. Revenez sur l’accueil pour réessayer.');
-    });
-    loadResume();
+    premiereHomeController = { home, owner, refresh, loadResume, sync, destroy };
+    render(); sync();
+    void loadResume();
   }
+
+  window.addEventListener('noctra:watch-state-changed', () => {
+    const controller = premiereHomeController;
+    if (controller && window.NoctraWatchState.sameAccount(controller.owner, window.NoctraWatchState.session())) {
+      void controller.loadResume();
+    } else {
+      controller?.destroy();
+      if (document.body.classList.contains('noctra-home') && !document.body.classList.contains('noctra-playing')) scheduleHomeEnhancement();
+    }
+  });
 
   function enhanceCinemaHome(home) {
     // Retire the injected landing section, including after a cached-page update.
@@ -3134,14 +3065,16 @@
   }
 
   function homeCarouselFeed(scroller) {
-    if (!desktopPerformanceProfile() || !window.ApiClient?.getItems) return null;
+    const watch = window.NoctraWatchState;
+    const owner = watch?.session();
+    if (!desktopPerformanceProfile() || !owner?.client.getItems) return null;
     const section = scroller?.closest?.('.verticalSection');
     const title = normalizedText(section?.querySelector?.('.sectionTitle')?.textContent);
     const recent = /ajout.*recent|recent.*ajout|recently added|latest/.test(title);
     if (!section || !recent) return null;
 
     let state = homeCarouselFeeds.get(scroller);
-    if (state) return state;
+    if (state && watch.sameAccount(state.owner, owner)) return state;
     const itemsContainer = scroller.getScrollSlider?.()
       || scroller.querySelector?.('.scrollSlider, .itemsContainer')
       || null;
@@ -3170,6 +3103,7 @@
               ? 'backdrop'
               : sample?.classList.contains('squareCard') ? 'square' : 'portrait';
     state = {
+      owner,
       scroller,
       section,
       itemsContainer,
@@ -3232,8 +3166,7 @@
       state.advanceAfterLoad ||= advanceAfterLoad;
       return false;
     }
-    const userId = window.ApiClient?.getCurrentUserId?.() || authContext?.user?.id || '';
-    if (!userId) return false;
+    const { client, userId } = state.owner;
     state.loading = true;
     state.section.dataset.noctraFeedLoading = 'true';
     const before = getCarouselMetrics(scroller);
@@ -3250,10 +3183,12 @@
           Fields: 'PrimaryImageAspectRatio,DateCreated,ProductionYear,MediaSourceCount',
           ImageTypeLimit: 1,
           EnableImageTypes: 'Primary,Backdrop,Thumb',
+          EnableUserData: true,
           EnableTotalRecordCount: true
         };
         if (state.parentId) query.ParentId = state.parentId;
-        const result = await window.ApiClient.getItems(userId, query);
+        const result = await client.getItems(userId, query);
+        if (!window.NoctraWatchState.sameAccount(state.owner, window.NoctraWatchState.session())) return false;
         const page = Array.isArray(result?.Items) ? result.Items : [];
         state.startIndex += page.length;
         // Jellyfin can populate its first cards after the feed state is created.
@@ -7232,8 +7167,9 @@
     frame.hidden = false;
     const external = document.querySelector('[data-tv-open-external]');
     if (external) {
-      external.href = url;
-      external.dataset.tvOpenExternal = url;
+      const page = ['PPV', 'Streamed', 'Volkamax'].includes(channel.provider) ? channel.externalUrl || url : url;
+      external.href = page;
+      external.dataset.tvOpenExternal = page;
       external.hidden = false;
     }
     const resolvedChannel = { ...channel, embedUrl: url };
@@ -7455,7 +7391,7 @@
       const liveWatchVipBridge = (channel.vipPlayback || channel.provider === 'LiveWatch') && /\/api\/tv\/livewatch\/(?:embed\/|vip\/[^/]+\/embed(?:$|[?#]))/.test(String(url));
       const wiTvPreparedBridge = channel.provider === 'WiTV' && /\/api\/tv\/embed\//.test(String(url));
       const wiTvWebFrame = channel.provider === 'WiTV';
-      const untrackedWebFrame = ['DaddyLive', 'Streamonsport', 'BrigitteTV', 'Xtemus', 'Streamed', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
+      const untrackedWebFrame = ['DaddyLive', 'Streamonsport', 'BrigitteTV', 'Xtemus', 'Streamed', 'PPV', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
       const loadedLabel = channel.provider === 'OHA' && options.compatPage
         ? 'OHA · lecteur chargé · démarrage du média…'
         : wiTvPreparedBridge
@@ -10027,6 +9963,13 @@
       }
     }
     const label = `${channel.provider || 'TV'} · ${resolvedOption?.label || option?.label || `Serveur ${Number(index) + 1}`}`;
+    if (resolvedOption?.playbackType === 'external' && resolvedOption.url) {
+      const target = new URL(resolvedOption.url);
+      if (target.protocol !== 'https:' || target.username || target.password) return;
+      setTvPlaybackStatus(resolvedOption.sourceLabel ? `Choisir ${resolvedOption.sourceLabel} sur le site du fournisseur` : label, 'idle');
+      if (manual) window.open(target.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (resolvedOption?.streamUrl || resolvedOption?.playbackType === 'stream') {
       await playTvDirectStream({ ...channel, transport: resolvedOption.transport || 'hls' }, resolvedOption.streamUrl, label, playbackSequence, index);
       return;
@@ -10124,7 +10067,9 @@
       ? Math.max(0, options.findIndex(item => Number(item.index ?? item.serverIndex) === Number(result.activeServer)))
       : options.findIndex(item => !item.manualOnly);
     if (initialOptionIndex < 0) {
-      setTvPlaybackStatus(`${provider} · aucun lecteur propre disponible · secours manuels uniquement`, 'error');
+      setTvPlaybackStatus(provider === 'WiTV' && result.officialPageOnly
+        ? 'WiTV · lecteur officiel disponible via Ouvrir le lecteur · secours manuels'
+        : `${provider} · aucun lecteur propre disponible · secours manuels uniquement`, 'error');
       return;
     }
     if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1 && !options[initialOptionIndex]?.verified) {
@@ -11260,7 +11205,8 @@
         // Serveur d'une source « automatique » : ses voisins restent les secours
         // internes de la source (reprise, autre serveur du même fournisseur).
         tvState.resolvedEmbeds = server.group.slice();
-        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence, false);
+        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence,
+          manual && server.option.playbackType === 'external');
       } else {
         await playTvSourceChannel({ ...server.entry.channel }, run.channelIndex, playbackSequence, { prefetched, unified: true });
       }
@@ -14492,6 +14438,7 @@
       }
       const back = document.querySelector('#noctra-back');
       if (back) back.dataset.visible = String(hasBack);
+      syncHomeWatchAccount();
       if (home && !playing) scheduleHomeEnhancement();
       else premiereHomeController?.destroy();
       repairAuthenticatedViewState();

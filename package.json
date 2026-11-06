@@ -1,6 +1,6 @@
 {
   "name": "noctra-media-client",
-  "version": "200.0.168",
+  "version": "200.0.175",
   "private": true,
   "type": "module",
   "description": "Client média Noctra basé sur le moteur Jellyfin Web",
@@ -103,8 +103,9 @@
     "test:multiview-focus": "node tests/multiview-video-focus.mjs",
     "test:multiview-chrome": "node tests/multiview-chrome-autohide.mjs",
     "test:channel-logos": "node tests/native-channel-logos.mjs",
-    "test:v200168": "node tests/v200168-resume-user-isolation.mjs && node tests/web-episode-flow-controls.mjs && npm run test:v200167",
     "test:v200167": "node tests/v200167-oha-mirrors.mjs && node tests/v200164-ppv-streamed-sources.mjs && npm run test:v200165",
+    "test:tv-connectors": "node tests/v200167-oha-mirrors.mjs && node tests/v200164-ppv-streamed-sources.mjs && node tests/v200046-witv-oha-startup.mjs && node tests/v200130-tv-all-servers.mjs",
+    "test:web-watch-state": "node tests/web-watch-state.mjs && node tests/web-episode-flow-controls.mjs",
     "test:v200165": "node tests/v200165-wasm-memory-guard.mjs && node tests/v200165-tv-refusal-reasons.mjs && node tests/ios-app-identity.mjs && npm run test:v200164",
     "test:v200164": "node tests/tv-player-skip-controls.mjs && node tests/web-episode-flow-controls.mjs && node tests/v200164-ppv-streamed-sources.mjs && node tests/static-integrity.mjs && npm run test:v200162",
     "test:v200162": "node tests/pc-updater-v8.mjs && node tests/v200162-new-server-domain.mjs && npm run test:v200161",

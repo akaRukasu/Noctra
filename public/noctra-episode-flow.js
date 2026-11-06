@@ -1,4 +1,4 @@
-/* Noctra 200.0.164 — génériques et enchaînement des épisodes, comme Noctra TV.
+/* Noctra Web — génériques et enchaînement des épisodes.
    - « Passer le générique », « Passer le générique de fin », « Passer le
      récap / l'aperçu » pendant le segment, jamais automatiques. Temps, dans
      l'ordre : segments du serveur Jellyfin (extension de détection, ex. Intro
@@ -6,10 +6,9 @@
      « Credits »…). Sans marqueur fiable : pas de bouton (plus de générique
      « appris » des avances manuelles). Le générique de fin passé, la scène
      après le générique reste visible.
-   - Carte « À suivre » au générique de fin (ou 30 s avant la fin) : l'épisode
+   - Carte « À suivre » à la fin : l'épisode
      suivant démarre seul après 10 s ; « Lire maintenant » ou « Plus tard »
-     (la lecture s'arrête à la fin). 200.0.168 : plus de bouton « Épisode
-     suivant » à part sur le web (demandé : seulement passer les génériques).
+     (la lecture s'arrête à la fin).
    - ±15 s : sauts du lecteur Jellyfin réglés à 15 s (si l'utilisateur ne les a
      pas déjà réglés), retour visuel cumulé des appuis répétés.
    - Transition : l'image et le titre de l'épisode suivant couvrent l'écran le
@@ -121,15 +120,17 @@
     const client = api();
     if (!client || !item?.Id) return [];
     const fromServer = client.getJSON(client.getUrl(`MediaSegments/${item.Id}`)).then(data => (data?.Items || [])
-      .filter(segment => SEGMENT_TYPES[segment.Type] && segment.EndTicks > segment.StartTicks)
+      .filter(segment => SEGMENT_TYPES[segment.Type] && Number.isFinite(segment.StartTicks) && Number.isFinite(segment.EndTicks)
+        && segment.StartTicks >= 0 && segment.EndTicks > segment.StartTicks)
       .map(segment => ({ type: SEGMENT_TYPES[segment.Type], startMs: Math.round(segment.StartTicks / 10_000), endMs: Math.round(segment.EndTicks / 10_000), source: 'jellyfin' })))
       .catch(() => []);
     const uid = userId();
-    const details = item.Chapters || !uid ? Promise.resolve(item)
+    const details = item.Chapters?.length || !uid ? Promise.resolve(item)
       : client.getJSON(client.getUrl(`Users/${uid}/Items/${item.Id}`, { Fields: 'Chapters' })).catch(() => item);
     const [server, full] = await Promise.all([fromServer, details]);
-    if (server.length) return server;
-    return chapterSegments(full);
+    const types = new Set(server.map(segment => segment.type));
+    return [...server, ...chapterSegments(full).filter(segment => !types.has(segment.type))]
+      .sort((a, b) => a.startMs - b.startMs);
   }
 
   // ── Épisode suivant ──
@@ -199,7 +200,8 @@
 
   // Au-dessus de l'OSD du lecteur Jellyfin (même niveau que son propre bouton).
   function host() {
-    return document.body;
+    const fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+    return fullscreen && fullscreen !== video && fullscreen.contains(video) ? fullscreen : document.body;
   }
 
   // ── Bouton « Passer » ──
@@ -255,8 +257,6 @@
 
   function updateSkip(at) {
     if (!state?.segments?.length) { if (state) state.segment = null; hideSkip(); return; }
-    // « Passer le générique de fin » et « Épisode suivant » restent distincts :
-    // les deux sont proposés au générique de fin.
     let found = null;
     for (const segment of state.segments) {
       if (segment.dismissed) continue;
@@ -453,7 +453,7 @@
   }
 
   // ── Suivi du lecteur Jellyfin ──
-  async function loadItem(item) {
+  function loadItem(item) {
     const manager = playbackManager();
     const token = Symbol('item');
     state = {
@@ -471,21 +471,22 @@
     };
     hideSkip();
     closeUpNext();
-    const [segments, next] = await Promise.all([
-      segmentsFor(item).catch(() => []),
-      item.Type === 'Episode' ? nextEpisodeOf(item, manager).catch(() => null) : Promise.resolve(null)
-    ]);
-    if (!state || state.token !== token) return;
-    state.segments = segments;
-    if (next?.item) {
+    document.body.classList.toggle('noctra-episode-flow', Boolean(manager));
+    void segmentsFor(item).then(segments => {
+      if (state?.token !== token) return;
+      state.segments = segments;
+      updateSkip(positionMs(manager));
+    }).catch(() => {});
+    if (item.Type !== 'Episode') return;
+    void nextEpisodeOf(item, manager).then(next => {
+      if (state?.token !== token || !next?.item) return;
       state.next = next.item;
       state.nextQueued = next.queued;
       const visuals = episodeVisuals(next.item);
       preload(visuals.picture);
       preload(visuals.logo);
       preload(visuals.backdrop);
-    }
-    document.body.classList.toggle('noctra-episode-flow', Boolean(manager));
+    }).catch(() => {});
   }
 
   function onTime() {
@@ -510,11 +511,11 @@
       try { manager?.stop?.(currentPlayer(manager)); } catch {}
       return;
     }
-    if (state.upNextDone || state.advancing) return;
-    // Générique de fin connu (dans les 4 dernières minutes) : « À suivre » à son
-    // début ; sinon 30 s avant la fin (15 s pour un épisode de moins de 10 min).
+    if (state.upNextDone || state.advancing || state.segment) return;
+    // Une scène après le générique se lit jusqu'au bout avant l'enchaînement.
     const outro = state.segments.find(segment => segment.type === 'outro' && segment.startMs > duration - 4 * 60_000);
-    const trigger = outro ? outro.startMs : duration - (duration > 10 * 60_000 ? 30_000 : 15_000);
+    const trigger = outro ? Math.max(outro.endMs, duration - COUNTDOWN_SECONDS * 1000)
+      : duration - (duration > 10 * 60_000 ? 30_000 : 15_000);
     if (at >= trigger && remaining > 1_500) openUpNext();
   }
 
@@ -573,7 +574,10 @@
 
   window.setInterval(scan, 1000);
   document.addEventListener('visibilitychange', scan);
+  const moveSkipToPlayer = () => { if (state?.segment) showSkip(state.segment); };
+  document.addEventListener('fullscreenchange', moveSkipToPlayer);
+  document.addEventListener('webkitfullscreenchange', moveSkipToPlayer);
 
   // Accès pour les tests et le diagnostic.
-  window.NoctraEpisodeFlow = { version: '200.0.164', chapterSegments, episodeLabel, skipLabel };
+  window.NoctraEpisodeFlow = { version: '200.0.171', chapterSegments, episodeLabel, skipLabel };
 })();

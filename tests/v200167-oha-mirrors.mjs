@@ -69,61 +69,92 @@ assert.ok(pages.includes('https://huhu.bz/watch?live=abcdefabcdef1234567890ab'))
 assert.equal(plain(context.ohaOfficialPageCandidates('http://185.254.196.78/live', 'abcdefabcdef1234567890ab', '', []))[0], 'http://185.254.196.78/watch?live=abcdefabcdef1234567890ab', 'adresse IP : ancienne route');
 assert.match(server, /if \(hash && !finalUrl\.hash\) finalUrl\.hash = hash;/, 'fragment « #\/channels » gardé après la requête');
 assert.match(server, /history\.replaceState\(\{\},'','\/#\/channels'\)/, 'route expirée : retour à #/channels');
-// Santé des miroirs : catalogue public de chacun, mis en mémoire.
-vm.runInContext(['let ohaMirrorHealthState = null;', line('ohaPublicGroups'), extract('ohaRequestBody'), extract('ohaHealthyMirrors'), 'this.ohaHealthyMirrors = ohaHealthyMirrors;'].join('\n'), Object.assign(context, { AbortSignal }));
-calls.length = 0;
-responder = url => url.startsWith('https://kool.ws/') ? new Response('', { status: 503 })
-  : url.startsWith('https://oha.cx/') && url.endsWith('/mediaurl-catalog.json') ? new Response('', { status: 404 })
-  : new Response(JSON.stringify({ items: [] }));
-assert.deepEqual(plain(await context.ohaHealthyMirrors()), ['huhu.bz', 'vavoo.top', 'oha.cx'], 'oha.cx : MediaHubMX en secours');
-const probes = calls.length;
-await context.ohaHealthyMirrors();
-assert.equal(calls.length, probes, 'résultat gardé en mémoire');
 
-// Serveurs d'une chaîne : ceux de chaque miroir qui répond.
-const resolveContext = {
-  URL, JSON, Date, Array, String, Number, Promise, setTimeout, clearTimeout, AbortController, console,
-  HttpError: context.HttpError, OHA_MIRRORS: ['huhu.bz', 'kool.ws', 'vavoo.top', 'oha.cx'],
-  delay: ms => new Promise(resolve => setTimeout(resolve, ms)),
-  publicPath: path => '/noctra' + path,
-  decodeTvStateReference: () => ({ root: 'https://huhu.bz/live', candidates: [{ url: 'u1', label: 'HD · Serveur 1' }, { url: 'u2', label: 'SD · Serveur 2' }] }),
-  tvReferences: new Map(), cleanError: error => error.message,
-  ohaOfficialPageCandidates: () => ['https://huhu.bz/#/channels'],
-  issueTvReference: () => 'bridge', ohaWebFallbackOption: () => ({ label: 'OHA intégré', fallback: true }),
-  healthy: ['huhu.bz', 'vavoo.top', 'oha.cx'], forced: [],
-  ohaHealthyMirrors: () => Promise.resolve(resolveContext.healthy),
-  firstSuccessfulOhaCandidate: async () => ({ label: 'HD · Serveur 1', streamUrl: '/s/1', playbackType: 'stream', verified: true, serverIndex: 0, mirror: 'vavoo.top' }),
-  resolveSingleOhaCandidate: async (reference, candidate, index, timeout, signal, onlyRoot) => {
-    resolveContext.forced.push(onlyRoot);
-    return { label: candidate.label, streamUrl: '/s/forced', playbackType: 'stream', verified: true, serverIndex: index, mirror: new URL(onlyRoot || 'https://huhu.bz/').hostname };
+const catalogueRefs = new Map();
+const tvCatalogCache = new Map();
+let nativeWorks = true;
+Object.assign(context, {
+  AbortController, AbortSignal, URLSearchParams, setTimeout, clearTimeout, tvCatalogCache,
+  tvReferences: new Map(),
+  normalizedIdentifier: value => value.toLowerCase(),
+  resolveTvUrl: (value, base) => new URL(value, base).href,
+  publicPath: path => path,
+  tvPublicStreamUrl: token => '/stream/' + token,
+  tvPublicOhaEmbedUrl: token => '/embed/' + token,
+  tvPublicImageUrl: value => value,
+  createHash: () => ({ update: value => ({ digest: () => value }) }),
+  issueTvReference: () => 'lecteur',
+  encodeTvStateReference(kind, state) {
+    const key = String(catalogueRefs.size + 1);
+    catalogueRefs.set(key, state);
+    return key;
+  },
+  decodeTvStateReference: token => catalogueRefs.get(token),
+  validateWiTvHlsStream: async (url, headers) => {
+    if (!nativeWorks || headers.referer === 'https://huhu.bz/') throw new Error('Média absent');
+    return { url };
   }
+});
+const start = server.indexOf('function ohaChannelIdentity(');
+const end = server.indexOf('function parseDelimitedTvCatalog(', start);
+vm.runInContext(['(() => {', line('ohaPublicGroups'), extract('cleanOhaChannelName'), server.slice(start, end),
+  'Object.assign(this, { tvCatalogFromOha, resolveOhaStreamReference });', '})();'].join('\n'), context);
+
+const item = (id, name, url, tag = 'France') => ({
+  id, name, url, tags: [tag], images: { logo: '/live2/logo/' + id + '.png' }
+});
+calls.length = 0;
+responder = (value, options) => {
+  const url = new URL(value);
+  if (url.pathname === '/live/resolve') {
+    assert.equal(options.method, undefined);
+    assert.equal(url.searchParams.get('language'), 'fr');
+    return Response.json({ url: 'https://example.org/video.m3u8', format: 'hls' });
+  }
+  assert.equal(url.pathname, '/live/catalog/live/channels.json');
+  const group = url.searchParams.get('filter[group]');
+  if (url.hostname === 'kool.ws') return Response.json({ items: [] });
+  if (url.hostname === 'oha.cx') return new Response('<!doctype html>');
+  if (group === 'France Sport') return Response.json({ items: [] });
+  if (url.hostname === 'vavoo.top') {
+    return Response.json({ items: [item('4', 'TF1 HD (7)', 'https://www.vavoo.to/live/play/4'),
+      item('99', 'Faux serveur', 'https://example.org/live/play/99')] });
+  }
+  const first = item('1', 'TF1 FHD (1)', 'https://huhu.bz/live/play/1');
+  if (url.searchParams.get('cursor') === '300') {
+    return Response.json({ items: [first, item('2', 'Arte HD (1)', 'https://huhu.bz/live/play/2')] });
+  }
+  return Response.json({ items: [first], nextCursor: '300' });
 };
-vm.createContext(resolveContext);
-vm.runInContext([extract('ohaServerChoices'), extract('resolveOhaStreamReference'), 'this.resolveOhaStreamReference = resolveOhaStreamReference;'].join('\n'), resolveContext);
-let result = plain(await resolveContext.resolveOhaStreamReference('jeton'));
-assert.deepEqual(result.serverChoices.map(c => c.label), [
-  'huhu.bz · HD · Serveur 1', 'huhu.bz · SD · Serveur 2',
-  'vavoo.top · HD · Serveur 1', 'vavoo.top · SD · Serveur 2',
-  'oha.cx · HD · Serveur 1', 'oha.cx · SD · Serveur 2'
-], 'kool.ws ne répond pas : absent');
-assert.equal(result.serverChoices[3].resolveUrl, '/noctra/api/tv/oha/resolve/jeton?server=1&mirror=vavoo.top');
-assert.equal(result.activeServer, 2, 'flux obtenu sur vavoo.top · Serveur 1');
-assert.equal(result.options[0].label, 'vavoo.top · HD · Serveur 1');
-assert.deepEqual(result.options.slice(1, -1).map(o => o.label), ['huhu.bz · HD · Serveur 1', 'huhu.bz · SD · Serveur 2', 'vavoo.top · SD · Serveur 2', 'oha.cx · HD · Serveur 1', 'oha.cx · SD · Serveur 2'], 'applis : serveurs des autres miroirs');
-assert.equal(result.options.at(-1).label, 'OHA intégré');
-// Serveur choisi sur un miroir précis.
-result = plain(await resolveContext.resolveOhaStreamReference('jeton', 1, 'oha.cx'));
-assert.deepEqual(resolveContext.forced, ['https://oha.cx/live']);
-assert.equal(result.activeServer, 5);
-// Adresse de miroir inconnue ignorée (pas de requête vers un site arbitraire).
-resolveContext.forced.length = 0;
-await resolveContext.resolveOhaStreamReference('jeton', 0, 'evil.example');
-assert.deepEqual(resolveContext.forced, ['']);
-// Aucun miroir vérifié : serveurs comme avant, sans nom de miroir.
-resolveContext.healthy = [];
-resolveContext.firstSuccessfulOhaCandidate = async () => { throw new Error('aucun flux'); };
-result = plain(await resolveContext.resolveOhaStreamReference('jeton'));
-assert.deepEqual(result.serverChoices.map(c => c.label), ['HD · Serveur 1', 'SD · Serveur 2']);
-assert.equal(result.options[0].label, 'OHA intégré', 'sans flux : lecteur officiel d’abord');
+
+const catalogue = await context.tvCatalogFromOha();
+assert.deepEqual(plain(catalogue.channels.map(channel => [channel.name, channel.serverCount])), [['Arte', 1], ['TF1', 2]]);
+assert.match(catalogue.warning, /kool\.ws.*oha\.cx/);
+assert.ok(calls.some(value => new URL(value).searchParams.get('cursor') === '300'));
+const probes = calls.length;
+await context.tvCatalogFromOha();
+assert.equal(calls.length, probes);
+
+const token = catalogue.channels.find(channel => channel.name === 'TF1').resolverUrl.split('/').at(-1);
+let result = plain(await context.resolveOhaStreamReference(token));
+assert.deepEqual(result.serverChoices.map(choice => choice.label), ['huhu.bz · FHD · Serveur 1', 'vavoo.top · HD · Serveur 7']);
+assert.equal(result.activeServer, 1);
+assert.equal(result.options[0].verified, true);
+assert.equal(result.externalUrl, 'https://vavoo.top/#/channels');
+const direct = result.serverChoices[1];
+calls.length = 0;
+result = plain(await context.resolveOhaStreamReference(token, direct.server, 'kool.ws'));
+assert.equal(result.activeServer, 1);
+assert.equal(calls.length, 1);
+assert.equal(new URL(calls[0]).hostname, 'vavoo.top');
+assert.equal(new URL(calls[0]).searchParams.get('url'), 'https://www.vavoo.to/live/play/4');
+await assert.rejects(context.resolveOhaStreamReference(token, 0), /flux HLS vérifiable/);
+nativeWorks = false;
+result = plain(await context.resolveOhaStreamReference(token));
 assert.equal(result.nativeUnavailable, true);
-console.log('200.0.167 : OHA / Kool sur huhu.bz, kool.ws, vavoo.top et oha.cx (#/channels), serveurs de chaque miroir : OK');
+assert.equal(result.options[0].manualOnly, true);
+
+for (const cache of tvCatalogCache.values()) cache.expiresAt = 0;
+responder = () => Response.json({ items: [] });
+assert.equal((await context.tvCatalogFromOha()).stale, true);
+console.log('OHA / Kool : pagination par miroir, serveurs réels par chaîne, résolution HLS et catalogue de secours OK');

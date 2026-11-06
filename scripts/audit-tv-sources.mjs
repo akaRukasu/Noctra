@@ -3,7 +3,7 @@
 const sources = [
   ['LiveWatch','https://livewatch.icu/'],['FSTV','https://fstv.rest/'],
   ['OHA · IP 1','http://185.254.196.78/live'],['OHA · IP 2','http://178.83.5.50/live'],['OHA · Vavoo','http://vavoo.top/live'],['OHA · Kool','https://kool.ws/live'],
-  ['WiTV','https://witv.football/'],['Movix','https://movix.men/live-tv'],['Movix · catalogue','https://api.movix.men/api/livetv/manifest'],
+  ['WiTV','https://witv.eu/chaines-live/generaliste/'],['Movix','https://movix.men/live-tv'],['Movix · catalogue','https://api.movix.men/api/livetv/manifest'],
   ['Streamed · strmfree.pk','https://strmfree.pk/'],['PPV · rockylive','https://rockylive.st/'],['PPV · tim-streams','https://tim-streams.com/'],['OHA · huhu.bz','https://huhu.bz/'],['Streamed · PK','https://streamed.pk/'],['Streamed · ST','https://streamed.st/'],
   ['StreamSports99','https://streamsports99.su/live-tv'],['BZH-Sport','https://bzh-sport.lat/'],['Volkamax','https://volkamax.club/'],
   ['DaddyLive','https://dlive.sx/'],['BrigitteTV','https://quellefrappe.click/prog.php'],['Xtemus','https://box.xtemus.com/?playlist=u256y494u21596x2'],['Xtemus · lien court','https://rebrand.ly/w/3/u']

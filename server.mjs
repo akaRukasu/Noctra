@@ -27,6 +27,7 @@ import { libraryRefreshState } from './lib/library-refresh.mjs';
 import { createInteractiveSearchCache } from './lib/interactive-search.mjs';
 import { publicIndexer, updateIndexer } from './lib/prowlarr-indexers.mjs';
 import { compareReleaseSize, sonarrPackKind, collectSeriesPacks } from './lib/release-search.mjs';
+import { wiTvRequestHeaders, parseWiTvPublishedPlayers, wiTvPublishedMedia } from './lib/witv-public.mjs';
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 const publicRoot = join(projectRoot, 'public');
@@ -481,10 +482,9 @@ function strictResumeItems(items, limit = 12) {
     const userData = item?.UserData || {};
     const position = Number(userData.PlaybackPositionTicks || 0);
     const runtime = Number(item?.RunTimeTicks || 0);
-    const playedPercentage = Number(userData.PlayedPercentage);
-    if (!id || seen.has(id) || userData.Played === true || !(position > 0)) return false;
-    if (Number.isFinite(playedPercentage) && playedPercentage >= 99) return false;
-    if (runtime > 0 && position >= runtime * .99) return false;
+    if (!id || seen.has(id) || !Number.isFinite(position) || position <= 0) return false;
+    // Jellyfin conserve « vu » lors d'un revisionnage. La position active prime.
+    if (runtime > 0 ? position >= runtime * .99 : Number(userData.PlayedPercentage) >= 99) return false;
     seen.add(id);
     return true;
   }).slice(0, Math.max(0, Number(limit) || 0));
@@ -5490,7 +5490,7 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
   let url = await assertPublicTvUrl(currentLiveWatchUrl(urlValue instanceof URL ? urlValue.toString() : urlValue));
   let requestOptions = { ...options, headers: { ...(options.headers || {}) } };
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
-    const response = await fetch(url, { ...requestOptions, redirect: 'manual' });
+    const response = await fetch(url, { ...requestOptions, headers: wiTvRequestHeaders(url, requestOptions.headers), redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get('location');
     if (!location) return response;
@@ -6444,21 +6444,17 @@ async function proxyLiveWatchVipTokenHttp(tokenValue, req, res, requestUrl) {
   });
 }
 
+const wiTvRoot = 'https://witv.eu/';
 const complementaryTvBuiltInSources = [
   { id: 'fstv-public', name: 'FSTV', section: 'channels', description: 'French Stream TV · catalogue public de chaînes', url: 'https://fstv.rest/', type: 'fstv', provider: 'FSTV' },
-  { id: 'witv-public', name: 'WiTV', section: 'channels', description: 'Catalogue public WiTV classé par catégories', url: 'https://witv.football/', type: 'witv', provider: 'WiTV' },
-  // 200.0.167 : OHA / Kool publié sur plusieurs miroirs (huhu.bz, kool.ws,
-  // vavoo.top, oha.cx), application « #/channels » ; essayés dans cet ordre.
+  { id: 'witv-public', name: 'WiTV', section: 'channels', description: 'Catalogue public WiTV classé par catégories', url: wiTvRoot, type: 'witv', provider: 'WiTV' },
+  // Les catalogues OHA / Kool sont réunis par chaîne.
   { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · huhu.bz (secours : kool.ws, vavoo.top, oha.cx)', url: 'https://huhu.bz/#/channels', type: 'oha', provider: 'OHA' },
   { id: 'streamsports99-live-tv', name: 'StreamSports99 TV', section: 'channels', description: 'Chaînes internationales · pays et programmes Live TV', url: 'https://streamsports99.su/live-tv', type: 'streamsports99', provider: 'StreamSports99' },
   { id: 'dlstreams-sports', name: 'DLStreams', section: 'sports', description: 'Programme sportif public · lecteurs intégrés DLStreams', url: 'https://dlstreams.st/', type: 'dlstreams', provider: 'DLStreams' },
-  // 200.0.164 : streamed.pk ne publie plus rien ; adresse actuelle strmfree.st
-  // (anciennes adresses essayées ensuite), et PPV (ppv.st) en source à part.
-  // 200.0.167 : Streamed sur strmfree.pk, PPV sur rockylive.st / tim-streams.com
-  // (chaque source essaie aussi les autres adresses, puis propose le site).
   { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree.pk', url: 'https://strmfree.pk/', type: 'streamed', provider: 'Streamed' },
   { id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · rockylive.st (secours : tim-streams.com)', url: 'https://rockylive.st/', type: 'ppv', provider: 'PPV' },
-  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · catégories et chaînes sportives', url: 'https://bzh.lat/', type: 'volkamax', provider: 'Volkamax' },
+  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · événements et chaînes sportives', url: 'https://volkamax.club/', type: 'volkamax', provider: 'Volkamax' },
   { id: 'daddylive-sports', name: 'DaddyLive', section: 'sports', description: 'Programme sportif · lecteurs DaddyLive intégrés', url: 'https://dlive.sx/', type: 'daddylive', provider: 'DaddyLive' },
   { id: 'brigitte-sports', name: 'Streamonsport', section: 'sports', description: 'Programme Streamonsport · lecteur du fournisseur', url: 'https://choc2foot.biz/', type: 'brigitte', provider: 'Streamonsport' },
   { id: 'xtemus-box', name: 'Xtemus · Ma sélection', section: 'personal', description: 'Playlist Xtemus · portail du fournisseur', url: 'https://box.xtemus.com/?playlist=u256y494u21596x2', type: 'portal', provider: 'Xtemus' },
@@ -9125,14 +9121,30 @@ function parseWiTvCategoryHtml(htmlValue, baseUrl, group = 'WiTV') {
   const html = String(htmlValue || '');
   const channels = [];
   const seen = new Set();
-  const expression = /href=["']([^"']*\/chaines-live\/(?!\s*(?:sport|cinema|documentaire|generaliste|enfants|info|musique|belgique|suisse)\/?["'])[^"']+\.html(?:\?[^"']*)?)["']/gi;
+  const base = new URL(baseUrl);
+  const currentSite = /^(?:www\.)?witv\.eu$/i.test(base.hostname);
+  // On the current site, each channel card gives its own title and artwork after the link.
+  const expression = currentSite
+    ? /<div\s+class=["']ann-short_item["']>\s*(?:<span[^>]*>[^<]*<\/span>\s*)?<a\s+href=["']([^"']+)["'][^>]*>[^<]*<\/a>\s*<div\s+class=["']ann-short_price["']>([^<]+)<\/div>(?:\s*<img\b[^>]*?\s+src=["']([^"']+)["'])?/gi
+    : /href=["']([^"']*\/chaines-live\/(?!\s*(?:sport|cinema|documentaire|generaliste|enfants|info|musique|belgique|suisse)\/?["'])[^"']+\.html(?:\?[^"']*)?)["']/gi;
   let match;
   while ((match = expression.exec(html)) && channels.length < 500) {
     let pageUrl;
     try { pageUrl = resolveTvUrl(decodeTvHtml(match[1]), baseUrl); } catch { continue; }
+    if (currentSite) {
+      const page = new URL(pageUrl);
+      if (page.origin !== base.origin || !/^\/chaines-live\/\d+-[^/]+\.html$/i.test(page.pathname)) continue;
+      pageUrl = page.origin + page.pathname;
+    }
     if (seen.has(pageUrl)) continue;
     seen.add(pageUrl);
-    const nearby = wiTvNearbyImage(html, match.index || 0, baseUrl);
+    const nearby = currentSite ? { alt: decodeTvHtml(match[2]).trim(), logo: '' } : wiTvNearbyImage(html, match.index || 0, baseUrl);
+    if (currentSite && match[3]) {
+      try {
+        const logo = new URL(resolveTvUrl(decodeTvHtml(match[3]), baseUrl));
+        if (logo.origin === base.origin) nearby.logo = logo.href;
+      } catch {}
+    }
     const name = nearby.alt && !/^(?:regarder|live)$/i.test(nearby.alt) ? nearby.alt : wiTvNameFromUrl(pageUrl);
     const resolveRef = encodeTvStateReference('witv-page', {
       url: safeTvRemoteUrl(pageUrl).toString(),
@@ -9182,7 +9194,7 @@ function tvIframeCandidatesFromHtml(htmlValue, baseUrl) {
     const adLike = /(?:^|\.)(?:ad|ads|doubleclick|googlesyndication)\./i.test(host) || /(?:^|[\/_-])(?:ad|ads)(?:[\/_-]|$)/i.test(pathname);
     let score = 0;
     if (/player|embed|live|watch|stream/i.test(`${host}${pathname}`)) score += 10;
-    if (['witv.football', 'www.witv.football'].includes(host) && /^\/player\/playerjs\/witv-player\.php$/i.test(pathname)) score += 120;
+    if (/^(?:www\.)?witv\.(?:eu|football)$/.test(host) && /^\/player\/playerjs\/witv-player\.php$/i.test(pathname)) score += 120;
     if (/(?:^|\.)livehdtvs?\.com$/i.test(host)) score -= 160;
     if (/apl425\.me$/i.test(host)) score += 4;
     if (adLike) score -= 30;
@@ -9206,8 +9218,9 @@ function tvIframeCandidatesFromHtml(htmlValue, baseUrl) {
 function isWiTvPublicPlayer(urlValue) {
   try {
     const parsed = new URL(urlValue);
-    return ['witv.football', 'www.witv.football'].includes(parsed.hostname.toLowerCase())
-      && /^\/player\/playerjs\/witv-player\.php$/i.test(parsed.pathname);
+    return /^(?:www\.)?witv\.(?:eu|football)$/i.test(parsed.hostname)
+      && ( /^\/player\/playerjs\/witv-player\.php$/i.test(parsed.pathname) ||
+        /^(?:www\.)?witv\.eu$/i.test(parsed.hostname) && /^\/player\/source[1-9]\/?$/i.test(parsed.pathname) );
   } catch {
     return false;
   }
@@ -9220,6 +9233,10 @@ function wiTvStreamFromPlayerHtml(htmlValue, baseUrl) {
 
 function wiTvStreamCandidatesFromPlayerHtml(htmlValue, baseUrl) {
   const html = String(htmlValue || '');
+  if (/^(?:www\.)?witv\.eu$/i.test(new URL(baseUrl).hostname)) {
+    const published = wiTvPublishedMedia(html, baseUrl);
+    if (published.length) return published;
+  }
   const values = [];
   const seen = new Set();
   const add = rawValue => {
@@ -9330,6 +9347,7 @@ function tvRecentPlaylistProbeUri(text, baseUrl, offset = 0) {
 
 async function validateWiTvHlsStream(streamUrlValue, headers = {}, timeoutMs = 8_000, signal = null, recentSegments = true) {
   const streamUrl = safeTvRemoteUrl(streamUrlValue);
+  const wiTvLive = /^(?:www\.)?witv\.eu$/i.test(streamUrl.hostname) && /^\/player\/source[1-9]\/?$/i.test(streamUrl.pathname);
   const relayHeaders = {
     accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain;q=0.8,*/*;q=0.3',
     'user-agent': headers['user-agent'] || 'Mozilla/5.0 Noctra/152',
@@ -9375,6 +9393,7 @@ async function validateWiTvHlsStream(streamUrlValue, headers = {}, timeoutMs = 8
       return { url: rootUrl, cookie: cookies.get(new URL(rootUrl).origin) || '' };
     }
     const text = await readTvPlaylistBody(response);
+    if (wiTvLive && /#EXT-X-ENDLIST\b/.test(text)) throw new HttpError(502, 'WiTV renvoie une vidéo de remplacement au lieu du direct.');
     const next = recentSegments
       ? tvRecentPlaylistProbeUri(text, response.url || currentUrl)
       : liveWatchFirstPlaylistUri(text, response.url || currentUrl);
@@ -9594,6 +9613,28 @@ function sanitizeWiTvPlayerHtml(htmlValue, baseUrl) {
   return html;
 }
 
+function wiTvOfficialTabOptions(html, pageUrl) {
+  const page = new URL(pageUrl);
+  if (page.protocol !== 'https:' || !/^(?:www\.)?witv\.eu$/i.test(page.hostname) ||
+    !/^\/chaines-live\/\d+-[^/]+\.html$/i.test(page.pathname)) return [];
+  const options = new Map();
+  // Read the public selector. Opaque data-v values are not stream or player URLs.
+  for (const [, , attributes, body] of html.matchAll(/<(span|button)\b([^>]*)>((?:[^<]|<(?!\/?(?:span|button)\b)[^>]*>)*)<\/\1>/gi)) {
+    const classes = attributes.match(/(?:^|\s)class=["']([^"']+)["']/i)?.[1]?.split(/\s+/) || [];
+    const target = attributes.match(/(?:^|\s)data-target=["']player([1-9]\d?)["']/i)?.[1];
+    if (!target || !classes.includes('player-tab') || options.has(target)) continue;
+    const tabName = decodeTvHtml(body.replace(/<[^>]+>/g, '')).trim().slice(0, 60) || `Source ${target}`;
+    const url = new URL(page);
+    url.hash = `player${target}`;
+    options.set(target, {
+      label: `${tabName} · à choisir sur WiTV`, serverIndex: Number(target) - 1, sourceLabel: tabName,
+      url: url.href, externalUrl: url.href, playbackType: 'external', officialClient: true, manualOnly: true
+    });
+    if (options.size === 12) break;
+  }
+  return [...options.values()];
+}
+
 async function resolveTvPageReference(token) {
   const additionalRef = tvReferences.get(String(token || ''));
   if (additionalRef?.meta?.kind === 'brigitte-event') {
@@ -9633,6 +9674,10 @@ async function resolveTvPageReference(token) {
   if (['streamed-event', 'streamed-source'].includes(additionalRef?.meta?.kind)) {
     if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge la source Streamed.');
     return resolveStreamedReference(additionalRef);
+  }
+  if (additionalRef?.meta?.kind === 'sports-public-players') {
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme sportif.');
+    return { options: additionalRef.meta.options, externalUrl: additionalRef.url };
   }
   if (additionalRef?.meta?.kind === 'additional-resolver') {
     if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Rechargez la source TV.');
@@ -9678,7 +9723,8 @@ async function resolveTvPageReference(token) {
   const html = await response.text();
   if (html.length > 4 * 1024 * 1024) throw new HttpError(413, 'La page du lecteur est trop volumineuse.');
   const baseUrl = response.url || reference.url;
-  const candidates = tvIframeCandidatesFromHtml(html, baseUrl);
+  const publishedPlayers = parseWiTvPublishedPlayers(html, baseUrl);
+  const candidates = publishedPlayers.length ? publishedPlayers : tvIframeCandidatesFromHtml(html, baseUrl);
   const internalCandidates = candidates.filter(item => isWiTvPublicPlayer(item.url));
   const players = internalCandidates.slice(0, 6);
   const controller = new AbortController();
@@ -9725,6 +9771,7 @@ async function resolveTvPageReference(token) {
   }));
   if (!active) options.push(...officialOptions, ...choices);
   else options.push(...officialOptions);
+  if (!players.length) options.push(...wiTvOfficialTabOptions(html, baseUrl));
   options.push(backup);
   const liveWatchBackupToken = encodeTvStateReference('witv-backup', { name: reference.meta?.channelName || '', provider: 'LiveWatch' });
   options.push({
@@ -9750,10 +9797,13 @@ async function resolveTvPageReference(token) {
       host: internalCandidates[0].host
     });
   }
-  const embeds = options.filter(item => item.url);
+  const embeds = options.filter(item => item.url && item.playbackType !== 'external');
+  const officialPageOnly = !embeds.length && /^(?:www\.)?witv\.eu$/i.test(new URL(baseUrl).hostname);
   return { externalUrl: reference.url, resolvedFrom: baseUrl, options, embeds, fallbackAvailable: true,
     nativeFailures, nativeUnavailable: !active,
-    warning: active ? '' : 'HLS WiTV indisponible depuis le serveur Noctra ; lecteur officiel WiTV conservé.' };
+    officialPageOnly,
+    warning: active ? '' : officialPageOnly ? 'WiTV ne fournit pas de direct intégré pour cette chaîne. Le lecteur officiel est disponible sur son site.' :
+      'HLS WiTV indisponible depuis le serveur Noctra ; lecteur officiel WiTV conservé.' };
 }
 
 const wiTvCategories = [
@@ -9768,7 +9818,7 @@ const wiTvCategories = [
   ['Suisse', 'suisse']
 ];
 
-async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
+async function tvCatalogFromWiTv(rootValue = wiTvRoot) {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `witv::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -9782,12 +9832,14 @@ async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
     if (!response.ok) throw new Error(`${group}: HTTP ${response.status}`);
     const html = await response.text();
     if (html.length > 4 * 1024 * 1024) throw new Error(`${group}: page trop volumineuse`);
-    return parseWiTvCategoryHtml(html, response.url || url, group);
+    const channels = parseWiTvCategoryHtml(html, response.url || url, group);
+    if (!channels.length) throw new Error(`${group}: aucune chaîne exploitable`);
+    return channels;
   }));
   const map = new Map();
   const errors = [];
   results.forEach((result, index) => {
-    if (result.status === 'fulfilled') result.value.forEach(channel => map.set(channel.embedUrl || channel.id, channel));
+    if (result.status === 'fulfilled') result.value.forEach(channel => map.set(channel.externalUrl || channel.id, channel));
     else errors.push(`${wiTvCategories[index][0]} indisponible`);
   });
   const channels = [...map.values()];
@@ -9799,7 +9851,7 @@ async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
     count: channels.length,
     warning: channels.length ? (errors.length ? `Catalogue partiel : ${errors.join(', ')}.` : '') : 'Le catalogue public WiTV est temporairement indisponible.'
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 10 * 60_000, value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (errors.length ? 30_000 : 10 * 60_000), value });
   return value;
 }
 
@@ -11096,14 +11148,15 @@ function streamedMatchChannel(item, baseUrl, fallbackGroup = 'Sports') {
   }, baseUrl, group);
 }
 
-// Adresses de Streamed, de la plus récente à la plus ancienne : en cas d'échec
-// (hôte injoignable, erreur, page HTML au lieu du JSON), l'adresse suivante.
-const STREAMED_HOSTS = ['strmfree.pk', 'strmfree.st', 'streamed.pk', 'streamed.st', 'rockylive.st', 'tim-streams.com'];
+// Seuls les anciens miroirs Streamed partagent les routes /api/matches.
+const STREAMED_HOSTS = ['streamed.pk', 'streamed.st'];
+const STREAMFREE_HOSTS = ['strmfree.pk', 'strmfree.st', 'streamfree.top'];
 // Adresse qui a répondu en dernier : les requêtes suivantes partent d'elle
 // (une adresse morte n'est pas réessayée à chaque rubrique du catalogue).
 let streamedHealthyHost = null;
 
-async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = []) {
+async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = [], signal = null) {
+  signal?.throwIfAborted();
   if (!tried.length && allowMirror && streamedHealthyHost?.expiresAt > Date.now()) {
     const start = new URL(urlValue);
     if (STREAMED_HOSTS.includes(start.hostname) && start.hostname !== streamedHealthyHost.host) {
@@ -11113,8 +11166,9 @@ async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = [])
     }
   }
   try {
+  const timeout = AbortSignal.timeout(allowMirror ? 6_000 : 8_000);
   const response = await fetchTvRemote(urlValue, {
-    signal: AbortSignal.timeout(allowMirror ? 6_000 : 8_000),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     headers: {
       accept: 'application/json,text/plain;q=0.9,*/*;q=0.4',
       'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
@@ -11137,7 +11191,7 @@ async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = [])
     const nextHost = STREAMED_HOSTS.find(host => !seen.includes(host));
     if (!nextHost) throw error;
     target.hostname = nextHost;
-    return fetchStreamedJson(target.href, target.origin + '/', seen.length + 1 < STREAMED_HOSTS.length, seen);
+    return fetchStreamedJson(target.href, target.origin + '/', seen.length + 1 < STREAMED_HOSTS.length, seen, signal);
   }
 
 }
@@ -11204,13 +11258,10 @@ async function resolveStreamedReference(reference) {
   return {options};
 }
 
-async function tvCatalogFromStreamed(rootValue = 'https://strmfree.st/') {
-  const root = safeTvRemoteUrl(rootValue).toString();
-  const cacheKey = `streamed::${root}`;
-  const cached = tvCatalogCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+async function legacyStreamedChannels(root) {
+  const signal = AbortSignal.timeout(8_000);
   const sportsEndpoint = new URL('/api/sports', root).toString();
-  const sports = await fetchStreamedJson(sportsEndpoint, root).catch(() => []);
+  const sports = await fetchStreamedJson(sportsEndpoint, root, true, [], signal).catch(() => []);
   const endpoints = [
     ['/api/matches/live/popular', 'Popular Live'],
     ['/api/matches/live/popular-viewcount', 'Popular Live'],
@@ -11218,7 +11269,7 @@ async function tvCatalogFromStreamed(rootValue = 'https://strmfree.st/') {
     ...((Array.isArray(sports) ? sports : []).slice(0, 16).map(sport => [`/api/matches/${encodeURIComponent(String(sport.id || ''))}/popular`, String(sport.name || sport.id || 'Sports')]))
   ];
   const results = await Promise.allSettled(endpoints.map(async ([path, group]) => {
-    const payload = await fetchStreamedJson(new URL(path, root).toString(), root);
+    const payload = await fetchStreamedJson(new URL(path, root).toString(), root, true, [], signal);
     if (!Array.isArray(payload)) return [];
     return payload.map(item => streamedDeferredChannel(item, root, group)).filter(Boolean);
   }));
@@ -11228,23 +11279,84 @@ async function tvCatalogFromStreamed(rootValue = 'https://strmfree.st/') {
     if (result.status !== 'fulfilled') { failedCount += 1; return; }
     result.value.forEach(channel => map.set(channel.id, channel));
   });
-  // Aucune adresse ne répond à l'API : site du fournisseur dans le lecteur web.
-  const unreachable = !map.size && failedCount === endpoints.length;
-  const channels = unreachable ? providerSiteChannels('Streamed', STREAMED_SITES) : [...map.values()];
-  const value = {
-    name: 'Streamed',
-    sourceType: 'streamed',
-    groups: [],
-    channels,
-    count: channels.length,
-    warning: unreachable
-      ? `L’API Streamed ne répond sur aucune adresse (${STREAMED_HOSTS.join(', ')}) : site du fournisseur proposé.`
-      : channels.length
-        ? (failedCount ? `${failedCount} rubrique(s) Streamed n’ont pas répondu.` : '')
-        : 'Aucun événement Streamed public exploitable n’est actuellement publié.'
-  };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
-  return value;
+  if (!map.size && failedCount === endpoints.length) throw new HttpError(502, 'API Streamed historique indisponible.');
+  return [...map.values()];
+}
+
+async function fetchSportsJson(url, root, provider) {
+  const response = await fetchTvRemote(url, {
+    signal: AbortSignal.timeout(6_000),
+    headers: { accept: 'application/json', referer: root, 'user-agent': 'Mozilla/5.0 Noctra' }
+  });
+  if (!response.ok) {
+    try { await response.body?.cancel?.(); } catch {}
+    throw new HttpError(502, `API ${provider} indisponible (HTTP ${response.status}).`);
+  }
+  const text = await response.text();
+  if (text.length > 6 * 1024 * 1024) throw new HttpError(413, `Programme ${provider} trop volumineux.`);
+  try { return JSON.parse(text); } catch { throw new HttpError(502, `Réponse ${provider} non JSON.`); }
+}
+
+function sportsPlayerOptions(entries, root, defaultLabel) {
+  const options = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (typeof entry?.url !== 'string' || !entry.url.trim()) continue;
+    let url;
+    try { url = safeTvRemoteUrl(new URL(entry.url, root)).href; } catch { continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    options.push({ label: String(entry.name || entry.quality || `${defaultLabel} ${options.length + 1}`), url, playbackType: 'embed', compatPage: true });
+  }
+  return options;
+}
+
+function sportsChannelWithPlayers(channel, options, externalUrl, provider) {
+  if (!channel || !options.length) return null;
+  const playback = { ...channel, externalUrl, compatPage: true, streamKind: `${provider} · lecteur web` };
+  if (options.length === 1) return { ...playback, embedUrl: options[0].url };
+  const token = issueTvReference(externalUrl, {}, { kind: 'sports-public-players', options });
+  return { ...playback, embedUrl: '', playbackType: 'resolver', resolverUrl: publicPath(`/api/tv/resolve/${token}`), streamKind: `${provider} · serveurs au clic` };
+}
+
+async function streamFreeChannels(root) {
+  const payload = await fetchSportsJson(new URL('/api/v1/streams', root), root, 'StreamFree');
+  if (!Array.isArray(payload?.streams)) throw new HttpError(502, 'Format du programme StreamFree inattendu.');
+  return payload.streams.map(item => {
+    if (!item?.name || !Array.isArray(item.sources)) return null;
+    const sources = [...item.sources].sort((a, b) => Number(Boolean(b?.live)) - Number(Boolean(a?.live)));
+    const options = sportsPlayerOptions(sources, root, 'StreamFree');
+    for (const option of options) {
+      const url = new URL(option.url);
+      // Les liens publiés pointent souvent vers strmfree.st. Le miroir qui
+      // sert le programme expose aussi la même route /embed.
+      if (STREAMFREE_HOSTS.includes(url.hostname) && url.pathname.startsWith('/embed/')) {
+        option.url = new URL(url.pathname + url.search + url.hash, root).href;
+      }
+    }
+    if (!options.length) return null;
+    const page = options[0].url;
+    const start = new Date(Number(item.match_timestamp) * 1000);
+    const channel = normalizeTvChannel({
+      name: item.name, embed_url: page, group: item.league || item.category || 'Sports',
+      category: item.category, provider: 'Streamed', logo: item.thumbnail_url || item.team1?.logo,
+      secondaryLogo: item.team2?.logo, eventId: item.stream_key || item.id,
+      kick_off_iso: item.match_timestamp && Number.isFinite(start.getTime()) ? start.toISOString() : null,
+      is_live: sources.some(source => source?.live === true)
+    }, root);
+    return sportsChannelWithPlayers(channel, options, page, 'StreamFree');
+  }).filter(Boolean);
+}
+
+async function tvCatalogFromStreamed(rootValue = 'https://strmfree.pk/') {
+  const root = safeTvRemoteUrl(rootValue).href;
+  const cacheKey = `streamed::${root}`;
+  const cached = tvCatalogCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const roots = [...new Set([root, ...STREAMFREE_HOSTS.map(host => `https://${host}/`), 'https://streamed.pk/'])];
+  return sportsCatalogWithFallback('Streamed', 'streamed', cacheKey, roots, STREAMED_SITES, candidate => {
+    return STREAMFREE_HOSTS.includes(new URL(candidate).hostname) ? streamFreeChannels(candidate) : legacyStreamedChannels(candidate);
+  });
 }
 
 // Site du fournisseur, proposé quand aucune de ses adresses ne publie de
@@ -11257,10 +11369,7 @@ function providerSiteChannels(provider, urls) {
   }).filter(Boolean);
 }
 
-// ── PPV (rockylive.st, tim-streams.com, ppv.st) : programme public /api/streams ──
-// Réponse lue de façon tolérante : { streams: [ { category, streams: [...] } ] }
-// ou liste directe. Chaque événement : nom, image, début / fin (secondes),
-// lecteur intégré (iframe) ou page /live/<uri_name>.
+// Chaque fournisseur PPV garde ses routes et son format de programme.
 const PPV_HOSTS = ['rockylive.st', 'tim-streams.com', 'ppv.st', 'ppv.to'];
 const PPV_SITES = ['https://rockylive.st/', 'https://tim-streams.com/'];
 const STREAMED_SITES = ['https://strmfree.pk/'];
@@ -11281,12 +11390,16 @@ function ppvChannel(event, category, root) {
   if (!event || typeof event !== 'object') return null;
   const name = String(event.name || event.title || '').replace(/\s+/g, ' ').trim();
   const slug = String(event.uri_name || event.slug || '').trim().replace(/^\/+/, '');
-  let embed = String(event.iframe || event.embed || event.embedUrl || '').trim();
+  let embed = String(event.embed_url || event.iframe || event.embed || event.embedUrl || '').trim();
   if (embed && !/^https?:\/\//i.test(embed)) { try { embed = new URL(embed, root).toString(); } catch { embed = ''; } }
-  const page = slug ? new URL(`/live/${slug.split('/').map(encodeURIComponent).join('/')}`, root).toString() : '';
+  let page = slug ? new URL(`/live/${slug.split('/').map(encodeURIComponent).join('/')}`, root).href : '';
+  if (event.event_url) {
+    try { page = resolveTvUrl(event.event_url, root); } catch {}
+  }
   if (!name || (!embed && !page)) return null;
   const now = Date.now() / 1000;
-  const start = Number(event.starts_at || event.start || 0) || 0;
+  const start = Number(event.start_timestamp || event.starts_at || event.start || 0) || 0;
+  const date = new Date(start * 1000);
   const end = Number(event.ends_at || event.end || 0) || 0;
   const always = Boolean(event.always_live || event.alwaysLive);
   // Événement terminé depuis plus d'une heure : retiré.
@@ -11298,7 +11411,9 @@ function ppvChannel(event, category, root) {
     group,
     category: group,
     provider: 'PPV',
-    description: [start ? new Date(start * 1000).toISOString() : '', event.tag ? String(event.tag) : ''].filter(Boolean).join(' · '),
+    eventId: event.id,
+    kick_off_iso: start && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+    description: [start && Number.isFinite(date.getTime()) ? date.toISOString() : '', event.tag ? String(event.tag) : ''].filter(Boolean).join(' · '),
     logo: event.poster || event.image || '',
     is_live: always || (start && start <= now && (!end || end >= now))
   }, root, group);
@@ -11306,65 +11421,79 @@ function ppvChannel(event, category, root) {
   return { ...channel, externalUrl: page || embed, playbackType: 'embed', compatPage: true, streamKind: embed ? 'PPV · lecteur intégré' : 'PPV · page de l’événement' };
 }
 
+async function timStreamsChannels(root) {
+  const payload = await fetchSportsJson(new URL('/api/live-upcoming', root), root, 'TimStreams');
+  if (!Array.isArray(payload?.events)) throw new HttpError(502, 'Format du programme TimStreams inattendu.');
+  const genres = new Map((Array.isArray(payload.genres) ? payload.genres : []).map(genre => [genre.id, genre]));
+  return payload.events.map(event => {
+    if (!event?.name || !event.url || event.vip || !Array.isArray(event.streams)) return null;
+    const options = sportsPlayerOptions(event.streams.filter(stream => stream && !stream.vip), root, 'TimStreams');
+    if (!options.length) return null;
+    const page = new URL(`/watch/${encodeURIComponent(event.url)}`, root).href;
+    const genre = genres.get(event.genre);
+    const group = genre?.sub_categories?.find(category => category.id === event.sub_genre)?.name || genre?.name || 'Sports';
+    const channel = normalizeTvChannel({
+      name: event.name, embed_url: options[0].url, group, category: genre?.name,
+      provider: 'PPV', logo: event.logo, eventId: event.url,
+      description: [typeof event.time === 'string' ? `${event.time.replace('T', ' ')} ET` : '', event.description].filter(Boolean).join(' · ')
+    }, root);
+    return sportsChannelWithPlayers(channel, options, page, 'TimStreams');
+  }).filter(Boolean);
+}
+
 async function tvCatalogFromPpv(rootValue = 'https://rockylive.st/') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `ppv::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  const first = new URL(root);
-  const hosts = [first.hostname, ...PPV_HOSTS.filter(host => host !== first.hostname)];
-  let payload = null;
-  let base = root;
-  let lastError = null;
-  for (const host of hosts) {
-    const target = new URL('/api/streams', root);
-    target.hostname = host;
+  const roots = [...new Set([root, ...PPV_HOSTS.map(host => `https://${host}/`)])];
+  return sportsCatalogWithFallback('PPV', 'ppv', cacheKey, roots, PPV_SITES, async candidate => {
+    const host = new URL(candidate).hostname;
+    if (host === 'tim-streams.com' || host === 'timst.top') return timStreamsChannels(candidate);
+    if (host === 'rockylive.st') {
+      const payload = await fetchSportsJson(new URL('/api/events.php?limit=1000', candidate), candidate, 'RockyLive');
+      if (payload?.success !== true || !Array.isArray(payload.events)) throw new HttpError(502, 'Format du programme RockyLive inattendu.');
+      return payload.events.map(event => ppvChannel(event, event?.league || event?.league_slug, candidate)).filter(Boolean);
+    }
+    const payload = await fetchSportsJson(new URL('/api/streams', candidate), candidate, 'PPV');
+    return ppvEvents(payload).map(({ event, category }) => ppvChannel(event, category, candidate)).filter(Boolean);
+  });
+}
+
+async function sportsCatalogWithFallback(name, sourceType, cacheKey, roots, sites, loadChannels) {
+  const failures = [];
+  for (const root of roots) {
+    const host = new URL(root).hostname;
     try {
-      const response = await fetchTvRemote(target.toString(), {
-        signal: AbortSignal.timeout(8_000),
-        headers: {
-          accept: 'application/json,text/plain;q=0.9,*/*;q=0.4',
-          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36',
-          referer: target.origin + '/'
-        }
-      });
-      if (!response.ok) throw new HttpError(response.status, `API PPV indisponible (${response.status}).`);
-      const text = await response.text();
-      if (text.length > 6 * 1024 * 1024) throw new HttpError(413, 'Programme PPV trop volumineux.');
-      payload = JSON.parse(text);
-      base = target.origin + '/';
-      break;
+      const channels = [...new Map((await loadChannels(root)).map(channel => [channel.id, channel])).values()];
+      if (channels.length) {
+        const value = {
+          name, sourceType, groups: [], channels, count: channels.length,
+          ...(failures.length ? { retryAfterMs: 20_000 } : {}),
+          warning: failures.length ? `Programme de secours · ${host}. ${failures.join(' ; ')}.` : ''
+        };
+        tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (failures.length ? 20_000 : 60_000), value });
+        return value;
+      }
+      failures.push(`${host} : programme vide`);
     } catch (error) {
-      lastError = error;
+      failures.push(`${host} : ${error instanceof HttpError ? error.message : 'connexion impossible'}`);
     }
   }
-  const seen = new Set();
-  const channels = [];
-  for (const { event, category } of payload ? ppvEvents(payload) : []) {
-    const channel = ppvChannel(event, category, base);
-    if (!channel || seen.has(channel.id)) continue;
-    seen.add(channel.id);
-    channels.push(channel);
-  }
-  // Aucune adresse ne répond à l'API : sites du fournisseur dans le lecteur web.
-  if (!payload) channels.push(...providerSiteChannels('PPV', PPV_SITES));
+  const channels = providerSiteChannels(name, sites);
   const value = {
-    name: 'PPV',
-    sourceType: 'ppv',
-    groups: [],
-    channels,
-    count: channels.length,
-    warning: payload
-      ? (channels.length ? '' : 'Aucun événement PPV public n’est actuellement publié.')
-      : `L’API PPV ne répond sur aucune adresse (${hosts.join(', ')}${lastError?.message ? ` ; ${lastError.message}` : ''}) : sites du fournisseur proposés.`
+    name, sourceType, groups: [], channels, count: channels.length,
+    retryAfterMs: 20_000,
+    warning: `Aucun programme ${name} exploitable. ${failures.join(' ; ')}. Sites des fournisseurs proposés.`
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (channels.length ? 60_000 : 20_000), value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 20_000, value });
   return value;
 }
 
+const VOLKAMAX_ROOTS = ['https://volkamax.club/', 'https://bzzh.lat/', 'https://bzh.lat/', 'https://bzh-sport.lat/'];
+
 function volkamaxAllowedHost(urlValue) {
-  try { return /(?:^|\.)(?:volkamax\.club|bzh-sport\.lat|bzh\.lat)$/i.test(new URL(urlValue).hostname); }
+  try { return /^(?:www\.)?(?:volkamax\.club|bzzh\.lat|bzh-sport\.lat|bzh\.lat)$/i.test(new URL(urlValue).hostname); }
   catch { return false; }
 }
 
@@ -11374,21 +11503,21 @@ function volkamaxExtractEmbedUrl(htmlValue, baseUrl) {
   for (const match of html.matchAll(/embeds\s*\[\s*\d+\s*\]\s*=\s*(['"])([\s\S]*?)\1\s*;/gi)) {
     values.push(decodeTvHtml(match[2]));
   }
-  values.push(html);
+  values.push(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
   for (const value of values) {
-    const iframe = String(value || '').match(/<iframe\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1]
-      || String(value || '').match(/\bsrc=["']([^"']+)["']/i)?.[1];
-    if (!iframe) continue;
-    try { return safeTvRemoteUrl(resolveTvUrl(iframe, baseUrl)).toString(); } catch {}
+    for (const [, iframe] of value.matchAll(/<iframe\b[^>]*\s+src\s*=\s*["']([^"']+)["']/gi)) {
+      try {
+        const target = safeTvRemoteUrl(resolveTvUrl(decodeTvHtml(iframe), baseUrl));
+        if (target.origin === new URL(baseUrl).origin && target.pathname === '/') continue;
+        return target.href;
+      } catch {}
+    }
   }
   return '';
 }
 
 function volkamaxBridgeUrl(pageUrl) {
-  const token = issueTvReference(pageUrl, {
-    referer: 'https://bzh.lat/',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36 Noctra/163'
-  }, { kind: 'volkamax-page', provider: 'Volkamax' });
+  const token = issueTvReference(pageUrl, {}, { kind: 'volkamax-page', provider: 'Volkamax' });
   return publicPath(`/api/tv/volkamax/embed/${token}`);
 }
 
@@ -11396,8 +11525,17 @@ async function proxyVolkamaxEmbed(tokenValue, res, mobile = false) {
   const reference = tvReferences.get(String(tokenValue || ''));
   if (!reference || reference.expiresAt <= Date.now() || reference.meta?.kind !== 'volkamax-page') throw new HttpError(410, 'Le lecteur Volkamax a expiré. Recharge la chaîne.');
   if (!volkamaxAllowedHost(reference.url)) throw new HttpError(403, 'Lecteur Volkamax non autorisé.');
-  const page = await fetchPublicTvHtml(reference.url, 'Volkamax', 12_000);
-  const embedUrl = volkamaxExtractEmbedUrl(page.html, page.finalUrl);
+  const source = new URL(reference.url);
+  const candidates = new Set([source.href, ...VOLKAMAX_ROOTS.slice(0, 2).map(root => new URL(source.pathname + source.search, root).href)]);
+  let embedUrl = '';
+  for (const candidate of candidates) {
+    try {
+      const page = await fetchPublicTvHtml(candidate, 'Volkamax', 6_000, new URL('/', candidate).href);
+      if (!volkamaxAllowedHost(page.finalUrl)) continue;
+      embedUrl = volkamaxExtractEmbedUrl(page.html, page.finalUrl);
+      if (embedUrl) break;
+    } catch {}
+  }
   if (!embedUrl) throw new HttpError(422, 'Volkamax n’a pas publié de lecteur exploitable pour cette entrée.');
   if (mobile) { res.writeHead(302, { location: embedUrl, 'cache-control': 'no-store', 'referrer-policy': 'origin-when-cross-origin' }); res.end(); return; }
   // Le lecteur BZH/Volkamax refuse désormais toute iframe possédant un
@@ -11416,11 +11554,12 @@ function parseVolkamaxSports(htmlValue, baseUrl) {
   const html = String(htmlValue || '');
   const channels = [];
   const seen = new Set();
-  const add = (hrefValue, labelValue, attrs = '', index = 0, forcedGroup = '') => {
+  const add = (hrefValue, labelValue, attrs = '', forcedGroup = '', isLive = false) => {
     let url = '';
     try { url = resolveTvUrl(decodeTvHtml(hrefValue), baseUrl); } catch { return; }
     if (!volkamaxAllowedHost(url) || seen.has(url)) return;
     const path = new URL(url).pathname.toLowerCase();
+    if (!forcedGroup && !/^\/regarder-la-chaine-/i.test(path)) return;
     const body = stripTvHtml(labelValue).replace(/\s+/g, ' ').trim();
     const attrName = decodeTvHtml((attrs.match(/\b(?:title|alt)=["']([^"']+)["']/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
     let name = body || attrName;
@@ -11444,58 +11583,49 @@ function parseVolkamaxSports(htmlValue, baseUrl) {
       embedUrl: volkamaxBridgeUrl(url),
       externalUrl: url,
       compatPage: true,
-      isLive: true,
-      streamKind: 'Volkamax · lecteur résolu'
+      isLive: isLive || !forcedGroup,
+      streamKind: 'Volkamax · lecteur web'
     });
   };
-  for (const row of html.matchAll(/<tr\b[^>]*class=["'][^"']*\bevent\b[^"']*["'][^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const href = row[1].match(/<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/i);
-    if (!href) continue;
-    const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(cell => stripTvHtml(cell[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const title = cells.find(value => / - | vs | v /i.test(value)) || stripTvHtml(href[4]);
+  for (const [, attrs, body] of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    const links = [...body.matchAll(/<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi)];
+    const href = links.find(link => /\bclass=["'][^"']*\bevent\b/i.test(link[1] + link[3]))
+      || (/\bclass=["'][^"']*\bevent\b/i.test(attrs) ? links[0] : null);
+    if (!href || !/-streaming-direct(?:[/?#]|$)/i.test(href[2])) continue;
+    const cells = [...body.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(cell => stripTvHtml(cell[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const title = stripTvHtml(body.match(/<td\b[^>]*class=["'][^"']*\bevent-title\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1] || '')
+      || cells.find(value => / - | vs | v /i.test(value)) || stripTvHtml(href[4]);
     const competition = cells.find(value => value && value !== title && !/^(?:aujourd'hui|\d{1,2}[:h]\d{2}|\d{1,2}-[A-Za-z]+-\d{4})$/i.test(value)) || '';
-    add(href[2], title, `${href[1]} ${href[3]}`, row.index, competition ? `Événements · ${competition}` : 'Événements');
+    add(href[2], title, `${href[1]} ${href[3]}`, competition ? `Événements · ${competition}` : 'Événements', /\/live\.gif/i.test(body));
   }
   const expression = /<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
   let match;
-  while ((match = expression.exec(html)) && channels.length < 900) {
-    add(match[2], match[4], `${match[1]} ${match[3]}`, match.index);
+  while ((match = expression.exec(html))) {
+    add(match[2], match[4], `${match[1]} ${match[3]}`);
   }
   return channels;
 }
 
-async function tvCatalogFromVolkamax(rootValue = 'https://bzh.lat/') {
+async function tvCatalogFromVolkamax(rootValue = VOLKAMAX_ROOTS[0]) {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `volkamax::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  let page;
-  try { page = await fetchPublicTvHtml(root, 'Volkamax', 9_000); }
-  catch (error) {
-    if (!volkamaxAllowedHost(root)) throw error;
-    const host = new URL(root).hostname;
-    const alternate = host === 'bzh.lat' ? 'https://bzh-sport.lat/' : 'https://bzh.lat/';
-    page = await fetchPublicTvHtml(alternate, 'Volkamax', 9_000);
-  }
-  const jsRedirect = String(page.html || '').match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)?.[1]
-    || String(page.html || '').match(/location\.replace\s*\(\s*['"]([^'"]+)['"]\s*\)/i)?.[1];
-  if (jsRedirect) {
-    try {
-      const redirected = resolveTvUrl(decodeTvHtml(jsRedirect), page.finalUrl);
-      if (volkamaxAllowedHost(redirected)) page = await fetchPublicTvHtml(redirected, 'Volkamax', 18_000);
-    } catch {}
-  }
-  const channels = parseVolkamaxSports(page.html, page.finalUrl);
-  const value = {
-    name: 'Volkamax',
-    sourceType: 'volkamax',
-    groups: [],
-    channels,
-    count: channels.length,
-    warning: channels.length ? '' : 'Aucun lien Sport Volkamax exploitable n’a été trouvé sur le domaine public actuel.'
-  };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 2 * 60_000, value });
-  return value;
+  if (!volkamaxAllowedHost(root)) throw new HttpError(403, 'Domaine Volkamax non autorisé.');
+  const roots = [...new Set([root, ...VOLKAMAX_ROOTS])];
+  return sportsCatalogWithFallback('Volkamax', 'volkamax', cacheKey, roots, [VOLKAMAX_ROOTS[0]], async candidate => {
+    const page = await fetchPublicTvHtml(candidate, 'Volkamax', 6_000);
+    if (!volkamaxAllowedHost(page.finalUrl)) throw new HttpError(502, 'Redirection Volkamax vers un domaine inconnu.');
+    const channels = parseVolkamaxSports(page.html, page.finalUrl);
+    if (channels.length) return channels;
+    const jsRedirect = page.html.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)?.[1]
+      || page.html.match(/location\.replace\s*\(\s*['"]([^'"]+)['"]\s*\)/i)?.[1];
+    if (!jsRedirect) return [];
+    const target = resolveTvUrl(decodeTvHtml(jsRedirect), page.finalUrl);
+    if (!volkamaxAllowedHost(target) || roots.includes(target)) return [];
+    const redirected = await fetchPublicTvHtml(target, 'Volkamax', 6_000);
+    return volkamaxAllowedHost(redirected.finalUrl) ? parseVolkamaxSports(redirected.html, redirected.finalUrl) : [];
+  });
 }
 
 function halouleLinkGroup(contextValue, urlValue, labelValue) {
@@ -11773,7 +11903,7 @@ function ohaPublicRouteCandidates(entryGroup, rootValue) {
 function ohaServerLabel(value, index) {
   const name = String(value || '');
   const quality = name.match(/\b(?:UHD|FHD|HD|SD|4K)\b/i)?.[0]?.toUpperCase() || 'Auto';
-  const server = name.match(/\|\s*([A-Z0-9]+)\s*$/i)?.[1]?.toUpperCase() || String(index + 1);
+  const server = (name.match(/\|\s*([A-Z0-9]+)\s*$/i)?.[1] || name.match(/\((\d+)\)\s*$/)?.[1] || String(index + 1)).toUpperCase();
   return `${quality} · Serveur ${server}`;
 }
 
@@ -11800,6 +11930,67 @@ const OHA_HOSTS = [...OHA_MIRRORS, ...OHA_LEGACY_HOSTS].flatMap(host => /^\d/.te
 
 function ohaIsMirror(value) {
   try { return OHA_MIRRORS.includes(new URL(value).hostname.toLowerCase().replace(/^www\./, '')); } catch { return false; }
+}
+
+function ohaV2PlayUrl(value, mirror, id) {
+  try {
+    const url = safeTvRemoteUrl(new URL(value, `https://${mirror}/`));
+    const host = url.hostname.replace(/^www\./, '');
+    const expected = /^\/live\/play\/(\d+)$/.exec(url.pathname);
+    if (url.protocol !== 'https:' || url.port || !expected || (id && expected[1] !== String(id))) return '';
+    if (host === mirror || (mirror === 'vavoo.top' && host === 'vavoo.to')) return url.href;
+  } catch {}
+  return '';
+}
+
+async function ohaV2Json(mirror, path, params, signal) {
+  const root = `https://${mirror}/`;
+  const url = new URL(path, root);
+  url.search = new URLSearchParams({ language: 'fr', region: 'FR', ...params });
+  const response = await fetchTvRemote(url, {
+    signal,
+    headers: { accept: 'application/json', referer: root, 'user-agent': 'Mozilla/5.0 Noctra' }
+  });
+  if (!response.ok) {
+    await response.body?.cancel?.();
+    throw new HttpError(502, `Miroir OHA ${mirror} indisponible (HTTP ${response.status}).`);
+  }
+  const text = await response.text();
+  if (text.length > 2 * 1024 * 1024) throw new HttpError(413, `Réponse OHA ${mirror} trop volumineuse.`);
+  try { return JSON.parse(text); } catch { throw new HttpError(502, `Réponse OHA ${mirror} non JSON.`); }
+}
+
+async function ohaV2CatalogGroup(mirror, group) {
+  const items = [];
+  const seen = new Set();
+  const signal = AbortSignal.timeout(8_000);
+  let cursor = '';
+  try {
+    for (let page = 0; page < 5; page += 1) {
+      const payload = await ohaV2Json(mirror, '/live/catalog/live/channels.json', {
+        sort: 'name', 'filter[group]': group, ...(cursor ? { cursor } : {})
+      }, signal);
+      if (!Array.isArray(payload?.items)) throw new HttpError(502, 'Format du catalogue OHA inattendu.');
+      for (const item of payload.items) {
+        if (!item?.id || typeof item.name !== 'string' || !item.name.trim() || !item.url) continue;
+        if (!Array.isArray(item.tags) || !item.tags.includes(group)) continue;
+        const url = ohaV2PlayUrl(item.url, mirror, item.id);
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        let logo = '';
+        if (item.images?.logo) {
+          try { logo = resolveTvUrl(item.images.logo, `https://${mirror}/`); } catch {}
+        }
+        items.push({ name: item.name, url, ids: { id: item.id }, logo, epg: item.epg, group, mirror });
+      }
+      const next = String(payload.nextCursor ?? '');
+      if (!next || next === cursor || !payload.items.length) return { items, partial: false };
+      cursor = next;
+    }
+  } catch (error) {
+    if (!items.length) throw error;
+  }
+  return { items, partial: true };
 }
 
 // API de catalogue / résolution : « mediahubmx » (Kool, Vavoo, Huhu) ou
@@ -11898,7 +12089,9 @@ async function ohaCatalogPage(root, group, cursor = null, timeoutMs = 9_000) {
       }, (status, detail) => status
         ? ohaProviderHttpError(status, 'catalogue') || new HttpError(status, `Catalogue OHA ${group} indisponible (${status}).`)
         : new HttpError(502, `Catalogue OHA ${group} : ${detail}.`));
-      if (!Array.isArray(payload?.items)) throw new HttpError(502, 'Catalogue OHA : format inattendu.');
+      if (!Array.isArray(payload?.items) || !payload.items.some(item => item?.url && item.ids?.id)) {
+        throw new HttpError(502, 'Catalogue OHA vide ou format inattendu.');
+      }
       ohaHealthyRoot = {url:candidateRoot, expiresAt:Date.now()+300_000};
       // V79 : si oha.cx redirige sa requête d'API vers un hôte canonique,
       // on accepte la réponse mais on conserve oha.cx comme racine fonctionnelle
@@ -11933,7 +12126,8 @@ function issueOhaResolverReference(entries, root, fallbackUrl = '', channelId = 
   const candidates = entries.map((entry, index) => ({
     url: safeTvRemoteUrl(entry.url).toString(),
     channelId: String(entry?.ids?.id || ''),
-    label: ohaServerLabel(entry.name, index)
+    label: ohaServerLabel(entry.name, index),
+    ...(entry.mirror ? { mirror: entry.mirror } : {})
   }));
   if (!candidates.length) throw new HttpError(422, 'Aucun serveur OHA disponible pour cette chaîne.');
   const routes = [...new Set((Array.isArray(routeCandidates) ? routeCandidates : []).map(value => ohaWatchRouteFromValue(value, root)).filter(Boolean))].slice(0, 12);
@@ -12162,7 +12356,9 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
   const deadline = AbortSignal.timeout(Math.max(2_500, timeoutMs));
   const attemptSignal = AbortSignal.any([controller.signal, deadline, ...(signal ? [signal] : [])]);
   // 200.0.167 : serveur d'un miroir précis (choisi dans la liste) ou course entre miroirs.
-  const roots = onlyRoot ? [onlyRoot] : ohaRootAlternatives(reference.meta.root).slice(0, 6);
+  const mirror = candidate.mirror;
+  const modern = mirror && OHA_MIRRORS.includes(mirror);
+  const roots = modern ? [`https://${mirror}/live`] : onlyRoot ? [onlyRoot] : ohaRootAlternatives(reference.meta.root).slice(0, 6);
   try {
     return await Promise.any(roots.map(async (candidateRoot, rootIndex) => {
       // Un miroir lent ne bloque plus tous les suivants pendant 8 secondes.
@@ -12178,7 +12374,9 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
       });
       attemptSignal.throwIfAborted();
       const origin = new URL(candidateRoot).origin;
-      const payload = await ohaPostJson(candidateRoot, 'resolve', {
+      const url = modern ? ohaV2PlayUrl(candidate.url, mirror, candidate.channelId) : '';
+      if (modern && !url) throw new HttpError(422, 'Référence de chaîne OHA invalide.');
+      const payload = modern ? await ohaV2Json(mirror, '/live/resolve', { url }, attemptSignal) : await ohaPostJson(candidateRoot, 'resolve', {
         method: 'POST',
         signal: AbortSignal.any([attemptSignal, AbortSignal.timeout(8_000)]),
         headers: {
@@ -12193,7 +12391,7 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
       }, (status, detail) => status
         ? ohaProviderHttpError(status, `serveur ${index + 1}`) || new HttpError(status, `Serveur OHA ${index + 1} indisponible (${status}).`)
         : new HttpError(502, `Serveur OHA ${index + 1} : ${detail}.`));
-      const streamValue = ohaResolvedStreamUrl(payload);
+      const streamValue = modern ? (payload?.format === 'hls' && payload.url) : ohaResolvedStreamUrl(payload);
       if (!streamValue) throw new HttpError(422, `Serveur OHA ${index + 1} n'a renvoyé aucun flux vidéo.`);
       const streamUrl = safeTvRemoteUrl(streamValue);
       const nativeHeaders = {
@@ -12260,51 +12458,13 @@ async function firstSuccessfulOhaCandidate(reference, candidates, signal = null)
   });
 }
 
-// 200.0.167 : miroirs OHA qui répondent (catalogue public), gardés 5 minutes.
-// Les serveurs d'une chaîne sont proposés sur chacun d'eux.
-let ohaMirrorHealthState = null;
-function ohaHealthyMirrors() {
-  if (ohaMirrorHealthState?.expiresAt > Date.now()) return ohaMirrorHealthState.value;
-  const value = Promise.all(OHA_MIRRORS.map(async host => {
-    const root = `https://${host}/live`;
-    try {
-      const payload = await ohaPostJson(root, 'catalog', {
-        method: 'POST',
-        signal: AbortSignal.timeout(7_000),
-        headers: {
-          accept: 'application/json, text/plain;q=0.8, */*;q=0.4',
-          'content-type': 'application/json; charset=utf-8',
-          origin: `https://${host}`,
-          referer: `https://${host}/`,
-          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36'
-        },
-        body: JSON.stringify(ohaRequestBody('catalog', { group: ohaPublicGroups[0], cursor: null }))
-      }, status => new HttpError(status || 502, `Miroir OHA ${host} indisponible.`));
-      return Array.isArray(payload?.items) ? host : '';
-    } catch { return ''; }
-  })).then(hosts => hosts.filter(Boolean));
-  ohaMirrorHealthState = { value, expiresAt: Date.now() + 300_000 };
-  value.then(hosts => { if (!hosts.length) ohaMirrorHealthState = { value, expiresAt: Date.now() + 30_000 }; });
-  return value;
-}
-
-// Serveurs d'une chaîne : un par serveur OHA et par miroir qui répond
-// (« huhu.bz · HD · Serveur 1 », « kool.ws · HD · Serveur 1 »…) ; sans miroir
-// connu, un par serveur comme avant.
-function ohaServerChoices(candidates, mirrors, resolverPath) {
-  if (!mirrors.length) return candidates.map((candidate, index) => ({
-    index, server: index, label: candidate.label || `Serveur ${index + 1}`,
-    resolveUrl: `${resolverPath}?server=${index}`, playbackType: 'resolver'
-  }));
-  const choices = [];
-  for (const mirror of mirrors) candidates.forEach((candidate, server) => choices.push({
-    index: choices.length, server, mirror,
-    label: `${mirror} · ${candidate.label || `Serveur ${server + 1}`}`,
-    resolveUrl: `${resolverPath}?server=${server}&mirror=${encodeURIComponent(mirror)}`,
+function ohaServerChoices(candidates, resolverPath) {
+  return candidates.map((candidate, index) => ({
+    index, server: index, mirror: candidate.mirror || '',
+    label: [candidate.mirror, candidate.label || `Serveur ${index + 1}`].filter(Boolean).join(' · '),
+    resolveUrl: `${resolverPath}?server=${index}`,
     playbackType: 'resolver'
   }));
-  return choices;
 }
 
 async function resolveOhaStreamReference(token, preferredIndex = null, preferredMirror = '') {
@@ -12321,12 +12481,6 @@ async function resolveOhaStreamReference(token, preferredIndex = null, preferred
   const candidates = reference.meta.candidates;
   const resolverPath = publicPath(`/api/tv/oha/resolve/${encodeURIComponent(String(token || ''))}`);
   const mirror = OHA_MIRRORS.includes(String(preferredMirror || '').toLowerCase()) ? String(preferredMirror).toLowerCase() : '';
-  // Santé des miroirs vérifiée en même temps que le premier flux (pas d'attente en plus).
-  const mirrorsPromise = ohaHealthyMirrors().catch(() => []);
-  let preferredFailure = '';
-  // Le flux natif ne doit pas attendre les sondes HTML des miroirs : les SPA
-  // renvoient souvent HTTP 200 même pour une fausse route. L'embed n'est chargé
-  // que s'il est utilisé et conserve l'ID du serveur effectivement sélectionné.
   const nativeController = new AbortController();
   const nativeDeadline = setTimeout(() => nativeController.abort(), 24_000);
   let nativeAttempt = null;
@@ -12334,25 +12488,14 @@ async function resolveOhaStreamReference(token, preferredIndex = null, preferred
     nativeAttempt = await (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < candidates.length
       ? resolveSingleOhaCandidate(reference, candidates[preferredIndex], preferredIndex, 22_000, nativeController.signal, mirror ? `https://${mirror}/live` : '')
       : firstSuccessfulOhaCandidate(reference, candidates, nativeController.signal));
-  } catch (error) {
-    preferredFailure = cleanError(error);
-  } finally {
+  } catch {} finally {
     clearTimeout(nativeDeadline);
     nativeController.abort(); // Annule les sondes concurrentes dès qu'un flux est prêt.
   }
   const selectedIndex = Number.isInteger(preferredIndex) && candidates[preferredIndex]
     ? preferredIndex : Number(nativeAttempt?.serverIndex ?? 0);
-  // Miroirs qui répondent (au plus 6 s d'attente de plus si la vérification n'est pas finie).
-  const healthy = await Promise.race([mirrorsPromise, delay(6_000).then(() => [])]);
-  const answeredMirror = nativeAttempt?.mirror || mirror;
-  const mirrors = answeredMirror && OHA_MIRRORS.includes(answeredMirror) && !healthy.includes(answeredMirror)
-    ? OHA_MIRRORS.filter(host => host === answeredMirror || healthy.includes(host))
-    : healthy;
-  const serverChoices = ohaServerChoices(candidates, mirrors, resolverPath);
-  // Choix actif : le serveur et le miroir du flux obtenu.
-  const activeChoice = nativeAttempt
-    ? serverChoices.find(choice => choice.server === selectedIndex && (!choice.mirror || choice.mirror === answeredMirror)) || null
-    : null;
+  const serverChoices = ohaServerChoices(candidates, resolverPath);
+  const activeChoice = nativeAttempt ? serverChoices[selectedIndex] : null;
   if (nativeAttempt && activeChoice) {
     nativeAttempt.label = activeChoice.label;
     nativeAttempt.serverIndex = activeChoice.index;
@@ -12361,7 +12504,8 @@ async function resolveOhaStreamReference(token, preferredIndex = null, preferred
   // Applis : serveurs des autres miroirs proposés comme serveurs à demander.
   const otherServers = serverChoices.filter(choice => choice !== activeChoice).map(choice => ({ label: choice.label, resolveUrl: choice.resolveUrl, playbackType: 'resolver', mirror: choice.mirror || '' }));
   const selectedChannelId = candidates[selectedIndex]?.channelId || reference.meta.channelId || '';
-  const officialRoot = reference.meta.root;
+  const selectedMirror = candidates[selectedIndex]?.mirror;
+  const officialRoot = OHA_MIRRORS.includes(selectedMirror) ? `https://${selectedMirror}/live` : reference.meta.root;
   const externalUrl = ohaOfficialPageCandidates(officialRoot, selectedChannelId, reference.meta.fallbackUrl, reference.meta.routeCandidates)[0];
   // La route officielle est conservée comme secours sans la charger en avance.
   // Le catalogue conserve sa référence stateless, mais le lecteur reçoit
@@ -12418,14 +12562,14 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
   const grouped = new Map();
   rawItems.forEach(item => {
     if (!item?.url || !item?.ids?.id) return;
-    const name = cleanOhaChannelName(item.name);
+    const name = cleanOhaChannelName(item.mirror ? item.name.replace(/\s*\(\d+\)\s*$/, '') : item.name);
     const key = ohaChannelIdentity(name);
     if (!key) return;
     const current = grouped.get(key) || { name, entries: [], logo: '', epg: [], group: item.group || 'France', id: String(item.ids.id) };
     // Les variantes BACKUP / LIVE DURING EVENTS ONLY sont des serveurs de la
     // même chaîne. Le libellé le plus court reste celui affiché à l'écran.
     if (name.length < current.name.length) current.name = name;
-    if (!current.entries.some(entry => entry.url === item.url)) current.entries.push(item);
+    if (!current.entries.some(entry => entry.url === item.url && entry.mirror === item.mirror)) current.entries.push(item);
     if (!current.logo && item.logo) current.logo = item.logo;
     if ((!current.epg || !current.epg.length) && Array.isArray(item.epg)) current.epg = item.epg;
     grouped.set(key, current);
@@ -12437,7 +12581,18 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
     // qu'avec un identifiant qui ressemble réellement au hash public OHA.
     const routeCandidates = ohaPublicRouteCandidates(item, root);
     const externalUrl = ohaCatalogPublicPageUrl(item, root);
-    const reference = issueOhaResolverReference(item.entries, root, externalUrl, item.id, item.name, routeCandidates);
+    const entries = item.entries;
+    if (entries[0]?.mirror) {
+      // Essayer d'abord un candidat par miroir, même si le premier publie plusieurs variantes.
+      const rank = new Map();
+      const order = entries.map(entry => {
+        const index = rank.get(entry.mirror) || 0;
+        rank.set(entry.mirror, index + 1);
+        return { entry, index };
+      }).sort((a, b) => a.index - b.index);
+      entries.splice(0, entries.length, ...order.map(value => value.entry));
+    }
+    const reference = issueOhaResolverReference(entries, root, externalUrl, item.id, item.name, routeCandidates);
     const programme = ohaProgramme(item.epg);
     return {
       id: `oha-${createHash('sha1').update(item.name).digest('hex').slice(0, 12)}`,
@@ -12470,9 +12625,10 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
     count: channels.length,
     nativePlayback: true,
     progressive: Boolean(options.progressive),
+    ...(options.partial ? { retryAfterMs: 30_000 } : {}),
     warning: options.warning || ''
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (options.partial ? 30_000 : 5 * 60_000), value });
   return value;
 }
 
@@ -12482,6 +12638,26 @@ async function tvCatalogFromOha(rootValue = 'https://huhu.bz/#/channels') {
   const cached = tvCatalogCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const staleValue = cached?.value || null;
+
+  const configuredMirror = new URL(root).hostname.replace(/^www\./, '');
+  const mirrors = [...new Set([configuredMirror, ...OHA_MIRRORS])].filter(mirror => OHA_MIRRORS.includes(mirror));
+  const catalogues = await Promise.all(mirrors.map(async mirror => {
+    const groups = await Promise.allSettled(ohaPublicGroups.map(group => ohaV2CatalogGroup(mirror, group)));
+    return { mirror, groups };
+  }));
+  const items = catalogues.flatMap(({ groups }) => groups.flatMap(result => result.value?.items || []));
+  if (items.length) {
+    const partial = catalogues.filter(({ groups }) => groups.some(result => !result.value?.items.length || result.value.partial));
+    return buildOhaCatalog(items, `https://${items[0].mirror}/live`, cacheKey, {
+      partial: Boolean(partial.length),
+      warning: partial.length ? `Catalogues OHA absents ou partiels · ${partial.map(({ mirror }) => mirror).join(', ')}.` : ''
+    });
+  }
+  if (staleValue?.channels?.length) {
+    const value = { ...staleValue, stale: true, retryAfterMs: 20_000, warning: 'Miroirs OHA indisponibles : dernier catalogue connu affiché.' };
+    tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 20_000, value });
+    return value;
+  }
 
   const firstPageState = Array(ohaPublicGroups.length).fill(null);
   const firstPages = ohaPublicGroups.map((group, index) =>
@@ -13464,6 +13640,13 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
     const tag = `${before}${target}${after}`;
     return target !== String(value || '') ? stripBridgeIntegrity(tag) : tag;
   });
+  if (ohaIsMirror(page.href)) {
+    // Le démarrage v2 importe son module dans un script inline et charge
+    // le manifeste à la racine du site.
+    html = html.replace(/(\bfrom\s*["'])(\/vuma\/[^"']+\.js)(["'])/g,
+      (_, before, value, after) => before + proxiedUrl(value) + after);
+    html = html.replace(/addons:\s*\[new URL\("\/", location\.href\)\.href\]/, `addons: [${inlineJson(page.origin + '/')} ]`);
+  }
   html = html.replace(/(<link\b[^>]*\bhref\s*=\s*["'])([^"']+)(["'][^>]*>)/gi, (_, before, value, after) => {
     const target = proxiedUrl(value);
     const tag = `${before}${target}${after}`;
@@ -14113,12 +14296,12 @@ const server = createServer(async (req, res) => {
       const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
       if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
       // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.168', baseUrl: basePath || '/', tvApp: true }, appProbe);
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.175', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.168',
+        version: '200.0.175',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -14810,10 +14993,6 @@ const server = createServer(async (req, res) => {
 
     if (path === '/api/home/resume' && req.method === 'GET') {
       if (!session?.user?.Id) throw new HttpError(401, 'Connexion requise.');
-      // 200.0.168 : lectures en cours = données personnelles. Jamais d'après le
-      // seul cookie de session : sur un navigateur partagé, il peut appartenir à
-      // la personne connectée avant (ses reprises s'affichaient chez une autre).
-      if (!directRequestToken(req)) throw new HttpError(428, 'Jeton de l’utilisateur Jellyfin requis pour les lectures en cours.');
       // Tous les titres commencés (60 au plus) : les applis en montrent 10 à 12 dans le
       // carrousel et le reste dans la rangée « Autres titres à reprendre ».
       const wanted = Math.min(60, Math.max(1, Number(requestUrl.searchParams.get('limit')) || 60));

@@ -1,4 +1,4 @@
-/* Noctra 200.0.164 — « Passer le générique (de fin) », « Épisode suivant », « À suivre », ±15 s et transition entre épisodes. */
+/* Noctra Web — génériques, ±15 s et transition entre épisodes. */
 
 /* Le bouton et l'écran « À suivre » de Noctra remplacent ceux de Jellyfin. */
 body.noctra-episode-flow .skip-button-container,

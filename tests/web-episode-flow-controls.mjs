@@ -1,5 +1,5 @@
 // Lecteur web (Jellyfin web + noctra-episode-flow.js) : « Passer le générique »,
-// « Passer le générique de fin », « Épisode suivant » distinct, ±15 s à 15 s par
+// « Passer le générique de fin », ±15 s à 15 s par
 // défaut sans écraser un réglage, retour visuel. Lecteur Jellyfin simulé
 // autour d'une vraie vidéo de 120 s (tests/fixtures/player-120s.webm).
 import assert from 'node:assert/strict';
@@ -18,9 +18,9 @@ try { playwright = createRequire(import.meta.url)('playwright'); } catch {
 if (!playwright) { console.log('Lecteur web : Playwright absent, non testé'); process.exit(0); }
 
 const origin = 'http://web.test';
-const browser = await playwright.chromium.launch();
+const browser = await playwright.chromium.launch({ executablePath: process.env.NOCTRA_TEST_CHROMIUM || undefined });
 try {
-  const run = async ({ segments, chapters, next, settings }) => {
+  const run = async ({ segments, chapters, next, settings, embeddedChapters = chapters, nextDelay = 0 }) => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     await page.route(origin + '/**', route => {
       const url = new URL(route.request().url());
@@ -29,8 +29,8 @@ try {
       if (url.pathname === '/media/e1.webm') return route.fulfill({ contentType: 'video/webm', body: video, headers: { 'accept-ranges': 'bytes' } });
       return route.fulfill({ status: 404, body: '' });
     });
-    await page.addInitScript(({ segments, chapters, next, settings }) => {
-      const item = { Id: 'e1', Type: 'Episode', SeriesId: 's1', Name: 'Pilote', ParentIndexNumber: 1, IndexNumber: 1, RunTimeTicks: 120 * 1e7, Chapters: chapters };
+    await page.addInitScript(({ segments, chapters, next, settings, embeddedChapters, nextDelay }) => {
+      const item = { Id: 'e1', Type: 'Episode', SeriesId: 's1', Name: 'Pilote', ParentIndexNumber: 1, IndexNumber: 1, RunTimeTicks: 120 * 1e7, Chapters: embeddedChapters };
       window.__calls = [];
       window.__prefs = Object.assign({}, settings);
       const video = () => document.querySelector('video');
@@ -57,13 +57,17 @@ try {
         getUrl: (path, query) => path + (query ? '?' + new URLSearchParams(query) : ''),
         getJSON: async url => {
           if (url.startsWith('MediaSegments/')) return { Items: segments };
-          if (url.startsWith('Users/u1/Items/')) return item;
-          if (url.startsWith('Shows/s1/Episodes')) return { Items: next ? [item, next] : [item] };
+          if (url.startsWith('Users/u1/Items/')) return { ...item, Chapters: chapters };
+          if (url.startsWith('Shows/s1/Episodes')) {
+            await new Promise(resolve => setTimeout(resolve, nextDelay));
+            window.__nextLoaded = true;
+            return { Items: next ? [item, next] : [item] };
+          }
           throw new Error('404 ' + url);
         },
         getImageUrl: () => ''
       };
-    }, { segments, chapters, next, settings });
+    }, { segments, chapters, next, settings, embeddedChapters, nextDelay });
     await page.goto(origin + '/web/index.html');
     await page.evaluate(() => document.querySelector('video').play());
     await page.waitForFunction(() => document.querySelector('video').currentTime > 0.2);
@@ -75,36 +79,40 @@ try {
 
   // 1. Segments du serveur : générique 0–20 s, générique de fin 90–110 s (scène après), épisode suivant.
   const next = { Id: 'e2', Type: 'Episode', SeriesId: 's1', Name: 'Suite', ParentIndexNumber: 1, IndexNumber: 2, Overview: 'Résumé.' };
-  let page = await run({ segments: [{ Type: 'Intro', StartTicks: 0, EndTicks: 20e7 }, { Type: 'Outro', StartTicks: 90e7, EndTicks: 110e7 }], chapters: [], next, settings: {} });
+  let page = await run({ segments: [{ Type: 'Intro', StartTicks: 0, EndTicks: 20e7 }], chapters: [
+    { Name: 'Ending', StartPositionTicks: 90e7 },
+    { Name: 'Scène finale', StartPositionTicks: 110e7 }
+  ], embeddedChapters: [], next, nextDelay: 3_000, settings: {} });
   await page.waitForFunction(() => document.querySelector('.noctra-skip-segment')?.dataset.visible === 'true', null, { timeout: 8000 });
   assert.match(await visible(page, '.noctra-skip-segment'), /^Passer le générique⏭$/);
+  assert.equal(await page.evaluate(() => Boolean(window.__nextLoaded)), false, 'le générique est utilisable avant le chargement du prochain épisode');
   // ±15 s réglés à 15 s (jamais réglés par l'utilisateur).
   assert.deepEqual(await page.evaluate(() => window.__prefs), { skipForwardLength: '15000', skipBackLength: '15000' });
   await page.click('.noctra-skip-segment');
   await page.waitForFunction(() => document.querySelector('video').currentTime >= 19.5);
   assert.equal(await visible(page, '.noctra-skip-segment'), '');
-  // 200.0.168 : plus de bouton « Épisode suivant » à part sur le web, même commandes affichées.
   await page.evaluate(() => document.querySelector('.videoOsdBottom').classList.remove('videoOsdBottom-hidden'));
-  await page.waitForTimeout(1300);
-  assert.equal(await page.evaluate(() => document.querySelectorAll('.noctra-next-episode').length), 0);
+  await page.waitForFunction(() => window.__nextLoaded);
+  assert.equal(await page.locator('.noctra-next-episode').count(), 0);
   // Retour visuel cumulé de sauts de 15 s répétés.
   await page.evaluate(async () => {
     const v = document.querySelector('video');
     window.__log = []; for (let i = 0; i < 3; i++) { const from = v.currentTime; v.currentTime += 15; await new Promise(r => v.addEventListener("seeked", r, { once: true })); window.__log.push([from, v.currentTime]); }
   });
   assert.match(await visible(page, '.noctra-seek-note'), /^⟳ \+45 s$/, JSON.stringify(await page.evaluate(() => window.__log)));
-  // Générique de fin : « Passer le générique de fin » ET carte « À suivre » (distincts).
+  // Générique de fin issu du chapitre quand Jellyfin ne fournit que l'intro.
   await seekTo(page, 92);
   await page.waitForFunction(() => /générique de fin/.test(document.querySelector('.noctra-skip-segment')?.textContent || '') && document.querySelector('.noctra-skip-segment').dataset.visible === 'true', null, { timeout: 5000 });
-  await page.waitForFunction(() => document.querySelector('.noctra-up-next')?.dataset.visible === 'true', null, { timeout: 5000 });
-  assert.ok(await page.evaluate(() => document.body.classList.contains('noctra-up-next-open')));
-  await page.click('.noctra-up-next-later');
+  assert.equal(await visible(page, '.noctra-up-next'), '');
   await page.click('.noctra-skip-segment');
   await page.waitForFunction(() => document.querySelector('video').currentTime >= 109.5);
   const calls = await page.evaluate(() => window.__calls);
   assert.ok(!calls.some(c => c[0] === 'play' || c[0] === 'stop'), 'passer le générique de fin ne lance pas l’épisode suivant : ' + JSON.stringify(calls));
   assert.ok((await at(page)) < 115, 'scène après le générique visible');
-  assert.equal(await page.evaluate(() => document.querySelectorAll('.noctra-next-episode').length), 0, 'aucun bouton « Épisode suivant »');
+  // La carte de fin reste disponible après le saut, sans bouton permanent.
+  await page.waitForFunction(() => document.querySelector('.noctra-up-next')?.dataset.visible === 'true');
+  await page.click('.noctra-up-next-play');
+  await page.waitForFunction(() => window.__calls.some(c => c[0] === 'play' && c[1] === 'e2'));
   await page.close();
 
   // 2. Sans segments ni chapitres nommés, réglage ±10/30 de l'utilisateur : rien d'inventé, réglage gardé.
@@ -130,7 +138,7 @@ try {
   await page.waitForTimeout(2500);
   assert.ok((await at(page)) < 106, 'aucun saut automatique');
   await page.close();
-  console.log('Lecteur web : passer le générique, passer le générique de fin, ±15 s, sans bouton « Épisode suivant » : OK');
+  console.log('Lecteur web : génériques et scène post-générique, enchaînement de fin et ±15 s : OK');
 } finally {
   await browser.close();
 }

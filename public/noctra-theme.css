@@ -23634,12 +23634,6 @@ html body.noctra-ready #noctra-panel[data-noctra-panel-kind="requests"] > .noctr
 }
 
 
-/* 200.0.107 — une carte de reprise rejetée ne doit jamais réapparaître via une règle Jellyfin !important. */
-.homePage .verticalSection[data-noctra-resume-synced="true"] .card[data-noctra-resume-state="filtered"],
-.homePage .verticalSection[data-noctra-resume-hidden="true"] {
-  display: none !important;
-}
-
 /* 200.0.107 — même géométrie du dock pour membres et administrateurs sur desktop. */
 @media (min-width: 761px) {
   html body.noctra-ready[data-noctra-role="user"]:not(.noctra-playing):not(.noctra-player-active) #noctra-dock[data-role="user"] {

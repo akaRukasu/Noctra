@@ -37,7 +37,7 @@ assert.match(shell, /await Promise\.race\(\[Promise\.all\(resolving\.map\(server
 assert.match(shell, /probes\.add\(expandTvUnifiedServer\(run, server, outcome\)\);/, 'Source lente dépliée et testée à son arrivée');
 assert.match(shell, /const chosen = run\.servers\.length === 1 && !run\.pending\.size \? 0 : await decideTvUnifiedServer\(run, probes\);/);
 // Lecture d'un serveur déplié et secours.
-assert.match(shell, /tvState\.resolvedEmbeds = server\.group\.slice\(\);\s*await playTvResolvedOption\(\{ \.\.\.server\.entry\.channel \}, server\.option, server\.optionIndex, playbackSequence, false\);/);
+assert.match(shell, /tvState\.resolvedEmbeds = server\.group\.slice\(\);\s*await playTvResolvedOption\(\{ \.\.\.server\.entry\.channel \}, server\.option, server\.optionIndex, playbackSequence,\s*manual && server\.option\.playbackType === 'external'\);/);
 assert.match(shell, /const usable = server => !server\.failed && !server\.manualOnly && server\.probeState !== 'down';/, 'Jamais de secours manuel automatique');
 assert.match(shell, /if \(!candidate \|\| candidate\.failed \|\| candidate\.manualOnly\) continue;/);
 assert.match(shell, /if \(tvUnifiedActive\(\) && tvUnifiedRun\.servers\[tvUnifiedRun\.index\]\?\.option\) \{\s*target\.hidden = true;/, 'Pas de seconde barre de serveurs');

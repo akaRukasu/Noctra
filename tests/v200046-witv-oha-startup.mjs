@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { parseWiTvPublishedPlayers } from '../lib/witv-public.mjs';
 const root = new URL('../', import.meta.url);
 const server = await readFile(new URL('server.mjs', root), 'utf8');
 const shell = await readFile(new URL('public/noctra-shell.js', root), 'utf8');
@@ -66,6 +67,7 @@ const resolve = load(extract(server, 'async function resolveTvPageReference(', '
   decodeTvStateReference: (token, kind) => states.get(token)?.kind === kind ? states.get(token) : null,
   encodeTvStateReference: (kind, state) => { const token = `t${states.size}`; states.set(token, { ...state, kind }); return token; },
   tvReferences: new Map(), isWiTvPublicPlayer: () => true,
+  parseWiTvPublishedPlayers,
   fetchTvRemote: async () => new Response('<html>channel</html>'),
   tvIframeCandidatesFromHtml: () => players,
   resolveWiTvPlayerOption: async (item, index, page, signal) => {

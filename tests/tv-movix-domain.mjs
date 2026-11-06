@@ -26,9 +26,11 @@ for(const family of ['vavoo','northlive','iptv']){
 }
 await provider.verify('movix','test-key');
 assert.equal(calls.filter(call=>call.url.endsWith('/manifest')).length,1,'Public bouquets share the manifest cache');
-assert.ok(calls.every(call=>new URL(call.url).origin==='https://api.movix.college'));
-assert.ok(calls.every(call=>call.headers.referer==='https://movix.college/'));
+assert.ok(calls.every(call=>new URL(call.url).origin==='https://api.movix.dog'));
+assert.ok(calls.every(call=>call.headers.referer==='https://movix.dog/'));
 assert.ok(calls.filter(call=>call.url.includes('/iptv/')).every(call=>call.headers['x-access-key']==='test-key'));
-assert.ok(additionalTvSources.filter(s=>s.id.startsWith('movix-')).every(s=>s.url.startsWith('https://api.movix.college/')));
-assert.ok(refs.filter(ref=>ref.url.startsWith('https://cdn.example')).every(ref=>ref.headers.referer==='https://movix.college/'));
+assert.ok(additionalTvSources.filter(s=>s.id.startsWith('movix-')).every(s=>s.url.startsWith('https://api.movix.dog/')));
+assert.ok(refs.filter(ref=>ref.url.startsWith('https://cdn.example')).every(ref=>ref.headers.referer==='https://movix.dog/'));
+assert.equal(refs.find(ref=>ref.url.startsWith('https://cdn.example') && ref.meta.provider==='Movix').headers['user-agent'],'VAVOO/2.6','Vavoo needs the same UA as Movix LiveTV');
+assert.equal(refs.filter(ref=>ref.url.startsWith('https://cdn.example'))[1].headers['user-agent'],undefined,'Do not replace unrelated provider headers');
 console.log('Movix: Vavoo, Northlive, IPTV catalogs/resolvers/VIP verification use the current API and referer.');
