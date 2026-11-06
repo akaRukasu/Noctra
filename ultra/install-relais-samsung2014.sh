@@ -53,6 +53,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Relais déjà installé : son port (et l'adresse autorisée) sont gardés, le
+# téléviseur les connaît déjà. Avant, relancer le script sans port prenait un
+# autre port libre et le téléviseur ne joignait plus le relais.
+if [[ -f "$SERVICE_FILE" ]]; then
+  EXISTING="$(sed -n 's/^ExecStart=//p' "$SERVICE_FILE" | tail -n 1)"
+  if [[ -z "$PORT" ]]; then
+    PORT="$(grep -oE -- '--port [0-9]+' <<<"$EXISTING" | awk '{print $2}' | head -n 1 || true)"
+    [[ -n "$PORT" ]] && printf 'Relais déjà installé : port %s gardé (celui que connaît le téléviseur).\n' "$PORT"
+  fi
+  if [[ -z "$ALLOW" ]]; then
+    ALLOW="$(grep -oE -- '--autoriser [^ ]+' <<<"$EXISTING" | awk '{print $2}' | head -n 1 || true)"
+  fi
+fi
+
 # Port libre de la plage du slot (outil Ultra.cc), différent de celui de Noctra.
 if [[ -z "$PORT" ]] && command -v app-ports >/dev/null 2>&1; then
   PORT="$(app-ports free 2>/dev/null | grep -oE '\b[0-9]{4,5}\b' | grep -v "^${NOCTRA_PORT}$" | head -n 1 || true)"

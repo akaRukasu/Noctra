@@ -11,12 +11,13 @@ param(
     [switch]$ResetSshKey,
     [string]$EnvFile = '',
     [switch]$Diagnostic,
-    [switch]$Repair
+    [switch]$Repair,
+    [switch]$Relay
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:NoctraUpdaterVersion = '8.5'
+$script:NoctraUpdaterVersion = '8.6'
 $script:LastSshDiagnostic = ''
 
 function Write-Step {
@@ -570,6 +571,100 @@ printf '\nBilan : %d OK, %d a verifier, %d probleme(s).\n' "$OK" "$WARN" "$BAD"
 (( BAD == 0 ))
 '@
 
+# V8.6 : relais Samsung Smart TV 2014 sur la seedbox (-Relay) : verification,
+# puis installation ou reparation en gardant le port deja connu du televiseur.
+$script:RelayScript = @'
+#!/usr/bin/env bash
+# Noctra - relais Samsung 2014 (V8.6). Aucune cle ni aucun mot de passe n'est affiche.
+set -uo pipefail
+APP_DIR="${NOCTRA_APP_DIR:-$HOME/apps/noctra}"
+ACTION="${NOCTRA_RELAY_ACTION:-verifier}"
+SERVICE="noctra-relais-tv"
+UNIT="$HOME/.config/systemd/user/$SERVICE.service"
+INSTALLER="$APP_DIR/ultra/install-relais-samsung2014.sh"
+RELAY_JS="$APP_DIR/apps/samsung-orsay/serveur/noctra-samsung2014.mjs"
+ENV_FILE="$APP_DIR/.env"
+BAD=0
+ok()   { printf '[OK] %s\n' "$*"; }
+bad()  { BAD=$((BAD+1)); printf '[!!] %s\n' "$*"; }
+note() { printf '[??] %s\n' "$*"; }
+info() { printf '     %s\n' "$*"; }
+title() { printf '\n== %s ==\n' "$*"; }
+env_value() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -nE "s/^[[:space:]]*${1}[[:space:]]*=[[:space:]]*['\"]?([^'\"]*)['\"]?[[:space:]]*$/\\1/p" "$ENV_FILE" | tr -d '\r' | tail -n 1
+}
+# Code HTTP d'une adresse, 12 s au plus ; "Noctra" ajoute si la reponse vient de Noctra.
+probe() {
+  local body code
+  body="$(curl -sS -m 12 -w '\n%{http_code}' "$1" 2>/dev/null || true)"
+  code="$(printf '%s' "$body" | tail -n 1)"
+  if printf '%s' "$body" | grep -q '"client":"Noctra"'; then printf '%s Noctra' "${code:-000}"; else printf '%s' "${code:-000}"; fi
+}
+
+BASE_URL="$(env_value BASE_URL)"; BASE_URL="${BASE_URL:-/noctra}"
+SHORT_HOST="$(hostname -s 2>/dev/null || hostname)"
+EXPECTED="https://$(whoami).${SHORT_HOST}.usbx.me${BASE_URL}"
+PUBLIC_IP="$(getent hosts "${SHORT_HOST}.usbx.me" 2>/dev/null | awk '{print $1}' | head -n 1 || true)"
+
+title "Relais Samsung 2014 sur ${SHORT_HOST}.usbx.me"
+if [[ -f "$ENV_FILE" ]]; then ok "Noctra installe dans $APP_DIR"; else bad "Noctra absent de $APP_DIR"; fi
+if [[ -f "$RELAY_JS" && -f "$INSTALLER" ]]; then ok "Fichiers du relais presents"; else bad "Fichiers du relais absents : mettre Noctra a jour (LANCER-MISE-A-JOUR-NOCTRA-V8.cmd)"; fi
+result="$(probe "$EXPECTED/health")"
+if [[ "$result" == *Noctra* ]]; then ok "Serveur Noctra joignable : $EXPECTED"; else bad "Serveur Noctra injoignable sur $EXPECTED (code ${result%% *})"; fi
+
+PORT=""; TARGET=""; ALLOW=""
+if [[ -f "$UNIT" ]]; then
+  EXEC="$(sed -n 's/^ExecStart=//p' "$UNIT" | tail -n 1)"
+  PORT="$(grep -oE -- '--port [0-9]+' <<<"$EXEC" | awk '{print $2}' | head -n 1 || true)"
+  TARGET="$(grep -oE -- '--serveur [^ ]+' <<<"$EXEC" | awk '{print $2}' | head -n 1 || true)"
+  ALLOW="$(grep -oE -- '--autoriser [^ ]+' <<<"$EXEC" | awk '{print $2}' | head -n 1 || true)"
+  ok "Relais installe (port ${PORT:-inconnu})"
+  if [[ "$TARGET" == "$EXPECTED" ]]; then ok "Le relais vise $TARGET"; else bad "Le relais vise ${TARGET:-?} au lieu de $EXPECTED (ancienne seedbox ?)"; fi
+  state="$(systemctl --user is-active "$SERVICE.service" 2>/dev/null || true)"
+  if [[ "$state" == active ]]; then ok "Service $SERVICE actif"; else bad "Service $SERVICE : ${state:-arrete}"; fi
+  if [[ -n "$PORT" ]]; then
+    result="$(probe "http://127.0.0.1:$PORT$BASE_URL/health")"
+    if [[ "$result" == *Noctra* ]]; then ok "Le relais repond et joint le serveur Noctra (port $PORT)"
+    else
+      bad "Le relais ne repond pas sur le port $PORT (code ${result%% *})"
+      for log in "$APP_DIR/logs/relais-tv-error.log" "$APP_DIR/logs/relais-tv.log"; do
+        [[ -s "$log" ]] && { info "Fin de $log :"; tail -n 5 "$log" | sed 's/^/       /'; }
+      done
+    fi
+  fi
+  if [[ -n "$ALLOW" ]]; then info "Acces limite a l'adresse $ALLOW (adresse publique de la box)"
+  else note "Acces au relais ouvert a tous (conseil : le limiter a l'adresse publique de la box)"; fi
+else
+  bad "Relais non installe sur cette seedbox"
+fi
+
+if [[ "$ACTION" == installer ]]; then
+  title "Installation / reparation du relais"
+  args=()
+  [[ -n "$PORT" ]] && args+=("$PORT")
+  allow="${NOCTRA_RELAY_ALLOW:-$ALLOW}"
+  [[ -n "$allow" ]] && args+=(--autoriser "$allow")
+  bash "$INSTALLER" "${args[@]}"
+  status=$?
+  [[ -f "$UNIT" ]] && PORT="$(sed -n 's/^ExecStart=//p' "$UNIT" | grep -oE -- '--port [0-9]+' | awk '{print $2}' | head -n 1 || true)"
+  if [[ $status -eq 0 && -n "$PORT" ]] && [[ "$(probe "http://127.0.0.1:$PORT$BASE_URL/health")" == *Noctra* ]]; then
+    ok "Relais en marche (port $PORT)"; BAD=0
+  else
+    bad "Le relais ne demarre pas : journal dans $APP_DIR/logs/relais-tv-error.log"
+  fi
+fi
+
+if [[ -n "$PORT" ]]; then
+  title "Sur le televiseur (Noctra > Parametres de l'appli > Serveur et relais local)"
+  [[ -n "$PUBLIC_IP" ]] && info "Adresse du relais a saisir : $PUBLIC_IP:$PORT"
+  info "(ou ${SHORT_HOST}.usbx.me:$PORT)"
+  info "Test depuis un telephone EN 4G (Wi-Fi coupe) : http://${SHORT_HOST}.usbx.me:$PORT$BASE_URL/health"
+  info "doit afficher un texte contenant Noctra. Sinon ce port n'est pas ouvert sur Internet."
+fi
+(( BAD == 0 ))
+'@
+
 # V8.1 : reparation sur place (sans nouvelle version), proposee apres le
 # diagnostic ou lancee seule (-Repair).
 $script:RepairScript = @'
@@ -799,6 +894,38 @@ function Invoke-NoctraRepair {
     else { Write-Host 'Reparation terminee.' -ForegroundColor Green }
 }
 
+function Invoke-NoctraRelay {
+    param([string]$Target, [string]$Action = 'verifier', [string]$Allow = '')
+    if ($Action -eq 'installer') { Write-Step 'Relais Samsung 2014 : installation ou reparation (le port deja connu du televiseur est garde)' }
+    else { Write-Step 'Relais Samsung 2014 : verification' }
+    $tempRelay = Join-Path ([System.IO.Path]::GetTempPath()) ('noctra-relay-' + [guid]::NewGuid().ToString('N') + '.sh')
+    try {
+        [System.IO.File]::WriteAllText($tempRelay, $script:RelayScript.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+        $scpPath = (Get-Command 'scp.exe' -ErrorAction Stop).Source
+        $upload = Invoke-NativeQuiet -FilePath $scpPath -TimeoutSeconds 60 -Arguments @(
+            '-q', '-P', [string]$SshPort, '-i', $IdentityFile,
+            '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
+            $tempRelay, "${Target}:~/noctra-relay.sh")
+        if ($upload.ExitCode -ne 0) {
+            Write-Host "Relais : envoi refuse (code $($upload.ExitCode)). $($upload.StdErr)" -ForegroundColor Yellow
+            return 1
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $tempRelay -Force -ErrorAction SilentlyContinue
+    }
+    $allowPart = ''
+    if ($Allow -match '^[0-9A-Fa-f:.]+$') { $allowPart = "NOCTRA_RELAY_ALLOW=$Allow " }
+    $command = "NOCTRA_RELAY_ACTION=$Action $allowPart" + 'bash $HOME/noctra-relay.sh; status=$?; rm -f $HOME/noctra-relay.sh; exit $status'
+    $result = Invoke-NoctraRemote -Target $Target -Command $command -TimeoutSeconds 180
+    $report = ($result.StdOut + $(if ($result.StdErr) { [Environment]::NewLine + $result.StdErr } else { '' })).Trim()
+    foreach ($line in ($report -split "`r?`n")) {
+        $color = if ($line.StartsWith('[OK]')) { 'Green' } elseif ($line.StartsWith('[!!]')) { 'Red' } elseif ($line.StartsWith('[??]')) { 'Yellow' } elseif ($line.StartsWith('==')) { 'Cyan' } else { 'Gray' }
+        Write-Host $line -ForegroundColor $color
+    }
+    return $result.ExitCode
+}
+
 function Invoke-NoctraDiagnostic {
     param([string]$Target)
     Write-Step 'Diagnostic du serveur (Node.js, installation, service, Jellyfin, qBittorrent, Sonarr, Radarr...)'
@@ -850,6 +977,20 @@ try {
     }
 
     Write-Host "[Noctra Updater PC v$script:NoctraUpdaterVersion]" -ForegroundColor DarkCyan
+
+    if ($Relay) {
+        $sshTarget = "${RemoteUser}@${RemoteHost}"
+        Ensure-NoctraSshKey -Target $sshTarget -KeyFile $IdentityFile
+        $code = Invoke-NoctraRelay -Target $sshTarget -Action 'verifier'
+        if ($code -ne 0) {
+            $answer = Read-Host "`nInstaller ou reparer le relais maintenant ? Le port deja connu du televiseur est garde. (O/N)"
+            if ($answer -match '^(o|oui|y|yes)$') {
+                $allow = Read-Host "Limiter l'acces a l'adresse publique de ta box (conseille) : tape-la (https://ifconfig.me depuis la maison), ou Entree pour garder le reglage actuel"
+                $null = Invoke-NoctraRelay -Target $sshTarget -Action 'installer' -Allow ($allow.Trim())
+            }
+        }
+        exit 0
+    }
 
     if ($Diagnostic -or $Repair) {
         $sshTarget = "${RemoteUser}@${RemoteHost}"

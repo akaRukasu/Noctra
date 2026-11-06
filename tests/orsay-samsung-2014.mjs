@@ -474,6 +474,30 @@ try {
   assert.equal(insecure.stored.insecure, true);
   assert.equal(insecure.query, '?platform=orsay&server=' + encodeURIComponent(origin + '/noctra'), 'serveur ouvert en HTTP');
   assert.deepEqual(errors, [], 'aucune erreur JavaScript');
+
+  // Seedbox déplacée (merlion → astra) : l'adresse gardée d'une installation
+  // précédente passe sur astra ; si le téléviseur ne joint pas astra mais joint
+  // encore l'ancienne adresse, celle-ci est reprise et n'est plus changée.
+  const port = new URL(origin).port;
+  const moved = async (rules, expected) => {
+    const other = await playwright.chromium.launch({ args: [`--host-resolver-rules=${rules}`] });
+    try {
+      const tab = await other.newPage({ viewport: { width: 1280, height: 720 } });
+      tab.on('pageerror', error => errors.push(error.message));
+      await tab.addInitScript(tvInit, { origin });
+      await tab.addInitScript(() => { if (window.__firstLoad) localStorage.setItem('noctra-orsay-server-v1', JSON.stringify({ url: 'http://akarukasu.merlion.usbx.me/noctra', relay: '' })); });
+      await tab.goto(origin + '/index.html');
+      await tab.waitForFunction(() => document.querySelectorAll('#nav .nav').length > 0, null, { timeout: 30000 });
+      const result = await tab.evaluate(() => ({ stored: JSON.parse(localStorage.getItem('noctra-orsay-server-v1')), query: window.NOCTRA_HOST_QUERY }));
+      assert.deepEqual(result.stored, expected.stored);
+      assert.equal(result.query, '?platform=orsay&server=' + encodeURIComponent(expected.stored.url));
+    } finally { await other.close(); }
+  };
+  await moved(`MAP akarukasu.astra.usbx.me:80 127.0.0.1:${port}, MAP akarukasu.merlion.usbx.me:80 127.0.0.1:9`,
+    { stored: { url: 'http://akarukasu.astra.usbx.me/noctra', relay: '' } });
+  await moved(`MAP akarukasu.astra.usbx.me:80 127.0.0.1:9, MAP akarukasu.merlion.usbx.me:80 127.0.0.1:${port}`,
+    { stored: { url: 'http://akarukasu.merlion.usbx.me/noctra', relay: '', keepServer: true } });
+  assert.deepEqual(errors, [], 'aucune erreur JavaScript');
 } finally {
   await browser.close();
   server.close();

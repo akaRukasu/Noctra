@@ -1147,13 +1147,18 @@
       var saved = JSON.parse(localStorage.getItem(SERVER_KEY) || 'null');
       if (saved && saved.url) {
         // Serveur déplacé (seedbox merlion.usbx.me → astra.usbx.me) : l'adresse
-        // gardée par une installation précédente est corrigée et réenregistrée.
-        var url = movedServer(saved.url);
-        var relay = movedServer(saved.relay || '');
-        if (url !== saved.url || relay !== (saved.relay || '')) {
-          saved.url = url;
-          saved.relay = relay;
-          saveServer(saved);
+        // gardée par une installation précédente est corrigée. L'ancienne est
+        // notée : si le téléviseur ne joint pas la nouvelle mais joint encore
+        // l'ancienne, Boot.connect y revient et ne la change plus (keepServer).
+        if (!saved.keepServer) {
+          var url = movedServer(saved.url);
+          var relay = movedServer(saved.relay || '');
+          if (url !== saved.url || relay !== (saved.relay || '')) {
+            saved.movedFrom = { url: saved.url, relay: saved.relay || '' };
+            saved.url = url;
+            saved.relay = relay;
+            saveServer(saved);
+          }
         }
         return saved;
       }
@@ -1339,6 +1344,32 @@
       probe(base, function (result) {
         clearTimeout(busyTimer);
         if (Boot.cancelled) return;
+        if (entry.movedFrom) {
+          var previous = { url: entry.movedFrom.url, relay: entry.movedFrom.relay, insecure: entry.insecure };
+          if (result.ok) { delete entry.movedFrom; saveServer(entry); }
+          else {
+            // Nouvelle adresse injoignable : l'ancienne, qui marchait, est essayée.
+            var oldBase = activeBase(previous);
+            Boot.busy('Nouvelle adresse injoignable. Essai de l’adresse précédente ' + oldBase.replace(/^https?:\/\//, '') + '…');
+            probe(oldBase, function (old) {
+              if (Boot.cancelled) return;
+              if (old.ok) {
+                entry.url = previous.url;
+                entry.relay = previous.relay;
+                entry.keepServer = true;
+                delete entry.movedFrom;
+                saveServer(entry);
+                Diag.add('SERVEUR', 'nouvelle adresse injoignable, adresse précédente gardée : ' + oldBase);
+                Boot.connect();
+                return;
+              }
+              delete entry.movedFrom;
+              saveServer(entry);
+              Boot.connect();
+            });
+            return;
+          }
+        }
         if (!result.ok && result.status === 0 && /^https:/i.test(base)) { Boot.tryHttp(entry, base, result); return; }
         if (!result.ok) { Boot.menu(explain(entry, result)); return; }
         Boot.hide();

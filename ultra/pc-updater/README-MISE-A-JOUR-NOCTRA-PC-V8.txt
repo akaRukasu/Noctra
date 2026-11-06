@@ -34,6 +34,19 @@ UTILISATION
 2. Mettre le ZIP noctra-media-client-vXXX.zip dans Telechargements.
 3. Lancer LANCER-MISE-A-JOUR-NOCTRA-V8.cmd et confirmer avec O.
    Diagnostic seul : DIAGNOSTIC-NOCTRA-V8.cmd.
+   Relais de la TV Samsung 2014 : RELAIS-SAMSUNG-2014-V8.cmd.
+
+RELAIS SAMSUNG 2014 (V8.6)
+--------------------------
+RELAIS-SAMSUNG-2014-V8.cmd verifie le relais sur la seedbox :
+- installe, service actif ;
+- branche sur https://akarukasu.astra.usbx.me/noctra (et non l'ancienne seedbox) ;
+- repond.
+Il affiche l'adresse a saisir sur le televiseur (IP:port). En cas de probleme,
+il propose de l'installer ou de le reparer. Le port deja connu du televiseur
+est garde. Il demande aussi l'adresse publique de la box pour limiter l'acces
+(https://ifconfig.me depuis la maison ; Entree pour garder le reglage).
+Ensuite, test depuis un telephone en 4G : http://astra.usbx.me:<port>/noctra/health
 
 La cle SSH de la V6/V7 est reutilisee. Si le nouveau serveur ne la connait pas
 encore, le script demande le mot de passe Ultra.cc une seule fois pour
