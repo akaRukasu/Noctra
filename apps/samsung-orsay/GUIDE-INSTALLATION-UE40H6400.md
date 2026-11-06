@@ -86,10 +86,12 @@ Le téléviseur parle en HTTP simple à un relais qui tourne sur la seedbox. Ce 
    ```bash
    bash ultra/install-relais-samsung2014.sh
    ```
-   Le script choisit un port libre de votre slot (`app-ports free`), installe le service `noctra-relais-tv` (relancé tout seul), puis affiche l'adresse à saisir sur le téléviseur, par exemple `169.150.243.3:12345`. Pour imposer un port : `bash ultra/install-relais-samsung2014.sh 12345`.
+   Le script choisit un port libre de votre slot (`app-ports free`), installe le service `noctra-relais-tv` (relancé tout seul), puis affiche l'adresse à saisir sur le téléviseur (adresse IP de la seedbox astra et port, par exemple `<IP>:12345`). Pour imposer un port : `bash ultra/install-relais-samsung2014.sh 12345`.
 3. **Vérifiez l'accès depuis Internet** : sur un téléphone en 4G (Wi-Fi coupé), ouvrez `http://astra.usbx.me:<port>/noctra/health`. Un texte contenant « Noctra » doit s'afficher. Sinon, ce port n'est pas ouvert : relancez le script avec un autre port de `app-ports free`.
 4. **Conseillé** : limitez l'accès à votre box. Depuis un appareil de la maison, notez votre adresse publique sur <https://ifconfig.me>, puis lancez `bash ultra/install-relais-samsung2014.sh <port> --autoriser <adresse>`. Si votre box change d'adresse, relancez cette commande avec la nouvelle.
-5. Sur le téléviseur, dans Noctra : **Utiliser un relais local**, OK sur le champ, puis saisissez `169.150.243.3:<port>` avec les chiffres de la télécommande (le « . » et le « : » sont sur le clavier à l'écran). Validez.
+5. Sur le téléviseur, dans Noctra : **Utiliser un relais local**, OK sur le champ, puis saisissez l'adresse affichée par le script (`<IP>:<port>`) avec les chiffres de la télécommande (le « . » et le « : » sont sur le clavier à l'écran). Validez.
+
+**Changement de seedbox (merlion → astra).** Le relais tournait sur l'ancienne seedbox : il n'existe plus. Relancez l'étape 2 sur astra (`ssh akarukasu@astra.usbx.me`). Le script vise alors `https://akarukasu.astra.usbx.me/noctra`. Saisissez ensuite sur le téléviseur la nouvelle adresse qu'il affiche. Pour cela : menu du compte › Paramètres de l'appli › Serveur et relais local, ou « Utiliser un relais local » sur l'écran « Connexion impossible ». L'adresse du serveur, elle, est corrigée seule depuis la version 1.1.62-2014.2.
 
 Suivi : `systemctl --user status noctra-relais-tv`, journal dans `logs/relais-tv.log`. Désinstallation : `bash ultra/install-relais-samsung2014.sh --desinstaller`.
 

@@ -1139,10 +1139,24 @@
     if (!/^https?:\/\//i.test(url)) url = (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(url) ? 'http://' : 'https://') + url;
     return url.replace(/[?#].*$/, '').replace(/\/+$/, '').replace(/\/(client(\/index\.html)?|health|tv-app(\/index\.html)?)$/i, '');
   }
+  function movedServer(url) {
+    return String(url || '').replace(/([\/.@])merlion\.usbx\.me(?=$|[\/:?#])/i, '$1astra.usbx.me');
+  }
   function loadServer() {
     try {
       var saved = JSON.parse(localStorage.getItem(SERVER_KEY) || 'null');
-      if (saved && saved.url) return saved;
+      if (saved && saved.url) {
+        // Serveur déplacé (seedbox merlion.usbx.me → astra.usbx.me) : l'adresse
+        // gardée par une installation précédente est corrigée et réenregistrée.
+        var url = movedServer(saved.url);
+        var relay = movedServer(saved.relay || '');
+        if (url !== saved.url || relay !== (saved.relay || '')) {
+          saved.url = url;
+          saved.relay = relay;
+          saveServer(saved);
+        }
+        return saved;
+      }
     } catch (error) { /* rien d'enregistré */ }
     return { url: config.defaultServerUrl || '', relay: '' };
   }
@@ -1293,7 +1307,7 @@
         saveServer(entry);
         Boot.connect();
       };
-      Boot.show('Relais Noctra', 'Adresse affichée par le relais : celui de la seedbox (par exemple 169.150.243.3:12345, voir le guide) ou celui d’un PC, NAS ou Raspberry Pi de la maison (par exemple 192.168.1.20:8095).\nLaissez vide pour ne plus l’utiliser.',
+      Boot.show('Relais Noctra', 'Adresse affichée par le relais : celui de la seedbox (adresse affichée par le script, voir le guide) ou celui d’un PC, NAS ou Raspberry Pi de la maison (par exemple 192.168.1.20:8095).\nLaissez vide pour ne plus l’utiliser.',
         [{ label: 'Valider', primary: true, run: submit }, { label: 'Retour', run: function () { Boot.menu(''); } }],
         { value: (entry.relay || '').replace(/^http:\/\//, ''), placeholder: '192.168.1.20:8095', submit: submit });
     },
