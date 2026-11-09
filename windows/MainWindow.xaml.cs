@@ -1,0 +1,330 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Interop;
+
+namespace Noctra.Windows;
+
+public partial class MainWindow : Window
+{
+    private readonly string dataDirectory = Environment.GetEnvironmentVariable("NOCTRA_WINDOWS_DATA") ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NoctraDesktop");
+    private readonly CancellationTokenSource lifetime = new();
+    private CancellationTokenSource? pageRequest;
+    private Jellyfin? client;
+    private Artwork? artwork;
+    private readonly Stack<Page> history = new();
+    private Page? page;
+    private string deviceId = Guid.NewGuid().ToString("N");
+    private bool closing;
+    private bool readyToClose;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        ConfigurePlayer();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        AttachDisplayTracking();
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) || SystemParameters.HighContrast) return;
+        var window = new WindowInteropHelper(this).Handle;
+        const int captionColor = 35;
+        const int textColor = 36;
+        var background = 0x1B1011;
+        var foreground = 0xFEF3F6;
+        _ = DwmSetWindowAttribute(window, captionColor, ref background, sizeof(int));
+        _ = DwmSetWindowAttribute(window, textColor, ref foreground, sizeof(int));
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+
+    private string AccountPath => Path.Combine(dataDirectory, "account.dat");
+
+    private void MinimizeWindow(object sender, RoutedEventArgs args) => WindowState = WindowState.Minimized;
+    private void MaximizeWindow(object sender, RoutedEventArgs args) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    private void QuitWindow(object sender, RoutedEventArgs args) => Close();
+
+    private async void Load(object sender, RoutedEventArgs args)
+    {
+        Loaded -= Load;
+        SizeChanged += (_, _) => SizeHeader();
+        StateChanged += (_, _) => Dispatcher.BeginInvoke(() => SizeHeader());
+        LocationChanged += (_, _) => { if (WindowState == WindowState.Maximized) SizeHeader(); };
+        SizeHeader();
+        var arguments = Environment.GetCommandLineArgs();
+        var server = Array.IndexOf(arguments, "--server");
+        var overridden = server >= 0 && server + 1 < arguments.Length;
+        ServerAddress.Text = overridden ? arguments[server + 1] : Jellyfin.DefaultAddress;
+        SignInButton.IsEnabled = false;
+        try
+        {
+            Directory.CreateDirectory(dataDirectory);
+            var installedPlayer = Path.Combine(AppContext.BaseDirectory, "player", "20261104", "libmpv-2.dll");
+            Mpv.LibraryPath = File.Exists(installedPlayer)
+                ? installedPlayer : Path.Combine(dataDirectory, "libmpv-2.dll");
+            var devicePath = Path.Combine(dataDirectory, "device.txt");
+            if (File.Exists(devicePath) && Guid.TryParse(await File.ReadAllTextAsync(devicePath, lifetime.Token), out var existing))
+                deviceId = existing.ToString("N");
+            else
+                await File.WriteAllTextAsync(devicePath, deviceId, lifetime.Token);
+            if (overridden || !File.Exists(AccountPath)) return;
+
+            var encrypted = await File.ReadAllBytesAsync(AccountPath, lifetime.Token);
+            var saved = JsonSerializer.Deserialize<SavedAccount>(ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser));
+            if (saved == null || !Jellyfin.TryAddress(saved.JellyfinUrl, out var root)) return;
+            ServerAddress.Text = saved.Address;
+            Username.Text = saved.User.Name;
+            Remember.IsChecked = true;
+            LoginStatus.Text = "Récupération de la session…";
+            Jellyfin.TryAddress(saved.NoctraUrl, out var noctra);
+            if (noctra == null && Jellyfin.TryAddress(saved.Address, out var oldAddress) &&
+                oldAddress!.AbsoluteUri.TrimEnd('/') != root!.AbsoluteUri.TrimEnd('/'))
+                noctra = new Uri(oldAddress.AbsoluteUri.TrimEnd('/') + "/");
+            var restored = new Jellyfin(root!, deviceId, saved.User, saved.Token, noctra);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var viewer = await restored.Validate(timeout.Token);
+            if (viewer.Id != saved.User.Id) throw new InvalidOperationException();
+            if (!closing) Enter(new Jellyfin(root!, deviceId, viewer, saved.Token, noctra));
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            LoginStatus.Text = "Session indisponible. Connectez-vous à nouveau.";
+        }
+        finally
+        {
+            SignInButton.IsEnabled = true;
+            if (client == null && !closing) Username.Focus();
+        }
+    }
+
+    private async void SignIn(object sender, RoutedEventArgs args)
+    {
+        if (!SignInButton.IsEnabled || closing || client != null) return;
+        var username = Username.Text.Trim();
+        var address = ServerAddress.Text.Trim();
+        if (username.Length == 0)
+        {
+            LoginStatus.Text = "Indiquez votre identifiant Jellyfin.";
+            Username.Focus();
+            return;
+        }
+        SignInButton.IsEnabled = false;
+        LoginStatus.Text = "Connexion en cours…";
+        try
+        {
+            var signedIn = await Jellyfin.SignIn(address, deviceId, username, Password.Password, lifetime.Token);
+            if (closing) return;
+            var message = "";
+            try
+            {
+                if (Remember.IsChecked == true)
+                {
+                    var saved = new SavedAccount(address, signedIn.Root.AbsoluteUri, signedIn.User, signedIn.Token, signedIn.NoctraRoot?.AbsoluteUri);
+                    var encrypted = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(saved), null, DataProtectionScope.CurrentUser);
+                    await File.WriteAllBytesAsync(AccountPath, encrypted, lifetime.Token);
+                }
+                else File.Delete(AccountPath);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException)
+            {
+                message = "Impossible de mettre à jour la session enregistrée sur ce PC.";
+            }
+            if (closing) return;
+            Enter(signedIn);
+            ShowStatus(message);
+        }
+        catch (InvalidOperationException error) { LoginStatus.Text = error.Message; }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            LoginStatus.Text = "Le serveur n’a pas répondu correctement. Vérifiez son adresse et votre connexion.";
+        }
+        finally
+        {
+            Password.Clear();
+            SignInButton.IsEnabled = true;
+        }
+    }
+
+    private void Enter(Jellyfin signedIn)
+    {
+        client = signedIn;
+        savedTvOwner = null;
+        savedTvSources = null;
+        tvCatalogCache.Clear(); tvCatalogOwner = null;
+        tvResolutionCache.Clear(); tvResolutionOwner = null;
+        seriesStatuses.Clear();
+        serverHealth.Clear();
+        _ = LoadPreferences(signedIn);
+        artwork = new Artwork(signedIn);
+        history.Clear();
+        ProfileName.Text = signedIn.User.Name;
+        Initial.Text = signedIn.User.Name.Length > 0 ? signedIn.User.Name[..1].ToUpperInvariant() : "N";
+        LoginShell.Visibility = Visibility.Collapsed;
+        LibraryShell.Visibility = Visibility.Visible;
+        _ = Navigate(HomePage, reset: true);
+    }
+
+    private async void SignOut(object sender, RoutedEventArgs args)
+    {
+        var previous = client;
+        SignInButton.IsEnabled = false;
+        AmbientArt.Source = null;
+        savedTvSources = null;
+        savedTvOwner = null;
+        externalPlayer?.Close();
+        tvCatalogCache.Clear(); tvCatalogOwner = null;
+        tvResolutionCache.Clear(); tvResolutionOwner = null;
+        externalPlayer = null;
+        seriesStatuses.Clear();
+        serverHealth.Clear();
+        multiview?.Close();
+        multiview = null;
+        multiviewSelection.Clear();
+        _ = EndCast();
+        pageRequest?.Cancel();
+        client = null;
+        artwork = null;
+        page = null;
+        history.Clear();
+        PageContent.Children.Clear();
+        SearchBox.Clear();
+        ProfileName.Text = "";
+        LibraryShell.Visibility = Visibility.Collapsed;
+        LoginShell.Visibility = Visibility.Visible;
+        LoginStatus.Text = "";
+        Remember.IsChecked = false;
+        try { File.Delete(AccountPath); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            LoginStatus.Text = "Impossible de supprimer la session enregistrée. Fermez puis relancez Noctra pour vérifier.";
+        }
+        Username.Clear();
+        Username.Focus();
+        if (previous != null) await RevokeSession(previous);
+        if (!closing) SignInButton.IsEnabled = true;
+    }
+
+    private async Task RevokeSession(Jellyfin account)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try { await account.Command("Sessions/Logout", null, timeout.Token); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException) { }
+    }
+
+    private sealed record Page(string Title, ButtonTab Tab, Func<Jellyfin, CancellationToken, Task> Render);
+    private enum ButtonTab { Home, Library, Favorites, Discover, Tv, None }
+    private Page HomePage => new("Accueil", ButtonTab.Home, RenderHome);
+
+    private async Task Navigate(Page destination, bool reset = false, bool back = false)
+    {
+        var account = client;
+        if (account == null || closing) return;
+        if (reset) history.Clear();
+        else if (!back && page != null) history.Push(page);
+        page = destination;
+
+        pageRequest?.Cancel();
+        pageRequest?.Dispose();
+        pageRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        var cancellation = pageRequest.Token;
+        AmbientArt.Source = null;
+        PageLabel.Text = destination.Title;
+        BackButton.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        HomeTab.Tag = destination.Tab == ButtonTab.Home ? "active" : null;
+        LibraryTab.Tag = destination.Tab == ButtonTab.Library ? "active" : null;
+        FavoritesTab.Tag = destination.Tab == ButtonTab.Favorites ? "active" : null;
+        DiscoverTab.Tag = destination.Tab == ButtonTab.Discover ? "active" : null;
+        TvTab.Tag = destination.Tab == ButtonTab.Tv ? "active" : null;
+        ShowStatus("");
+        TvSidebar.Visibility = Visibility.Collapsed;
+        TvMenu.Children.Clear();
+        TvMenuScroller.ScrollToTop();
+        PageContent.Children.Clear();
+        Scroller.ScrollToTop();
+        PageContent.Children.Add(Message("Chargement…"));
+        try { await destination.Render(account, cancellation); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException)
+        {
+            if (cancellation.IsCancellationRequested) return;
+            PageContent.Children.Clear();
+            PageContent.Children.Add(Message(error is NoctraApiException ? error.Message : destination.Tab == ButtonTab.Tv ?
+                "Impossible de charger cette section TV. Vérifiez le service Noctra ou réessayez." : "Impossible de charger cette page. Vérifiez la connexion au serveur."));
+            var retry = Action("Réessayer", () => _ = Navigate(destination, back: true));
+            retry.HorizontalAlignment = HorizontalAlignment.Left;
+            PageContent.Children.Add(retry);
+        }
+    }
+
+    private void OpenHome(object sender, RoutedEventArgs args) => _ = Navigate(HomePage, reset: true);
+    private void OpenLibraries(object sender, RoutedEventArgs args) => _ = Navigate(new("Médiathèques", ButtonTab.Library, RenderLibraries), reset: true);
+    private void OpenFavorites(object sender, RoutedEventArgs args) => _ = Navigate(BrowsePage("Favoris", ButtonTab.Favorites, favorite: true), reset: true);
+    private void OpenProfile(object sender, RoutedEventArgs args) => _ = Navigate(new("Profil", ButtonTab.None, RenderProfile));
+
+    private Task RenderProfile(Jellyfin account, CancellationToken cancellation)
+    {
+        PageContent.Children.Clear();
+        PageContent.Children.Add(Heading(account.User.Name, "Profil Jellyfin"));
+        PageContent.Children.Add(Message("Serveur · " + account.Root.Host));
+        displayReadout = Text("", 14, color: "Muted");
+        displayReadout.Margin = new Thickness(0, 8, 0, 16);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(displayReadout, "DisplayReadout");
+        UpdateDisplayReadout();
+        PageContent.Children.Add(displayReadout);
+        PageContent.Children.Add(PlaybackSettings(account));
+        var signOut = Action("Se déconnecter", () => SignOut(this, new RoutedEventArgs()));
+        signOut.HorizontalAlignment = HorizontalAlignment.Left;
+        PageContent.Children.Add(signOut);
+        return Task.CompletedTask;
+    }
+    private void Back(object sender, RoutedEventArgs args) { if (history.TryPop(out var previous)) _ = Navigate(previous, back: true); }
+    private void Search(object sender, RoutedEventArgs args)
+    {
+        var term = SearchBox.Text.Trim();
+        if (term.Length > 0) _ = Navigate(BrowsePage("Recherche", ButtonTab.None, search: term));
+        else SearchBox.Focus();
+    }
+
+    private void SearchKey(object sender, KeyEventArgs args)
+    {
+        if (args.Key != Key.Enter) return;
+        args.Handled = true;
+        Search(sender, args);
+    }
+
+    private void ShowStatus(string text)
+    {
+        StatusText.Text = text;
+        StatusBar.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private async void CloseWindow(object? sender, CancelEventArgs args)
+    {
+        if (readyToClose) return;
+        args.Cancel = true;
+        if (closing) return;
+        closing = true;
+        multiview?.Close();
+        await EndCast();
+        lifetime.Cancel();
+        FinishPlayback();
+        await Task.WhenAny(stopping, Task.Delay(7000));
+        readyToClose = true;
+        _ = Dispatcher.BeginInvoke(new Action(Close));
+    }
+}

@@ -1,0 +1,107 @@
+# Noctra pour Windows (client natif C# / .NET 10 / WPF, lecteur libmpv,
+# WebView2 pour les lecteurs web tiers). Sur une machine Windows de GitHub :
+# construction, tests de protocole et d'audio, publication x64 autonome, setup
+# Inno Setup (normal et de test), puis test de l'interface avec une API locale
+# simulée (aucun serveur réel) et captures d'écran.
+# Téléchargement : Actions › Noctra Windows › Artifacts.
+name: Noctra Windows
+
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/noctra-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noctra-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Noctra Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Version
+        id: version
+        run: |
+          $version = ([xml](Get-Content Noctra.Windows.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Noctra Windows $version"
+      - name: Construction
+        run: dotnet build Noctra.Windows.csproj -c Release
+      - name: Tests de protocole (récepteur Cast TLS simulé, regroupement TV)
+        run: dotnet run --project tests/protocol/Noctra.Tests.csproj -c Release
+      - name: Tests audio
+        run: dotnet run --project tests/audio/Noctra.AudioTests.csproj -c Release
+      - name: Publication x64 autonome
+        run: dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true -o publish
+      - name: Inno Setup
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          $iscc = Get-ChildItem 'C:\Program Files (x86)', 'C:\Program Files' -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe introuvable' }
+          Write-Host "Compilateur : $($iscc.FullName)"
+          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+      - name: Setups (normal et test)
+        run: |
+          $publish = (Resolve-Path publish).Path
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & $env:ISCC "/DPublishDir=$publish" "/O$PWD/dist" installer/Noctra.iss
+          if ($LASTEXITCODE) { throw "Setup : code $LASTEXITCODE" }
+          & $env:ISCC "/DPublishDir=$publish" "/DTestBuild=1" "/O$PWD/dist" installer/Noctra.iss
+          if ($LASTEXITCODE) { throw "Setup de test : code $LASTEXITCODE" }
+          Get-ChildItem dist | Format-Table Name, Length
+      - name: Outils du test d'interface (Python, pywinauto, FFmpeg, moteur mpv vérifié)
+        run: |
+          python -m pip install --quiet pywinauto pillow pywin32
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress | Out-Null }
+          $ffmpeg = (Get-Command ffmpeg).Source
+          "FFMPEG=$ffmpeg" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/noctra" | Out-Null
+          & $ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 -t 120 -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -b:v 800k -c:a libopus "$env:RUNNER_TEMP/noctra/video-120s.webm"
+          # Même archive mpv que le setup (URL et SHA-256 épinglés dans installer/Noctra.iss).
+          $iss = Get-Content installer/Noctra.iss -Raw
+          $url = [regex]::Match($iss, 'Source: "(https://[^"]+mpv-dev[^"]+\.7z)"').Groups[1].Value
+          $hash = [regex]::Match($iss, 'mpv\.7z";[^\r\n]*Hash: "([0-9a-f]{64})"').Groups[1].Value
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP/noctra/mpv.7z"
+          $actual = (Get-FileHash "$env:RUNNER_TEMP/noctra/mpv.7z" -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $hash) { throw "mpv : SHA-256 $actual au lieu de $hash" }
+          7z x "$env:RUNNER_TEMP/noctra/mpv.7z" "-o$env:RUNNER_TEMP/noctra/mpv" libmpv-2.dll -y | Out-Null
+          "MPV_DLL=$env:RUNNER_TEMP/noctra/mpv/libmpv-2.dll" >> $env:GITHUB_ENV
+      - name: Test de l'interface (API locale simulée)
+        timeout-minutes: 30
+        run: |
+          python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures
+          if ($LASTEXITCODE) { throw "Test de l'interface : code $LASTEXITCODE" }
+      - name: Archive des sources
+        if: always()
+        working-directory: .
+        run: git archive --format=zip --prefix="Noctra-Windows-${{ steps.version.outputs.version }}/" -o "windows/dist/Noctra-Windows-${{ steps.version.outputs.version }}-sources.zip" HEAD:windows
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: noctra-windows-setup
+          path: |
+            windows/dist/Noctra-Setup-*.exe
+            windows/dist/Noctra-QA-*.exe
+            windows/dist/Noctra-Windows-*-sources.zip
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: noctra-windows-captures
+          path: windows/captures/
+          if-no-files-found: ignore

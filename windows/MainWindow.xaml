@@ -1,0 +1,540 @@
+<Window x:Class="Noctra.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Noctra.Windows"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:integration="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
+        WindowStyle="None" Title="Noctra" Icon="Noctra.ico" Width="1320" Height="880" MinWidth="920" MinHeight="665" WindowStartupLocation="CenterScreen"
+        Background="#0D0D15" Foreground="#F6F3FE" FontFamily="Segoe UI Variable, Segoe UI" FontSize="14"
+        UseLayoutRounding="True" Loaded="Load" Closing="CloseWindow" PreviewKeyDown="WindowKey">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="44" ResizeBorderThickness="6" CornerRadius="12" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
+    <Window.Resources>
+        <FontFamily x:Key="DisplayFont">./fonts/#Noctra Display</FontFamily>
+        <SolidColorBrush x:Key="Ink" Color="#F6F3FE"/>
+        <SolidColorBrush x:Key="Muted" Color="#BBC8DD"/>
+        <SolidColorBrush x:Key="Accent" Color="#D2C2FF"/>
+        <SolidColorBrush x:Key="Panel" Color="#111C31"/>
+        <SolidColorBrush x:Key="Outline" Color="#374763"/>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+        </Style>
+        <Style TargetType="Button" x:Key="Action">
+            <Setter Property="Background" Value="#A023314A"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Outline}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="MinHeight" Value="40"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Body" CornerRadius="21" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Body" Property="BorderBrush" Value="#A48BEF"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Body" Property="Opacity" Value=".75"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Body" Property="BorderBrush" Value="White"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Body" Property="Opacity" Value=".45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Button" x:Key="Primary" BasedOn="{StaticResource Action}">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#F3CFFF"/>
+                        <GradientStop Color="#A7CBFF" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="#170D2C"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        </Style>
+        <Style TargetType="Button" x:Key="DockIcon" BasedOn="{StaticResource Action}">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Width" Value="39"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="1"/>
+            <Setter Property="Padding" Value="0"/>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="active">
+                    <Setter Property="Background" Value="#28203D"/>
+                    <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+                    <Setter Property="BorderBrush" Value="#45345F"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="Button" x:Key="WindowCaption">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="54"/>
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#293549"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#40516A"/></Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions><Condition Property="Tag" Value="close"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+                                <Setter TargetName="Surface" Property="Background" Value="#C42B1C"/><Setter Property="Foreground" Value="White"/>
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Button" x:Key="Card" BasedOn="{StaticResource Action}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+        <Style TargetType="Button" x:Key="NavigationTab" BasedOn="{StaticResource DockIcon}">
+            <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Width" Value="Auto"/>
+            <Setter Property="MinHeight" Value="44"/>
+            <Setter Property="Padding" Value="16,0"/>
+        </Style>
+        <Style TargetType="Button" x:Key="Round" BasedOn="{StaticResource Action}">
+            <Setter Property="Width" Value="44"/><Setter Property="Height" Value="44"/>
+            <Setter Property="Padding" Value="0"/><Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="18"/>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Foreground" Value="#D4C2FF"/>
+            <Setter Property="Background" Value="#384052"/>
+            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" Margin="0,8" VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Focusable="False">
+                                        <RepeatButton.Template><ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="4" CornerRadius="2" Background="#D4C2FF"/>
+                                        </ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="12" Height="12">
+                                        <Thumb.Template><ControlTemplate TargetType="Thumb">
+                                            <Ellipse Fill="#F0E8FF" Stroke="#B6A4DF" StrokeThickness="1"/>
+                                        </ControlTemplate></Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False">
+                                        <RepeatButton.Template><ControlTemplate TargetType="RepeatButton">
+                                            <Border Height="4" CornerRadius="2" Background="#384052"/>
+                                        </ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="11"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="#13121D">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="{TemplateBinding Orientation}">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="Grip" CornerRadius="4" Margin="2" Background="#5B506F"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Grip" Property="Background" Value="#9580BD"/></Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#172338"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Outline}"/>
+            <Setter Property="Padding" Value="11,7"/>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="MinHeight" Value="40"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Item" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="9" SnapsToDevicePixels="True">
+                            <ContentPresenter ContentSource="Content" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="Item" Property="Background" Value="#3A3052"/></Trigger>
+                            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Item" Property="Background" Value="#51406B"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="Background" Value="#142135"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Outline}"/>
+            <Setter Property="MinHeight" Value="42"/>
+            <Setter Property="MaxDropDownHeight" Value="300"/>
+            <Setter Property="IsTextSearchEnabled" Value="True"/>
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="PickerRoot" SnapsToDevicePixels="True">
+                            <ToggleButton x:Name="DropDownToggle" Focusable="False" ClickMode="Press"
+                                IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Picker" Background="#142135" BorderBrush="{StaticResource Outline}" BorderThickness="1" CornerRadius="15"/>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Picker" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="Picker" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Margin="14,8,36,8" VerticalAlignment="Center" IsHitTestVisible="False"
+                                Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                RecognizesAccessKey="True"/>
+                            <TextBlock Text="⌄" IsHitTestVisible="False" Foreground="{StaticResource Accent}" FontSize="18"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" PlacementTarget="{Binding ElementName=PickerRoot}"
+                                   AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   VerticalOffset="5">
+                                <Border Width="{Binding ActualWidth, ElementName=PickerRoot}" MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                        TextElement.Foreground="{StaticResource Ink}" Background="#142135" BorderBrush="#596885" BorderThickness="1" CornerRadius="13" Padding="5">
+                                    <ScrollViewer CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#100F1B"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Outline}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="MinHeight" Value="41"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Body" CornerRadius="18" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Body" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="#100F1B"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Outline}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="MinHeight" Value="41"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="Body" CornerRadius="18" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Body" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid x:Name="WindowFrame">
+        <Grid.RowDefinitions><RowDefinition x:Name="CaptionRow" Height="44"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Border x:Name="FrameHeader" Background="#0B1222" BorderBrush="#27364C" BorderThickness="0,0,0,1">
+            <DockPanel Margin="16,0,0,0" LastChildFill="False">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="26" Height="26" CornerRadius="7" Background="#C5B4FA">
+                        <TextBlock Text="N" Foreground="#17102D" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
+                    </Border>
+                    <TextBlock Text="NOCTRA" FontSize="14" FontWeight="Bold" Foreground="#D8DFF0" Margin="10,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="WINDOWS" Foreground="#8493AE" FontSize="11" Margin="4,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button x:Name="CaptionMinimize" Content="&#xE921;" Click="MinimizeWindow" Style="{StaticResource WindowCaption}" ToolTip="Réduire" AutomationProperties.Name="Réduire"/>
+                    <Button x:Name="CaptionMaximize" Content="&#xE922;" Click="MaximizeWindow" Style="{StaticResource WindowCaption}" ToolTip="Agrandir ou restaurer" AutomationProperties.Name="Agrandir ou restaurer"/>
+                    <Button x:Name="CaptionClose" Content="&#xE8BB;" Click="QuitWindow" Style="{StaticResource WindowCaption}" Tag="close" ToolTip="Fermer" AutomationProperties.Name="Fermer"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <Grid Grid.Row="1" x:Name="LoginShell">
+            <Grid.Background>
+                <RadialGradientBrush Center=".22,.18" GradientOrigin=".22,.18" RadiusX=".88" RadiusY="1.05">
+                    <GradientStop Color="#2A285A"/><GradientStop Color="#111C39" Offset=".58"/><GradientStop Color="#080F20" Offset="1"/>
+                </RadialGradientBrush>
+            </Grid.Background>
+            <Border IsHitTestVisible="False">
+                <Border.Background>
+                    <RadialGradientBrush Center=".8,.18" GradientOrigin=".8,.18" RadiusX=".47" RadiusY=".67">
+                        <GradientStop Color="#6058BDD6"/><GradientStop Color="#0058BDD6" Offset="1"/>
+                    </RadialGradientBrush>
+                </Border.Background>
+            </Border>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <Grid MaxWidth="1024" Margin="45,38" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="396"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,38,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,40">
+                            <Border Background="{StaticResource Accent}" Width="40" Height="40" CornerRadius="11">
+                                <TextBlock Text="N" FontSize="24" FontWeight="Bold" Foreground="#170D2C" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="NOCTRA" FontSize="22" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock Text="FILMS &amp; SÉRIES" FontSize="13" FontWeight="Bold" Foreground="{StaticResource Accent}" Margin="0,0,0,10"/>
+                        <TextBlock Text="Votre cinéma à la maison" FontFamily="{StaticResource DisplayFont}" TextWrapping="Wrap" FontSize="48" LineHeight="55" LineStackingStrategy="BlockLineHeight" FontWeight="Bold"/>
+                        <TextBlock Text="Retrouvez votre bibliothèque et reprenez vos films et séries là où vous les avez laissés." Margin="0,18,0,0"
+                                   TextWrapping="Wrap" FontSize="17" MaxWidth="330" HorizontalAlignment="Left" Foreground="{StaticResource Muted}"/>
+                    </StackPanel>
+                    <Border Grid.Column="1" CornerRadius="22" Background="#C6121D34" BorderBrush="#5A557999" BorderThickness="1" Padding="30,24">
+                        <StackPanel>
+                            <TextBlock Text="Connexion" FontSize="30" FontWeight="Bold"/>
+                            <TextBlock Text="Connectez-vous avec votre compte Jellyfin." TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,6,0,22"/>
+                            <Label Content="Identifiant" Target="{Binding ElementName=Username}" Foreground="{StaticResource Ink}" Padding="0,0,0,6"/>
+                            <TextBox x:Name="Username" AutomationProperties.Name="Identifiant"/>
+                            <Label Content="Mot de passe" Target="{Binding ElementName=Password}" Foreground="{StaticResource Ink}" Padding="0,13,0,6"/>
+                            <PasswordBox x:Name="Password" AutomationProperties.Name="Mot de passe"/>
+                            <CheckBox x:Name="Remember" Content="Rester connecté sur ce PC" Margin="0,17,0,15" Foreground="{StaticResource Muted}"/>
+                            <Button x:Name="SignInButton" Style="{StaticResource Primary}" Content="Se connecter" MinHeight="45" IsDefault="True" Click="SignIn"/>
+                            <Expander x:Name="ServerSettings" Header="Adresse du serveur" Foreground="{StaticResource Muted}" Margin="0,13,0,0">
+                                <TextBox x:Name="ServerAddress" AutomationProperties.Name="Adresse Noctra ou Jellyfin" Margin="0,8,0,0"/>
+                            </Expander>
+                            <TextBlock x:Name="LoginStatus" TextWrapping="Wrap" Foreground="#FFBBD3" AutomationProperties.LiveSetting="Polite" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+        <Grid Grid.Row="1" x:Name="LibraryShell" Visibility="Collapsed">
+            <Grid.Background>
+                <RadialGradientBrush Center=".48,0" GradientOrigin=".48,0" RadiusX=".74" RadiusY=".91">
+                    <GradientStop Color="#172943"/>
+                    <GradientStop Color="#0B1628" Offset=".53"/>
+                    <GradientStop Color="#080F1F" Offset="1"/>
+                </RadialGradientBrush>
+            </Grid.Background>
+            <Image x:Name="AmbientArt" Stretch="UniformToFill" Opacity=".13" IsHitTestVisible="False"/>
+            <Border Background="#88080F1F" IsHitTestVisible="False"/>
+            <DockPanel>
+                <DockPanel x:Name="NavigationHeader" DockPanel.Dock="Top" Height="66" Margin="28,14,28,18" LastChildFill="False">
+                    <Border DockPanel.Dock="Left" CornerRadius="32" Padding="7" Background="#99131D30"
+                            BorderBrush="#303D4D6C" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="NavigationBrand" Text="N" FontWeight="Bold" FontSize="24" Foreground="{StaticResource Accent}"
+                                       VerticalAlignment="Center" Width="36" TextAlignment="Center"/>
+                            <Button x:Name="HomeTab" Tag="active" Style="{StaticResource NavigationTab}" Click="OpenHome"
+                                    Content="Accueil" AutomationProperties.Name="Accueil"/>
+                            <Button x:Name="LibraryTab" Style="{StaticResource NavigationTab}" Click="OpenLibraries"
+                                    Content="Médiathèques" AutomationProperties.Name="Médiathèques"/>
+                            <Button x:Name="DiscoverTab" Style="{StaticResource NavigationTab}" Click="OpenDiscover"
+                                    Content="Découvrir" AutomationProperties.Name="Découverte"/>
+                            <Button x:Name="TvTab" Style="{StaticResource NavigationTab}" Click="OpenTv"
+                                    Content="TV" AutomationProperties.Name="TV en direct"/>
+                            <Button x:Name="FavoritesTab" Style="{StaticResource DockIcon}" Click="OpenFavorites"
+                                    Visibility="Collapsed"
+                                    FontFamily="Segoe UI Variable" FontSize="13" Width="Auto" Padding="14,0"
+                                    Content="Ma liste" AutomationProperties.Name="Favoris"/>
+                            <Button x:Name="MoreTab" Style="{StaticResource DockIcon}" Click="OpenMore" Width="44" MinHeight="44"
+                                    Content="&#xE712;" ToolTip="Toutes les fonctions" AutomationProperties.Name="Toutes les fonctions"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Grid x:Name="HeaderSearch" Width="240" Height="44">
+                            <TextBox x:Name="SearchBox" FontSize="14" MinHeight="44" AutomationProperties.Name="Rechercher un film ou une série" KeyDown="SearchKey"/>
+                            <TextBlock x:Name="SearchPlaceholder" Text="Rechercher un titre" Margin="13,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource Muted}" IsHitTestVisible="False">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Text, ElementName=SearchBox}" Value=""/>
+                                                    <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=SearchBox}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                        <Button x:Name="SearchButton" Style="{StaticResource DockIcon}" Content="&#xE721;" Click="Search"
+                                ToolTip="Rechercher" AutomationProperties.Name="Rechercher" Margin="4,0"/>
+                        <Button x:Name="ProfileButton" Style="{StaticResource Action}" Click="OpenProfile" Height="44" Padding="11,0,14,0" ToolTip="Profil et réglages"
+                                AutomationProperties.Name="Profil et réglages">
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="ProfileAvatar" Background="#493769" Width="28" Height="28" CornerRadius="14">
+                                    <TextBlock x:Name="Initial" Foreground="{StaticResource Accent}" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock x:Name="ProfileName" Margin="6,0,0,0" VerticalAlignment="Center" MaxWidth="90" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <Button x:Name="BackButton" Style="{StaticResource DockIcon}" Content="&#xE72B;" Click="Back"
+                                ToolTip="Retour" AutomationProperties.Name="Retour"/>
+                        <TextBlock x:Name="PageLabel" Visibility="Collapsed" Margin="7,0,0,0" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
+                                   MaxWidth="155" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </DockPanel>
+                <Border DockPanel.Dock="Bottom" x:Name="StatusBar" Background="#251A38" Padding="24,9" Visibility="Collapsed">
+                    <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                </Border>
+                <DockPanel>
+                    <Border x:Name="TvSidebar" DockPanel.Dock="Left" Visibility="Collapsed" Width="186"
+                            VerticalAlignment="Top" Margin="37,11,0,27" Padding="14"
+                            Background="#DA101D30" BorderBrush="#35485B73" BorderThickness="1" CornerRadius="24">
+                        <local:SmoothScrollViewer x:Name="TvMenuScroller" VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Sources TV">
+                            <StackPanel x:Name="TvMenu"/>
+                        </local:SmoothScrollViewer>
+                    </Border>
+                    <local:SmoothScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PageContent">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Margin" Value="37,11,37,27"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Visibility, ElementName=TvSidebar}" Value="Visible">
+                                            <Setter Property="Margin" Value="24,11,37,27"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                        </StackPanel>
+                    </local:SmoothScrollViewer>
+                </DockPanel>
+            </DockPanel>
+        </Grid>
+        <Grid Grid.Row="1" x:Name="Player" Visibility="Collapsed" Background="#03050A">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Border x:Name="PlayerHeader" Background="#0B1120" BorderBrush="#263044" BorderThickness="0,0,0,1" Padding="18,12">
+                <DockPanel>
+                    <Button x:Name="ReturnButton" DockPanel.Dock="Left" Content="‹" Style="{StaticResource Round}" Click="StopPlayback"
+                            ToolTip="Retour à Noctra" AutomationProperties.Name="Retour à Noctra"/>
+                    <Button DockPanel.Dock="Right" Content="Diffuser" Style="{StaticResource Action}" Click="OpenCast" Margin="10,0,0,0"/>
+                    <Border DockPanel.Dock="Right" CornerRadius="11" BorderBrush="#3B4962" BorderThickness="1" Padding="12,6" VerticalAlignment="Center">
+                        <TextBlock x:Name="PlaybackMode" Foreground="#BAC9DE" FontSize="12" FontWeight="SemiBold"/>
+                    </Border>
+                    <StackPanel Margin="14,0" VerticalAlignment="Center">
+                        <TextBlock Text="LECTURE EN COURS" Foreground="#8FA0BA" FontSize="10" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="MediaTitle" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <integration:WindowsFormsHost Grid.Row="1" x:Name="VideoHost" Visibility="Collapsed"/>
+            <StackPanel Grid.Row="1" x:Name="PlaybackNotice" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="600" Margin="28">
+                <TextBlock Text="N" FontSize="48" Foreground="#BEA9FA" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                <TextBlock x:Name="PlayerMessage" TextWrapping="Wrap" TextAlignment="Center" FontSize="18" Foreground="#D1DCEE" AutomationProperties.LiveSetting="Polite"/>
+                <ProgressBar x:Name="OpeningProgress" IsIndeterminate="True" Height="3" Width="180" Foreground="#BEA9FA" Background="#27324A" BorderThickness="0" Margin="0,20,0,0"/>
+                <Button x:Name="InstallButton" Content="Installer le lecteur et lancer la vidéo" Style="{StaticResource Primary}"
+                        Margin="0,18,0,0" HorizontalAlignment="Center" Click="InstallPlayer"/>
+                <Button x:Name="RetryPlaybackButton" Content="Réessayer la lecture" Style="{StaticResource Primary}"
+                        Margin="0,14,0,0" HorizontalAlignment="Center" Visibility="Collapsed" Click="RetryPlayback"/>
+            </StackPanel>
+            <Border Grid.Row="2" x:Name="PlayerControls" Background="#0C1220" BorderBrush="#263044" BorderThickness="0,1,0,0" Padding="24,10,24,17">
+                <StackPanel>
+                    <TextBlock x:Name="PlayerHint" Height="18" FontSize="12" Foreground="#BBC8DD"/>
+                    <Slider x:Name="Timeline" IsEnabled="False" IsMoveToPointEnabled="True" AutomationProperties.Name="Position de lecture"
+                            PreviewMouseLeftButtonDown="BeginSeek" PreviewMouseLeftButtonUp="EndSeek" KeyUp="SeekKey"/>
+                    <DockPanel Margin="0,10,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource Action}" Click="ChooseLiveQuality" Visibility="Collapsed"
+                                    AutomationProperties.Name="Qualités TV" ToolTip="Afficher toutes les qualités du flux" Margin="0,0,6,0" MinWidth="82"/>
+                            <Button Content="♫" Style="{StaticResource Round}" Click="AudioTrack" ToolTip="Choisir une piste audio"
+                                    AutomationProperties.Name="Pistes audio" Margin="0,0,6,0"/>
+                            <Button Content="CC" FontSize="13" Style="{StaticResource Round}" Click="SubtitleTrack" ToolTip="Choisir les sous-titres"
+                                    AutomationProperties.Name="Sous-titres" Margin="0,0,6,0"/>
+                            <Button x:Name="FullscreenReturn" Content="Retour" Style="{StaticResource Action}" Click="StopPlayback" Visibility="Collapsed" Margin="0,0,10,0"/>
+                            <Button x:Name="FullscreenButton" Content="↗" Style="{StaticResource Round}" Click="Fullscreen" ToolTip="Plein écran · F11"
+                                    AutomationProperties.Name="Plein écran"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="BackwardButton" Content="↶" FontSize="24" Style="{StaticResource Round}" Click="BackFifteen"
+                                    ToolTip="Reculer de 15 secondes" AutomationProperties.Name="Reculer de 15 secondes" Margin="0,0,8,0"/>
+                            <Button x:Name="PauseButton" Content="Pause" Style="{StaticResource Primary}" Click="TogglePause"
+                                    MinWidth="97" Margin="0,0,8,0" FontSize="14"/>
+                            <Button x:Name="ForwardButton" Content="↷" FontSize="24" Style="{StaticResource Round}" Click="ForwardFifteen"
+                                    ToolTip="Avancer de 15 secondes" AutomationProperties.Name="Avancer de 15 secondes" Margin="0,0,20,0"/>
+                            <TextBlock x:Name="PositionLabel" Foreground="#A9B8CF" VerticalAlignment="Center" FontSize="12" MinWidth="118"/>
+                            <Button Content="♪" Style="{StaticResource Round}" Click="MutePlayer" ToolTip="Couper ou rétablir le son" Margin="8,0,2,0"/>
+                            <Slider x:Name="VolumeControl" Value="85" Minimum="0" Maximum="100" Width="90" VerticalAlignment="Center"
+                                    AutomationProperties.Name="Volume" ValueChanged="ChangeVolume"/>
+                            <Button x:Name="SkipCredits" Content="Passer le générique" Style="{StaticResource Primary}" Click="SkipCreditsClick"
+                                    Visibility="Collapsed" Margin="14,0,0,0"/>
+                        </StackPanel>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
+
