@@ -290,21 +290,28 @@ public partial class MainWindow
         BindingOperations.SetBinding(backdrop, ImageBrush.ImageSourceProperty, new Binding(nameof(Image.Source)) { Source = image });
         var ambient = new ImageBrush { Stretch = Stretch.UniformToFill };
         BindingOperations.SetBinding(ambient, ImageBrush.ImageSourceProperty, new Binding(nameof(Image.Source)) { Source = image });
-        var layers = new Grid { Background = BrushFor("Canvas"), ClipToBounds = true };
+        var layers = new Grid { Background = Brushes.Transparent, ClipToBounds = true };
+        // Tout le visuel (image, flou, dégradés) s'efface vers le bas : aucune démarcation avec la page.
+        var visual = new Grid { Background = BrushFor("Canvas"), OpacityMask = new LinearGradientBrush
+        {
+            StartPoint = new Point(.5, 0), EndPoint = new Point(.5, 1),
+            GradientStops = { new GradientStop(Colors.White, 0), new GradientStop(Colors.White, .62), new GradientStop(Color.FromArgb(150, 255, 255, 255), .82), new GradientStop(Colors.Transparent, 1) }
+        } };
+        layers.Children.Add(visual);
         var glow = new Border { Background = ambient, Opacity = 0, Effect = new BlurEffect { Radius = 70, KernelType = KernelType.Gaussian } };
-        layers.Children.Add(glow);
+        visual.Children.Add(glow);
         var picture = new Border { Background = backdrop, HorizontalAlignment = HorizontalAlignment.Right, Opacity = 0 };
-        layers.Children.Add(picture);
-        // Lisibilité du texte à gauche, du bandeau en haut, et fondu vers la page en bas.
-        layers.Children.Add(new Border { Background = new LinearGradientBrush
+        visual.Children.Add(picture);
+        // Lisibilité du texte à gauche et du bandeau en haut.
+        visual.Children.Add(new Border { Background = new LinearGradientBrush
         {
             StartPoint = new Point(0, 0), EndPoint = new Point(1, 0),
             GradientStops = { new GradientStop(Shade(245), 0), new GradientStop(Shade(200), .28), new GradientStop(Shade(70), .55), new GradientStop(Shade(0), .78) }
         } });
-        layers.Children.Add(new Border { Background = new LinearGradientBrush
+        visual.Children.Add(new Border { Background = new LinearGradientBrush
         {
             StartPoint = new Point(.5, 0), EndPoint = new Point(.5, 1),
-            GradientStops = { new GradientStop(Shade(150), 0), new GradientStop(Shade(0), .22), new GradientStop(Shade(0), .58), new GradientStop(Shade(255), 1) }
+            GradientStops = { new GradientStop(Shade(150), 0), new GradientStop(Shade(0), .22), new GradientStop(Shade(0), .6), new GradientStop(Shade(130), 1) }
         } });
         var copy = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, MaxWidth = 620 };
         var badge = Text(eyebrow, 12, true, "Accent");

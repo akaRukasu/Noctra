@@ -260,8 +260,9 @@ public partial class MainWindow
         var image = new Image { Height = sports ? 90 : 46, MaxWidth = sports ? 200 : 100, Stretch = Stretch.Uniform, Margin = new Thickness(8) };
         if (service.Link(channel.Entries.Select(pair => pair.Entry.Logo).FirstOrDefault(url => !string.IsNullOrWhiteSpace(url))) is { } url && artwork is { } art)
             _ = art.Fetch(image, url.AbsoluteUri, 250, ct => service.Image(url, ct), cancellation);
-        var top = new Grid { Height = sports ? 132 : 74, Background = ColorOf("#F0F1F6") };
-        top.Children.Add(new TextBlock { Text = sports ? "LIVE" : string.Concat(channel.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(word => word[0])), FontSize = 25, FontWeight = FontWeights.Bold, Foreground = ColorOf("#5A6078"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center });
+        // Sports : fond sombre teinté et mention « EN DIRECT » quand l'événement n'a pas d'affiche.
+        var top = new Grid { Height = sports ? 132 : 74, Background = sports ? new LinearGradientBrush(Color.FromRgb(42, 33, 72), Color.FromRgb(17, 22, 36), 25) : ColorOf("#F0F1F6") };
+        top.Children.Add(new TextBlock { Text = sports ? "\u25CF  EN DIRECT" : string.Concat(channel.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(word => word[0])), FontSize = sports ? 15 : 25, FontWeight = FontWeights.Bold, Foreground = sports ? BrushFor("Accent") : ColorOf("#5A6078"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center });
         var placeholderStyle = new Style(typeof(TextBlock));
         placeholderStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
         var noImage = new DataTrigger { Binding = new Binding(nameof(Image.Source)) { Source = image }, Value = null };
