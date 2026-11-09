@@ -110,6 +110,8 @@ public partial class MainWindow
             image.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(320)));
         }
         descriptor.AddValueChanged(image, Shown);
+        // Sortie de l'arbre visuel : plus de suivi ; si l'image revient, elle reste visible.
+        image.Unloaded += (_, _) => { descriptor.RemoveValueChanged(image, Shown); image.BeginAnimation(UIElement.OpacityProperty, null); image.Opacity = 1; };
     }
 
     // Défilement horizontal animé des rangées (flèches).
@@ -198,6 +200,11 @@ public partial class MainWindow
                 item.CanPlay ? () => StartPlayback(item) : () => OpenDetail(item, ButtonTab.Home),
                 item.CanPlay ? Action("Voir la fiche", () => OpenDetail(item, ButtonTab.Home)) : null, cancellation);
             var previous = banner.Children.OfType<FrameworkElement>().Where(child => child.Tag as string == "slide").ToArray();
+            // Un seul bouton de lecture principal identifiable à la fois (pendant le fondu aussi).
+            foreach (var old in previous) old.IsHitTestVisible = false;
+            foreach (var old in previous)
+                foreach (var playButton in FindButtons(old).Where(button => AutomationProperties.GetAutomationId(button) == "PrimaryPlayback"))
+                    AutomationProperties.SetAutomationId(playButton, "");
             hero.Tag = "slide";
             banner.Children.Insert(banner.Children.Count - (candidates.Length > 1 ? 1 : 0), hero);
             if (animate && SystemParameters.ClientAreaAnimation)
@@ -218,10 +225,11 @@ public partial class MainWindow
         {
             var pager = new Grid { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 44, 70) };
             var row = new StackPanel { Orientation = Orientation.Horizontal };
-            var previousButton = Action("‹", () => { Show(index - 1, true); timer.Stop(); timer.Start(); }, "DockIcon");
+            void Restart() { if (timer.IsEnabled) { timer.Stop(); timer.Start(); } }
+            var previousButton = Action("‹", () => { Show(index - 1, true); Restart(); }, "DockIcon");
             previousButton.Content = "\uE76B"; previousButton.Foreground = BrushFor("Ink");
             AutomationProperties.SetName(previousButton, "Titre précédent");
-            var nextButton = Action("›", () => { Show(index + 1, true); timer.Stop(); timer.Start(); }, "DockIcon");
+            var nextButton = Action("›", () => { Show(index + 1, true); Restart(); }, "DockIcon");
             nextButton.Content = "\uE76C"; nextButton.Foreground = BrushFor("Ink");
             AutomationProperties.SetName(nextButton, "Titre suivant");
             for (var dot = 0; dot < candidates.Length; dot++)
@@ -231,7 +239,7 @@ public partial class MainWindow
                 var hit = new Button { Style = (Style)Resources["Card"], Content = pill, Padding = new Thickness(4), Margin = new Thickness(2, 0, 2, 0),
                     VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent };
                 AutomationProperties.SetName(hit, $"Titre {dot + 1} sur {candidates.Length}");
-                hit.Click += (_, _) => { Show(target, true); timer.Stop(); timer.Start(); };
+                hit.Click += (_, _) => { Show(target, true); Restart(); };
                 dots.Children.Add(hit);
             }
             row.Children.Add(previousButton);
@@ -240,8 +248,11 @@ public partial class MainWindow
             row.Children.Add(nextButton);
             pager.Children.Add(row);
             banner.Children.Add(pager);
-            timer.Tick += (_, _) => { if (!banner.IsMouseOver && banner.IsVisible) Show(index + 1, true); };
-            banner.Loaded += (_, _) => timer.Start();
+            // Défilement automatique : en pause au survol, quand la fenêtre n'est pas active, et
+            // désactivable (NOCTRA_HERO_AUTOPLAY=0 : tests d'interface, préférence d'accessibilité).
+            timer.Tick += (_, _) => { if (!banner.IsMouseOver && banner.IsVisible && IsActive && !banner.IsKeyboardFocusWithin) Show(index + 1, true); };
+            if (Environment.GetEnvironmentVariable("NOCTRA_HERO_AUTOPLAY") != "0" && SystemParameters.ClientAreaAnimation)
+                banner.Loaded += (_, _) => timer.Start();
             banner.Unloaded += (_, _) => timer.Stop();
         }
         Show(0, false);
@@ -366,8 +377,10 @@ public partial class MainWindow
             };
         }
         layers.SizeChanged += (_, _) => Fit();
-        Scroller.SizeChanged += (_, _) => Fit();
-        hero.Loaded += (_, _) => { ApplyContentMargins(); Fit(); };
+        // Abonnement à la fenêtre retiré quand le visuel quitte la page (pas de fuite entre pages).
+        void ViewportChanged(object? sender, SizeChangedEventArgs args) => Fit();
+        hero.Loaded += (_, _) => { Scroller.SizeChanged += ViewportChanged; ApplyContentMargins(); Fit(); };
+        hero.Unloaded += (_, _) => Scroller.SizeChanged -= ViewportChanged;
         async Task LoadHeroArt()
         {
             if (artwork == null) return;
@@ -534,7 +547,64 @@ public partial class MainWindow
         button.GotKeyboardFocus += (_, _) => { Lift(true); button.BringIntoView(); };
         button.LostKeyboardFocus += (_, _) => Lift(false);
         _ = artwork?.Load(image, item, landscape, landscape ? 560 : 360, cancellation);
+        button.ContextMenu = CardMenu(item, button, tab, cancellation);
+        // Flèches gauche / droite : carte voisine de la rangée (la rangée suit le focus).
+        button.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key is not (System.Windows.Input.Key.Left or System.Windows.Input.Key.Right) || button.Parent is not Panel panel) return;
+            var index = panel.Children.IndexOf(button) + (args.Key == System.Windows.Input.Key.Right ? 1 : -1);
+            if (index < 0 || index >= panel.Children.Count) return;
+            if (panel.Children[index] is UIElement target && target.Focus()) args.Handled = true;
+        };
         return button;
+    }
+
+    // Clic droit (ou touche Menu) sur une carte : fiche, vu / non vu, favori, retrait de la reprise.
+    private ContextMenu CardMenu(MediaItem item, Button card, ButtonTab tab, CancellationToken cancellation)
+    {
+        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"), BorderBrush = ColorOf("#30354A") };
+        void Add(string label, Func<Jellyfin, Task> run, string done)
+        {
+            var entry = new MenuItem { Header = label, Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            entry.Click += async (_, _) =>
+            {
+                if (client is not { } account) return;
+                try { await run(account); if (!cancellation.IsCancellationRequested) ShowStatus(done); }
+                catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+                { if (!cancellation.IsCancellationRequested) ShowStatus("Le serveur n’a pas enregistré la modification. Réessayez."); }
+            };
+            menu.Items.Add(entry);
+        }
+        var details = new MenuItem { Header = "Voir la fiche", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+        details.Click += (_, _) => OpenDetail(item, tab);
+        menu.Items.Add(details);
+        var played = item.UserData?.Played == true;
+        Add(played ? "Marquer comme non vu" : "Marquer comme vu", account => account.Mark(item.Id, !played, cancellation),
+            played ? "Marqué comme non vu." : "Marqué comme vu.");
+        var favorite = item.UserData?.IsFavorite == true;
+        Add(favorite ? "Retirer des favoris" : "Ajouter aux favoris", account => account.Favorite(item.Id, !favorite, cancellation),
+            favorite ? "Retiré des favoris." : "Ajouté aux favoris.");
+        if (item.Progress > 0)
+            Add("Retirer de « Continuer à regarder »", async account =>
+            {
+                await account.ClearResume(item.Id, cancellation);
+                if (card.Parent is Panel row)
+                {
+                    var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(220));
+                    fade.Completed += (_, _) => row.Children.Remove(card);
+                    card.BeginAnimation(UIElement.OpacityProperty, fade);
+                }
+            }, "Retiré de « Continuer à regarder ».");
+        return menu;
+    }
+
+    private static IEnumerable<Button> FindButtons(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is Button button) yield return button;
+            foreach (var nested in FindButtons(child)) yield return nested;
+        }
     }
 
     private FrameworkElement Heading(string title, string subtitle)

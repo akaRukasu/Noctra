@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,7 +10,7 @@ using System.Windows.Controls;
 namespace Noctra.Windows;
 
 internal sealed record PlaybackPreferences(double Volume = 85, double SubtitleScale = 1.1, string AudioLanguage = "fra,fre,fr",
-    string SubtitleLanguage = "fra,fre,fr", bool HardwareDecoding = true);
+    string SubtitleLanguage = "fra,fre,fr", bool HardwareDecoding = true, string[]? TvFavorites = null);
 
 public partial class MainWindow
 {
@@ -31,6 +32,16 @@ public partial class MainWindow
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or OperationCanceledException) { }
         if (client == account) VolumeControl.Value = preferences.Volume;
+    }
+
+    // 0.6 : chaînes favorites (clé de nom de chaîne), propres au profil sur ce PC.
+    private bool IsTvFavorite(string name) => preferences.TvFavorites?.Contains(ChannelKey(name)) == true;
+    private async Task ToggleTvFavorite(Jellyfin account, string name)
+    {
+        var key = ChannelKey(name);
+        var current = preferences.TvFavorites ?? [];
+        preferences = preferences with { TvFavorites = current.Contains(key) ? current.Where(item => item != key).ToArray() : current.Append(key).ToArray() };
+        await SavePreferences(account);
     }
 
     private async Task SavePreferences(Jellyfin account)

@@ -111,6 +111,14 @@ jobs:
           if ($actual -ne $hash) { throw "mpv : SHA-256 $actual au lieu de $hash" }
           7z x "$env:RUNNER_TEMP/noctra/mpv.7z" "-o$env:RUNNER_TEMP/noctra/mpv" libmpv-2.dll -y | Out-Null
           "MPV_DLL=$env:RUNNER_TEMP/noctra/mpv/libmpv-2.dll" >> $env:GITHUB_ENV
+      # Écran de la machine GitHub (1024 × 768 par défaut) agrandi : fenêtre et captures entières.
+      - name: Écran 1920 × 1080
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host "Écran : $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
       - name: Test de l'interface (API locale simulée)
         if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
         timeout-minutes: 30

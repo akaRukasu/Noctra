@@ -153,7 +153,8 @@ public partial class MainWindow
                 }
             }
             channels = TvIdentity.Group(entries.Where(pair => sports || activeCountry == "*" || TvCountry.Of(pair.Entry) == activeCountry), sports)
-                .OrderBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+                .OrderBy(channel => IsTvFavorite(channel.Name) ? 0 : 1)
+                .ThenBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
             groups = groups.Where(pair => sports || activeCountry == "*" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) is "zz" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) == activeCountry).ToArray();
             if (groups.Length > 0)
             {
@@ -268,6 +269,11 @@ public partial class MainWindow
         ((TextBlock)top.Children[0]).Style = placeholderStyle;
         top.Children.Add(image);
         FrameworkElement logoArea = top;
+        // Chaîne favorite : étoile en haut à droite (les favorites passent en tête de liste).
+        var star = IsTvFavorite(channel.Name) ? new Border { Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = ColorOf("#E607080D"),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8),
+            Child = new TextBlock { Text = "\uE735", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 12, Foreground = BrushFor("Accent"),
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } } : null;
         if (!sports)
         {
             var logoFrame = new Grid { Height = 105, Background = new LinearGradientBrush(Color.FromRgb(31, 33, 48), Color.FromRgb(20, 21, 31), 90) };
@@ -278,6 +284,7 @@ public partial class MainWindow
         var labels = new StackPanel { Margin = new Thickness(14, 12, 14, 15) }; var title = Text(channel.Name, 13, true); title.TextTrimming = TextTrimming.CharacterEllipsis; labels.Children.Add(title);
         var subtitle = Text(channel.Entries.Select(pair => pair.Source.Name).Distinct().Count() > 1 ? "Plusieurs sources" : channel.Entries[0].Source.Name, 11, color: "Muted"); subtitle.TextTrimming = TextTrimming.CharacterEllipsis; subtitle.Margin = new Thickness(0, 5, 0, 0); labels.Children.Add(subtitle);
         var content = new StackPanel(); content.Children.Add(logoArea); content.Children.Add(labels);
+        if (star != null && logoArea is Grid logoGrid) logoGrid.Children.Add(star);
         var panel = new Border { Background = ColorOf("#13151F"), BorderBrush = ColorOf("#1CFFFFFF"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), Child = content, ClipToBounds = true,
             RenderTransformOrigin = new Point(.5, .5), RenderTransform = new ScaleTransform(1, 1) };
         panel.SizeChanged += (_, _) => panel.Clip = new RectangleGeometry(new Rect(panel.RenderSize), 15, 15);
@@ -298,7 +305,7 @@ public partial class MainWindow
     private async Task AddTvGuide(NoctraService service, string guideId, CancellationToken cancellation)
     {
         var slot = new StackPanel();
-        PageContent.Children.Insert(Math.Min(1, PageContent.Children.Count), slot);
+        PageContent.Children.Insert(Math.Min(2, PageContent.Children.Count), slot);
         try
         {
             var guide = await service.Json("api/tv/programme?id=" + Uri.EscapeDataString(guideId), cancellation);
@@ -344,6 +351,12 @@ public partial class MainWindow
         if (account.NoctraRoot == null) return;
         var service = new NoctraService(account, account.NoctraRoot); PageContent.Children.Clear();
         PageContent.Children.Add(Heading(channel.Name, $"{channel.Entries.Length} variante(s) réunie(s) · choisissez votre serveur. Les tests exigent une image vidéo."));
+        // 0.6 : chaîne favorite (en tête de liste TV pour ce profil).
+        string FavoriteLabel() => IsTvFavorite(channel.Name) ? "★  Chaîne favorite" : "☆  Ajouter aux favoris TV";
+        var favorite = Action(FavoriteLabel(), () => { });
+        favorite.HorizontalAlignment = HorizontalAlignment.Left; favorite.Margin = new Thickness(0, -8, 0, 18);
+        favorite.Click += async (_, _) => { await ToggleTvFavorite(account, channel.Name); favorite.Content = FavoriteLabel(); AutomationProperties.SetName(favorite, FavoriteLabel()); };
+        PageContent.Children.Add(favorite);
         // 0.6 : guide des programmes (maintenant / ensuite), comme la PWA (api/tv/programme).
         var guideId = channel.Entries.Select(pair => pair.Entry.IptvOrgId).FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
         if (guideId != null) _ = AddTvGuide(service, guideId, cancellation);

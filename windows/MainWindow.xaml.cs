@@ -9,7 +9,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Interop;
 
 namespace Noctra.Windows;
@@ -288,8 +290,21 @@ public partial class MainWindow : Window
     private Task RenderProfile(Jellyfin account, CancellationToken cancellation)
     {
         PageContent.Children.Clear();
-        PageContent.Children.Add(Heading(account.User.Name, "Profil Jellyfin"));
-        PageContent.Children.Add(Message("Serveur · " + account.Root.Host));
+        // 0.6 : en-tête de profil (avatar en dégradé, nom, serveur).
+        var header = new DockPanel { Margin = new Thickness(0, 8, 0, 26) };
+        var avatar = new Border { Width = 76, Height = 76, CornerRadius = new CornerRadius(38), Background = (Brush)Resources["AccentGradient"],
+            Margin = new Thickness(0, 0, 22, 0), Child = new TextBlock { Text = account.User.Name.Length > 0 ? account.User.Name[..1].ToUpperInvariant() : "N",
+                FontSize = 34, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromRgb(10, 10, 18)),
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+        DockPanel.SetDock(avatar, Dock.Left);
+        header.Children.Add(avatar);
+        var who = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        who.Children.Add(Text(account.User.Name, 34, true));
+        var server = Text("Profil Jellyfin · " + account.Root.Host, 15, color: "Muted");
+        server.Margin = new Thickness(0, 4, 0, 0);
+        who.Children.Add(server);
+        header.Children.Add(who);
+        PageContent.Children.Add(header);
         displayReadout = Text("", 14, color: "Muted");
         displayReadout.Margin = new Thickness(0, 8, 0, 16);
         System.Windows.Automation.AutomationProperties.SetAutomationId(displayReadout, "DisplayReadout");

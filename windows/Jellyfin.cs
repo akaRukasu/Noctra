@@ -201,6 +201,18 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         response.EnsureSuccessStatusCode();
     }
 
+    // 0.6 : retirer un titre de « Continuer à regarder » (position remise à zéro, statut vu inchangé).
+    internal async Task ClearResume(string id, CancellationToken cancellation)
+    {
+        var body = new { PlaybackPositionTicks = 0L };
+        try { await Command("UserItems/" + id + "/UserData?userId=" + user.Id, body, cancellation); }
+        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed)
+        {
+            // Jellyfin antérieur à 10.9.
+            await Command("Users/" + user.Id + "/Items/" + id + "/UserData", body, cancellation);
+        }
+    }
+
     internal async Task<MediaSegment[]> Credits(string id, CancellationToken cancellation)
     {
         var data = await Get<SegmentPage>("MediaSegments/" + id, null, cancellation);

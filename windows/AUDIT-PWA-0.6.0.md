@@ -20,8 +20,8 @@ La colonne « Priorité » ordonne le travail restant :
 | À suivre (30 jours) | ✅ | ✅ | `NextUp` du compte. Dédoublonné avec « Continuer ». |
 | Médiathèques en 2 × 2 | ✅ | ✅ | 0.6 : tuiles illustrées (visuel d'un ajout récent). |
 | Bandeau adaptatif, recherche, profil | ✅ | ✅ | 0.6 : bandeau flottant, opaque au défilement. |
-| Navigation clavier et focus visible | 🟡 | 🟡 | 0.6 : anneau d'accent sur boutons et cartes, rangées qui suivent le focus. Flèches entre cartes : non (P2). |
-| Retirer un titre de « Continuer à regarder » | ✅ (Jellyfin) | ❌ | P2. |
+| Navigation clavier et focus visible | 🟡 | ✅ | 0.6 : anneau d'accent sur boutons et cartes, flèches gauche / droite entre cartes, rangées qui suivent le focus. |
+| Retirer un titre de « Continuer à regarder » | ✅ (Jellyfin) | ✅ | 0.6 : clic droit sur une carte (voir la fiche, vu / non vu, favori, retirer de la reprise). |
 
 ## Médiathèques, fiches, recherche
 
@@ -59,8 +59,8 @@ La colonne « Priorité » ordonne le travail restant :
 | Sports et PPV séparés | ✅ | ✅ | |
 | Choix manuel, secours manuel visible | ✅ | ✅ | |
 | Qualité réelle (image décodée) | ✅ (200.0.176 : « Auto · 1080p ») | ✅ | La vérification mpv exige une image qui avance. |
-| Guide des programmes (maintenant / ensuite) | ✅ | ❌ | P2 : l'API fournit déjà `epgUrl`. |
-| Favoris TV | ✅ | ❌ | P2. |
+| Guide des programmes (maintenant / ensuite) | ✅ | ✅ | 0.6 : fiche de chaîne, avec l'avancement du programme (`api/tv/programme`). |
+| Favoris TV | ✅ | ✅ | 0.6 : étoile sur la fiche ; favorites en tête de liste, par profil sur ce PC (pas partagées avec la PWA). |
 | Multivue | ✅ (9) | ✅ (4) | |
 | Diagnostic du lecteur TV | ✅ | 🟡 | État et qualité seulement (P3). |
 | Lecteurs web tiers, blocage pub, audio vers Noctra | 🟡 (iframe) | ✅ | Plus abouti sous Windows. |
@@ -85,4 +85,5 @@ La colonne « Priorité » ordonne le travail restant :
 
 1. **Esthétique (priorité de l'utilisateur)** : refonte visuelle complète de l'accueil, des fiches, des médiathèques, du bandeau, du lecteur, des messages et de la connexion.
 2. **Parcours principaux sécurisés** par le test d'interface existant, qui passe sur une machine Windows à chaque envoi. Il couvre deux profils, la reprise de Teen Wolf, « À suivre », vu / non vu et le retour du lecteur.
-3. **Suite (P2)** : guide des programmes TV, favoris TV, vignettes de progression, recherche de sous-titres, SyncPlay.
+3. **Ajouté en 0.6** : guide des programmes TV, favoris TV, retrait de « Continuer à regarder », flèches entre cartes.
+4. **Suite (P2)** : vignettes de progression (trickplay), recherche de sous-titres, SyncPlay.

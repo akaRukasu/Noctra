@@ -561,7 +561,8 @@ def open_app(profile, address=None):
     command = [str(args.exe.resolve())]
     if address:
         command += ["--server", address]
-    process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile)})
+    # 0.6 : grand visuel de l'accueil sans défilement automatique pendant le test (titre mis en avant stable).
+    process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0"})
     try:
         app = Application(backend="uia").connect(process=process.pid, timeout=30)
         dialog = app.window(title="Noctra", control_type="Window")
