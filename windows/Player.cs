@@ -18,6 +18,19 @@ namespace Noctra.Windows;
 
 public partial class MainWindow
 {
+    // 0.6 : icône lecture / pause ; le nom accessible reste « Pause » ou « Reprendre ».
+    private void ShowPauseState(bool paused)
+    {
+        var glyph = paused ? "\uE768" : "\uE769";
+        var name = paused ? "Reprendre" : "Pause";
+        if (!Equals(PauseButton.Content, glyph)) PauseButton.Content = glyph;
+        if (System.Windows.Automation.AutomationProperties.GetName(PauseButton) != name)
+        {
+            System.Windows.Automation.AutomationProperties.SetName(PauseButton, name);
+            PauseButton.ToolTip = name + " · Espace";
+        }
+    }
+
     private readonly Forms.Panel surface = new() { BackColor = System.Drawing.Color.Black, AccessibleName = "Surface vidéo", AccessibleRole = Forms.AccessibleRole.Pane };
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private MediaItem? pendingMedia;
@@ -50,7 +63,7 @@ public partial class MainWindow
         PositionLabel.Text = "";
         SkipCredits.Visibility = Visibility.Collapsed;
         PlaybackMode.Text = "";
-        PauseButton.Content = "Pause";
+        ShowPauseState(false);
         if (File.Exists(Mpv.LibraryPath)) _ = OpenPlayback(item);
         else InstallPlayer(this, new RoutedEventArgs());
     }
@@ -202,7 +215,7 @@ public partial class MainWindow
             segment.EndTicks - TimeSpan.TicksPerMillisecond * 250 > positionTicks);
         SkipCredits.Visibility = state.CurrentCredits != null ? Visibility.Visible : Visibility.Collapsed;
         var paused = engine.Paused;
-        PauseButton.Content = paused ? "Reprendre" : "Pause";
+        ShowPauseState(paused);
         if (!seeking && state.Duration > 0)
         {
             Timeline.Maximum = state.Duration;
@@ -502,7 +515,7 @@ public partial class MainWindow
         if (!state.Started && state.Deadline <= DateTime.UtcNow) OpenLive(state);
         else if (state.Started)
         {
-            PauseButton.Content = engine.Paused ? "Reprendre" : "Pause";
+            ShowPauseState(engine.Paused);
             if (engine.Seconds("video-params/h") is > 0 and var height)
             {
                 LiveQualityButton.Content = $"{height:0}p";

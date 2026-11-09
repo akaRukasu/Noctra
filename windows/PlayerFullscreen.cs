@@ -74,7 +74,7 @@ public partial class MainWindow
             SizeHeader();
             AttachFloatingControls();
             FullscreenReturn.Visibility = Visibility.Visible;
-            FullscreenButton.Content = "↙"; FullscreenButton.ToolTip = "Quitter le plein écran · Échap ou F11";
+            FullscreenButton.Content = "\uE73F"; FullscreenButton.ToolTip = "Quitter le plein écran · Échap ou F11";
             System.Windows.Automation.AutomationProperties.SetName(FullscreenButton, "Quitter le plein écran");
             WakeFullscreenControls(force: true);
         }
@@ -82,7 +82,7 @@ public partial class MainWindow
         {
             fullscreen = false;
             if (pendingLive == null) RestoreDockedControls();
-            FullscreenButton.Content = "↗"; FullscreenButton.ToolTip = "Plein écran · F11";
+            FullscreenButton.Content = "\uE740"; FullscreenButton.ToolTip = "Plein écran · F11";
             System.Windows.Automation.AutomationProperties.SetName(FullscreenButton, "Plein écran");
             FrameHeader.Visibility = Visibility.Visible; PlayerHeader.Visibility = Visibility.Visible;
             playerScreen.Exit();

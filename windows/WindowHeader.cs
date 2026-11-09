@@ -25,8 +25,9 @@ public partial class MainWindow
         var fontSize = compact ? 14 : width < 1600 ? 15 : width < 2200 ? 16 : 17;
         var padding = compact ? 11 : width < 1600 ? 18 : 22;
         var gutter = Math.Clamp(width * .022, 24, 44);
-        NavigationHeader.Height = controlHeight + 18;
-        NavigationHeader.Margin = new Thickness(gutter, 14, gutter, 18);
+        NavigationHeader.Height = controlHeight + 10;
+        NavigationHeader.Margin = new Thickness(gutter, 10, gutter, 14);
+        contentGutter = gutter + 8;
         NavigationBrand.FontSize = fontSize + 9;
         NavigationBrand.Width = controlHeight - 8;
         foreach (var button in new[] { HomeTab, LibraryTab, DiscoverTab, TvTab })
@@ -46,6 +47,33 @@ public partial class MainWindow
         ProfileName.MaxWidth = compact ? 65 : 120;
         ProfileAvatar.Width = ProfileAvatar.Height = controlHeight - 18;
         ProfileAvatar.CornerRadius = new CornerRadius((controlHeight - 18) / 2.0);
+        ApplyContentMargins();
+    }
+
+    private double contentGutter = 40;
+    // Contenu sous le bandeau flottant ; les visuels « pleine largeur » (Tag bleed)
+    // passent sous le bandeau et touchent les bords de la fenêtre.
+    internal const string Bleed = "bleed";
+    private void ApplyContentMargins()
+    {
+        var top = NavigationHeader.Height + NavigationHeader.Margin.Top + NavigationHeader.Margin.Bottom + 6;
+        var tv = TvSidebar.Visibility == Visibility.Visible;
+        TvSidebar.Margin = new Thickness(contentGutter, top, 0, 24);
+        var margin = new Thickness(tv ? 22 : contentGutter, top, contentGutter, 36);
+        if (PageContent.Margin != margin) PageContent.Margin = margin;
+        foreach (var child in PageContent.Children)
+            if (child is FrameworkElement { Tag: Bleed } element)
+                element.Margin = new Thickness(-margin.Left, -margin.Top, -margin.Right, element.Margin.Bottom);
+    }
+
+    private bool navigationSolid;
+    private void UpdateNavigationSurface()
+    {
+        var solid = Scroller.VerticalOffset > 18;
+        if (solid == navigationSolid) return;
+        navigationSolid = solid;
+        NavigationSolid.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(solid ? 1 : 0,
+            new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = new System.Windows.Media.Animation.CubicEase() });
     }
 
     private Thickness MaximizedFrameInset()

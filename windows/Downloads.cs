@@ -55,7 +55,7 @@ public partial class MainWindow
 
         void Draw()
         {
-            ((TextBlock)status.Child).Text = $"↓ {Size(data.Num("downloadSpeed"))}/s    ↑ {Size(data.Num("uploadSpeed"))}/s    ·    {Size(data.Num("freeSpace"))} disponibles";
+            MessageLabel(status).Text = $"↓ {Size(data.Num("downloadSpeed"))}/s    ↑ {Size(data.Num("uploadSpeed"))}/s    ·    {Size(data.Num("freeSpace"))} disponibles";
             list.Children.Clear();
             foreach (var torrent in data.List("torrents").Where(item => item.Str("name").Contains(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase)))
             {

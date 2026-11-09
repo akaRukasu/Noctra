@@ -383,7 +383,7 @@ public partial class MainWindow
                     foreach (var server in DecodeServers(service, TvProviderLabel(channel, pair.Source, pair.Entry), result)) AddServer(server);
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException) { failures++; }
-            finally { gate.Release(); completed++; if (!cancellation.IsCancellationRequested) ((TextBlock)loading.Child).Text = $"{completed}/{pending.Length} sources explorées · les lecteurs trouvés sont utilisables immédiatement"; }
+            finally { gate.Release(); completed++; if (!cancellation.IsCancellationRequested) MessageLabel(loading).Text = $"{completed}/{pending.Length} sources explorées · les lecteurs trouvés sont utilisables immédiatement"; }
         }));
         if (cancellation.IsCancellationRequested) return;
         PageContent.Children.Remove(loading);

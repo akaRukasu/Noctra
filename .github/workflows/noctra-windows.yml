@@ -50,11 +50,14 @@ jobs:
       - name: Outil d'inspection audio (construction)
         run: dotnet build tests/audio/Noctra.AudioTests.csproj -c Release
       - name: Publication x64 autonome
+        id: publish
         run: dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true -o publish
-      - name: Inno Setup
+      # Le script exige Inno Setup 7 (ArchiveExtraction, style « modern dynamic »).
+      - name: Inno Setup 7
         run: |
-          choco install innosetup -y --no-progress | Out-Null
-          $iscc = Get-ChildItem 'C:\Program Files (x86)', 'C:\Program Files' -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          Invoke-WebRequest 'https://jrsoftware.org/download.php/is.exe' -OutFile "$env:RUNNER_TEMP/innosetup.exe"
+          Start-Process "$env:RUNNER_TEMP/innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$env:RUNNER_TEMP\InnoSetup" -Wait
+          $iscc = Get-Item "$env:RUNNER_TEMP\InnoSetup\ISCC.exe" -ErrorAction SilentlyContinue
           if (-not $iscc) { throw 'ISCC.exe introuvable' }
           Write-Host "Compilateur : $($iscc.FullName)"
           "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
@@ -68,6 +71,7 @@ jobs:
           if ($LASTEXITCODE) { throw "Setup de test : code $LASTEXITCODE" }
           Get-ChildItem dist | Format-Table Name, Length
       - name: Outils du test d'interface (Python, pywinauto, FFmpeg, moteur mpv vérifié)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
         run: |
           python -m pip install --quiet pywinauto pillow pywin32
           if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress | Out-Null }
@@ -85,6 +89,7 @@ jobs:
           7z x "$env:RUNNER_TEMP/noctra/mpv.7z" "-o$env:RUNNER_TEMP/noctra/mpv" libmpv-2.dll -y | Out-Null
           "MPV_DLL=$env:RUNNER_TEMP/noctra/mpv/libmpv-2.dll" >> $env:GITHUB_ENV
       - name: Test de l'interface (API locale simulée)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
         timeout-minutes: 30
         run: |
           python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures

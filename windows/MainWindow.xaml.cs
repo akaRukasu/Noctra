@@ -62,6 +62,9 @@ public partial class MainWindow : Window
     {
         Loaded -= Load;
         SizeChanged += (_, _) => SizeHeader();
+        TvSidebar.IsVisibleChanged += (_, _) => ApplyContentMargins();
+        Scroller.ScrollChanged += (_, _) => UpdateNavigationSurface();
+        statusTimer.Tick += (_, _) => { statusTimer.Stop(); FadeStatus(); };
         StateChanged += (_, _) => Dispatcher.BeginInvoke(() => SizeHeader());
         LocationChanged += (_, _) => { if (WindowState == WindowState.Maximized) SizeHeader(); };
         SizeHeader();
@@ -258,7 +261,13 @@ public partial class MainWindow : Window
         PageContent.Children.Clear();
         Scroller.ScrollToTop();
         PageContent.Children.Add(Message("Chargement…"));
-        try { await destination.Render(account, cancellation); }
+        try
+        {
+            await destination.Render(account, cancellation);
+            // 0.6 : arrivée de la page en fondu (l'accueil anime aussi ses rangées une à une).
+            if (!cancellation.IsCancellationRequested && SystemParameters.ClientAreaAnimation)
+                PageContent.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(.0, 1, TimeSpan.FromMilliseconds(240)));
+        }
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException)
         {
             if (cancellation.IsCancellationRequested) return;
@@ -307,10 +316,29 @@ public partial class MainWindow : Window
         Search(sender, args);
     }
 
+    // 0.6 : notification en pastille, fondu d'entrée, disparition seule après quelques secondes.
+    private readonly System.Windows.Threading.DispatcherTimer statusTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private void ShowStatus(string text)
     {
+        statusTimer.Stop();
         StatusText.Text = text;
-        StatusBar.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (text.Length == 0)
+        {
+            StatusBar.BeginAnimation(OpacityProperty, null);
+            StatusBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+        StatusBar.Visibility = Visibility.Visible;
+        StatusBar.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        statusTimer.Interval = TimeSpan.FromSeconds(Math.Clamp(text.Length / 14.0, 4, 9));
+        statusTimer.Start();
+    }
+
+    private void FadeStatus()
+    {
+        var fade = new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(260));
+        fade.Completed += (_, _) => { if (!statusTimer.IsEnabled) StatusBar.Visibility = Visibility.Collapsed; };
+        StatusBar.BeginAnimation(OpacityProperty, fade);
     }
 
     private async void CloseWindow(object? sender, CancelEventArgs args)

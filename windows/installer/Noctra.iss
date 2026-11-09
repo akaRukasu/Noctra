@@ -1,4 +1,4 @@
-#define AppVersion "0.5.9"
+#define AppVersion "0.6.0"
 #ifndef PublishDir
   #define PublishDir "..\..\noctra-windows-native-publish-059"
 #endif
@@ -29,11 +29,11 @@ SolidCompression=yes
 ArchiveExtraction=auto
 OutputDir=..\..\..\outputs
 #ifdef TestBuild
-OutputBaseFilename=Noctra-QA-0.5.9-x64
+OutputBaseFilename=Noctra-QA-{#AppVersion}-x64
 CloseApplications=no
 AppMutex=NoctraWindowsDesktopQA
 #else
-OutputBaseFilename=Noctra-Setup-0.5.9-x64
+OutputBaseFilename=Noctra-Setup-{#AppVersion}-x64
 CloseApplications=yes
 AppMutex=NoctraWindowsDesktop
 #endif
@@ -51,7 +51,7 @@ Name: "desktopicon"; Description: "Créer un raccourci sur le bureau"; GroupDesc
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LISEZ-MOI.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\BILAN-0.5.9.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\BILAN-{#AppVersion}.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "prerequisites\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedWebView
 Source: "..\licences\*"; DestDir: "{app}\licences"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261104/mpv-dev-x86_64-20261104-git-46787be250.7z"; DestDir: "{app}\player\20261104"; DestName: "mpv.7z"; Excludes: "include\*,libmpv.dll.a"; ExternalSize: 31711881; Hash: "5ae0aaa85b2e690e9c574a44e10a86f3d5fe4b406ef6dfa684f5ab25e6bf6306"; Flags: external download extractarchive recursesubdirs ignoreversion; Check: NeedPlayer
