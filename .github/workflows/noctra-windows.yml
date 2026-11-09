@@ -44,8 +44,11 @@ jobs:
         run: dotnet build Noctra.Windows.csproj -c Release
       - name: Tests de protocole (récepteur Cast TLS simulé, regroupement TV)
         run: dotnet run --project tests/protocol/Noctra.Tests.csproj -c Release
-      - name: Tests audio
-        run: dotnet run --project tests/audio/Noctra.AudioTests.csproj -c Release
+      # Outil d'inspection des sessions audio Windows, piloté par le test
+      # d'interface (--audio-inspector) : construit ici. La machine de GitHub
+      # n'a pas de sortie audio réelle : la mesure se fait sur un vrai PC.
+      - name: Outil d'inspection audio (construction)
+        run: dotnet build tests/audio/Noctra.AudioTests.csproj -c Release
       - name: Publication x64 autonome
         run: dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true -o publish
       - name: Inno Setup
@@ -89,7 +92,9 @@ jobs:
       - name: Archive des sources
         if: always()
         working-directory: .
-        run: git archive --format=zip --prefix="Noctra-Windows-${{ steps.version.outputs.version }}/" -o "windows/dist/Noctra-Windows-${{ steps.version.outputs.version }}-sources.zip" HEAD:windows
+        run: |
+          New-Item -ItemType Directory -Force windows/dist | Out-Null
+          git archive --format=zip --prefix="Noctra-Windows-${{ steps.version.outputs.version }}/" -o "windows/dist/Noctra-Windows-${{ steps.version.outputs.version }}-sources.zip" HEAD:windows
       - uses: actions/upload-artifact@v4
         if: always()
         with:
