@@ -19,7 +19,8 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  # Écriture : seulement la référence refs/noctra-ci/* des captures (aucune branche).
+  contents: write
 
 concurrency:
   group: noctra-windows-${{ github.ref }}-${{ github.event.inputs.sources }}
@@ -137,20 +138,23 @@ jobs:
           name: noctra-windows-captures
           path: windows/captures/
           if-no-files-found: ignore
-      # Les captures, réduites en JPEG, sont aussi écrites dans le journal (texte base64),
-      # lisible là où le stockage des artefacts n'est pas accessible.
-      - name: Captures dans le journal
+      # Captures réduites (JPEG) publiées dans une référence Git dédiée, hors branches :
+      # refs/noctra-ci/captures (lecture : git fetch origin refs/noctra-ci/captures).
+      # Aucune branche n'est modifiée et cette référence ne déclenche aucune action.
+      - name: Captures (référence Git)
         if: always()
-        shell: python
         working-directory: windows
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          import base64, io, pathlib
-          from PIL import Image
-          for path in sorted(pathlib.Path("captures").glob("*.png")):
-              image = Image.open(path).convert("RGB")
-              image.thumbnail((1280, 1280))
-              data = io.BytesIO(); image.save(data, "JPEG", quality=70, optimize=True)
-              text = base64.b64encode(data.getvalue()).decode()
-              for index in range(0, len(text), 4000):
-                  print(f"NOCTRA-CAPTURE {path.stem} {index // 4000} {text[index:index + 4000]}")
-              print(f"NOCTRA-CAPTURE-END {path.stem}")
+          if (-not (Test-Path captures)) { Write-Host 'Aucune capture'; exit 0 }
+          $out = "$env:RUNNER_TEMP/noctra-captures"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          python -c "import pathlib,sys;from PIL import Image;o=pathlib.Path(sys.argv[1]);[Image.open(p).convert('RGB').save(o/(p.stem+'.jpg'),'JPEG',quality=82) for p in sorted(pathlib.Path('captures').glob('*.png'))]" $out
+          Set-Content "$out/RUN.txt" "run ${{ github.run_id }} · sources ${{ github.event.inputs.sources || github.sha }}"
+          Push-Location $out
+          git init -q; git config user.name 'noctra-ci'; git config user.email 'noctra-ci@users.noreply.github.com'
+          git add -A; git commit -q -m "Captures ${{ github.run_id }}"
+          $name = if ('${{ github.event.inputs.sources }}') { 'captures-reference' } else { 'captures' }
+          git push -q --force "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git" "HEAD:refs/noctra-ci/$name"
+          Pop-Location
