@@ -15,7 +15,8 @@ internal sealed class Mpv : IDisposable
         name == Library ? NativeLibrary.Load(LibraryPath) : IntPtr.Zero);
 
     internal string? LastError { get; private set; }
-    internal Mpv(IntPtr window, string? authorization, double startSeconds, string? noctraToken = null, bool software = false, bool probe = false, bool live = false)
+    internal Mpv(IntPtr window, string? authorization, double startSeconds, string? noctraToken = null, bool software = false, bool probe = false, bool live = false,
+        bool paused = false, bool audioOnly = false)
     {
         handle = mpv_create();
         if (handle == IntPtr.Zero) throw new InvalidOperationException("Le moteur mpv ne s’initialise pas.");
@@ -55,6 +56,9 @@ internal sealed class Mpv : IDisposable
             if (noctraToken is { Length: > 0 } && !noctraToken.Contains('\r') && !noctraToken.Contains('\n'))
                 Option("http-header-fields", "x-noctra-token: " + noctraToken.Replace(",", "\\,"));
             if (startSeconds > 0) Option("start", startSeconds.ToString("0.000", CultureInfo.InvariantCulture));
+            // 0.7 : départ en pause (SyncPlay : le groupe démarre ensemble) ; musique sans image.
+            if (paused) Option("pause", "yes");
+            if (audioOnly) Option("vid", "no");
             Check(mpv_initialize(handle));
         }
         catch
@@ -73,6 +77,21 @@ internal sealed class Mpv : IDisposable
         {
             for (int i = 0; i < values.Length; i++) pointers[i] = Marshal.StringToCoTaskMemUTF8(values[i]);
             Check(mpv_command(handle, pointers));
+        }
+        finally
+        {
+            foreach (IntPtr pointer in pointers) Marshal.FreeCoTaskMem(pointer);
+        }
+    }
+
+    // Commande exécutée par mpv en arrière-plan (ajout de sous-titres distants sans bloquer l'interface).
+    internal void CommandAsync(params string[] values)
+    {
+        var pointers = new IntPtr[values.Length + 1];
+        try
+        {
+            for (int i = 0; i < values.Length; i++) pointers[i] = Marshal.StringToCoTaskMemUTF8(values[i]);
+            Check(mpv_command_async(handle, 0, pointers));
         }
         finally
         {
@@ -138,6 +157,7 @@ internal sealed class Mpv : IDisposable
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern void mpv_terminate_destroy(IntPtr context);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_set_option_string(IntPtr context, [MarshalAs(UnmanagedType.LPUTF8Str)] string option, [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command(IntPtr context, IntPtr[] args);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern int mpv_command_async(IntPtr context, ulong reply, IntPtr[] args);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr mpv_wait_event(IntPtr context, double timeout);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mpv_get_property")] private static extern int mpv_get_property_double(IntPtr context, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, int format, out double value);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mpv_get_property")] private static extern int mpv_get_property_flag(IntPtr context, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, int format, out int value);

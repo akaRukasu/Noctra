@@ -41,12 +41,43 @@ internal sealed record MediaItem
     public Chapter[]? Chapters { get; init; }
     public string? CollectionType { get; init; }
     public MediaPerson[]? People { get; init; }
+    // 0.7 : musique, listes de lecture, fiche technique, bandes-annonces, vignettes de progression.
+    public string? Album { get; init; }
+    public string? AlbumId { get; init; }
+    public string? AlbumArtist { get; init; }
+    public string[]? Artists { get; init; }
+    public string? AlbumPrimaryImageTag { get; init; }
+    public string? PlaylistItemId { get; init; }
+    public string? MediaType { get; init; }
+    public string? Container { get; init; }
+    public MediaSourceInfo[]? MediaSources { get; init; }
+    public NamedValue[]? Studios { get; init; }
+    public string[]? Tags { get; init; }
+    public string[]? Taglines { get; init; }
+    public MediaUrl[]? RemoteTrailers { get; init; }
+    public MediaUrl[]? ExternalUrls { get; init; }
+    public int? LocalTrailerCount { get; init; }
+    public double? CriticRating { get; init; }
+    public DateTime? PremiereDate { get; init; }
+    public Dictionary<string, string>? ProviderIds { get; init; }
+    public Dictionary<string, Dictionary<string, TrickplayInfo>>? Trickplay { get; init; }
 
-    internal bool CanPlay => Type is "Movie" or "Episode";
+    internal bool CanPlay => Type is "Movie" or "Episode" or "Audio" or "MusicVideo" or "Video" or "Trailer";
+    internal bool IsAudio => Type == "Audio";
+    internal bool Square => Type is "MusicAlbum" or "Audio" or "MusicArtist" or "Playlist" or "Photo" or "PhotoAlbum";
     internal string DisplayTitle => Type == "Episode" && !string.IsNullOrWhiteSpace(SeriesName) ? SeriesName : Name;
-    internal string Caption => Type == "Episode"
-        ? string.Join(" · ", new[] { IndexNumber is int number ? $"S{ParentIndexNumber ?? 1:00} E{number:00}" : "", Name }.Where(s => s.Length > 0))
-        : ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? (Type == "Series" ? "Série" : "Film");
+    internal string Caption => Type switch
+    {
+        "Episode" => string.Join(" · ", new[] { IndexNumber is int number ? $"S{ParentIndexNumber ?? 1:00} E{number:00}" : "", Name }.Where(s => s.Length > 0)),
+        "Audio" => string.Join(" · ", new[] { AlbumArtist ?? Artists?.FirstOrDefault(), Album }.Where(s => !string.IsNullOrWhiteSpace(s))),
+        "MusicAlbum" => string.Join(" · ", new[] { AlbumArtist, ProductionYear?.ToString(CultureInfo.InvariantCulture) }.Where(s => !string.IsNullOrWhiteSpace(s))),
+        "MusicArtist" => "Artiste",
+        "Playlist" => ChildCount is int count ? count + " élément" + (count > 1 ? "s" : "") : "Liste de lecture",
+        "Photo" => ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? "Photo",
+        "PhotoAlbum" or "Folder" => "Album",
+        "Person" => "Personne",
+        _ => ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? (Type == "Series" ? "Série" : "Film")
+    };
     internal long Resume => UserData?.PlaybackPositionTicks is > 0 and <= TimeSpan.TicksPerDay &&
         (RunTimeTicks is not > 0 || UserData.PlaybackPositionTicks < RunTimeTicks * .99) ? UserData.PlaybackPositionTicks : 0;
     internal double Progress => RunTimeTicks is > 0 ? (double)Resume / RunTimeTicks.Value : 0;
@@ -57,12 +88,21 @@ internal sealed record Chapter(string? Name, long StartPositionTicks);
 internal sealed record MediaPerson(string Id, string Name, string? Type, string? Role);
 internal sealed record MediaSegment(string Type, long StartTicks, long EndTicks);
 internal sealed record SegmentPage(MediaSegment[]? Items);
+internal sealed record MediaStreamInfo(string? Type, string? Codec, int? Width, int? Height, string? VideoRange, string? VideoRangeType,
+    int? Channels, string? ChannelLayout, string? Language, string? DisplayTitle, string? Title, bool IsExternal, int Index, string? Profile,
+    long? BitRate, double? RealFrameRate, bool IsDefault, string? DeliveryMethod, string? DeliveryUrl);
+internal sealed record MediaSourceInfo(string? Id, string? Container, long? Size, long? Bitrate, string? Name, MediaStreamInfo[]? MediaStreams);
+internal sealed record NamedValue(string? Name, string? Id);
+internal sealed record MediaUrl(string? Name, string? Url);
+internal sealed record TrickplayInfo(int Width, int Height, int TileWidth, int TileHeight, int ThumbnailCount, int Interval);
 internal sealed record SavedAccount(string Address, string JellyfinUrl, Viewer User, string Token, string? NoctraUrl = null);
 
 internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string token, Uri? noctraRoot = null)
 {
     internal static readonly HttpClient Http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(12) };
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // Transferts longs (téléchargement hors connexion) : pas de délai global.
+    internal static readonly HttpClient Transfer = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = Timeout.InfiniteTimeSpan };
     internal const string DefaultAddress = "https://akarukasu.astra.usbx.me/noctra/";
     private const string Details = "Overview,Genres,PrimaryImageAspectRatio,ParentId";
     internal Uri Root => root;
@@ -72,6 +112,28 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     internal Uri? NoctraRoot => noctraRoot;
 
     internal static async Task<Jellyfin> SignIn(string address, string deviceId, string username, string password, CancellationToken cancellation)
+    {
+        var (target, noctra) = await ResolveServer(address, cancellation);
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(target, "Users/AuthenticateByName"));
+        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, null));
+        request.Content = new StringContent(JsonSerializer.Serialize(new { Username = username, Pw = password }), Encoding.UTF8, "application/json");
+        using var login = await Http.SendAsync(request, cancellation);
+        if (login.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            throw new InvalidOperationException("Identifiant ou mot de passe Jellyfin incorrect.");
+        login.EnsureSuccessStatusCode();
+        return Session(target, noctra, deviceId, await login.Content.ReadAsStringAsync(cancellation));
+    }
+
+    internal static Jellyfin Session(Uri target, Uri? noctra, string deviceId, string reply)
+    {
+        var session = JsonSerializer.Deserialize<LoginReply>(reply, Json);
+        if (session?.User is null || !PlayRequest.Identifier(session.User.Id) || string.IsNullOrWhiteSpace(session.AccessToken))
+            throw new InvalidOperationException("La session Jellyfin reçue est incomplète.");
+        return new Jellyfin(target, deviceId, session.User, session.AccessToken, noctra);
+    }
+
+    // Adresse Noctra (api/config → Jellyfin) ou adresse Jellyfin directe.
+    internal static async Task<(Uri Target, Uri? Noctra)> ResolveServer(string address, CancellationToken cancellation)
     {
         if (!TryAddress(address, out var server)) throw new InvalidOperationException("Indique une adresse HTTPS valide.");
         if (server!.AbsolutePath.EndsWith("/client/index.html", StringComparison.OrdinalIgnoreCase)) server = new Uri(server, "../");
@@ -94,18 +156,7 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
             if (!info.RootElement.TryGetProperty("Version", out _)) throw new InvalidOperationException("Serveur Jellyfin introuvable à cette adresse.");
             target = server;
         }
-        target = new Uri(target.AbsoluteUri.TrimEnd('/') + "/");
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(target, "Users/AuthenticateByName"));
-        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, null));
-        request.Content = new StringContent(JsonSerializer.Serialize(new { Username = username, Pw = password }), Encoding.UTF8, "application/json");
-        using var login = await Http.SendAsync(request, cancellation);
-        if (login.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            throw new InvalidOperationException("Identifiant ou mot de passe Jellyfin incorrect.");
-        login.EnsureSuccessStatusCode();
-        var reply = JsonSerializer.Deserialize<LoginReply>(await login.Content.ReadAsStringAsync(cancellation), Json);
-        if (reply?.User is null || !PlayRequest.Identifier(reply.User.Id) || string.IsNullOrWhiteSpace(reply.AccessToken))
-            throw new InvalidOperationException("La session Jellyfin reçue est incomplète.");
-        return new Jellyfin(target, deviceId, reply.User, reply.AccessToken, noctra);
+        return (new Uri(target.AbsoluteUri.TrimEnd('/') + "/"), noctra);
     }
 
     internal static bool TryAddress(string? input, out Uri? result) =>
@@ -139,7 +190,7 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     }
 
     internal Task<ItemPage> Browse(string? type, string? parent, string? search, int start, bool latest, CancellationToken cancellation,
-        bool favorite = false, string? watched = null, string? sort = null)
+        bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null)
     {
         var query = new Dictionary<string, string>
         {
@@ -154,11 +205,74 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         if (favorite) filters.Add("IsFavorite");
         if (watched != null) filters.Add(watched);
         if (filters.Count > 0) query["Filters"] = string.Join(",", filters);
+        if (!string.IsNullOrWhiteSpace(genre)) query["Genres"] = genre;
+        if (year is > 1800 and < 2300) query["Years"] = year.Value.ToString(CultureInfo.InvariantCulture);
+        if (rating is > 0 and <= 10) query["MinCommunityRating"] = rating.Value.ToString(CultureInfo.InvariantCulture);
+        if (sort is "Random" or "CommunityRating" or "Runtime" or "PremiereDate") query["SortOrder"] = sort == "Runtime" ? "Ascending" : "Descending";
         return Get<ItemPage>("Items", query, cancellation);
     }
 
+    // Requête de catalogue libre (musique, photos, personnes, listes de lecture).
+    internal Task<ItemPage> Items(Dictionary<string, string> query, CancellationToken cancellation)
+    {
+        query.TryAdd("UserId", user.Id);
+        query.TryAdd("EnableUserData", "true");
+        query.TryAdd("Fields", Details);
+        return Get<ItemPage>("Items", query, cancellation);
+    }
+
+    // Genres, années et classifications d'une médiathèque (filtres du catalogue).
+    internal Task<JsonElement> Filters(string? parent, string types, CancellationToken cancellation) =>
+        Get<JsonElement>("Items/Filters", new Dictionary<string, string> { ["UserId"] = user.Id, ["IncludeItemTypes"] = types }
+            .Concat(parent == null ? [] : new[] { KeyValuePair.Create("ParentId", parent) }).ToDictionary(), cancellation);
+
+    // Lecture : chapitres, pistes et vignettes de progression (Jellyfin 10.9+ ; ignoré sinon).
+    internal Task<MediaItem> PlaybackDetail(string id, CancellationToken cancellation) =>
+        Get<MediaItem>("Users/" + user.Id + "/Items/" + id, new() { ["Fields"] = "Chapters,MediaSources,MediaStreams,Trickplay" }, cancellation);
+
+    internal Task<ItemPage> PlaylistItems(string id, CancellationToken cancellation) =>
+        Get<ItemPage>("Playlists/" + id + "/Items", new() { ["UserId"] = user.Id, ["EnableUserData"] = "true", ["Fields"] = Details }, cancellation);
+
+    internal async Task<string> CreatePlaylist(string name, string[] ids, CancellationToken cancellation)
+    {
+        var reply = await CommandJson("Playlists", new { Name = name, Ids = ids, UserId = user.Id, MediaType = "Video", IsPublic = false }, cancellation);
+        return reply.Str("Id");
+    }
+
+    internal Task AddToPlaylist(string playlist, string[] ids, CancellationToken cancellation) =>
+        Command("Playlists/" + playlist + "/Items?ids=" + string.Join(",", ids) + "&userId=" + user.Id, null, cancellation);
+
+    internal Task RemoveFromPlaylist(string playlist, string entry, CancellationToken cancellation) =>
+        Command("Playlists/" + playlist + "/Items?entryIds=" + Uri.EscapeDataString(entry), null, cancellation, HttpMethod.Delete);
+
+    // Sous-titres en ligne (extension OpenSubtitles du serveur).
+    internal Task<JsonElement> RemoteSubtitles(string id, string language, CancellationToken cancellation) =>
+        Get<JsonElement>("Items/" + id + "/RemoteSearch/Subtitles/" + Uri.EscapeDataString(language), null, cancellation);
+
+    internal Task DownloadSubtitle(string id, string subtitle, CancellationToken cancellation) =>
+        Command("Items/" + id + "/RemoteSearch/Subtitles/" + Uri.EscapeDataString(subtitle), null, cancellation);
+
+    // Fichier original (droit « téléchargement » du compte Jellyfin).
+    internal async Task<HttpResponseMessage> Download(string id, CancellationToken cancellation)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(root, "Items/" + id + "/Download"));
+        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+        return await Transfer.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation);
+    }
+
+    internal async Task<JsonElement> CommandJson(string path, object? body, CancellationToken cancellation)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(root, path));
+        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+        if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        using var response = await Http.SendAsync(request, cancellation);
+        response.EnsureSuccessStatusCode();
+        var text = await response.Content.ReadAsStringAsync(cancellation);
+        return text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone();
+    }
+
     internal Task<MediaItem> Detail(string id, CancellationToken cancellation) =>
-        Get<MediaItem>("Users/" + user.Id + "/Items/" + id, new() { ["Fields"] = Details + ",People,Chapters,MediaSources,MediaStreams" }, cancellation);
+        Get<MediaItem>("Users/" + user.Id + "/Items/" + id, new() { ["Fields"] = Details + ",People,Chapters,MediaSources,MediaStreams,Studios,Tags,Taglines,RemoteTrailers,ExternalUrls,ProviderIds" }, cancellation);
     internal Task<ItemPage> Similar(string id, CancellationToken cancellation) =>
         Get<ItemPage>("Items/" + id + "/Similar", new() { ["UserId"] = user.Id, ["Limit"] = "12", ["Fields"] = Details }, cancellation);
     internal Task<ItemPage> Seasons(string id, CancellationToken cancellation) =>
@@ -202,9 +316,12 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     }
 
     // 0.6 : retirer un titre de « Continuer à regarder » (position remise à zéro, statut vu inchangé).
-    internal async Task ClearResume(string id, CancellationToken cancellation)
+    internal Task ClearResume(string id, CancellationToken cancellation) => SetResume(id, 0, cancellation);
+
+    // 0.7 : position de reprise (aussi utilisée pour reporter une lecture hors connexion).
+    internal async Task SetResume(string id, long ticks, CancellationToken cancellation)
     {
-        var body = new { PlaybackPositionTicks = 0L };
+        var body = new { PlaybackPositionTicks = Math.Max(0, ticks) };
         try { await Command("UserItems/" + id + "/UserData?userId=" + user.Id, body, cancellation); }
         catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed)
         {
@@ -236,7 +353,7 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
 
     internal static string Authorization(string device, string? token) =>
         "MediaBrowser Client=\"Noctra Windows\", Device=\"Windows\", DeviceId=\"" + Uri.EscapeDataString(device) +
-        "\", Version=\"0.6.0\"" + (token == null ? "" : ", Token=\"" + Uri.EscapeDataString(token) + "\"");
+        "\", Version=\"0.7.0\"" + (token == null ? "" : ", Token=\"" + Uri.EscapeDataString(token) + "\"");
 
     private async Task<T> Get<T>(string path, Dictionary<string, string>? query, CancellationToken cancellation)
     {

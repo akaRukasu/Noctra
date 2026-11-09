@@ -19,13 +19,13 @@ public partial class MainWindow
     private System.Drawing.Point lastVideoPointer;
     private Key lastModeKey;
     private long lastModeKeyAt;
-    private bool FloatingControls => fullscreen || pendingLive != null;
+    private bool FloatingControls => fullscreen || miniPlayer || pendingLive != null;
 
     private void ConfigureFullscreen()
     {
         ConfigurePlayerHints(PlayerControls);
         videoInput = new VideoInputFilter(surface, key => PlayerShortcut(key), WakeFullscreenControls, () => pointerHidden,
-            () => SetFullscreen(!fullscreen));
+            () => { if (miniPlayer) SetMiniPlayer(false); else SetFullscreen(!fullscreen); }, () => miniPlayer ? DragMiniPlayer() : false);
         Forms.Application.AddMessageFilter(videoInput);
         controlsIdle.Tick += (_, _) =>
         {
@@ -64,6 +64,7 @@ public partial class MainWindow
     private void SetFullscreen(bool enabled)
     {
         if (enabled == fullscreen || enabled && pendingMedia == null && pendingLive == null) return;
+        if (enabled && miniPlayer) SetMiniPlayer(false);
         playerScreen ??= new ScreenFullscreen(this);
         if (enabled)
         {
@@ -143,23 +144,27 @@ public partial class MainWindow
             lastModeKey = key; lastModeKeyAt = now;
         }
         if (key == Key.F11) SetFullscreen(!fullscreen);
-        else if (key == Key.Escape) { if (fullscreen) SetFullscreen(false); else FinishPlayback(); }
-        else if (key == Key.Space) Command("cycle", "pause");
-        else if (key == Key.Left) { if (pendingLive == null) Command("seek", "-15", "relative"); }
-        else if (key == Key.Right) { if (pendingLive == null) Command("seek", "15", "relative"); }
+        else if (key == Key.Escape) { if (miniPlayer) SetMiniPlayer(false); else if (fullscreen) SetFullscreen(false); else FinishPlayback(); }
+        else if (key == Key.Space) TogglePause(this, new RoutedEventArgs());
+        else if (key == Key.Left) { if (pendingLive == null) SeekRelative(-15); }
+        else if (key == Key.Right) { if (pendingLive == null) SeekRelative(15); }
         else if (key == Key.M) Command("cycle", "mute");
+        else if (key == Key.I) ShowStats(statsPopup?.IsOpen != true);
+        else if (key == Key.P) SetMiniPlayer(!miniPlayer);
+        else if (key == Key.N) PlayQueueStep(1);
         else return false;
         return true;
     }
 }
 
-internal sealed class VideoInputFilter(Forms.Control surface, Func<Key, bool> shortcut, Action move, Func<bool> hidden, Action doubleClick) : Forms.IMessageFilter
+internal sealed class VideoInputFilter(Forms.Control surface, Func<Key, bool> shortcut, Action move, Func<bool> hidden, Action doubleClick, Func<bool> press) : Forms.IMessageFilter
 {
     public bool PreFilterMessage(ref Forms.Message message)
     {
         if (!surface.IsHandleCreated || !surface.Visible || message.HWnd != surface.Handle && !IsChild(surface.Handle, message.HWnd)) return false;
         if (message.Msg == 0x0200) move();
         if (message.Msg == 0x0203) { doubleClick(); return true; }
+        if (message.Msg == 0x0201 && press()) return true;
         if (message.Msg == 0x0020 && hidden()) { SetCursor(IntPtr.Zero); return true; }
         if (message.Msg != 0x0100) return false;
         var key = KeyInterop.KeyFromVirtualKey(message.WParam.ToInt32());

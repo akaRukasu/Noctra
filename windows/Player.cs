@@ -46,16 +46,40 @@ public partial class MainWindow
     {
         VideoHost.Child = surface;
         ConfigureFullscreen();
+        ConfigureSeekPreview();
         timer.Tick += (_, _) => TickPlayer();
     }
 
-    private void StartPlayback(MediaItem item)
+    private long? pendingStartTicks;
+    private bool pendingSynchronized;
+    private Uri? pendingLocalFile;
+    // 0.7 : file de lecture (liste de lecture, album) : le titre suivant démarre à la fin du précédent.
+    private MediaItem[] playQueue = [];
+    private int playQueueIndex;
+
+    private void StartPlayback(MediaItem item) => StartPlayback(item, null);
+    private void StartPlayback(MediaItem item, long? startTicks, bool synchronized = false, bool keepQueue = false, Uri? localFile = null)
     {
-        if (client == null || active != null || pendingMedia != null || pendingLive != null || closing || !item.CanPlay) return;
+        // Séance SyncPlay : le titre est lancé pour tout le groupe (le serveur renvoie la file à chacun).
+        if (!synchronized && localFile == null && syncGroup != null && client != null && item.CanPlay && !item.IsAudio && pendingLive == null)
+        {
+            SyncPlayItem(item, startTicks ?? item.Resume);
+            return;
+        }
+        if ((client == null && localFile == null) || active != null || pendingMedia != null || pendingLive != null || closing || !item.CanPlay) return;
+        if (!keepQueue) { playQueue = []; playQueueIndex = 0; }
         externalPlayer?.Close();
         externalPlayer = null;
         pendingMedia = item;
-        MediaTitle.Text = item.Type == "Episode" ? item.DisplayTitle + " · " + item.Caption : item.DisplayTitle;
+        pendingStartTicks = startTicks;
+        pendingSynchronized = synchronized;
+        pendingLocalFile = localFile;
+        MediaTitle.Text = item.Type == "Episode" ? item.DisplayTitle + " · " + item.Caption :
+            item.IsAudio ? item.Name + (item.Caption.Length > 0 ? " · " + item.Caption : "") : item.DisplayTitle;
+        PrepareAudioStage(item);
+        QueuePrevious.Visibility = QueueNext.Visibility = playQueue.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+        QueuePrevious.IsEnabled = playQueueIndex > 0;
+        QueueNext.IsEnabled = playQueueIndex + 1 < playQueue.Length;
         LibraryShell.Visibility = Visibility.Collapsed;
         Player.Visibility = Visibility.Visible;
         Timeline.Value = 0;
@@ -68,25 +92,55 @@ public partial class MainWindow
         else InstallPlayer(this, new RoutedEventArgs());
     }
 
+    private void PlayQueue(MediaItem[] items, int index, long start = 0)
+    {
+        items = items.Where(entry => entry.CanPlay && PlayRequest.Identifier(entry.Id)).ToArray();
+        if (items.Length == 0) return;
+        playQueue = items;
+        playQueueIndex = Math.Clamp(index, 0, items.Length - 1);
+        StartPlayback(items[playQueueIndex], start > 0 ? start : items[playQueueIndex].Resume, keepQueue: true);
+    }
+
+    private void PlayQueueStep(int step)
+    {
+        var target = playQueueIndex + step;
+        if (playQueue.Length < 2 || target < 0 || target >= playQueue.Length) return;
+        var queue = playQueue;
+        FinishPlayback(refresh: false);
+        playQueue = queue;
+        playQueueIndex = target;
+        StartPlayback(queue[target], 0, keepQueue: true);
+    }
+    private void QueuePreviousClick(object sender, RoutedEventArgs args) => PlayQueueStep(-1);
+    private void QueueNextClick(object sender, RoutedEventArgs args) => PlayQueueStep(1);
+
     private async Task OpenPlayback(MediaItem item)
     {
         var account = client;
-        if (account == null || pendingMedia != item || closing) return;
-        var request = new PlayRequest(item.Id, account.User.Id, account.Token, account.DeviceId, item.Resume);
+        if (pendingMedia != item || closing) return;
+        if (account == null && pendingLocalFile == null) return;
+        var start = pendingStartTicks ?? item.Resume;
+        var request = account == null
+            ? new PlayRequest(item.Id, "offline", "offline", deviceId, Math.Clamp(start, 0, TimeSpan.TicksPerDay))
+            : new PlayRequest(item.Id, account.User.Id, account.Token, account.DeviceId, Math.Clamp(start, 0, TimeSpan.TicksPerDay));
         if (!request.IsValid())
         {
             Notice("La vidéo ne peut pas être ouverte avec cette session.");
             return;
         }
-        var state = new ActivePlayback(new JellyfinPlayback(Jellyfin.Http, account.Root, request))
+        var state = new ActivePlayback(new JellyfinPlayback(Jellyfin.Http, account?.Root ?? new Uri("https://localhost/"), request, item.IsAudio, pendingLocalFile))
         {
-            Software = !preferences.HardwareDecoding
+            Software = !preferences.HardwareDecoding, Synchronized = pendingSynchronized, Item = item
         };
         active = state;
-        Notice("Ouverture de la vidéo…");
+        Notice(item.IsAudio ? "Ouverture du titre…" : "Ouverture de la vidéo…");
         await stopping;
         if (active != state) return;
-        _ = FindCredits(account, item, state);
+        if (account != null && pendingLocalFile == null)
+        {
+            _ = FindCredits(account, item, state);
+            _ = LoadPlaybackDetails(account, item, state);
+        }
         await LoadMedia(state, allowDirect: true);
     }
 
@@ -130,13 +184,15 @@ public partial class MainWindow
         {
             var media = await state.Session.Prepare(state.Cancellation.Token, allowDirect);
             if (active != state) return;
-            VideoHost.Visibility = Visibility.Visible;
+            VideoHost.Visibility = state.Session.Audio ? Visibility.Collapsed : Visibility.Visible;
+            AudioStage.Visibility = state.Session.Audio ? Visibility.Visible : Visibility.Collapsed;
             PlaybackNotice.Visibility = Visibility.Collapsed;
             PlayerControls.Visibility = Visibility.Visible;
-            PlaybackMode.Text = state.Session.Method == "DirectPlay" ? "Lecture directe" : "Lecture adaptée par Jellyfin";
+            PlaybackMode.Text = MethodLabel(state);
             await Dispatcher.InvokeAsync(() => VideoHost.UpdateLayout(), DispatcherPriority.Loaded);
             if (active != state) return;
-            state.Engine = new Mpv(surface.Handle, state.Session.MediaAuthorization, state.Session.StartSeconds, software: state.Software);
+            state.Engine = new Mpv(surface.Handle, state.Session.Local ? null : state.Session.MediaAuthorization, state.Session.StartSeconds,
+                software: state.Software, paused: state.Synchronized, audioOnly: state.Session.Audio);
             ApplyPlayerPreferences(state.Engine);
             state.Engine.Load(media);
             timer.Start();
@@ -174,10 +230,12 @@ public partial class MainWindow
                 ApplyPlayerPreferences(engine);
                 CorrectVideoDisplay();
                 var height = engine.Seconds("height");
-                PlaybackMode.Text = (state.Session.Method == "DirectPlay" ? "Lecture directe" : "Jellyfin · flux adapté") +
-                    (height is > 0 ? $" · {height:0}p" : "");
+                PlaybackMode.Text = MethodLabel(state) + (height is > 0 && !state.Session.Audio ? $" · {height:0}p" : "");
                 _ = state.Session.Report("", state.Position, false);
+                AddExternalSubtitles(state, engine);
+                if (state.Synchronized) SyncStarted(state);
             }
+            else if (kind == Mpv.Event.PlaybackRestart && state.Synchronized) SyncSeekCompleted(state);
             else if (kind is Mpv.Event.EndFile or Mpv.Event.Shutdown)
             {
                 if (!state.Started && !state.Software)
@@ -193,7 +251,9 @@ public partial class MainWindow
                 if (eof && state.Started)
                 {
                     state.Position = engine.Seconds("duration") ?? state.Duration;
-                    FinishPlayback(capture: false);
+                    if (state.Session.Local) SaveOfflinePosition(state, finished: true);
+                    if (!InSyncGroup && playQueueIndex + 1 < playQueue.Length) PlayQueueStep(1);
+                    else FinishPlayback(capture: false);
                 }
                 else FailPlayback("Le lecteur a interrompu la vidéo. " + (engine.LastError ?? "Essayez à nouveau."));
                 return;
@@ -223,6 +283,8 @@ public partial class MainWindow
             Timeline.IsEnabled = true;
         }
         PositionLabel.Text = FormatTime(state.Position) + " / " + FormatTime(state.Duration);
+        if (state.Synchronized) SyncTick(state, engine);
+        UpdateStats(engine, state);
         if (state.NextReport <= DateTime.UtcNow || paused != state.Paused)
         {
             state.Paused = paused;
@@ -283,6 +345,7 @@ public partial class MainWindow
     private void ReleasePlayback(bool capture = true)
     {
         timer.Stop();
+        HideSeekPreview();
         var state = active;
         if (state == null) return;
         active = null;
@@ -291,13 +354,18 @@ public partial class MainWindow
         {
             if (capture) state.Position = state.Engine?.Seconds("time-pos") ?? state.Position;
             stopping = state.Session.Report("/Stopped", state.Position, state.Paused);
+            if (state.Session.Local) SaveOfflinePosition(state, finished: false);
         }
+        // Séance commune : ce PC ne fait plus attendre le groupe tant qu'il ne relance pas la lecture.
+        if (state.Synchronized && syncGroup != null) _ = SyncRequest("SetIgnoreWait", new { IgnoreWait = true });
         state.Engine?.Dispose();
         state.Cancellation.Dispose();
     }
 
-    private void FinishPlayback(bool capture = true)
+    private void FinishPlayback(bool capture = true, bool refresh = true)
     {
+        if (miniPlayer) SetMiniPlayer(false);
+        ShowStats(false);
         if (pendingLive is { } live)
         {
             installation?.Cancel();
@@ -320,9 +388,11 @@ public partial class MainWindow
         seeking = false;
         if (fullscreen) SetFullscreen(false);
         Player.Visibility = Visibility.Collapsed;
+        AudioStage.Visibility = Visibility.Collapsed;
         if (closing) return;
+        if (client == null && offlineMode) { OfflineShell(); return; }
         LibraryShell.Visibility = Visibility.Visible;
-        _ = RefreshAfterPlayback(page);
+        if (refresh) _ = RefreshAfterPlayback(page);
     }
 
     private async Task RefreshAfterPlayback(Page? destination)
@@ -342,9 +412,26 @@ public partial class MainWindow
     }
 
     private void StopPlayback(object sender, RoutedEventArgs args) => FinishPlayback();
-    private void TogglePause(object sender, RoutedEventArgs args) => Command("cycle", "pause");
-    private void BackFifteen(object sender, RoutedEventArgs args) => Command("seek", "-15", "relative");
-    private void ForwardFifteen(object sender, RoutedEventArgs args) => Command("seek", "15", "relative");
+    // Séance SyncPlay : pause, lecture et déplacements passent par le serveur (appliqués chez tous).
+    private bool SyncControls => syncGroup != null && pendingLive == null && active is { Synchronized: true };
+    private void TogglePause(object sender, RoutedEventArgs args)
+    {
+        if (SyncControls) { _ = SyncRequest(CurrentEngine?.Paused == true ? "Unpause" : "Pause"); return; }
+        Command("cycle", "pause");
+    }
+    private void BackFifteen(object sender, RoutedEventArgs args) => SeekRelative(-15);
+    private void ForwardFifteen(object sender, RoutedEventArgs args) => SeekRelative(15);
+    private void SeekRelative(double delta)
+    {
+        if (SyncControls && active is { } state) { UserSeek(Math.Max(0, state.Position + delta)); return; }
+        Command("seek", delta.ToString("0.###", CultureInfo.InvariantCulture), "relative");
+    }
+    private void UserSeek(double seconds)
+    {
+        if (SyncControls) { _ = SyncRequest("Seek", new { PositionTicks = (long)(Math.Max(0, seconds) * TimeSpan.TicksPerSecond) }); return; }
+        SeekTo(seconds);
+    }
+    private void SeekTo(double seconds) => Command("seek", Math.Max(0, seconds).ToString("0.000", CultureInfo.InvariantCulture), "absolute+exact");
     private void AudioTrack(object sender, RoutedEventArgs args) => ShowTracks((Button)sender, "audio");
     private void SubtitleTrack(object sender, RoutedEventArgs args) => ShowTracks((Button)sender, "sub");
     private Mpv? CurrentEngine => active?.Engine ?? pendingLive?.Engine;
@@ -354,6 +441,18 @@ public partial class MainWindow
         if (engine == null) return;
         var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"),
             PlacementTarget = button, Placement = PlacementMode.Top };
+        if (type == "sub" && active is { Started: true, Session.Local: false } current && client is { } account && !current.Session.Audio)
+        {
+            var search = new MenuItem { Header = "Rechercher des sous-titres en ligne" };
+            foreach (var (code, language) in new[] { ("fre", "Français"), ("eng", "Anglais"), ("spa", "Espagnol"), ("ger", "Allemand"), ("ita", "Italien"), ("por", "Portugais") })
+            {
+                var choice = new MenuItem { Header = language };
+                choice.Click += (_, _) => _ = SearchSubtitles(account, current, code, button);
+                search.Items.Add(choice);
+            }
+            menu.Items.Add(search);
+            menu.Items.Add(new Separator());
+        }
         if (type == "sub")
         {
             var off = new MenuItem { Header = "Désactiver les sous-titres" };
@@ -389,14 +488,13 @@ public partial class MainWindow
     }
     private void SkipCreditsClick(object sender, RoutedEventArgs args)
     {
-        if (active?.CurrentCredits is { } segment)
-            Command("seek", (segment.EndTicks / (double)TimeSpan.TicksPerSecond).ToString("0.000", CultureInfo.InvariantCulture), "absolute+exact");
+        if (active?.CurrentCredits is { } segment) UserSeek(segment.EndTicks / (double)TimeSpan.TicksPerSecond);
     }
     private void Fullscreen(object sender, RoutedEventArgs args) => SetFullscreen(!fullscreen);
     private void BeginSeek(object sender, MouseButtonEventArgs args) => seeking = true;
     private void EndSeek(object sender, MouseButtonEventArgs args) { seeking = false; Seek(); }
     private void SeekKey(object sender, KeyEventArgs args) { if (args.Key is Key.Left or Key.Right or Key.Home or Key.End) Seek(); }
-    private void Seek() => Command("seek", Timeline.Value.ToString("0.000", CultureInfo.InvariantCulture), "absolute+exact");
+    private void Seek() => UserSeek(Timeline.Value);
 
     private static string FormatTime(double seconds) => TimeSpan.FromSeconds(Math.Clamp(double.IsFinite(seconds) ? seconds : 0, 0, 86400))
         .ToString(@"h\:mm\:ss");
@@ -419,7 +517,9 @@ public partial class MainWindow
         internal readonly JellyfinPlayback Session = session;
         internal CancellationTokenSource Cancellation = new();
         internal Mpv? Engine;
-        internal bool Started, Paused, TriedFallback, Software;
+        internal bool Started, Paused, TriedFallback, Software, Synchronized;
+        internal MediaItem? Item;
+        internal Trickplay? Thumbnails;
         internal double Position, Duration;
         internal DateTime NextReport;
         internal MediaSegment[] Credits = [];
@@ -516,6 +616,7 @@ public partial class MainWindow
         else if (state.Started)
         {
             ShowPauseState(engine.Paused);
+            UpdateStats(engine, null);
             if (engine.Seconds("video-params/h") is > 0 and var height)
             {
                 LiveQualityButton.Content = $"{height:0}p";

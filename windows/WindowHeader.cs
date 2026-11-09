@@ -15,7 +15,7 @@ public partial class MainWindow
     {
         var inset = MaximizedFrameInset();
         WindowFrame.Margin = inset;
-        CaptionRow.Height = new GridLength(fullscreen ? 0 : CaptionHeight);
+        CaptionRow.Height = new GridLength(fullscreen || miniPlayer ? 0 : CaptionHeight);
         if (WindowChrome.GetWindowChrome(this) is { } chrome) chrome.CaptionHeight = CaptionHeight + inset.Top;
 
         // WPF widths are logical units: Windows applies the current monitor's DPI once.

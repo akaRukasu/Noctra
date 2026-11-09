@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         var overridden = server >= 0 && server + 1 < arguments.Length;
         ServerAddress.Text = overridden ? arguments[server + 1] : Jellyfin.DefaultAddress;
         SignInButton.IsEnabled = false;
+        SavedAccount? saved = null;
         try
         {
             Directory.CreateDirectory(dataDirectory);
@@ -89,7 +90,7 @@ public partial class MainWindow : Window
             if (overridden || !File.Exists(AccountPath)) return;
 
             var encrypted = await File.ReadAllBytesAsync(AccountPath, lifetime.Token);
-            var saved = JsonSerializer.Deserialize<SavedAccount>(ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser));
+            saved = JsonSerializer.Deserialize<SavedAccount>(ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser));
             if (saved == null || !Jellyfin.TryAddress(saved.JellyfinUrl, out var root)) return;
             ServerAddress.Text = saved.Address;
             Username.Text = saved.User.Name;
@@ -109,6 +110,8 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is not OutOfMemoryException)
         {
             LoginStatus.Text = "Session indisponible. Connectez-vous à nouveau.";
+            // Sans réseau : les téléchargements du profil enregistré restent lisibles.
+            if (saved?.User is { } viewer && PlayRequest.Identifier(viewer.Id)) OfferOffline(viewer);
         }
         finally
         {
@@ -134,21 +137,7 @@ public partial class MainWindow : Window
         {
             var signedIn = await Jellyfin.SignIn(address, deviceId, username, Password.Password, lifetime.Token);
             if (closing) return;
-            var message = "";
-            try
-            {
-                if (Remember.IsChecked == true)
-                {
-                    var saved = new SavedAccount(address, signedIn.Root.AbsoluteUri, signedIn.User, signedIn.Token, signedIn.NoctraRoot?.AbsoluteUri);
-                    var encrypted = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(saved), null, DataProtectionScope.CurrentUser);
-                    await File.WriteAllBytesAsync(AccountPath, encrypted, lifetime.Token);
-                }
-                else File.Delete(AccountPath);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException)
-            {
-                message = "Impossible de mettre à jour la session enregistrée sur ce PC.";
-            }
+            var message = await RememberAccount(address, signedIn);
             if (closing) return;
             Enter(signedIn);
             ShowStatus(message);
@@ -165,9 +154,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task<string> RememberAccount(string address, Jellyfin signedIn)
+    {
+        try
+        {
+            if (Remember.IsChecked == true)
+            {
+                var saved = new SavedAccount(address, signedIn.Root.AbsoluteUri, signedIn.User, signedIn.Token, signedIn.NoctraRoot?.AbsoluteUri);
+                var encrypted = ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(saved), null, DataProtectionScope.CurrentUser);
+                await File.WriteAllBytesAsync(AccountPath, encrypted, lifetime.Token);
+            }
+            else File.Delete(AccountPath);
+            return "";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException)
+        {
+            return "Impossible de mettre à jour la session enregistrée sur ce PC.";
+        }
+    }
+
     private void Enter(Jellyfin signedIn)
     {
         client = signedIn;
+        offlineMode = false;
+        offlineViewer = signedIn.User;
+        OfflineButton.Visibility = Visibility.Collapsed;
+        QuickConnectPanel.Visibility = Visibility.Collapsed;
+        quickConnect?.Cancel();
+        StartRealtime(signedIn);
+        _ = SyncOfflinePositions(signedIn);
         savedTvOwner = null;
         savedTvSources = null;
         tvCatalogCache.Clear(); tvCatalogOwner = null;
@@ -201,6 +216,10 @@ public partial class MainWindow : Window
         multiview = null;
         multiviewSelection.Clear();
         _ = EndCast();
+        if (syncGroup != null) _ = SyncRequest("Leave");
+        StopRealtime();
+        foreach (var job in offlineJobs.Values) job.Cancel.Cancel();
+        offlineViewer = null;
         pageRequest?.Cancel();
         client = null;
         artwork = null;
@@ -363,6 +382,9 @@ public partial class MainWindow : Window
         if (closing) return;
         closing = true;
         multiview?.Close();
+        if (syncGroup != null) await Task.WhenAny(SyncRequest("Leave"), Task.Delay(1500));
+        StopRealtime();
+        foreach (var job in offlineJobs.Values) job.Cancel.Cancel();
         await EndCast();
         lifetime.Cancel();
         FinishPlayback();

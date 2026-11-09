@@ -1,0 +1,662 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+
+namespace Noctra.Windows;
+
+// 0.7 : SyncPlay (regarder ensemble, synchronisé par le serveur Jellyfin) et télécommande
+// de ce PC depuis un autre appareil (commandes « Play », « Playstate », « GeneralCommand »).
+public partial class MainWindow
+{
+    private JellyfinSocket? realtime;
+    private bool realtimeConnected;
+    private TimeSpan serverClockOffset;
+    private long syncPing = 120;
+    private SyncGroup? syncGroup;
+    private readonly System.Windows.Threading.DispatcherTimer syncClock = new() { Interval = TimeSpan.FromSeconds(45) };
+    private MediaItem? syncPendingItem;
+
+    private sealed class SyncGroup
+    {
+        internal string Id = "";
+        internal string Name = "";
+        internal List<string> Members = [];
+        internal string State = "Idle";
+        internal string? PlaylistItemId;
+        internal string? ItemId;
+        internal bool Playing;
+        internal string LastCommand = "";
+        internal DateTime CommandWhen;
+        internal long CommandTicks;
+        internal bool AwaitingReady;
+        internal bool Buffering;
+        internal DateTime NextDrift;
+        internal CancellationTokenSource? Scheduled;
+    }
+
+    private DateTime ServerNow => DateTime.UtcNow + serverClockOffset;
+    private bool InSyncGroup => syncGroup != null;
+
+    private void StartRealtime(Jellyfin account)
+    {
+        StopRealtime();
+        realtime = new JellyfinSocket(account,
+            (type, data) => Dispatcher.BeginInvoke(() => { if (client == account && !closing) RealtimeMessage(account, type, data); }),
+            connected => Dispatcher.BeginInvoke(() =>
+            {
+                if (client != account) return;
+                realtimeConnected = connected;
+                if (connected) _ = AnnounceCapabilities(account);
+                RefreshSyncIndicators();
+            }));
+        realtime.Start();
+        if (!syncClockConfigured)
+        {
+            syncClockConfigured = true;
+            syncClock.Tick += (_, _) => { if (client is { } current && syncGroup != null) _ = SyncClock(current); };
+        }
+    }
+    private bool syncClockConfigured;
+
+    private void StopRealtime()
+    {
+        realtime?.Close();
+        realtime = null;
+        realtimeConnected = false;
+        syncClock.Stop();
+        if (syncGroup != null) syncGroup.Scheduled?.Cancel();
+        syncGroup = null;
+        RefreshSyncIndicators();
+    }
+
+    // Ce PC apparaît dans Jellyfin comme un lecteur pilotable (téléphone, PWA, autre client).
+    private async Task AnnounceCapabilities(Jellyfin account)
+    {
+        try
+        {
+            await account.Command("Sessions/Capabilities/Full", new
+            {
+                PlayableMediaTypes = new[] { "Video", "Audio" },
+                SupportedCommands = new[] { "DisplayMessage", "SetVolume", "VolumeUp", "VolumeDown", "ToggleMute", "Mute", "Unmute", "ToggleFullscreen", "PlayState", "PlayMediaSource" },
+                SupportsMediaControl = true,
+                SupportsPersistentIdentifier = true
+            }, lifetime.Token);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException) { }
+    }
+
+    private void RealtimeMessage(Jellyfin account, string type, JsonElement data)
+    {
+        switch (type)
+        {
+            case "SyncPlayGroupUpdate": SyncUpdate(account, data); break;
+            case "SyncPlayCommand": SyncCommand(data); break;
+            case "Playstate": RemotePlaystate(data); break;
+            case "Play": _ = RemotePlay(account, data); break;
+            case "GeneralCommand": RemoteGeneral(data); break;
+        }
+    }
+
+    // ---------- Télécommande ----------
+
+    private void RemotePlaystate(JsonElement data)
+    {
+        var engine = CurrentEngine;
+        switch (data.Str("Command"))
+        {
+            case "Stop": FinishPlayback(); break;
+            case "Pause": if (engine != null && !engine.Paused) TogglePause(this, new RoutedEventArgs()); break;
+            case "Unpause": if (engine is { Paused: true }) TogglePause(this, new RoutedEventArgs()); break;
+            case "PlayPause": TogglePause(this, new RoutedEventArgs()); break;
+            case "Seek":
+                if (pendingLive == null && data.Num("SeekPositionTicks") is var ticks and >= 0) UserSeek(ticks / TimeSpan.TicksPerSecond);
+                break;
+            case "Rewind": if (pendingLive == null) BackFifteen(this, new RoutedEventArgs()); break;
+            case "FastForward": if (pendingLive == null) ForwardFifteen(this, new RoutedEventArgs()); break;
+            case "NextTrack": PlayQueueStep(1); break;
+            case "PreviousTrack": PlayQueueStep(-1); break;
+        }
+    }
+
+    private async Task RemotePlay(Jellyfin account, JsonElement data)
+    {
+        var ids = data.List("ItemIds").Select(id => id.Str()).Where(PlayRequest.Identifier).ToArray();
+        if (ids.Length == 0) return;
+        try
+        {
+            var items = new List<MediaItem>();
+            foreach (var id in ids.Take(200)) items.Add(await account.Detail(id, lifetime.Token));
+            if (client != account || closing) return;
+            var start = (long)Math.Max(0, data.Num("StartPositionTicks"));
+            var index = (int)Math.Clamp(data.Num("StartIndex"), 0, items.Count - 1);
+            if (pendingMedia != null || pendingLive != null) FinishPlayback();
+            ShowStatus("Lecture demandée depuis un autre appareil.");
+            PlayQueue(items.ToArray(), index, start);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+        { ShowStatus("Le titre demandé à distance est introuvable sur ce compte."); }
+    }
+
+    private void RemoteGeneral(JsonElement data)
+    {
+        var arguments = data.Field("Arguments");
+        switch (data.Str("Name"))
+        {
+            case "DisplayMessage":
+                var header = arguments.Str("Header");
+                ShowStatus((header.Length > 0 ? header + " · " : "") + arguments.Str("Text"));
+                break;
+            case "SetVolume":
+                if (double.TryParse(arguments.Str("Volume"), NumberStyles.Float, CultureInfo.InvariantCulture, out var volume))
+                    VolumeControl.Value = Math.Clamp(volume, 0, 100);
+                break;
+            case "VolumeUp": VolumeControl.Value = Math.Min(100, VolumeControl.Value + 5); break;
+            case "VolumeDown": VolumeControl.Value = Math.Max(0, VolumeControl.Value - 5); break;
+            case "ToggleMute": case "Mute": case "Unmute": Command("cycle", "mute"); break;
+            case "ToggleFullscreen": SetFullscreen(!fullscreen); break;
+        }
+    }
+
+    // ---------- SyncPlay : messages du serveur ----------
+
+    private void SyncUpdate(Jellyfin account, JsonElement data)
+    {
+        var payload = data.Field("Data");
+        switch (data.Str("Type"))
+        {
+            case "GroupJoined":
+                syncGroup?.Scheduled?.Cancel();
+                syncGroup = new SyncGroup
+                {
+                    Id = data.Str("GroupId"), Name = payload.Str("GroupName"), State = payload.Str("State"),
+                    Members = payload.List("Participants").Select(member => member.Str()).Where(name => name.Length > 0).ToList()
+                };
+                ShowStatus("Vous regardez ensemble dans « " + syncGroup.Name + " ».");
+                _ = SyncClock(account);
+                syncClock.Start();
+                if (syncPendingItem is { } pending)
+                {
+                    syncPendingItem = null;
+                    _ = SyncRequest("SetNewQueue", new { PlayingQueue = new[] { pending.Id }, PlayingItemPosition = 0, StartPositionTicks = pending.Resume });
+                }
+                break;
+            case "UserJoined":
+                if (syncGroup != null && payload.Str() is { Length: > 0 } joined)
+                {
+                    if (!syncGroup.Members.Contains(joined)) syncGroup.Members.Add(joined);
+                    ShowStatus(joined + " a rejoint le groupe.");
+                }
+                break;
+            case "UserLeft":
+                if (syncGroup != null && payload.Str() is { Length: > 0 } left)
+                {
+                    syncGroup.Members.Remove(left);
+                    ShowStatus(left + " a quitté le groupe.");
+                }
+                break;
+            case "GroupLeft":
+                LeaveSyncLocally("Vous avez quitté le groupe.");
+                break;
+            case "NotInGroup":
+            case "GroupDoesNotExist":
+                LeaveSyncLocally(syncGroup == null ? "" : "Ce groupe n’existe plus.");
+                break;
+            case "StateUpdate":
+                if (syncGroup != null) syncGroup.State = payload.Str("State");
+                break;
+            case "PlayQueue":
+                _ = SyncQueue(account, payload);
+                break;
+            case "LibraryAccessDenied":
+                ShowStatus("Un participant n’a pas accès à ce titre dans Jellyfin.");
+                break;
+            case "CreateGroupDenied":
+            case "JoinGroupDenied":
+                ShowStatus("Jellyfin n’autorise pas SyncPlay pour ce compte (droit à activer par l’administrateur).");
+                break;
+        }
+        RefreshSyncIndicators();
+    }
+
+    private void LeaveSyncLocally(string message)
+    {
+        syncGroup?.Scheduled?.Cancel();
+        syncGroup = null;
+        syncClock.Stop();
+        SetSpeed(1);
+        if (message.Length > 0) ShowStatus(message);
+        RefreshSyncIndicators();
+    }
+
+    private async Task SyncQueue(Jellyfin account, JsonElement queue)
+    {
+        if (syncGroup is not { } group) return;
+        var playlist = queue.List("Playlist");
+        var index = (int)queue.Num("PlayingItemIndex");
+        group.Playing = queue.Flag("IsPlaying");
+        if (index < 0 || index >= playlist.Length) return;
+        var itemId = playlist[index].Str("ItemId");
+        var playlistItemId = playlist[index].Str("PlaylistItemId");
+        if (!PlayRequest.Identifier(itemId)) return;
+        var reason = queue.Str("Reason");
+        // Simple modification de la file (ajout, ordre) : la lecture en cours continue.
+        if (group.PlaylistItemId == playlistItemId && active?.Session.ItemId == itemId && reason is not ("NewPlaylist" or "SetCurrentItem")) return;
+        group.PlaylistItemId = playlistItemId;
+        group.ItemId = itemId;
+        MediaItem item;
+        try { item = await account.Detail(itemId, lifetime.Token); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            ShowStatus("Le titre choisi par le groupe est introuvable sur ce compte.");
+            return;
+        }
+        if (client != account || syncGroup != group || group.PlaylistItemId != playlistItemId || closing) return;
+        if (pendingMedia != null || pendingLive != null) FinishPlayback(refresh: false);
+        group.AwaitingReady = true;
+        group.LastCommand = "";
+        StartPlayback(item, (long)Math.Max(0, queue.Num("StartPositionTicks")), synchronized: true);
+        _ = SyncRequest("SetIgnoreWait", new { IgnoreWait = false });
+    }
+
+    private void SyncCommand(JsonElement data)
+    {
+        if (syncGroup is not { } group || data.Str("GroupId") != group.Id) return;
+        var item = data.Str("PlaylistItemId");
+        if (item.Length > 0 && group.PlaylistItemId != null && item != group.PlaylistItemId) return;
+        var when = ParseServerTime(data.Str("When")) ?? ServerNow;
+        var ticks = (long)Math.Max(0, data.Num("PositionTicks"));
+        group.Scheduled?.Cancel();
+        var scheduled = group.Scheduled = new CancellationTokenSource();
+        group.LastCommand = data.Str("Command");
+        group.CommandWhen = when;
+        group.CommandTicks = ticks;
+        switch (group.LastCommand)
+        {
+            case "Unpause":
+                group.Playing = true;
+                _ = SyncUnpause(group, scheduled.Token);
+                break;
+            case "Pause":
+                group.Playing = false;
+                _ = SyncPause(group, scheduled.Token);
+                break;
+            case "Seek":
+                group.Playing = false;
+                if (active is { Started: true })
+                {
+                    Command("set", "pause", "yes");
+                    SetSpeed(1);
+                    group.AwaitingReady = true;
+                    SeekTo(ticks / (double)TimeSpan.TicksPerSecond);
+                }
+                break;
+            case "Stop":
+                group.Playing = false;
+                if (pendingMedia != null) FinishPlayback();
+                break;
+        }
+        RefreshSyncIndicators();
+    }
+
+    private async Task SyncUnpause(SyncGroup group, CancellationToken token)
+    {
+        if (active is not { Started: true }) return; // appliqué au démarrage de la vidéo
+        var wait = group.CommandWhen - ServerNow;
+        if (wait > TimeSpan.Zero)
+        {
+            Command("set", "pause", "yes");
+            SeekTo(group.CommandTicks / (double)TimeSpan.TicksPerSecond);
+            try { await Task.Delay(wait, token); }
+            catch (OperationCanceledException) { return; }
+            if (syncGroup != group || token.IsCancellationRequested) return;
+            Command("set", "pause", "no");
+        }
+        else
+        {
+            SeekTo((group.CommandTicks + (-wait).Ticks) / (double)TimeSpan.TicksPerSecond);
+            Command("set", "pause", "no");
+        }
+        group.NextDrift = DateTime.UtcNow.AddSeconds(2.5);
+    }
+
+    private async Task SyncPause(SyncGroup group, CancellationToken token)
+    {
+        var wait = group.CommandWhen - ServerNow;
+        if (wait > TimeSpan.Zero)
+        {
+            try { await Task.Delay(wait, token); }
+            catch (OperationCanceledException) { return; }
+        }
+        if (syncGroup != group || token.IsCancellationRequested) return;
+        Command("set", "pause", "yes");
+        SetSpeed(1);
+        SeekTo(group.CommandTicks / (double)TimeSpan.TicksPerSecond);
+    }
+
+    // Vidéo prête (premier affichage) : le serveur démarre le groupe quand tout le monde l'est.
+    private void SyncStarted(ActivePlayback state)
+    {
+        if (syncGroup is not { } group)
+        {
+            Command("set", "pause", "no");
+            return;
+        }
+        group.AwaitingReady = false;
+        _ = SyncReady(group, state, false);
+        if (group.LastCommand == "Unpause" && group.Playing) _ = SyncUnpause(group, (group.Scheduled ??= new()).Token);
+    }
+
+    // Fin d'un déplacement demandé par le groupe.
+    private void SyncSeekCompleted(ActivePlayback state)
+    {
+        if (syncGroup is not { AwaitingReady: true } group) return;
+        group.AwaitingReady = false;
+        _ = SyncReady(group, state, false);
+    }
+
+    private Task SyncReady(SyncGroup group, ActivePlayback state, bool playing) =>
+        SyncRequest("Ready", new
+        {
+            When = ServerNow.ToString("o", CultureInfo.InvariantCulture),
+            PositionTicks = (long)(state.Position * TimeSpan.TicksPerSecond),
+            IsPlaying = playing, PlaylistItemId = group.PlaylistItemId ?? ""
+        });
+
+    // Écart avec le groupe : léger changement de vitesse, ou saut au-delà de 2,5 s ; mise en
+    // mémoire tampon signalée au groupe (qui attend alors ce PC).
+    private void SyncTick(ActivePlayback state, Mpv engine)
+    {
+        if (syncGroup is not { } group) return;
+        var waiting = engine.Flag("paused-for-cache");
+        if (waiting && group.Playing && !group.Buffering)
+        {
+            group.Buffering = true;
+            _ = SyncRequest("Buffering", new
+            {
+                When = ServerNow.ToString("o", CultureInfo.InvariantCulture), PositionTicks = (long)(state.Position * TimeSpan.TicksPerSecond),
+                IsPlaying = true, PlaylistItemId = group.PlaylistItemId ?? ""
+            });
+        }
+        else if (!waiting && group.Buffering)
+        {
+            group.Buffering = false;
+            _ = SyncReady(group, state, true);
+        }
+        if (!group.Playing || group.LastCommand != "Unpause" || engine.Paused || waiting || DateTime.UtcNow < group.NextDrift) return;
+        group.NextDrift = DateTime.UtcNow.AddSeconds(1);
+        var expected = (group.CommandTicks + (ServerNow - group.CommandWhen).Ticks) / (double)TimeSpan.TicksPerSecond;
+        var drift = state.Position - expected;
+        if (Math.Abs(drift) > 2.5)
+        {
+            SetSpeed(1);
+            SeekTo(expected);
+            group.NextDrift = DateTime.UtcNow.AddSeconds(3);
+        }
+        else if (Math.Abs(drift) > .12) SetSpeed(drift > 0 ? .95 : 1.05);
+        else SetSpeed(1);
+        SyncDriftReadout = drift;
+    }
+    private double SyncDriftReadout;
+
+    private void SetSpeed(double speed)
+    {
+        if (CurrentEngine is not { } engine) return;
+        try { engine.Command("set", "speed", speed.ToString("0.00", CultureInfo.InvariantCulture)); }
+        catch (InvalidOperationException) { }
+    }
+
+    private static DateTime? ParseServerTime(string value) =>
+        DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var time) ? time : null;
+
+    // Horloge du serveur (méthode NTP simplifiée, meilleur de trois échanges) et ping du groupe.
+    private async Task SyncClock(Jellyfin account)
+    {
+        var best = (Offset: TimeSpan.Zero, Delay: TimeSpan.MaxValue);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                var sent = DateTime.UtcNow;
+                var reply = await account.ReadJson("GetUtcTime", lifetime.Token);
+                var back = DateTime.UtcNow;
+                if (ParseServerTime(reply.Str("RequestReceptionTime")) is not { } reception ||
+                    ParseServerTime(reply.Str("ResponseTransmissionTime")) is not { } transmission) continue;
+                var delay = back - sent - (transmission - reception);
+                if (delay < best.Delay) best = ((reception - sent + (transmission - back)) / 2, delay);
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+        }
+        if (best.Delay == TimeSpan.MaxValue || client != account) return;
+        serverClockOffset = best.Offset;
+        syncPing = (long)Math.Clamp(best.Delay.TotalMilliseconds, 0, 5000);
+        if (syncGroup != null) await SyncRequest("Ping", new { Ping = syncPing });
+    }
+
+    private async Task SyncRequest(string action, object? body = null)
+    {
+        if (client is not { } account) return;
+        try { await account.Command("SyncPlay/" + action, body ?? new { }, lifetime.Token); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+        {
+            if (error is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized })
+                ShowStatus("Jellyfin n’autorise pas SyncPlay pour ce compte (droit à activer par l’administrateur).");
+            else if (!lifetime.IsCancellationRequested) ShowStatus("Le serveur n’a pas répondu à la demande SyncPlay. Réessayez.");
+        }
+    }
+
+    // ---------- SyncPlay : actions locales ----------
+
+    private void SyncCreate(string name, MediaItem? item = null)
+    {
+        syncPendingItem = item;
+        _ = SyncRequest("New", new { GroupName = string.IsNullOrWhiteSpace(name) ? "Soirée Noctra" : name.Trim()[..Math.Min(name.Trim().Length, 60)] });
+    }
+
+    private void SyncJoin(string groupId) { if (PlayRequest.Identifier(groupId)) _ = SyncRequest("Join", new { GroupId = groupId }); }
+    private void SyncLeave() => _ = SyncRequest("Leave");
+
+    // Un titre lancé pendant une séance commune démarre chez tous les participants.
+    private void SyncPlayItem(MediaItem item, long startTicks)
+    {
+        ShowStatus("Lancement de « " + item.DisplayTitle + " » pour tout le groupe…");
+        _ = SyncRequest("SetNewQueue", new { PlayingQueue = new[] { item.Id }, PlayingItemPosition = 0, StartPositionTicks = startTicks });
+    }
+
+    private void RefreshSyncIndicators()
+    {
+        var group = syncGroup;
+        SyncBadge.Visibility = group == null ? Visibility.Collapsed : Visibility.Visible;
+        SyncBadgeText.Text = group == null ? "" : "Ensemble · " + Math.Max(1, group.Members.Count);
+        SyncBadge.ToolTip = group == null ? null : group.Name + " · " + string.Join(", ", group.Members);
+        if (page?.Title == SyncPageTitle && LibraryShell.Visibility == Visibility.Visible && pageRequest != null && !rerenderingSync)
+        {
+            rerenderingSync = true;
+            _ = Dispatcher.BeginInvoke(async () => { try { if (page?.Title == SyncPageTitle) await Navigate(SyncPlayPage, back: true); } finally { rerenderingSync = false; } });
+        }
+    }
+    private bool rerenderingSync;
+
+    private void SyncMenu(object sender, RoutedEventArgs args)
+    {
+        var button = (Button)sender;
+        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"), PlacementTarget = button, Placement = PlacementMode.Bottom };
+        MenuItem Entry(string header, Action? click, bool enabled = true)
+        {
+            var entry = new MenuItem { Header = header, Foreground = BrushFor("Ink"), IsEnabled = enabled, Padding = new Thickness(6, 8, 18, 8) };
+            if (click != null) entry.Click += (_, _) => click();
+            menu.Items.Add(entry);
+            return entry;
+        }
+        if (syncGroup is { } group)
+        {
+            Entry(group.Name + " · " + group.Members.Count + " participant" + (group.Members.Count > 1 ? "s" : ""), null, false);
+            foreach (var member in group.Members) Entry("   " + member, null, false);
+            menu.Items.Add(new Separator());
+            Entry("Quitter le groupe", SyncLeave);
+        }
+        else
+        {
+            var current = pendingMedia;
+            Entry("Créer un groupe avec ce titre", current == null ? null : () =>
+            {
+                var position = (long)((active?.Position ?? 0) * TimeSpan.TicksPerSecond);
+                SyncCreate("Soirée de " + (client?.User.Name ?? "Noctra"), current with { UserData = new WatchData(false, position, false) });
+            }, current != null && realtimeConnected);
+            if (!realtimeConnected) Entry("Connexion temps réel indisponible", null, false);
+            var loading = Entry("Recherche des groupes…", null, false);
+            _ = FillGroups(menu, loading);
+        }
+        trackMenu = menu;
+        menu.IsOpen = true;
+    }
+
+    private async Task FillGroups(ContextMenu menu, MenuItem placeholder)
+    {
+        if (client is not { } account) return;
+        try
+        {
+            var groups = (await account.ReadJson("SyncPlay/List", lifetime.Token)).List();
+            menu.Items.Remove(placeholder);
+            if (groups.Length == 0) menu.Items.Add(new MenuItem { Header = "Aucun groupe ouvert", IsEnabled = false, Foreground = BrushFor("Muted") });
+            foreach (var group in groups)
+            {
+                var id = group.Str("GroupId");
+                var entry = new MenuItem { Header = "Rejoindre « " + group.Str("GroupName") + " » · " + group.List("Participants").Length, Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+                entry.Click += (_, _) => SyncJoin(id);
+                menu.Items.Add(entry);
+            }
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            placeholder.Header = "SyncPlay indisponible sur ce compte";
+        }
+    }
+
+    private const string SyncPageTitle = "Regarder ensemble";
+
+    private Page SyncPlayPage => new(SyncPageTitle, ButtonTab.None, async (account, cancellation) =>
+    {
+        PageContent.Children.Clear();
+        PageContent.Children.Add(FeatureHero("", "REGARDER ENSEMBLE", "Une séance, plusieurs écrans.",
+            "Lecture, pause et déplacements synchronisés au dixième de seconde avec les autres participants, sur ce PC, la PWA, Android ou un autre ordinateur."));
+        if (!realtimeConnected)
+        {
+            PageContent.Children.Add(Message("Connexion temps réel au serveur en cours… Si elle n’aboutit pas, vérifiez que le WebSocket de Jellyfin est accessible."));
+            var retry = Action("Réessayer la connexion", () => { if (client is { } current) StartRealtime(current); _ = Navigate(SyncPlayPage, back: true); });
+            retry.HorizontalAlignment = HorizontalAlignment.Left;
+            retry.Margin = new Thickness(0, 0, 0, 20);
+            PageContent.Children.Add(retry);
+        }
+        if (syncGroup is { } group)
+        {
+            var card = new StackPanel();
+            card.Children.Add(Text("VOTRE GROUPE", 11, true, "Accent"));
+            var name = Text(group.Name, 30, true);
+            name.Margin = new Thickness(0, 6, 0, 4);
+            AutomationProperties.SetAutomationId(name, "SyncGroupName");
+            card.Children.Add(name);
+            var state = group.State switch { "Playing" => "Lecture en cours", "Paused" => "En pause", "Waiting" => "En attente des participants", _ => "Aucune lecture" };
+            card.Children.Add(Text(state + " · ping " + syncPing + " ms", 13, color: "Muted"));
+            var members = new WrapPanel { Margin = new Thickness(0, 18, 0, 18) };
+            foreach (var member in group.Members) members.Children.Add(Chip(member));
+            card.Children.Add(members);
+            card.Children.Add(Text("Lancez un film ou un épisode depuis Noctra : il démarre chez tout le monde au même instant.", 14, color: "Muted"));
+            var leave = Action("Quitter le groupe", SyncLeave);
+            leave.HorizontalAlignment = HorizontalAlignment.Left;
+            leave.Margin = new Thickness(0, 18, 0, 0);
+            card.Children.Add(leave);
+            PageContent.Children.Add(Sheet(card));
+            return;
+        }
+        var create = new StackPanel();
+        create.Children.Add(Text("Créer un groupe", 22, true));
+        var groupName = Input(create, "Nom du groupe", "Soirée de " + account.User.Name);
+        AutomationProperties.SetAutomationId(groupName, "SyncGroupInput");
+        var start = Action("Créer le groupe", () => SyncCreate(groupName.Text), "Primary");
+        start.HorizontalAlignment = HorizontalAlignment.Left;
+        start.Margin = new Thickness(0, 14, 0, 0);
+        AutomationProperties.SetAutomationId(start, "SyncCreate");
+        create.Children.Add(start);
+        PageContent.Children.Add(Sheet(create));
+        var heading = Text("Groupes ouverts", 22, true);
+        heading.Margin = new Thickness(0, 26, 0, 12);
+        PageContent.Children.Add(heading);
+        try
+        {
+            var groups = (await account.ReadJson("SyncPlay/List", cancellation)).List();
+            if (cancellation.IsCancellationRequested) return;
+            if (groups.Length == 0) PageContent.Children.Add(Message("Aucun groupe ouvert pour le moment. Créez-en un : les autres le verront ici."));
+            foreach (var open in groups)
+            {
+                var id = open.Str("GroupId");
+                var people = open.List("Participants").Select(member => member.Str()).ToArray();
+                PageContent.Children.Add(Row(open.Str("GroupName"), people.Length + " participant" + (people.Length > 1 ? "s" : "") + " · " + string.Join(", ", people),
+                    Action("Rejoindre", () => SyncJoin(id), "Primary")));
+            }
+        }
+        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized)
+        {
+            PageContent.Children.Add(Message("SyncPlay n’est pas autorisé pour ce compte. L’administrateur peut l’activer dans les droits de l’utilisateur Jellyfin."));
+        }
+    });
+
+    // Grand en-tête illustré des pages de fonctions (dégradé, icône, accroche).
+    private FrameworkElement FeatureHero(string glyph, string eyebrow, string title, string description)
+    {
+        var grid = new Grid { MinHeight = 210, ClipToBounds = true };
+        grid.Children.Add(new Border { CornerRadius = new CornerRadius(24), Background = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0), EndPoint = new Point(1, 1),
+            GradientStops = { new GradientStop(Color.FromRgb(44, 31, 84), 0), new GradientStop(Color.FromRgb(22, 26, 48), .55), new GradientStop(Color.FromRgb(12, 48, 64), 1) }
+        } });
+        grid.Children.Add(new Border { CornerRadius = new CornerRadius(24), BorderBrush = ColorOf("#26FFFFFF"), BorderThickness = new Thickness(1) });
+        var halo = new System.Windows.Shapes.Ellipse { Width = 340, Height = 340, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -120, -60, 0), Fill = new RadialGradientBrush(Color.FromArgb(110, 188, 170, 255), Color.FromArgb(0, 188, 170, 255)) };
+        grid.Children.Add(halo);
+        var icon = new TextBlock { Text = glyph, FontFamily = (FontFamily)Resources["IconFont"], FontSize = 92, Foreground = ColorOf("#30FFFFFF"),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 56, 0) };
+        grid.Children.Add(icon);
+        var copy = new StackPanel { Margin = new Thickness(36, 32, 200, 32), VerticalAlignment = VerticalAlignment.Center };
+        copy.Children.Add(Text(eyebrow, 11, true, "Accent"));
+        var heading = Text(title, 38, true);
+        heading.TextWrapping = TextWrapping.Wrap;
+        heading.Margin = new Thickness(0, 8, 0, 10);
+        copy.Children.Add(heading);
+        var caption = Text(description, 15, color: "Muted");
+        caption.TextWrapping = TextWrapping.Wrap;
+        caption.MaxWidth = 640;
+        caption.HorizontalAlignment = HorizontalAlignment.Left;
+        copy.Children.Add(caption);
+        grid.Children.Add(copy);
+        grid.Margin = new Thickness(0, 6, 0, 24);
+        Reveal(copy, 80, 14);
+        return grid;
+    }
+
+    private Border Chip(string label, string? glyph = null)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Background = BrushFor("AccentGradient"), Margin = new Thickness(0, 0, 9, 0),
+            Child = new TextBlock { Text = glyph ?? (label.Length > 0 ? label[..1].ToUpperInvariant() : "?"), FontFamily = glyph != null ? (FontFamily)Resources["IconFont"] : FontFamily,
+                FontWeight = FontWeights.Bold, FontSize = 12, Foreground = ColorOf("#0A0A12"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Foreground = BrushFor("Ink"), FontWeight = FontWeights.SemiBold });
+        return new Border { Child = row, Padding = new Thickness(6, 6, 14, 6), CornerRadius = new CornerRadius(19), Background = ColorOf("#14FFFFFF"),
+            BorderBrush = ColorOf("#1FFFFFFF"), BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 8, 8) };
+    }
+
+    private Border Sheet(UIElement content) => new()
+    {
+        Child = content, Padding = new Thickness(26, 22, 26, 24), CornerRadius = new CornerRadius(20),
+        Background = BrushFor("Panel"), BorderBrush = BrushFor("Outline"), BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 14)
+    };
+}
