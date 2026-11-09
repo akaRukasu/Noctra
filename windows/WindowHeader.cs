@@ -61,9 +61,10 @@ public partial class MainWindow
         TvSidebar.Margin = new Thickness(contentGutter, top, 0, 24);
         var margin = new Thickness(tv ? 22 : contentGutter, top, contentGutter, 36);
         if (PageContent.Margin != margin) PageContent.Margin = margin;
-        foreach (var child in PageContent.Children)
-            if (child is FrameworkElement { Tag: Bleed } element)
-                element.Margin = new Thickness(-margin.Left, -margin.Top, -margin.Right, element.Margin.Bottom);
+        // Pleine largeur ; sous le bandeau seulement pour le premier élément de la page.
+        for (var index = 0; index < PageContent.Children.Count; index++)
+            if (PageContent.Children[index] is FrameworkElement { Tag: Bleed } element)
+                element.Margin = new Thickness(-margin.Left, index == 0 ? -margin.Top : 0, -margin.Right, element.Margin.Bottom);
     }
 
     private bool navigationSolid;

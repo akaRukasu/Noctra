@@ -22,7 +22,7 @@ public partial class MainWindow
         var account = client;
         var label = Text("Vérification…", 11, true, "Muted");
         var badge = new Border { Child = label, CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 4, 8, 4),
-            Background = ColorOf("#AB17263A"), Margin = new Thickness(0, detail ? 12 : 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
+            Background = ColorOf("#1FFFFFFF"), Margin = new Thickness(0, detail ? 12 : 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
             MaxWidth = detail ? 900 : 220 };
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         var started = false;

@@ -36,20 +36,39 @@ public partial class MainWindow
         PageContent.Children.Clear();
         PageContent.Children.Add(Heading("Votre espace Noctra", "Bibliothèque, lecture et services du serveur."));
         var choices = new WrapPanel();
-        void Entry(string title, string description, Action open)
+        // 0.6 : tuiles avec icône, titre et description ; survol éclairci.
+        Button Tile(string title, string description, string glyph, Action open)
         {
-            var text = new StackPanel();
-            text.Children.Add(Text(title, 19, true));
+            var icon = new Border { Width = 42, Height = 42, CornerRadius = new CornerRadius(12), Background = ColorOf("#26BCAAFF"),
+                Child = new TextBlock { Text = glyph, FontFamily = (System.Windows.Media.FontFamily)Resources["IconFont"], FontSize = 18,
+                    Foreground = BrushFor("Accent"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+            var text = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+            text.Children.Add(Text(title, 17, true));
             var caption = Text(description, 13, color: "Muted");
             caption.TextWrapping = TextWrapping.Wrap;
-            caption.Margin = new Thickness(0, 6, 0, 0);
+            caption.Margin = new Thickness(0, 4, 0, 0);
             text.Children.Add(caption);
+            var body = new StackPanel();
+            body.Children.Add(icon);
+            body.Children.Add(text);
             var button = Action(title, open);
-            button.Content = text;
-            button.Width = 258;
-            button.MinHeight = 102;
-            button.Margin = new Thickness(0, 0, 12, 12);
-            choices.Children.Add(button);
+            button.Content = body;
+            button.Background = ColorOf("#0DFFFFFF");
+            button.HorizontalContentAlignment = HorizontalAlignment.Left;
+            button.Padding = new Thickness(20, 18, 20, 18);
+            button.Width = 270;
+            button.MinHeight = 150;
+            button.Margin = new Thickness(0, 0, 14, 14);
+            return button;
+        }
+        void Entry(string title, string description, Action open)
+        {
+            var glyph = title switch
+            {
+                "Profil et lecture" => "\uE77B", "Favoris" => "\uE734", "Sessions" => "\uE7F4", "Diffuser" => "\uEC15",
+                "Découverte et demandes" => "\uE721", "TV et multivue" => "\uE7F4", "Ma multivue" => "\uF0E2", _ => "\uE8A9"
+            };
+            choices.Children.Add(Tile(title, description, glyph, open));
         }
         Entry("Profil et lecture", "Compte, volume et préférences du lecteur.", () => OpenProfile(this, new RoutedEventArgs()));
         Entry("Favoris", "Retrouvez vos films et séries enregistrés.", () => OpenFavorites(this, new RoutedEventArgs()));
@@ -65,26 +84,16 @@ public partial class MainWindow
         if (cancellation.IsCancellationRequested || !session.Flag("isAdmin")) return;
         PageContent.Children.Add(Heading("Gestion du serveur", "Outils accessibles à votre compte administrateur."));
         var admin = new WrapPanel();
-        foreach (var (title, description, destination) in new[]
+        foreach (var (title, description, destination, glyph) in new[]
         {
-            ("Téléchargements", "Transferts et fichiers en partage", DownloadsPage),
-            ("Fichiers", "Dossiers, renommage et corbeille", FilesPage()),
-            ("Automatisation", "Catalogue et recherche de versions", AutomationPage("radarr")),
-            ("Indexeurs Prowlarr", "Configuration et test des sources", IndexersPage),
-            ("Jellyfin et médiathèques", "Serveur, comptes et actualisation", JellyfinAdminPage),
-            ("Sources et accès TV", "Sources, clés et accès LiveWatch", TvSettingsPage)
+            ("Téléchargements", "Transferts et fichiers en partage", DownloadsPage, "\uE896"),
+            ("Fichiers", "Dossiers, renommage et corbeille", FilesPage(), "\uE8B7"),
+            ("Automatisation", "Catalogue et recherche de versions", AutomationPage("radarr"), "\uE9F5"),
+            ("Indexeurs Prowlarr", "Configuration et test des sources", IndexersPage, "\uE774"),
+            ("Jellyfin et médiathèques", "Serveur, comptes et actualisation", JellyfinAdminPage, "\uE912"),
+            ("Sources et accès TV", "Sources, clés et accès LiveWatch", TvSettingsPage, "\uE7F4")
         })
-        {
-            var button = Action(title, () => _ = Navigate(destination));
-            var labels = new StackPanel();
-            labels.Children.Add(Text(title, 18, true));
-            labels.Children.Add(Text(description, 12, color: "Muted"));
-            button.Content = labels;
-            button.Width = 258;
-            button.MinHeight = 92;
-            button.Margin = new Thickness(0, 0, 12, 12);
-            admin.Children.Add(button);
-        }
+            admin.Children.Add(Tile(title, description, glyph, () => _ = Navigate(destination)));
         PageContent.Children.Add(admin);
     });
 

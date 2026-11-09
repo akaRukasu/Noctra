@@ -12,12 +12,17 @@ on:
       - 'windows/**'
       - '.github/workflows/noctra-windows.yml'
   workflow_dispatch:
+    inputs:
+      sources:
+        description: "Version des sources windows/ à construire (commit, branche ou étiquette ; vide = celle du lancement)"
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: noctra-windows-${{ github.ref }}
+  group: noctra-windows-${{ github.ref }}-${{ github.event.inputs.sources }}
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +36,15 @@ jobs:
         working-directory: windows
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Comparaison avec une version précédente (lancement manuel) : sources windows/ de ce commit.
+      - name: Sources d'une version précédente
+        if: ${{ github.event.inputs.sources != '' && github.event.inputs.sources != null }}
+        working-directory: .
+        run: |
+          git checkout "${{ github.event.inputs.sources }}" -- windows
+          Write-Host "Sources windows/ : ${{ github.event.inputs.sources }}"
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -52,12 +66,20 @@ jobs:
       - name: Publication x64 autonome
         id: publish
         run: dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true -o publish
-      # Le script exige Inno Setup 7 (ArchiveExtraction, style « modern dynamic »).
-      - name: Inno Setup 7
+      # Inno Setup 7 (version de référence) si son site répond, sinon Inno Setup 6.x
+      # (Chocolatey) : le script choisit l'option d'extraction selon la version.
+      - name: Inno Setup
         run: |
-          Invoke-WebRequest 'https://jrsoftware.org/download.php/is.exe' -OutFile "$env:RUNNER_TEMP/innosetup.exe"
-          Start-Process "$env:RUNNER_TEMP/innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$env:RUNNER_TEMP\InnoSetup" -Wait
-          $iscc = Get-Item "$env:RUNNER_TEMP\InnoSetup\ISCC.exe" -ErrorAction SilentlyContinue
+          $dir = "$env:RUNNER_TEMP\InnoSetup"
+          try {
+            Invoke-WebRequest 'https://jrsoftware.org/download.php/is.exe' -OutFile "$env:RUNNER_TEMP/innosetup.exe" -MaximumRedirection 5
+            Start-Process "$env:RUNNER_TEMP/innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$dir" -Wait
+          } catch { Write-Host "Inno Setup 7 indisponible : $($_.Exception.Message)" }
+          $iscc = Get-Item "$dir\ISCC.exe" -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress | Out-Null
+            $iscc = Get-ChildItem 'C:\Program Files (x86)', 'C:\Program Files' -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           if (-not $iscc) { throw 'ISCC.exe introuvable' }
           Write-Host "Compilateur : $($iscc.FullName)"
           "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
@@ -115,3 +137,20 @@ jobs:
           name: noctra-windows-captures
           path: windows/captures/
           if-no-files-found: ignore
+      # Les captures, réduites en JPEG, sont aussi écrites dans le journal (texte base64),
+      # lisible là où le stockage des artefacts n'est pas accessible.
+      - name: Captures dans le journal
+        if: always()
+        shell: python
+        working-directory: windows
+        run: |
+          import base64, io, pathlib
+          from PIL import Image
+          for path in sorted(pathlib.Path("captures").glob("*.png")):
+              image = Image.open(path).convert("RGB")
+              image.thumbnail((1280, 1280))
+              data = io.BytesIO(); image.save(data, "JPEG", quality=70, optimize=True)
+              text = base64.b64encode(data.getvalue()).decode()
+              for index in range(0, len(text), 4000):
+                  print(f"NOCTRA-CAPTURE {path.stem} {index // 4000} {text[index:index + 4000]}")
+              print(f"NOCTRA-CAPTURE-END {path.stem}")

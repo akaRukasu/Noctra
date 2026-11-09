@@ -1,4 +1,4 @@
-# Construire Noctra Windows 0.5.9
+# Construire Noctra Windows 0.6.0
 
 ## Application
 
@@ -14,7 +14,7 @@ dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true
 
 ## Setup
 
-Installer Inno Setup 7.1.1 ou compatible, puis appeler son compilateur depuis le dossier des sources :
+Installer Inno Setup 7.1.1 (ou Inno Setup 6.4 et plus : le script adapte alors son option d’extraction), puis appeler son compilateur depuis le dossier des sources :
 
 ```powershell
 $noctraPublish = (Resolve-Path publish).Path
@@ -52,3 +52,18 @@ Les captures, fichiers de lecture et données d'utilisateurs ayant servi aux vé
 Le projet utilise le package Microsoft.Web.WebView2 indiqué dans le fichier projet. Le setup contient le bootstrapper Microsoft signé dans `installer/prerequisites`, et les notices correspondantes sont dans `licences`. Il détecte le runtime avant de lancer son installation.
 
 Pour tester le setup sans modifier une installation utilisateur, compiler une seconde fois avec `/DTestBuild=1` et un dossier de sortie de test. Cette variante a un identifiant et un verrou d’application distincts ; les fichiers du client sont les mêmes.
+
+## Construction automatique (GitHub)
+
+L'action **Noctra Windows** (`.github/workflows/noctra-windows.yml`) tourne sur une machine Windows de GitHub à chaque modification du dossier `windows/`. Elle enchaîne :
+1. la construction et les tests de protocole ;
+2. la publication x64 autonome ;
+3. les setups normal et de test ;
+4. le test de l'interface sur API simulée, avec captures ;
+5. l'archive des sources.
+
+Les fichiers produits se trouvent dans Actions › Noctra Windows › Artifacts :
+- `noctra-windows-setup` : setups et sources ;
+- `noctra-windows-captures` : captures d'écran.
+
+Sous Linux, la compilation seule est possible pour une vérification rapide : `dotnet build Noctra.Windows.csproj -p:EnableWindowsTargeting=true`.

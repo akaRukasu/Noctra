@@ -29,7 +29,7 @@ internal sealed class MultiviewWindow : Window
         Height = 800;
         MinWidth = 800;
         MinHeight = 540;
-        Background = new SolidColorBrush(Color.FromRgb(7, 12, 24));
+        Background = new SolidColorBrush(Color.FromRgb(7, 8, 13));
         Foreground = Brushes.White;
         FontFamily = owner.FontFamily;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

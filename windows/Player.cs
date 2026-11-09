@@ -352,7 +352,7 @@ public partial class MainWindow
     {
         var engine = CurrentEngine;
         if (engine == null) return;
-        var menu = new ContextMenu { Background = ColorOf("#142039"), Foreground = BrushFor("Ink"),
+        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"),
             PlacementTarget = button, Placement = PlacementMode.Top };
         if (type == "sub")
         {

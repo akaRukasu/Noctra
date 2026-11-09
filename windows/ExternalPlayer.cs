@@ -16,7 +16,7 @@ namespace Noctra.Windows;
 
 internal sealed class ExternalPlayerWindow : Window
 {
-    private readonly WebView2 browser = new() { DefaultBackgroundColor = System.Drawing.Color.FromArgb(5, 10, 20) };
+    private readonly WebView2 browser = new() { DefaultBackgroundColor = System.Drawing.Color.FromArgb(5, 6, 10) };
     private readonly TextBlock status = new() { Text = "Ouverture du lecteur…", Foreground = Brushes.LightGray, FontSize = 12, Margin = new Thickness(0, 5, 0, 0) };
     private readonly TextBlock blocked = new() { Foreground = Brushes.LightGray, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 12, 0) };
     private readonly TextBlock audioStatus = new() { Text="Son · connexion…",Foreground=Brushes.LightGray,FontSize=11 };
@@ -48,7 +48,7 @@ internal sealed class ExternalPlayerWindow : Window
         AutomationProperties.SetAutomationId(audioStatus,"ExternalAudioStatus");
         var root = new DockPanel();
         var bar = new DockPanel();
-        header = new Border { Child = bar, Background = new SolidColorBrush(Color.FromRgb(12, 23, 40)), Padding = new Thickness(18, 13, 18, 13) };
+        header = new Border { Child = bar, Background = new SolidColorBrush(Color.FromRgb(7, 8, 13)), Padding = new Thickness(18, 13, 18, 13) };
         DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
         Button Button(string text, Action action)
         {

@@ -26,7 +26,12 @@ SetupIconFile=..\Noctra.ico
 UninstallDisplayIcon={app}\Noctra.exe
 Compression=lzma2/normal
 SolidCompression=yes
+; Inno Setup 7 : « auto » ; Inno Setup 6.4 à 6.x : extraction 7z « enhanced » (même archive mpv).
+#if Ver >= EncodeVer(7,0,0)
 ArchiveExtraction=auto
+#else
+ArchiveExtraction=enhanced
+#endif
 OutputDir=..\..\..\outputs
 #ifdef TestBuild
 OutputBaseFilename=Noctra-QA-{#AppVersion}-x64

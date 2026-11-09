@@ -66,9 +66,11 @@ public partial class MainWindow
         Button? selectedSourceButton = null;
         void MenuItem(string name, Action open, bool active = false)
         {
-            var button = Action(name, open, active ? "Primary" : "Action"); button.HorizontalContentAlignment = HorizontalAlignment.Left;
-            button.Margin = new Thickness(0, 0, 0, 7);
-            var text = Text(name, 12, active); text.Foreground = active ? ColorOf("#181B30") : BrushFor("Ink"); text.TextTrimming = TextTrimming.CharacterEllipsis;
+            // 0.6 : menu latéral discret, entrée active surlignée en violet translucide.
+            var button = Action(name, open); button.HorizontalContentAlignment = HorizontalAlignment.Left;
+            button.Margin = new Thickness(0, 0, 0, 4); button.MinHeight = 38; button.Padding = new Thickness(12, 6, 12, 6);
+            button.Background = active ? ColorOf("#33BCAAFF") : Brushes.Transparent;
+            var text = Text(name, 13, active); text.Foreground = BrushFor(active ? "Ink" : "Muted"); text.TextTrimming = TextTrimming.CharacterEllipsis;
             button.Content = text; TvMenu.Children.Add(button);
             if (active) selectedSourceButton = button;
         }
@@ -257,8 +259,8 @@ public partial class MainWindow
         var image = new Image { Height = sports ? 90 : 46, MaxWidth = sports ? 200 : 100, Stretch = Stretch.Uniform, Margin = new Thickness(8) };
         if (service.Link(channel.Entries.Select(pair => pair.Entry.Logo).FirstOrDefault(url => !string.IsNullOrWhiteSpace(url))) is { } url && artwork is { } art)
             _ = art.Fetch(image, url.AbsoluteUri, 250, ct => service.Image(url, ct), cancellation);
-        var top = new Grid { Height = sports ? 132 : 74, Background = ColorOf("#E4E7EDF4") };
-        top.Children.Add(new TextBlock { Text = sports ? "LIVE" : string.Concat(channel.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(word => word[0])), FontSize = 25, FontWeight = FontWeights.Bold, Foreground = ColorOf("#3E536B"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center });
+        var top = new Grid { Height = sports ? 132 : 74, Background = ColorOf("#F0F1F6") };
+        top.Children.Add(new TextBlock { Text = sports ? "LIVE" : string.Concat(channel.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3).Select(word => word[0])), FontSize = 25, FontWeight = FontWeights.Bold, Foreground = ColorOf("#5A6078"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center });
         var placeholderStyle = new Style(typeof(TextBlock));
         placeholderStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
         var noImage = new DataTrigger { Binding = new Binding(nameof(Image.Source)) { Source = image }, Value = null };
@@ -268,7 +270,7 @@ public partial class MainWindow
         FrameworkElement logoArea = top;
         if (!sports)
         {
-            var logoFrame = new Grid { Height = 105, Background = ColorOf("#192A41") };
+            var logoFrame = new Grid { Height = 105, Background = new LinearGradientBrush(Color.FromRgb(31, 33, 48), Color.FromRgb(20, 21, 31), 90) };
             top.SizeChanged += (_, _) => top.Clip = new RectangleGeometry(new Rect(top.RenderSize), 15, 15);
             logoFrame.Children.Add(new Border { Width = 120, Height = 74, Child = top, CornerRadius = new CornerRadius(16), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center });
             logoArea = logoFrame;
@@ -276,10 +278,65 @@ public partial class MainWindow
         var labels = new StackPanel { Margin = new Thickness(14, 12, 14, 15) }; var title = Text(channel.Name, 13, true); title.TextTrimming = TextTrimming.CharacterEllipsis; labels.Children.Add(title);
         var subtitle = Text(channel.Entries.Select(pair => pair.Source.Name).Distinct().Count() > 1 ? "Plusieurs sources" : channel.Entries[0].Source.Name, 11, color: "Muted"); subtitle.TextTrimming = TextTrimming.CharacterEllipsis; subtitle.Margin = new Thickness(0, 5, 0, 0); labels.Children.Add(subtitle);
         var content = new StackPanel(); content.Children.Add(logoArea); content.Children.Add(labels);
-        var panel = new Border { Background = ColorOf("#E0122033"), BorderBrush = ColorOf("#384A5D73"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(20), Child = content, ClipToBounds = true };
-        panel.SizeChanged += (_, _) => panel.Clip = new RectangleGeometry(new Rect(panel.RenderSize), 19, 19);
-        var button = Action(channel.Name, () => _ = Navigate(TvDetail(channel)), "Card"); button.Content = panel; button.Width = sports ? 245 : 165; button.Margin = new Thickness(6, 0, 6, 15); button.ToolTip = channel.Name;
+        var panel = new Border { Background = ColorOf("#13151F"), BorderBrush = ColorOf("#1CFFFFFF"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), Child = content, ClipToBounds = true,
+            RenderTransformOrigin = new Point(.5, .5), RenderTransform = new ScaleTransform(1, 1) };
+        panel.SizeChanged += (_, _) => panel.Clip = new RectangleGeometry(new Rect(panel.RenderSize), 15, 15);
+        var button = Action(channel.Name, () => _ = Navigate(TvDetail(channel)), "Card"); button.Content = panel; button.Width = sports ? 245 : 165; button.Margin = new Thickness(6, 4, 6, 15); button.ToolTip = channel.Name;
+        // Survol : carte légèrement agrandie et liseré clair.
+        void Hover(bool on)
+        {
+            var zoom = (ScaleTransform)panel.RenderTransform;
+            var scale = new System.Windows.Media.Animation.DoubleAnimation(on ? 1.04 : 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = new System.Windows.Media.Animation.CubicEase() };
+            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, scale); zoom.BeginAnimation(ScaleTransform.ScaleYProperty, scale);
+            panel.BorderBrush = ColorOf(on ? "#59FFFFFF" : "#1CFFFFFF"); Panel.SetZIndex(button, on ? 1 : 0);
+        }
+        button.MouseEnter += (_, _) => Hover(true); button.MouseLeave += (_, _) => Hover(false);
+        button.GotKeyboardFocus += (_, _) => Hover(true); button.LostKeyboardFocus += (_, _) => Hover(false);
         return button;
+    }
+
+    private async Task AddTvGuide(NoctraService service, string guideId, CancellationToken cancellation)
+    {
+        var slot = new StackPanel();
+        PageContent.Children.Insert(Math.Min(1, PageContent.Children.Count), slot);
+        try
+        {
+            var guide = await service.Json("api/tv/programme?id=" + Uri.EscapeDataString(guideId), cancellation);
+            if (cancellation.IsCancellationRequested || !guide.Flag("available")) return;
+            var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 18) };
+            foreach (var (label, key) in new[] { ("MAINTENANT", "now"), ("ENSUITE", "next") })
+            {
+                var programme = guide.Field(key);
+                var title = programme.Str("title");
+                if (title.Length == 0) continue;
+                static string Clock(double ms) => ms > 0 ? DateTimeOffset.FromUnixTimeMilliseconds((long)ms).ToLocalTime().ToString("HH:mm") : "";
+                var start = Clock(programme.Num("start"));
+                var stop = Clock(programme.Num("stop"));
+                var copy = new StackPanel();
+                copy.Children.Add(Text(label + (start.Length > 0 ? "  ·  " + start + (stop.Length > 0 ? " – " + stop : "") : ""), 11, true, "Accent"));
+                var name = Text(title, 16, true);
+                name.TextTrimming = TextTrimming.CharacterEllipsis;
+                name.Margin = new Thickness(0, 5, 0, 0);
+                copy.Children.Add(name);
+                // Avancement du programme en cours.
+                if (key == "now" && programme.Num("start") > 0 && programme.Num("stop") > programme.Num("start"))
+                {
+                    var progress = Math.Clamp((DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - programme.Num("start")) / (programme.Num("stop") - programme.Num("start")), 0, 1);
+                    var track = new Grid { Height = 3, Margin = new Thickness(0, 10, 0, 0) };
+                    track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(progress, .01), GridUnitType.Star) });
+                    track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(1 - progress, .01), GridUnitType.Star) });
+                    var rail = new Border { CornerRadius = new CornerRadius(1.5), Background = ColorOf("#33FFFFFF") };
+                    Grid.SetColumnSpan(rail, 2);
+                    track.Children.Add(rail);
+                    track.Children.Add(new Border { CornerRadius = new CornerRadius(1.5), Background = BrushFor("AccentGradient") });
+                    copy.Children.Add(track);
+                }
+                row.Children.Add(new Border { Child = copy, Width = 340, Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 12, 0),
+                    CornerRadius = new CornerRadius(14), Background = ColorOf("#0DFFFFFF"), BorderBrush = ColorOf("#17FFFFFF"), BorderThickness = new Thickness(1) });
+            }
+            if (row.Children.Count > 0) { slot.Children.Add(row); Reveal(row); }
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException) { }
     }
 
     private Page TvDetail(TvChannel channel) => new(channel.Name, ButtonTab.Tv, async (account, cancellation) =>
@@ -287,6 +344,9 @@ public partial class MainWindow
         if (account.NoctraRoot == null) return;
         var service = new NoctraService(account, account.NoctraRoot); PageContent.Children.Clear();
         PageContent.Children.Add(Heading(channel.Name, $"{channel.Entries.Length} variante(s) réunie(s) · choisissez votre serveur. Les tests exigent une image vidéo."));
+        // 0.6 : guide des programmes (maintenant / ensuite), comme la PWA (api/tv/programme).
+        var guideId = channel.Entries.Select(pair => pair.Entry.IptvOrgId).FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        if (guideId != null) _ = AddTvGuide(service, guideId, cancellation);
         var loading = Message("Recherche des serveurs et des lecteurs…"); PageContent.Children.Add(loading);
         var choices = new List<TvServer>(); var seen = new HashSet<string>(StringComparer.Ordinal);
         var qualityChecks = new Dictionary<string, (LiveStream Stream, TextBlock Status)>();
@@ -357,7 +417,7 @@ public partial class MainWindow
                 var test = Action("Tester", () => _ = PaintServerHealth(server.Stream, status, cancellation)); test.Margin = new Thickness(8, 0, 0, 0); buttons.Children.Add(test);
                 if (probes++ < 4) _ = PaintServerHealth(server.Stream, status, cancellation);
             }
-            var card = new Border { Child = bar, Background = ColorOf("#DA122135"), BorderBrush = ColorOf("#3D53657C"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(19), Padding = new Thickness(20, 17, 18, 17), Margin = new Thickness(0, 0, 0, 11) };
+            var card = new Border { Child = bar, Background = ColorOf("#0DFFFFFF"), BorderBrush = ColorOf("#17FFFFFF"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), Padding = new Thickness(20, 16, 18, 16), Margin = new Thickness(0, 0, 0, 10) };
             var area = server.Stream != null ? directArea : server.External != null ? webArea : otherArea;
             sections[area].Visibility = Visibility.Visible; area.Children.Add(card);
         }

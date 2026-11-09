@@ -1,14 +1,24 @@
-# Noctra Windows 0.5.9
+# Noctra Windows 0.6.0
 
 Client Windows natif WPF pour Noctra et Jellyfin. Windows 11 x64.
 
 ## Installation
 
-Ouvrez **Noctra-Setup-0.5.9-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
+Ouvrez **Noctra-Setup-0.6.0-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
 
 Connectez-vous ensuite avec votre compte Jellyfin. L’adresse Noctra est préremplie et peut être changée dans **Adresse du serveur**.
 
 ## Interface et lecture
+
+**Nouveau en 0.6.0 : interface refaite.**
+- **Palette et bandeau** : palette nuit, accents violet et cyan. Le bandeau flotte sur les visuels et devient opaque quand la page défile.
+- **Accueil** : grand visuel pleine largeur, avec logo du titre, synopsis, défilement automatique (en pause au survol), fondu enchaîné et points de pagination.
+- **Cartes** : elles s'agrandissent au survol et les images apparaissent en fondu. La progression est en dégradé, et une coche indique les titres vus.
+- **Médiathèques** : tuiles illustrées en 2 × 2.
+- **Épisodes** : lignes aérées, avec vignette, durée et progression.
+- **TV** : guide « Maintenant / Ensuite » sur la fiche d'une chaîne.
+- **Lecteur** : barre à icônes.
+- **Notifications** : en pastille, elles s'effacent seules.
 
 L’accueil affiche les reprises, les ajouts récents séparés pour chaque médiathèque, puis À suivre, et enfin les médiathèques. Il utilise les visuels et logos de Jellyfin. Les reprises, épisodes à suivre et favoris proviennent du compte connecté. Les fiches donnent accès à la lecture directe, aux saisons, au statut vu ou non vu et à la distribution.
 

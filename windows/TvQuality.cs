@@ -56,7 +56,7 @@ public partial class MainWindow
     {
         if (pendingLive is not { Engine: { } engine } state) return;
         WakeFullscreenControls(force: true);
-        var menu = new ContextMenu { Background = ColorOf("#142039"), Foreground = BrushFor("Ink"), PlacementTarget = LiveQualityButton, Placement = PlacementMode.Top, MaxHeight = 450 };
+        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"), PlacementTarget = LiveQualityButton, Placement = PlacementMode.Top, MaxHeight = 450 };
         var qualities = TvQuality.Read(engine);
         var automatic = new MenuItem { Header = "Auto · meilleure qualité disponible", IsCheckable = true, IsChecked = state.AutomaticQuality };
         automatic.Click += (_, _) =>
