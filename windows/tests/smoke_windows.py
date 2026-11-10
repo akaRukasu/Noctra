@@ -886,11 +886,11 @@ def check_tv_responsiveness():
     control("TvSearch").set_edit_text("Bouquet 5 chaîne 7")
     until(lambda: by_name("Bouquet 5 chaîne 7").exists(timeout=.1), "French bouquet channels missing from the large catalog")
     control("TvSearch").set_edit_text("Bouquet 1 chaîne 7"); sleep(1.5)
-    assert not by_name("Bouquet 1 chaîne 7").exists(timeout=.1), "Italian bouquet channels leak into France"
+    assert not window.child_window(title_re=r"^Bouquet 1 chaîne 7( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1), "Italian bouquet channels leak into France"
     control("TvCountry").select("Tous les pays")
     watch(80, "Tous les pays")
     control("TvSearch").set_edit_text("Bouquet 1 chaîne 7")
-    until(lambda: by_name("Bouquet 1 chaîne 7").exists(timeout=.1), "All countries do not include the Italian bouquet")
+    until(lambda: window.child_window(title_re=r"^Bouquet 1 chaîne 7( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1), "All countries do not include the Italian bouquet")
     screenshot("tv-grand-catalogue")
     print("OK · TV « Toutes les chaînes » réactive avec 4 000 chaînes et 80 bouquets.", flush=True)
 
@@ -900,18 +900,18 @@ def check_tv_countries_and_qualities():
     until(lambda:control("TvCountry").exists(timeout=.1),"Country selector is missing")
     until(lambda:by_name("TF1").exists(timeout=.1),"French channels missing")
     assert control("TvCountry").selected_text()=="France"
-    assert not by_name("BBC One").exists(timeout=.1) and not by_name("La Une").exists(timeout=.1),"Foreign channels leak into France"
+    assert not window.child_window(title_re=r"^BBC One( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1) and not window.child_window(title_re=r"^La Une( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1),"Foreign channels leak into France"
     assert not any(name=="german-bouquet" for name,_,_ in events),"Foreign bouquets loaded before they were requested"
     # Vue réunie : pas de grille de bouquets (ceux de tous les pays), leurs chaînes sont dans la liste.
     until(lambda:by_name("Noctra Bouquet").exists(timeout=.1),"French bouquet channels missing from all channels")
     assert not by_name("Choisir un bouquet").exists(timeout=.1) and not by_name("Germany · test").exists(timeout=.1),"Bouquet grid shown in all channels"
     control("TvCountry").select("Royaume-Uni")
-    until(lambda:by_name("BBC One").exists(timeout=.1),"UK selection has no BBC channel")
+    until(lambda:window.child_window(title_re=r"^BBC One( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1),"UK selection has no BBC channel")
     assert not by_name("TF1").exists(timeout=.1)
     control("TvCountry").select("Allemagne")
-    until(lambda:by_name("ZDF régional").exists(timeout=.1),"German bouquet did not load after country selection")
+    until(lambda:window.child_window(title_re=r"^ZDF régional( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1),"German bouquet did not load after country selection")
     control("TvCountry").select("Belgique")
-    until(lambda:by_name("La Une").exists(timeout=.1),"Belgian French-language channel classified as France")
+    until(lambda:window.child_window(title_re=r"^La Une( [A-Z]{2,3})?$",control_type="Button").exists(timeout=.1),"Belgian French-language channel classified as France")
     control("TvCountry").select("Pays non précisé")
     until(lambda:by_name("Mystère TV").exists(timeout=.1),"Unknown country channels cannot be accessed")
     control("TvTab").invoke()
