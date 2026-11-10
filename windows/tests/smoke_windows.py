@@ -892,6 +892,8 @@ def check_episode_flow():
     def plays(item):
         return sum(1 for path, user, p in events if path == "/jellyfin/Sessions/Playing" and p.get("ItemId") == item)
     started = plays("episode")
+    # Épisode repris depuis le début (les tests précédents l'ont arrêté près de la fin).
+    progress["profile-a"] = 0
     control("HomeTab").invoke()
     until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Home missing before the episode flow")
     control("PrimaryPlayback", "Button").invoke()
