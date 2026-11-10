@@ -1524,6 +1524,15 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             ImageGrab.grab(bbox=win32gui.GetWindowRect(multi.handle),all_screens=True).save(args.screens/"multivue.png")
         multi.child_window(title="Revenir à la grille",control_type="Button").invoke()
         until(lambda:multi.child_window(title="Mettre en avant",control_type="Button",found_index=1).exists(timeout=.1),"Grid not restored")
+        # Plein écran : seulement les images (ni en-tête ni bandeaux), Échap pour revenir.
+        multi.child_window(title="Plein écran",control_type="Button").invoke()
+        until(lambda:tuple(win32gui.GetWindowRect(multi.handle))==monitor_rect(multi),"Multiview fullscreen does not cover the monitor")
+        until(lambda:not multi.child_window(title="Mettre en avant",control_type="Button").exists(timeout=.1),"Tile bars remained in multiview fullscreen")
+        rect=win32gui.GetWindowRect(multi.handle);win32api.SetCursorPos(((rect[0]+rect[2])//2,(rect[1]+rect[3])//2));sleep(1)
+        if args.screens:
+            ImageGrab.grab(bbox=rect,all_screens=True).save(args.screens/"multivue-plein-ecran.png")
+        multi.set_focus();send_keys("{ESC}")
+        until(lambda:multi.child_window(title="Mettre en avant",control_type="Button",found_index=1).exists(timeout=.1),"Escape did not restore the multiview bars")
         print("OK · Multivue : direct et lecteur web, mise en avant, retour à la grille.",flush=True)
         multi.close()
         control("TvTab").invoke()

@@ -64,6 +64,9 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - retirer ;
   - état (connexion, en direct, image reçue) et qualité réelle.
 - **Qualité commune** : « Auto stable » (720p jusqu'à 4 chaînes, 540p jusqu'à 9, 480p au-delà ; la chaîne en avant ou en plein écran garde la meilleure), sans limite, ou plafond 1080p / 720p / 480p / 360p.
+- **Plein écran épuré** : uniquement les images, cases bord à bord, sans en-tête ni bandeaux. L'en-tête réapparaît par-dessus quand le pointeur touche le haut de l'écran ; Échap pour revenir.
+- **Clic sur une image** : cette chaîne prend le son (message sur l'image) ; double-clic : mettre en avant.
+- Menu de qualité au thème sombre de Noctra.
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 

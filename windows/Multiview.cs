@@ -66,6 +66,14 @@ internal sealed class MultiviewWindow : Window
     private readonly MultiviewInput input;
     private Tile? featured, solo, audio;
     private bool stopped;
+    // Plein écran : rien que les images ; l'en-tête réapparaît par-dessus quand le pointeur touche le haut de l'écran.
+    private readonly DockPanel layout = new() { Margin = new Thickness(12) };
+    private readonly System.Windows.Controls.Primitives.Popup reveal = new()
+    {
+        Placement = System.Windows.Controls.Primitives.PlacementMode.Custom, AllowsTransparency = true, StaysOpen = true, Focusable = false
+    };
+    private DateTime revealUntil;
+    private readonly Button fullButton;
     private static Task<CoreWebView2Environment>? webEnvironment;
     private static readonly (string Label, int Height)[] Qualities = [("Auto stable", -1), ("Auto sans limite", 0), ("1080p max", 1080), ("720p max", 720), ("480p max", 480), ("360p max", 360)];
 
@@ -94,7 +102,8 @@ internal sealed class MultiviewWindow : Window
         AutomationProperties.SetName(quality, "Qualité de la multivue");
         quality.SelectionChanged += (_, _) => { foreach (var tile in tiles) ApplyQuality(tile); };
         tools.Children.Add(quality);
-        tools.Children.Add(Glyph("", "Plein écran de la multivue · F11", () => SetFullscreen(!screen.Active), pill: true, label: "Plein écran"));
+        fullButton = Glyph("\uE740", "Plein écran de la multivue · F11", () => SetFullscreen(!screen.Active), pill: true, label: "Plein écran");
+        tools.Children.Add(fullButton);
         tools.Children.Add(Glyph("", "Fermer la multivue", Close, pill: true, label: "Fermer"));
         bar.Children.Add(tools);
         var heading = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -102,11 +111,16 @@ internal sealed class MultiviewWindow : Window
         heading.Children.Add(title);
         heading.Children.Add(caption);
         bar.Children.Add(heading);
-        var root = new DockPanel { Margin = new Thickness(12) };
+        var root = layout;
         DockPanel.SetDock(bar, Dock.Top);
         root.Children.Add(bar);
         root.Children.Add(grid);
         Content = root;
+        // Menus déroulants au thème sombre de Noctra (styles de la fenêtre principale).
+        foreach (var type in new[] { typeof(ComboBox), typeof(ComboBoxItem), typeof(System.Windows.Controls.Primitives.ScrollBar) })
+            if (owner.TryFindResource(type) is Style style) Resources[type] = style;
+        reveal.PlacementTarget = this;
+        reveal.CustomPopupPlacementCallback = (_, _, _) => [new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(0, 0), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)];
         foreach (var source in selected.Take(Maximum)) AddTile(source, open: false);
         Relayout();
         input = new MultiviewInput(this);
@@ -130,6 +144,7 @@ internal sealed class MultiviewWindow : Window
         if (stopped || Contains(source) || tiles.Count >= Maximum) return false;
         AddTile(source, open: IsLoaded);
         Relayout();
+        if (screen.Active) ApplyChrome();
         return true;
     }
 
@@ -223,7 +238,7 @@ internal sealed class MultiviewWindow : Window
         title.Text = count + (count > 1 ? " chaînes simultanées" : " chaîne");
         var web = tiles.Count(tile => tile.Source.Web);
         caption.Text = (count - web) + " direct" + (count - web > 1 ? "s" : "") + (web > 0 ? " · " + web + " lecteur" + (web > 1 ? "s" : "") + " web" : "") +
-            " · une seule sortie audio · double-clic sur une image : mettre en avant";
+            " · clic sur une image : son · double-clic : mettre en avant · F11 : plein écran";
         if (featured != null && !tiles.Contains(featured)) featured = null;
         if (solo != null && !tiles.Contains(solo)) solo = null;
         foreach (var tile in tiles) tile.Root.Visibility = solo == null || tile == solo ? Visibility.Visible : Visibility.Collapsed;
@@ -278,7 +293,6 @@ internal sealed class MultiviewWindow : Window
     private void SetSolo(Tile? tile)
     {
         solo = tile;
-        bar.Visibility = solo != null && screen.Active ? Visibility.Collapsed : Visibility.Visible;
         if (tile != null && audio != tile) SetAudio(tile);
         Relayout();
     }
@@ -288,7 +302,63 @@ internal sealed class MultiviewWindow : Window
         if (enabled == screen.Active) { if (!enabled && solo != null) SetSolo(null); return; }
         if (enabled) screen.Enter(); else screen.Exit();
         if (!screen.Active && solo != null) SetSolo(null);
-        bar.Visibility = solo != null && screen.Active ? Visibility.Collapsed : Visibility.Visible;
+        ApplyChrome();
+    }
+
+    // Plein écran : en-tête de la multivue et bandeaux des chaînes retirés, cases bord à bord ;
+    // l'en-tête revient par-dessus l'image quand le pointeur touche le haut de l'écran.
+    private void ApplyChrome()
+    {
+        var clean = screen.Active;
+        fullButton.Content = clean ? "Quitter le plein écran" : "Plein écran";
+        AutomationProperties.SetName(fullButton, clean ? "Quitter le plein écran" : "Plein écran");
+        layout.Margin = new Thickness(clean ? 0 : 12);
+        foreach (var tile in tiles)
+        {
+            tile.Header.Visibility = clean ? Visibility.Collapsed : Visibility.Visible;
+            tile.Root.Margin = new Thickness(clean ? 1 : 4);
+            tile.Root.CornerRadius = new CornerRadius(clean ? 0 : 12);
+            tile.Root.BorderThickness = new Thickness(clean ? 0 : 1.5);
+        }
+        if (clean && bar.Parent == layout)
+        {
+            layout.Children.Remove(bar);
+            bar.Margin = new Thickness(18, 12, 18, 12);
+            reveal.Child = new Border { Child = bar, Background = new SolidColorBrush(Color.FromArgb(235, 9, 10, 16)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(0, 0, 0, 1) };
+        }
+        else if (!clean && bar.Parent != layout)
+        {
+            reveal.IsOpen = false;
+            if (reveal.Child is Border holder) holder.Child = null;
+            reveal.Child = null;
+            bar.Margin = new Thickness(0, 0, 0, 10);
+            layout.Children.Insert(0, bar);
+        }
+        if (reveal.Child is FrameworkElement shown) shown.Width = ActualWidth;
+    }
+
+    private void UpdateReveal()
+    {
+        if (!screen.Active || reveal.Child == null) { if (reveal.IsOpen) reveal.IsOpen = false; return; }
+        var pointer = Forms.Cursor.Position;
+        var handle = new WindowInteropHelper(this).Handle;
+        var area = Forms.Screen.FromHandle(handle).Bounds;
+        var overBar = reveal.IsOpen && reveal.Child is FrameworkElement shown && shown.IsMouseOver;
+        if (area.Contains(pointer) && pointer.Y - area.Top < 8 || overBar) revealUntil = DateTime.UtcNow.AddSeconds(2.5);
+        var open = DateTime.UtcNow < revealUntil && IsActive;
+        if (open && reveal.Child is FrameworkElement content) content.Width = ActualWidth;
+        if (reveal.IsOpen != open) reveal.IsOpen = open;
+    }
+
+    // Clic simple sur l'image d'un direct : cette chaîne prend le son.
+    internal void VideoClick(IntPtr window)
+    {
+        var tile = tiles.FirstOrDefault(item => item.Panel is { IsHandleCreated: true } panel && (panel.Handle == window || IsChild(panel.Handle, window)));
+        if (tile == null || tile == audio) return;
+        SetAudio(tile);
+        if (tile.Engine is { } engine)
+            try { engine.Command("show-text", "Son · " + tile.Source.Name, "1200"); } catch (InvalidOperationException) { }
     }
 
     // Une seule sortie audio : la chaîne choisie a le son, toutes les autres sont muettes.
@@ -374,6 +444,7 @@ internal sealed class MultiviewWindow : Window
 
     private void Tick()
     {
+        UpdateReveal();
         foreach (var tile in tiles.ToArray())
         {
             if (tile.Engine is not { } engine) continue;
@@ -533,6 +604,7 @@ internal sealed class MultiviewWindow : Window
         stopped = true;
         timer.Stop();
         Forms.Application.RemoveMessageFilter(input);
+        reveal.IsOpen = false;
         foreach (var tile in tiles)
         {
             tile.Engine?.Dispose();
@@ -543,8 +615,9 @@ internal sealed class MultiviewWindow : Window
 
     private sealed class MultiviewInput(MultiviewWindow owner) : Forms.IMessageFilter
     {
-        private IntPtr lastWindow;
+        private IntPtr lastWindow, clickWindow;
         private long lastDown;
+        private Forms.Timer? clickDelay;
         public bool PreFilterMessage(ref Forms.Message message)
         {
             if (message.Msg == 0x0100 && owner.OwnsVideo(message.HWnd))
@@ -563,8 +636,19 @@ internal sealed class MultiviewWindow : Window
             if (message.Msg == 0x0203 || same)
             {
                 lastDown = 0;
+                clickDelay?.Stop();
                 owner.VideoDoubleClick(message.HWnd);
+                return false;
             }
+            // Clic simple, après le délai d'un éventuel double-clic : le son passe à cette chaîne.
+            if (clickDelay == null)
+            {
+                clickDelay = new Forms.Timer { Interval = Math.Clamp(Forms.SystemInformation.DoubleClickTime, 200, 500) };
+                clickDelay.Tick += (_, _) => { clickDelay.Stop(); owner.VideoClick(clickWindow); };
+            }
+            clickWindow = message.HWnd;
+            clickDelay.Stop();
+            clickDelay.Start();
             return false;
         }
     }
