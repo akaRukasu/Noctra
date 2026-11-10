@@ -181,7 +181,21 @@ public partial class MainWindow
         panel.Effect = new DropShadowEffect { BlurRadius = 36, ShadowDepth = 10, Opacity = .7, Color = Colors.Black };
         hoverPanel = panel;
         hoverCard = card;
-        hoverPopup = new Popup { AllowsTransparency = true, Placement = PlacementMode.Center, PlacementTarget = card, StaysOpen = true, Child = shadow, Focusable = false };
+        // Centré sur la carte, mais toujours entier dans la fenêtre (cartes au bord, bas de page).
+        hoverPopup = new Popup
+        {
+            AllowsTransparency = true, Placement = PlacementMode.Custom, PlacementTarget = card, StaysOpen = true, Child = shadow, Focusable = false,
+            CustomPopupPlacementCallback = (popupSize, targetSize, _) =>
+            {
+                var scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                var origin = card.TranslatePoint(new Point(0, 0), LibraryShell);
+                var left = origin.X * scale + (targetSize.Width - popupSize.Width) / 2;
+                var top = origin.Y * scale + (targetSize.Height - popupSize.Height) / 2;
+                left = Math.Clamp(left, 0, Math.Max(0, LibraryShell.ActualWidth * scale - popupSize.Width));
+                top = Math.Clamp(top, NavigationBar.ActualHeight * scale * .5, Math.Max(0, LibraryShell.ActualHeight * scale - popupSize.Height));
+                return [new CustomPopupPlacement(new Point(left - origin.X * scale, top - origin.Y * scale), PopupPrimaryAxis.None)];
+            }
+        };
         _ = artwork?.Load(image, item, true, 760, cancellation);
         hoverPopup.IsOpen = true;
         if (SystemParameters.ClientAreaAnimation)
