@@ -1,16 +1,24 @@
-# Noctra Windows 0.6.0
+# Noctra Windows 0.7.0
 
 Client Windows natif WPF pour Noctra et Jellyfin. Windows 11 x64.
 
 ## Installation
 
-Ouvrez **Noctra-Setup-0.6.0-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
+Ouvrez **Noctra-Setup-0.7.0-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
 
 Connectez-vous ensuite avec votre compte Jellyfin. L’adresse Noctra est préremplie et peut être changée dans **Adresse du serveur**.
 
 ## Interface et lecture
 
-**Nouveau en 0.6.0 : interface refaite.**
+**Nouveau en 0.7.0** (détail dans `BILAN-0.7.0.md`) :
+- **Regarder ensemble (SyncPlay)** avec les autres clients Jellyfin ; télécommande de ce PC depuis un téléphone ou la PWA.
+- **Lecteur** : vignettes sur la barre de progression, sous-titres externes et recherche en ligne, apparence des sous-titres, vitesse, décalages, chapitres, statistiques (I), mini-lecteur (P).
+- **Musique** (albums, artistes, paroles synchronisées), **listes de lecture**, **photos**, pages des personnes.
+- **Fiches** : badges 4K / HDR / Dolby Vision / Atmos, fiche technique, bande-annonce ; **aperçu au survol** des affiches ; filtres genre, année, note.
+- **Hors connexion** : « Télécharger sur ce PC » puis lecture sans réseau.
+- **Quick Connect**, changement de mot de passe, administration Jellyfin complétée.
+
+**Depuis la 0.6.0 : interface refaite.**
 - **Palette et bandeau** : palette nuit, accents violet et cyan. Le bandeau flotte sur les visuels et devient opaque quand la page défile.
 - **Accueil** : grand visuel pleine largeur, avec logo du titre, synopsis, défilement automatique (en pause au survol), fondu enchaîné et points de pagination.
 - **Cartes** : elles s'agrandissent au survol et les images apparaissent en fondu. La progression est en dégradé, et une coche indique les titres vus.
@@ -62,7 +70,7 @@ Les sources, le script du setup et le test des parcours Windows accompagnent l�
 
 ## Portée de cette version
 
-La parité avec toute la PWA n’est pas complète : SyncPlay, le visionnage hors connexion, la gestion intégrale des utilisateurs/plugins Jellyfin et certains outils avancés de métadonnées et de sous-titres restent absents. Les téléchargements du menu de gestion concernent ceux du serveur. Les demandes disposent désormais du mode automatique ou manuel, du serveur et du profil qualité ; le choix d’un dossier reste soumis aux droits administrateur.
+Par rapport à la PWA, il reste absent : la lecture des livres (renvoi vers la PWA) et les réglages rares du serveur Jellyfin (transcodage, réseau, catalogue d’extensions). Certaines fonctions dépendent du serveur : vignettes de progression générées, extension de sous-titres, droits « téléchargement » et « SyncPlay » du compte. Voir `AUDIT-PWA-0.7.0.md`.
 
 Le setup n'est pas signé. Le bilan livré avec les sources distingue les fonctions présentes des vérifications réalisées et des limites connues.
 

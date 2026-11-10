@@ -80,7 +80,10 @@ Elles sont faites par l'action **Noctra Windows** sur une machine Windows de Git
 - Quick Connect dans les deux sens ;
 - les extensions et le stockage.
 
-Résultats exacts et captures : voir le message de livraison.
+**Résultat** : le run 42744603786 (sources 17d6f0c) est vert de bout en bout. Les tests de protocole, le test principal et les 15 contrôles du test des nouveautés sont tous « OK ».
+Pendant la mise au point, le client a été rendu plus robuste :
+- nouvel essai automatique sur coupure réseau passagère ;
+- sortie audio muette quand aucun périphérique n'est disponible.
 
 ## Limites
 
