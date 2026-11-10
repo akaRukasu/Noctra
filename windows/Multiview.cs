@@ -576,12 +576,28 @@ internal sealed class MultiviewWindow : Window
             await web.AddScriptToExecuteOnDocumentCreatedAsync(AdProtection.ProtectionScript(true));
             await web.AddScriptToExecuteOnDocumentCreatedAsync(AdProtection.OhaMediaCompatibility);
             await web.AddScriptToExecuteOnDocumentCreatedAsync(AdProtection.TargetChannel(tile.Source.Name));
+            await web.AddScriptToExecuteOnDocumentCreatedAsync(HideScrollbars);
             web.IsMuted = tile != audio;
             web.Navigate(page.AbsoluteUri);
         }
         catch (WebView2RuntimeNotFoundException) { Fail(tile, "Composant Microsoft WebView2 absent · relancez le setup"); }
         catch (Exception error) when (error is InvalidOperationException or COMException or IOException) { if (!stopped) Fail(tile, "Impossible d’ouvrir ce lecteur · réessayez"); }
     }
+
+    // Une case de multivue n'affiche que l'image : barres de défilement de la page masquées (la molette défile toujours).
+    private const string HideScrollbars = """
+        (() => {
+          const add = () => {
+            if (!document.documentElement || document.getElementById('noctra-multiview-scroll')) return;
+            const style = document.createElement('style');
+            style.id = 'noctra-multiview-scroll';
+            style.textContent = '*::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}html,body{scrollbar-width:none!important}';
+            (document.head || document.documentElement).appendChild(style);
+          };
+          add();
+          document.addEventListener('DOMContentLoaded', add);
+        })();
+        """;
 
     private static bool WebUri(Uri uri) => uri.UserInfo.Length == 0 && (uri.Scheme == "https" || uri.Scheme == "http" && uri.IsLoopback);
 
