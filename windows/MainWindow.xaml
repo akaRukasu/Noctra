@@ -198,7 +198,7 @@
                     <ControlTemplate TargetType="Expander">
                         <StackPanel>
                             <ToggleButton x:Name="Header" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
-                                          Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left">
+                                          Cursor="Hand" FocusVisualStyle="{x:Null}" HorizontalAlignment="Left" Foreground="{TemplateBinding Foreground}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
                                         <StackPanel Orientation="Horizontal" Background="Transparent">
@@ -409,7 +409,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Body" CornerRadius="11" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
-                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" Margin="{TemplateBinding Padding}" VerticalAlignment="Stretch"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Body" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
