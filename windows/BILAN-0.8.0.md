@@ -86,6 +86,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - Jellyfin n'a pas de commande de suppression : une séance disparaît quand plus personne n'y est. Noctra la rejoint donc sans rien lire, puis la quitte aussitôt.
   - Séance oubliée (personne d'autre dedans) : elle est supprimée.
   - Séance où d'autres personnes sont encore : Noctra demande confirmation et prévient qu'elle restera ouverte pour eux.
+- **Séance fantôme corrigée** : si Noctra était fermé sans quitter sa séance, Jellyfin gardait ce PC comme participant (même identifiant d'appareil au lancement suivant). La séance restait alors ouverte avec « 1 participant ». Désormais, à chaque connexion, Noctra quitte côté serveur toute séance qu'il n'affiche pas, et elle disparaît.
 - Fermeture automatique quand il n'y a plus de lecture et plus d'autre participant :
   - une minute après le départ du dernier participant ;
   - dix minutes si personne n'a rejoint la séance (le temps d'inviter ses proches).

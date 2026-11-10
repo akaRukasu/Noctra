@@ -78,6 +78,10 @@ public partial class MainWindow
                 if (client != account) return;
                 realtimeConnected = connected;
                 if (connected) _ = AnnounceCapabilities(account);
+                // 0.8 : Jellyfin garde ce PC dans une séance si Noctra a été fermé sans la quitter (même
+                // identifiant d'appareil au lancement suivant) : la séance restait ouverte avec un participant
+                // fantôme. À la connexion, hors séance côté Noctra, on la quitte côté serveur (sans effet sinon).
+                if (connected && syncGroup == null && closingGroupId == null) _ = SyncRequest("Leave");
                 RefreshSyncIndicators();
             }));
         realtime.Start();
@@ -260,7 +264,7 @@ public partial class MainWindow
                     if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
                     return;
                 }
-                LeaveSyncLocally("Vous avez quitté le groupe.");
+                LeaveSyncLocally(syncGroup == null ? "" : "Vous avez quitté le groupe.");
                 break;
             case "NotInGroup":
             case "GroupDoesNotExist":
