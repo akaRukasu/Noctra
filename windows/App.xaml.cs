@@ -23,7 +23,8 @@ public partial class App : Application
         }
         // 0.8 : WPF anime l'interface à 60 images/s par défaut, quelle que soit la fréquence de l'écran.
         // Cadence portée à celle de l'écran le plus rapide (240 Hz, 144 Hz…) pour les fondus, survols et défilements.
-        var hz = Math.Clamp(DisplayTiming.FastestRefreshRate() ?? 60, 60, 480);
+        // Rendu logiciel (pas de carte graphique utilisable) : cadence de WPF conservée, pour ne pas charger le processeur.
+        var hz = System.Windows.Media.RenderCapability.Tier >> 16 >= 2 ? Math.Clamp(DisplayTiming.FastestRefreshRate() ?? 60, 60, 480) : 60;
         try
         {
             System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(typeof(System.Windows.Media.Animation.Timeline),

@@ -59,7 +59,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 
 **Fluidité quand le PC est très sollicité**
 - L'image est calée sur le son (réglage par défaut de mpv). Avant, elle suivait la fréquence de l'écran, imposée d'après Windows : avec une fréquence dynamique (60 / 90 / 120 Hz), la vidéo pouvait défiler trop vite (× 1,5) et le son saccader.
-- Réserve audio portée à 0,5 s ; priorité de Noctra un peu relevée pendant une lecture.
+- Réserve audio portée à 0,5 s.
 
 **TV**
 - Pastille rouge « EN DIRECT ».
@@ -96,7 +96,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - l'accueil apparaît dès que « Continuer à regarder » est prêt ;
   - chaque rangée de médiathèque se remplit à son arrivée.
 - Les menus du clic droit sont préparés seulement quand on les ouvre.
-- **Écrans 120 / 144 / 240 Hz** : WPF anime l'interface à 60 images/s par défaut. La cadence suit maintenant l'écran le plus rapide (jusqu'à 480 Hz) : fondus, survols, défilement et rangées. Les réglages indiquent « animations N images/s ».
+- **Écrans 120 / 144 / 240 Hz** : WPF anime l'interface à 60 images/s par défaut. La cadence suit maintenant l'écran le plus rapide (jusqu'à 480 Hz, avec une carte graphique) : fondus, survols, défilement et rangées. Les réglages indiquent « animations N images/s ».
 - **Défilement et rangées** : la molette et les flèches des rangées font glisser l'image déjà calculée (animation WPF) au lieu de refaire la mise en page à chaque image (jusqu'à 360 cartes dans une rangée infinie).
 
 ## Rangées infinies et SyncPlay discret

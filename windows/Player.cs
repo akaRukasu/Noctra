@@ -113,7 +113,6 @@ public partial class MainWindow
         UpdateSkipOverlay();
         PlaybackMode.Text = "";
         ShowPauseState(false);
-        BoostPlayback(true);
         if (File.Exists(Mpv.LibraryPath)) _ = OpenPlayback(item);
         else InstallPlayer(this, new RoutedEventArgs());
     }
@@ -269,13 +268,6 @@ public partial class MainWindow
         if (active is { } state) state.StopAtEnd = true;
         UpNextCard.Visibility = Visibility.Collapsed;
         UpdateSkipOverlay();
-    }
-
-    // 0.8 : priorité un peu plus haute pendant une lecture : moins de saccades quand le PC est très sollicité.
-    private static void BoostPlayback(bool on)
-    {
-        try { System.Diagnostics.Process.GetCurrentProcess().PriorityClass = on ? System.Diagnostics.ProcessPriorityClass.AboveNormal : System.Diagnostics.ProcessPriorityClass.Normal; }
-        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
     }
 
     private async Task FindCredits(Jellyfin account, MediaItem item, ActivePlayback state)
@@ -552,7 +544,6 @@ public partial class MainWindow
 
     private void FinishPlayback(bool capture = true, bool refresh = true)
     {
-        BoostPlayback(false);
         UpNextCard.Visibility = Visibility.Collapsed;
         if (miniPlayer) SetMiniPlayer(false);
         ShowStats(false);
@@ -818,7 +809,6 @@ public partial class MainWindow
         externalPlayer?.Close();
         externalPlayer = null;
         pendingLive = new LivePlayback(streams);
-        BoostPlayback(true);
         MediaEyebrow.Text = "EN DIRECT";
         MediaTitle.Text = name;
         MediaSubtitle.Visibility = Visibility.Collapsed;
