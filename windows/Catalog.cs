@@ -167,6 +167,8 @@ public partial class MainWindow
             PageContent.Children.Add(FeaturedCarousel(candidates, label, cancellation));
         }
         else PageContent.Children.Add(Heading("Votre espace", "Retrouvez ici vos films et séries."));
+        // 0.7 : regarder ensemble (SyncPlay) accessible depuis l'accueil.
+        PageContent.Children.Add(HomeSyncStrip(account, cancellation));
         AddShelf("Continuer à regarder", resume, "Vos films et épisodes en cours apparaîtront ici.", true, cancellation);
         foreach (var library in libraries)
             AddShelf("Ajouts récents · " + library.Name, previews[library.Id]?.Items,

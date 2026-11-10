@@ -901,11 +901,11 @@ def check_new_features():
     print("OK · Hors connexion : fichier copié sur le PC, lu localement, position reportée.", flush=True)
 
     # SyncPlay : groupe, lecture synchronisée, pause et déplacement passés par le serveur.
-    until(lambda: control("MoreTab").is_visible(), "Library not restored after offline playback")
-    control("MoreTab").invoke()
-    by_name("Regarder ensemble").invoke()
-    until(lambda: control("SyncCreate").exists(timeout=.1), "SyncPlay page missing")
-    control("SyncCreate").invoke()
+    # Séance créée depuis le bandeau « Regarder ensemble » de l'accueil.
+    until(lambda: control("HomeTab").is_visible(), "Library not restored after offline playback")
+    control("HomeTab").invoke()
+    until(lambda: control("HomeSyncCreate").exists(timeout=.1), "Home SyncPlay strip missing")
+    control("HomeSyncCreate").invoke()
     until(lambda: control("SyncGroupName").exists(timeout=.1), "Group was not joined")
     screenshot("syncplay-groupe")
     control("HomeTab").invoke()
@@ -984,6 +984,10 @@ def check_new_features():
 
     control("ReturnButton").invoke()
     until(lambda: control("MoreTab").is_visible(), "Library not restored after group playback")
+    until(lambda: control("HomeSyncOpen").exists(timeout=.1), "Home strip does not show the current group")
+    control("HomeSyncOpen").set_focus()
+    sleep(.8)
+    screenshot("accueil-ensemble")
     control("MoreTab").invoke()
     by_name("Regarder ensemble").invoke()
     until(lambda: by_name("Quitter le groupe").exists(timeout=.1), "Leave action missing")

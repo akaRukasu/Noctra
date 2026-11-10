@@ -7,6 +7,7 @@ La 0.7 ajoute tout ce qui manquait par rapport à la version web, et quelques fo
 **Regarder ensemble (SyncPlay)**
 - Connexion temps réel au serveur Jellyfin (WebSocket, jeton dans l'en-tête, reconnexion automatique).
 - Groupes : créer, rejoindre, quitter, voir les participants (page « Regarder ensemble », bouton dans le lecteur, bouton sur les fiches).
+- Bandeau « Regarder ensemble » sur l'accueil : créer une séance ou rejoindre une séance ouverte en un clic ; pendant une séance, nom du groupe et participants.
 - Un film ou un épisode lancé pendant une séance démarre chez tout le monde au même instant.
 - Lecture, pause et déplacements passent par le serveur et s'appliquent chez tous.
 - Écart rattrapé seul : légère accélération ou ralentissement, ou saut au-delà de 2,5 s.
