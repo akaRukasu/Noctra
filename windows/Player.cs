@@ -311,6 +311,7 @@ public partial class MainWindow
     private void Notice(string message, bool install = false)
     {
         VideoHost.Visibility = Visibility.Collapsed;
+        AudioStage.Visibility = Visibility.Collapsed;
         PlayerControls.Visibility = Visibility.Collapsed;
         PlayerMessage.Text = message;
         RetryPlaybackButton.Visibility = Visibility.Collapsed;

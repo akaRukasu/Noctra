@@ -59,6 +59,8 @@ internal sealed class Mpv : IDisposable
             // 0.7 : départ en pause (SyncPlay : le groupe démarre ensemble) ; musique sans image.
             if (paused) Option("pause", "yes");
             if (audioOnly) Option("vid", "no");
+            // Sans périphérique audio utilisable (casque débranché, pilote absent) : lecture muette plutôt qu'un arrêt.
+            _ = mpv_set_option_string(handle, "audio-fallback-to-null", "yes");
             Check(mpv_initialize(handle));
         }
         catch
