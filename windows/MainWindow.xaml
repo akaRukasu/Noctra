@@ -925,7 +925,7 @@
                         <Border x:Name="BufferBar" Height="5" CornerRadius="2.5" Background="#59FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Left"
                                 Width="0" IsHitTestVisible="False"/>
                         <Slider x:Name="Timeline" Style="{StaticResource PlayerTimeline}" IsEnabled="False" IsMoveToPointEnabled="True" AutomationProperties.Name="Position de lecture"
-                                PreviewMouseLeftButtonDown="BeginSeek" PreviewMouseLeftButtonUp="EndSeek" KeyUp="SeekKey"/>
+                                KeyUp="SeekKey"/>
                         <Canvas x:Name="ChapterMarks" IsHitTestVisible="False"/>
                     </Grid>
                     <DockPanel Margin="0,10,0,0">

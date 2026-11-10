@@ -52,6 +52,75 @@ public partial class MainWindow
     private string? closingGroupId;
     private string closingGroupName = "";
     private int closingOthers;
+    private string[] closingParticipants = [];
+
+    // Après le départ : la séance a-t-elle vraiment disparu ? Sinon, une autre session y est encore
+    // (PWA, téléphone, autre PC, parfois du même compte). Un administrateur peut déconnecter ces
+    // appareils (après confirmation) : Jellyfin retire alors leurs sessions et supprime la séance.
+    private async Task ConfirmGroupDeleted(Jellyfin account, string groupId, string name, string[] participants)
+    {
+        JsonElement? still = null;
+        try
+        {
+            await Task.Delay(700, lifetime.Token);
+            still = (await account.ReadJson("SyncPlay/List", lifetime.Token)).List().Cast<JsonElement?>().FirstOrDefault(group => group!.Value.Str("GroupId") == groupId);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+        if (client != account) return;
+        if (still == null)
+        {
+            ShowStatus("Séance « " + name + " » supprimée.");
+            if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+            return;
+        }
+        var people = still.Value.List("Participants").Select(member => member.Str()).Where(person => person.Length > 0).Distinct().ToArray();
+        if (people.Length == 0) people = participants;
+        JsonElement[] sessions = [];
+        if (account.User.Policy?.IsAdministrator == true)
+        {
+            try
+            {
+                sessions = (await account.ReadJson("Sessions", lifetime.Token)).List()
+                    .Where(session => people.Contains(session.Str("UserName")) && session.Str("DeviceId") is { Length: > 0 and < 200 } device && device != account.DeviceId)
+                    .ToArray();
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+        }
+        if (sessions.Length == 0)
+        {
+            ShowStatus("« " + name + " » est encore occupée par " + string.Join(", ", people) +
+                " sur un autre appareil (PWA, téléphone…). Elle disparaîtra quand cet appareil quittera la séance.");
+            if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+            return;
+        }
+        string Describe(JsonElement session)
+        {
+            var when = DateTime.TryParse(session.Str("LastActivityDate"), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var date)
+                ? " · actif le " + date.ToLocalTime().ToString("dd/MM HH:mm", CultureInfo.GetCultureInfo("fr-FR")) : "";
+            return "• " + session.Str("DeviceName") + " (" + session.Str("Client") + ", " + session.Str("UserName") + when + ")";
+        }
+        var list = string.Join("\n", sessions.Take(12).Select(Describe));
+        if (MessageBox.Show(this, "Jellyfin garde « " + name + " » tant qu’une de ces sessions y est inscrite :\n\n" + list +
+                "\n\nDéconnecter ces appareils de Jellyfin ? La séance sera supprimée ; ils devront se reconnecter.",
+                "Supprimer la séance", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+            return;
+        }
+        foreach (var device in sessions.Select(session => session.Str("DeviceId")).Distinct())
+        {
+            try { await account.Command("Devices?id=" + Uri.EscapeDataString(device), null, lifetime.Token, HttpMethod.Delete); }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException) { }
+        }
+        try
+        {
+            await Task.Delay(1500, lifetime.Token);
+            var gone = !(await account.ReadJson("SyncPlay/List", lifetime.Token)).List().Any(group => group.Str("GroupId") == groupId);
+            ShowStatus(gone ? "Séance « " + name + " » supprimée (appareils déconnectés)." : "Appareils déconnectés ; Jellyfin n’a pas encore fermé la séance, réessayez dans un instant.");
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+        if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+    }
     private readonly System.Windows.Threading.DispatcherTimer syncIdle = new() { Interval = TimeSpan.FromSeconds(10) };
     private static readonly double SyncIdleLimit = double.TryParse(Environment.GetEnvironmentVariable("NOCTRA_SYNC_IDLE_SECONDS"),
         System.Globalization.NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) && seconds > 0 ? seconds : 0;
@@ -217,6 +286,7 @@ public partial class MainWindow
                 {
                     // Séance rejointe seulement pour la supprimer : aucune lecture, départ immédiat.
                     var people = payload.List("Participants").Select(member => member.Str()).Where(name => name.Length > 0).ToList();
+                    closingParticipants = people.Distinct().ToArray();
                     people.Remove(account.User.Name);
                     closingOthers = people.Count;
                     _ = SyncRequest("Leave");
@@ -257,11 +327,9 @@ public partial class MainWindow
             case "GroupLeft":
                 if (closingGroupId != null && syncGroup?.Id != data.Str("GroupId"))
                 {
-                    var name = closingGroupName;
+                    var closedId = closingGroupId;
                     closingGroupId = null;
-                    ShowStatus(closingOthers == 0 ? "Séance « " + name + " » supprimée."
-                        : "Vous avez quitté « " + name + " » ; elle reste ouverte tant que " + closingOthers + " autre(s) participant(s) y sont.");
-                    if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+                    _ = ConfirmGroupDeleted(account, closedId, closingGroupName, closingParticipants);
                     return;
                 }
                 LeaveSyncLocally(syncGroup == null ? "" : "Vous avez quitté le groupe.");
@@ -575,7 +643,19 @@ public partial class MainWindow
         closingGroupId = groupId;
         closingGroupName = name;
         closingOthers = 0;
+        closingParticipants = [];
         _ = SyncRequest("Join", new { GroupId = groupId });
+        _ = DeleteFallback();
+        // Sans réponse du serveur (ce PC y était peut-être déjà inscrit) : départ quand même, puis vérification.
+        async Task DeleteFallback()
+        {
+            try { await Task.Delay(4000, lifetime.Token); }
+            catch (OperationCanceledException) { return; }
+            if (closingGroupId != groupId || client is not { } account) return;
+            closingGroupId = null;
+            await SyncRequest("Leave");
+            await ConfirmGroupDeleted(account, groupId, name, closingParticipants);
+        }
     }
 
     // Fermeture automatique : plus aucune lecture et plus personne d'autre dans la séance.

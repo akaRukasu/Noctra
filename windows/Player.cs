@@ -48,6 +48,22 @@ public partial class MainWindow
         ConfigureFullscreen();
         ConfigureSeekPreview();
         timer.Tick += (_, _) => TickPlayer();
+        // 0.8 : la barre traite elle-même le clic (aller au point cliqué) et le marque « traité » : sans
+        // « handledEventsToo », le début du glissement n'était pas vu et la position en cours écrasait
+        // le curseur toutes les 200 ms pendant qu'on le déplaçait.
+        Timeline.AddHandler(UIElement.PreviewMouseLeftButtonDownEvent, new MouseButtonEventHandler(BeginSeek), true);
+        Timeline.AddHandler(UIElement.PreviewMouseLeftButtonUpEvent, new MouseButtonEventHandler(EndSeek), true);
+        Timeline.AddHandler(Thumb.DragStartedEvent, new DragStartedEventHandler((_, _) => seeking = true), true);
+        Timeline.AddHandler(Thumb.DragCompletedEvent, new DragCompletedEventHandler((_, _) => { if (seeking) { seeking = false; Seek(); } }), true);
+        Timeline.ValueChanged += (_, _) => { if (seeking && active is { Duration: > 0 } state) PositionLabel.Text = FormatTime(Timeline.Value) + " / " + FormatTime(state.Duration); };
+        // Appui n'importe où sur la barre puis glissement : la position suit le pointeur.
+        Timeline.PreviewMouseMove += (_, args) =>
+        {
+            if (!seeking || !Timeline.IsMouseCaptured || args.LeftButton != MouseButtonState.Pressed) return;
+            if (Timeline.Template?.FindName("PART_Track", Timeline) is Track track && track.ActualWidth > 0)
+                Timeline.Value = Math.Clamp(track.ValueFromPoint(args.GetPosition(track)), Timeline.Minimum, Timeline.Maximum);
+        };
+        Timeline.LostMouseCapture += (_, _) => { if (seeking && Mouse.LeftButton == MouseButtonState.Released) { seeking = false; Seek(); } };
     }
 
     private long? pendingStartTicks;
@@ -292,7 +308,7 @@ public partial class MainWindow
             Timeline.Value = state.Position;
             Timeline.IsEnabled = true;
         }
-        PositionLabel.Text = FormatTime(state.Position) + " / " + FormatTime(state.Duration);
+        if (!seeking) PositionLabel.Text = FormatTime(state.Position) + " / " + FormatTime(state.Duration);
         UpdateTimelineDecorations(engine, state);
         if (state.Synchronized) SyncTick(state, engine);
         if (state.Session.Audio) UpdateLyrics(state);
@@ -481,8 +497,20 @@ public partial class MainWindow
         if (active?.CurrentCredits is { } segment) UserSeek(segment.EndTicks / (double)TimeSpan.TicksPerSecond);
     }
     private void Fullscreen(object sender, RoutedEventArgs args) => SetFullscreen(!fullscreen);
-    private void BeginSeek(object sender, MouseButtonEventArgs args) => seeking = true;
-    private void EndSeek(object sender, MouseButtonEventArgs args) { seeking = false; Seek(); }
+    private void BeginSeek(object sender, MouseButtonEventArgs args)
+    {
+        if (!Timeline.IsEnabled) return;
+        seeking = true;
+        // Le glissement continue même si le pointeur sort de la barre (fenêtres superposées).
+        if (!Timeline.IsMouseCaptureWithin) Timeline.CaptureMouse();
+    }
+    private void EndSeek(object sender, MouseButtonEventArgs args)
+    {
+        if (!seeking) return;
+        seeking = false;
+        if (Timeline.IsMouseCaptured) Timeline.ReleaseMouseCapture();
+        Seek();
+    }
     private void SeekKey(object sender, KeyEventArgs args) { if (args.Key is Key.Left or Key.Right or Key.Home or Key.End) Seek(); }
     private void Seek() => UserSeek(Timeline.Value);
 

@@ -658,6 +658,8 @@ class Lookup:
     générique ») qui s'effacent pendant la lecture. Recherche dans la fenêtre principale, puis dans
     les fenêtres superposées du processus ; une action réveille les commandes (pointeur sur l'image)."""
 
+    roots = {}
+
     def __init__(self, auto_id, kind=None):
         self.auto_id, self.kind = auto_id, kind
 
@@ -668,12 +670,23 @@ class Lookup:
                 return spec.wrapper_object()
         except Exception:
             pass  # disparu entre la recherche et la lecture (commandes qui s'effacent)
+        criteria = {"control_type": self.kind} if self.kind else {}
+        # Fenêtre superposée où l'élément a été vu la dernière fois : cherchée en premier (plus rapide).
+        cached = Lookup.roots.get(self.auto_id)
+        if cached is not None:
+            try:
+                for item in cached.descendants(**criteria):
+                    if item.element_info.automation_id == self.auto_id:
+                        return item
+            except Exception:
+                Lookup.roots.pop(self.auto_id, None)
         try:
             for root in Desktop(backend="uia").windows():
                 if root.process_id() != process.pid or root.handle == window.handle:
                     continue
-                for item in root.descendants(**({"control_type": self.kind} if self.kind else {})):
+                for item in root.descendants(**criteria):
                     if item.element_info.automation_id == self.auto_id:
+                        Lookup.roots[self.auto_id] = root
                         return item
         except Exception:
             pass
@@ -700,19 +713,23 @@ class Lookup:
         return self._resolve()
 
     def __getattr__(self, name):
-        value = getattr(self._resolve(), name)
+        target = self._resolve()
+        value = getattr(target, name)
         if not callable(value):
             return value
 
         def call(*args, **kwargs):
-            # Commandes du lecteur : si l'élément s'efface pendant l'action, on les réveille et on recommence.
+            # Commandes du lecteur : si l'élément s'efface pendant l'action, on les réveille et on recommence
+            # (élément déjà trouvé utilisé d'abord : une seule recherche dans le cas normal).
+            nonlocal target
             for attempt in range(3):
                 try:
-                    return getattr(self._resolve(), name)(*args, **kwargs)
+                    return getattr(target, name)(*args, **kwargs)
                 except Exception:
                     if attempt == 2:
                         raise
                     wake_player()
+                    target = self._resolve()
         return call
 
 
@@ -1042,6 +1059,24 @@ def check_new_features():
     screenshot("vignettes-progression")
     print("OK · Vignettes de progression (trickplay) sur la barre.", flush=True)
 
+    # 0.8 : appui sur la barre puis glissement jusqu'au milieu : une seule demande, à la position lâchée.
+    seeks = [payload for name, _, payload in events if name == "syncplay-Seek"]
+    timeline = control("Timeline").rectangle()
+    middle = (timeline.top + timeline.bottom) // 2
+    win32api.SetCursorPos((timeline.left + timeline.width() // 4, middle))
+    sleep(.2)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
+    for step in range(1, 11):
+        win32api.SetCursorPos((timeline.left + timeline.width() // 4 + step * timeline.width() // 40, middle))
+        sleep(.12)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+    until(lambda: len([1 for name, _, _ in events if name == "syncplay-Seek"]) > len(seeks), "Dragging the timeline did not seek")
+    sleep(1)
+    after = [payload for name, _, payload in events if name == "syncplay-Seek"][len(seeks):]
+    assert len(after) <= 2, f"Timeline drag sent too many seeks: {len(after)}"
+    assert 45 * 10_000_000 <= after[-1]["PositionTicks"] <= 75 * 10_000_000, f"Timeline drag landed at {after[-1]['PositionTicks'] / 10_000_000:.1f} s"
+    print("OK · Barre de lecture : appui puis glissement, position lâchée appliquée.", flush=True)
+
     # Statistiques de lecture.
     control("SettingsButton").invoke()
     until(lambda: process_controls("Button", auto_id="StatsToggle"), "Player settings panel missing")
@@ -1348,7 +1383,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         assert report("", "episode")["PositionTicks"] >= 95_000_000
         until(lambda: control("SkipCredits").is_visible(), "Skip credits button not visible")
         control("SkipCredits").invoke()
-        until(lambda: "0:00:24" in control("PositionLabel").window_text() or "0:00:25" in control("PositionLabel").window_text(),
+        until(lambda: re.search(r"^0:00:2[45] ", control("PositionLabel").window_text()),
               "Skip credits did not seek")
         wake_player()
         screenshot("lecture")
