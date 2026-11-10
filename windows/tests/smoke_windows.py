@@ -958,6 +958,10 @@ def check_new_features():
     # Recherche de sous-titres en ligne, téléchargés par le serveur puis ajoutés à la lecture.
     control("SubtitleButton").invoke()
     until(lambda: menu_item("Rechercher des sous-titres"), "Subtitle search entry missing")
+    sleep(.4)
+    # Capture de l'écran sans changer le focus (un menu ouvert se fermerait).
+    if args.screens:
+        ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "menu-sous-titres.png")
     menu_item("Rechercher des sous-titres").expand()
     until(lambda: menu_item("Français"), "Subtitle languages missing")
     menu_item("Français").invoke()

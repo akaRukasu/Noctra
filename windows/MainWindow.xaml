@@ -445,6 +445,9 @@
             <Setter Property="SnapsToDevicePixels" Value="True"/>
             <Setter Property="HasDropShadow" Value="False"/>
             <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <!-- Police de texte explicite : un menu hérite sinon de celle du bouton qui l'ouvre (icônes). -->
+            <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI"/>
+            <Setter Property="FontWeight" Value="Normal"/>
             <Setter Property="FontSize" Value="13.5"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -461,6 +464,7 @@
         </Style>
         <Style TargetType="MenuItem">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI"/>
             <Setter Property="Foreground" Value="{StaticResource Ink}"/>
             <Setter Property="Padding" Value="8,8,16,8"/>
             <Setter Property="MinWidth" Value="190"/>
