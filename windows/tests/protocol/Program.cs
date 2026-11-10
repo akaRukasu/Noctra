@@ -114,6 +114,34 @@ foreach (var (entry, expected) in new[]
 Check(TvCountry.Group("United Kingdom · Généralistes")=="uk" && TvCountry.Group("France · cinéma")=="fr","Bouquet country not detected");
 Check(TvCountry.Group("🇩🇪")=="de","Flag-only bouquet country not detected");
 Console.WriteLine("OK · French brands, country metadata, foreign French-language channels, bouquet countries and unknown countries.");
+// 0.8 : regroupement « Toutes les chaînes » du serveur (noctra-tv-unified.js 200.0.181), cas du test v200181-tv-unified-identity-logos.mjs.
+TvEntry Unified(string name, string id, string? country = "France", string? iptvName = null, string? iptvId = null) =>
+    new(name, null, country, null, null, null, "/resolve/" + id, null, null, false, null, IptvOrgId: iptvId, Id: JsonSerializer.SerializeToElement(id), IptvOrgName: iptvName);
+TvSource UnifiedSource(string id) => new(id, id, null, "channels");
+var cards = TvUnified.Merge(new[]
+{
+    (UnifiedSource("bowdtv-guide"), new[] { Unified("Ciné+ Club","cine"), Unified("CANAL+ FAMILY","family"), Unified("BFM Paris Île-de-France","bfm"), Unified("TÉLÉTOON+","teletoon"),
+        Unified("Disney+","disneyplus"), Unified("Cartoon Network","cartoon"), Unified("Disney Channel","disney"), Unified("beIN SPORTS 1","bein1"), Unified("beIN SPORTS 2","bein2"),
+        Unified("English Club TV AF","english-af"), Unified("English Club TV Réunion","english-reu"), Unified("Antenne Réunion","antenne"),
+        Unified("France 3 Bretagne","f3b"), Unified("France 3","f3"), Unified("Euronews","bowd-euronews"), Unified("Eurosport 1","eurosport") }),
+    (UnifiedSource("oha-live"), new[] { Unified("CINE CLUB","other-cine",iptvName:"Cine+ Club",iptvId:"CinePlusClub.fr"), Unified("CANAL FAMILY","other-family"),
+        Unified("BFM PARIS","other-bfm",iptvName:"BFM Paris Ile-de-France",iptvId:"BFMParisIledeFrance.fr"), Unified("TELETOON+","other-teletoon",iptvName:"Cartoon Network",iptvId:"CartoonNetwork.ca"),
+        Unified("DISNEY+","other-disney",iptvName:"Disney Channel",iptvId:"DisneyChannel.be"), Unified("AR: beIN Sports 1","other-bein","QA"), Unified("Euronews HD","oha-euronews"),
+        Unified("EUROSPORT 1 EN FRANÇAIS","eurosport-fr"), Unified("Sport en France","sport-en-france") }),
+    (UnifiedSource("livewatch-daddy"), new[] { Unified("Euronews French","daddy-euronews"), Unified("Euronews English","daddy-euronews-en","GB"), Unified("Eurosport 1 in French HD","eurosport-in") })
+});
+TvUnifiedChannel Card(string id) => cards.First(card => card.Entries.Any(pair => pair.Entry.Id?.GetString() == id));
+foreach (var (first, second) in new[] { ("cine","other-cine"), ("family","other-family"), ("bfm","other-bfm"), ("teletoon","other-teletoon"), ("disneyplus","other-disney"), ("english-af","english-reu"),
+    ("bowd-euronews","daddy-euronews"), ("bowd-euronews","oha-euronews"), ("eurosport","eurosport-fr"), ("eurosport","eurosport-in") })
+    Check(Card(first) == Card(second), $"Same channel on two cards: {first} / {second}");
+foreach (var (first, second) in new[] { ("teletoon","cartoon"), ("disneyplus","disney"), ("bein1","bein2"), ("bein1","other-bein"), ("f3","f3b"), ("daddy-euronews","daddy-euronews-en") })
+    Check(Card(first) != Card(second), $"Different channels merged: {first} / {second}");
+Check(Card("teletoon").Name.Contains("télétoon", StringComparison.OrdinalIgnoreCase) && Card("disneyplus").Name.Contains("Disney+", StringComparison.OrdinalIgnoreCase), "Display names differ from the web");
+Check(Card("antenne").Name == "Antenne Réunion" && Card("english-af").Name == "English Club TV", "Regional names differ from the web");
+Check(Card("english-af").Variants.Count == 2 && Card("sport-en-france").Name == "Sport en France", "BowdTV variants or « Sport en France » differ from the web");
+Check(TvUnified.UnifiedName("13 EME RUE HD") == TvUnified.UnifiedName("13ème Rue") && TvUnified.UnifiedName("SPORTenFRANCE") == TvUnified.UnifiedName("Sport en France"), "Name rules differ from the web");
+Check(cards.Where(TvUnified.IsFrench).GroupBy(card => TvUnified.UnifiedName(card.Name)).All(group => group.Count() == 1), "Duplicate French cards");
+Console.WriteLine("OK · « Toutes les chaînes » regroupées comme le Web et la PWA 200.0.181, « en français » compris.");
 
 static void Check(bool valid, string message) { if (!valid) throw new InvalidOperationException(message); }
 static string ReadPayload(byte[] data)

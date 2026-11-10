@@ -124,6 +124,13 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 
 ## TV : « Toutes les chaînes »
 
+- **Mêmes regroupements que le serveur** : les chaînes sont réunies par les règles du Web et de la PWA de Noctra 200.0.181 (`noctra-tv-unified.js`, porté en C#) :
+  - mêmes noms, pays, numéros TNT et ordre ;
+  - les déclinaisons BowdTV (Caraïbes, Réunion, AF, différé) passent sous la chaîne principale, comme serveurs manuels ;
+  - les éditions distinctes (France 3 Bretagne) gardent leur carte ;
+  - comme sur le Web, la vue réunie charge les bouquets français ou sans pays, sauf si un autre pays est choisi.
+- **« en français »** : « Eurosport 1 en français », « … in French », « … version française » rejoignent la chaîne française (ajout Windows, à reporter côté serveur).
+- **Vérification** : sur six catalogues de 5 000 entrées aux noms variés, le résultat est identique carte par carte à `noctra-tv-unified.js` 200.0.181 exécuté par Node (même règle « en français » ajoutée des deux côtés). Sur l'un d'eux, l'ancien regroupement Windows donnait 521 cartes françaises dont 91 noms en double ; le nouveau en donne 379, sans doublon.
 - Par défaut, uniquement les chaînes françaises. Le menu « Pays » permet d'en choisir un autre (ou « Tous les pays »).
 - Plus de grille « Choisir un bouquet » avec les bouquets de tous les pays dans cette vue, comme dans la PWA. Les bouquets sont ouverts et leurs chaînes rejoignent la liste, filtrée par pays.
 - Une chaîne de bouquet sans pays indiqué prend celui de son bouquet (« France · … » → France).

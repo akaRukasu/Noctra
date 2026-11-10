@@ -21,7 +21,10 @@ internal sealed record TvGroup(string? Name, string? Title, string? Ref);
 internal sealed record TvCatalog(TvEntry[]? Channels, TvGroup[]? Groups, bool Progressive, string? Warning, int RetryAfterMs = 0);
 internal sealed record TvEntry(string? Name, string? Group, string? Country, string? Logo, string? Provider,
     string? StreamUrl, string? ResolverUrl, string? EmbedUrl, string? ExternalUrl, bool IsEvent, JsonElement? EventId,
-    string? IptvOrgCountry = null, string? IptvOrgId = null, string? EpgId = null, string? Language = null);
+    string? IptvOrgCountry = null, string? IptvOrgId = null, string? EpgId = null, string? Language = null,
+    // 0.8 : champs utilisés par le regroupement « Toutes les chaînes » du serveur (noctra-tv-unified.js).
+    JsonElement? Id = null, string? IptvOrgName = null, string? PlaybackType = null, string? VipFallbackUrl = null,
+    string? HomeName = null, string? AwayName = null, JsonElement? StartTime = null, JsonElement? IsLive = null);
 internal sealed record TvOption(string? Label, string? StreamUrl, string? ResolveUrl, string? Url, string? PlaybackType, bool ManualOnly,
     string? EmbedUrl = null, string? ExternalUrl = null);
 internal sealed record TvResolved(TvOption[]? Options, TvOption[]? ServerChoices, TvOption[]? Embeds, string? ExternalUrl, string? Warning);

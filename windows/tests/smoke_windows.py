@@ -416,7 +416,7 @@ class Fixture(BaseHTTPRequestHandler):
                                   "channels": [{"name": f"{prefixes[i % 8]}{words[i % 7]} {i}{suffixes[i % 6]}", "country": "", "streamUrl": "/api/tv/relay/index.m3u8"} for i in range(4000)]})
             if (q.get("ref") or [""])[0].startswith("stress-"):
                 n = int(q["ref"][0].split("-")[1]); events.append(("stress-bouquet", user, {"n": n}))
-                return self.send({"channels": [{"name": f"Bouquet {n} chaîne {k} HD", "country": "", "streamUrl": "/api/tv/relay/index.m3u8"} for k in range(60)]})
+                return self.send({"channels": [{"name": f"Bouquet {n} chaîne {k} HD", "country": "", "group": f"{['France', 'Italia', 'Deutschland', 'UK', 'Espana'][n % 5]} · bouquet {n}", "streamUrl": "/api/tv/relay/index.m3u8"} for k in range(60)]})
             if q.get("ref") == ["bouquet-de"]:
                 events.append(("german-bouquet",user,{}))
                 return self.send({"channels":[{"name":"ZDF régional","country":"Germany","streamUrl":"/api/tv/relay/index.m3u8"}]})

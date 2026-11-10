@@ -89,7 +89,7 @@ public partial class MainWindow
         var title = Text(selected?.Name ?? (sports ? "Tous les événements" : "Toutes les chaînes"), 23, true); content.Children.Add(title);
         if (sources.Length == 0) { content.Children.Add(Message("Aucune source dans cette section.")); return; }
         var waiting = Text("Les catalogues se chargent progressivement…", 12, color: "Muted"); waiting.Margin = new Thickness(0, 14, 0, 14); content.Children.Add(waiting);
-        var scope = selected == null ? sources : new[] { selected }; var catalogs = new TvCatalog?[scope.Length];
+        var scope = selected == null ? sources.Where(source => source.Section != "portals").ToArray() : new[] { selected }; var catalogs = new TvCatalog?[scope.Length];
         var errors = new string?[scope.Length];
         var childCatalogs = new List<(TvSource Source, TvCatalog Catalog, string? Bouquet)>();
         var childErrors = 0;
@@ -167,26 +167,44 @@ public partial class MainWindow
                 var aggregated = selected == null && group == null;
                 var result = await Task.Run(() =>
                 {
-                    var entries = parts.SelectMany(part => (part.Catalog?.Channels ?? []).Select(entry => (part.Source, Entry: entry)))
-                        .Concat(children.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: string.IsNullOrWhiteSpace(entry.Group) && string.IsNullOrWhiteSpace(entry.Country) ? entry with { Group = part.Bouquet } : entry))))
-                        .Where(pair => !string.IsNullOrWhiteSpace(pair.Entry.Name) && SportsEntry(pair.Source, pair.Entry) == sports)
-                        .DistinctBy(pair => (pair.Source.Id, pair.Entry.Name, pair.Entry.StreamUrl, pair.Entry.ResolverUrl, pair.Entry.EmbedUrl, pair.Entry.ExternalUrl)).ToArray();
                     var allGroups = parts.SelectMany(part => (part.Catalog?.Groups ?? []).Select(category => (Category: category, part.Source)))
                         .Where(pair => !string.IsNullOrWhiteSpace(pair.Category.Ref)).DistinctBy(pair => pair.Category.Ref).ToArray();
-                    TvCountryChoice[] options = [];
-                    if (!sports)
+                    TvChannel[] grouped; TvCountryChoice[] options = [];
+                    if (sports)
                     {
-                        var codes = entries.Select(pair => TvCountry.Of(pair.Entry)).Concat(allGroups.Select(pair => TvCountry.Group(pair.Category.Name ?? pair.Category.Title)))
-                            .Append(country).Append("fr").Distinct().Where(code => code != "*").OrderBy(code => code == "fr" ? 0 : 1).ThenBy(TvCountry.Label);
-                        options = new[] { new TvCountryChoice("*", TvCountry.Label("*")) }.Concat(codes.Select(code => new TvCountryChoice(code, TvCountry.Label(code)))).ToArray();
+                        var events = parts.SelectMany(part => (part.Catalog?.Channels ?? []).Select(entry => (part.Source, Entry: entry)))
+                            .Concat(children.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: entry))))
+                            .Where(pair => !string.IsNullOrWhiteSpace(pair.Entry.Name) && SportsEntry(pair.Source, pair.Entry))
+                            .DistinctBy(pair => (pair.Source.Id, pair.Entry.Name, pair.Entry.StreamUrl, pair.Entry.ResolverUrl, pair.Entry.EmbedUrl, pair.Entry.ExternalUrl));
+                        grouped = TvIdentity.Group(events, true).OrderBy(channel => favorites.Contains(ChannelKey(channel.Name)) ? 0 : 1)
+                            .ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
                     }
-                    var grouped = TvIdentity.Group(entries.Where(pair => sports || country == "*" || TvCountry.Of(pair.Entry) == country), sports)
-                        .OrderBy(channel => favorites.Contains(ChannelKey(channel.Name)) ? 0 : 1)
-                        .ThenBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+                    else
+                    {
+                        // 0.8 : chaînes réunies par les règles du serveur (Web et PWA, noctra-tv-unified.js 200.0.181) :
+                        // une carte par chaîne, pays, numéros TNT et déclinaisons BowdTV comme sur le Web.
+                        string BouquetCountry(string? name) => TvUnified.GroupCountry(new TvGroup(name, null, null));
+                        var loaded = parts.Where(part => part.Catalog != null).Select(part => (part.Source, Channels: part.Catalog!.Channels ?? []))
+                            .Concat(children.Select(part => (part.Source, Channels: (part.Catalog.Channels ?? []).Select(entry =>
+                                // Bouquet d'un autre pays : une chaîne sans pays ni catégorie prend le pays du bouquet.
+                                string.IsNullOrWhiteSpace(entry.Group) && string.IsNullOrWhiteSpace(entry.Country) && BouquetCountry(part.Bouquet) is { Length: > 0 } code && code != "fr"
+                                    ? entry with { Group = part.Bouquet } : entry).ToArray())))
+                            .Select(part => (part.Source, part.Channels.Where(entry => !entry.IsEvent).ToArray()));
+                        var cards = TvUnified.Merge(loaded);
+                        static string CodeOf(TvUnifiedChannel card) => TvUnified.IsFrench(card) ? "fr" : card.Country.Length > 0 ? card.Country : "zz";
+                        var codes = cards.Select(CodeOf).Concat(allGroups.Select(pair => BouquetCountry(pair.Category.Name) is { Length: > 0 } code ? code : "zz"))
+                            .Append(country).Append("fr").Distinct().Where(code => code != "*").OrderBy(code => code == "fr" ? 0 : code == "zz" ? 2 : 1).ThenBy(TvCountry.Label);
+                        options = new[] { new TvCountryChoice("*", TvCountry.Label("*")) }.Concat(codes.Select(code => new TvCountryChoice(code, TvCountry.Label(code)))).ToArray();
+                        grouped = cards.Where(card => country == "*" || CodeOf(card) == country)
+                            .OrderBy(card => favorites.Contains(ChannelKey(card.Name)) ? 0 : 1)
+                            .Select(card => new TvChannel(card.Name, card.Entries, card.Variants)).ToArray();
+                    }
                     // Comme la PWA : dans « Toutes les chaînes », les bouquets sont ouverts et leurs chaînes mêlées à la liste
                     // (filtrée par pays) ; la grille des bouquets reste réservée à la page d'une source.
-                    var shown = aggregated ? [] : allGroups.Where(pair => sports || country == "*" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) is "zz" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) == country).ToArray();
-                    return (Channels: grouped, Keys: grouped.Select(channel => ChannelKey(channel.Name)).ToArray(), Groups: shown, Options: options);
+                    var shown = aggregated ? [] : allGroups.Where(pair => sports || country == "*" || TvUnified.GroupCountry(pair.Category) is var code && (code.Length == 0 || code == country)).ToArray();
+                    // Recherche : par le nom de la carte et par les noms d'origine dans chaque source (comme le Web).
+                    var keys = grouped.Select(channel => string.Join("|", channel.Entries.Select(pair => pair.Entry.Name ?? "").Prepend(channel.Name).Distinct().Take(13).Select(ChannelKey))).ToArray();
+                    return (Channels: grouped, Keys: keys, Groups: shown, Options: options);
                 }, cancellation);
                 if (cancellation.IsCancellationRequested) return;
                 if (!sports)
@@ -211,8 +229,8 @@ public partial class MainWindow
                         foreach (var pair in groups)
                         {
                             var label = pair.Category.Name ?? pair.Category.Title ?? "Bouquet";
-                            var groupCountry = TvCountry.Group(label);
-                            var button = Action(label, () => _ = Navigate(TvPage(pair.Source.Id, sports, pair.Category.Ref, groupCountry == "zz" ? activeCountry : groupCountry)));
+                            var groupCountry = TvUnified.GroupCountry(pair.Category);
+                            var button = Action(label, () => _ = Navigate(TvPage(pair.Source.Id, sports, pair.Category.Ref, groupCountry.Length == 0 ? activeCountry : groupCountry)));
                             button.HorizontalContentAlignment = HorizontalAlignment.Left; button.Margin = new Thickness(0, 0, 10, 10);
                             button.ToolTip = pair.Source.Name + " · " + label; groupGrid.Children.Add(button);
                         }
@@ -281,8 +299,11 @@ public partial class MainWindow
             var jobs = catalogs.SelectMany((catalog, index) => (catalog?.Groups ?? []).Where(category => !string.IsNullOrWhiteSpace(category.Ref))
                 .Select(category => (Source: scope[index], Group: category)))
                 .DistinctBy(job => (job.Source.Id, job.Group.Ref))
-                .Where(job => sports || activeCountry == "*" || TvCountry.Group(job.Group.Name ?? job.Group.Title) is "zz" || TvCountry.Group(job.Group.Name ?? job.Group.Title) == activeCountry)
-                .OrderByDescending(job => (job.Group.Name ?? job.Group.Title ?? "").Contains("France", StringComparison.OrdinalIgnoreCase)).Take(120).ToArray();
+                // Comme la PWA (tvUnifiedGroupOrder) : bouquets français ou sans pays, français d'abord ; BowdTV publie déjà la France
+                // à la racine. Un autre pays choisi charge aussi ses bouquets.
+                .Where(job => sports || activeCountry == "*" || !(job.Source.Id == "bowdtv-guide" && activeCountry == "fr") &&
+                    TvUnified.GroupCountry(job.Group) is var code && (code.Length == 0 || code == activeCountry))
+                .OrderBy(job => TvUnified.FrenchGroupName(job.Group) ? 0 : 1).Take(120).ToArray();
             await Parallel.ForEachAsync(jobs, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellation }, async (job, ct) =>
             {
                 try
@@ -513,13 +534,15 @@ public partial class MainWindow
         foreach (var pair in channel.Entries)
         {
             var entry = pair.Entry; var label = TvProviderLabel(channel, pair.Source, entry);
-            if (service.Stream(entry.StreamUrl) is { } stream) AddServer(new(label + " · direct", stream));
-            if (service.Link(entry.EmbedUrl) is { } embed) AddServer(new(label + " · lecteur externe", External: embed));
+            // Déclinaison BowdTV (Caraïbes, Réunion, différé…) : serveur manuel sous la chaîne principale, comme sur le Web.
+            var manual = channel.Variants?.ContainsKey(entry) == true;
+            if (service.Stream(entry.StreamUrl) is { } stream) AddServer(new(label + " · direct", stream, ManualOnly: manual));
+            if (service.Link(entry.EmbedUrl) is { } embed) AddServer(new(label + " · lecteur externe", External: embed, ManualOnly: manual));
             if (service.Link(entry.ExternalUrl) is { } external && !external.AbsolutePath.StartsWith("/embed/", StringComparison.Ordinal))
                 AddServer(new(label + " · page du fournisseur", External: external, ManualOnly: true));
             if (entry.ResolverUrl != null && service.IsApi(entry.ResolverUrl)) AddServer(new(label + " · rechercher à nouveau", Resolver: entry.ResolverUrl));
         }
-        var pending = channel.Entries.Where(pair => service.IsApi(pair.Entry.ResolverUrl)).DistinctBy(pair => pair.Entry.ResolverUrl).Take(12).ToArray();
+        var pending = channel.Entries.Where(pair => service.IsApi(pair.Entry.ResolverUrl) && channel.Variants?.ContainsKey(pair.Entry) != true).DistinctBy(pair => pair.Entry.ResolverUrl).Take(12).ToArray();
         using var gate = new SemaphoreSlim(4);
         var completed = 0; var failures = 0;
         await Task.WhenAll(pending.Select(async pair =>

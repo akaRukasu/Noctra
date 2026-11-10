@@ -8,7 +8,8 @@ using System.Text.RegularExpressions;
 
 namespace Noctra.Windows;
 
-internal sealed record TvChannel(string Name, (TvSource Source, TvEntry Entry)[] Entries);
+// Variants : déclinaisons BowdTV (Caraïbes, Réunion, différé…) proposées comme serveurs manuels de la chaîne.
+internal sealed record TvChannel(string Name, (TvSource Source, TvEntry Entry)[] Entries, IReadOnlyDictionary<TvEntry, string>? Variants = null);
 
 // The same naming rules as Noctra TV/web: quality and mirror suffixes are not different channels.
 internal static class TvIdentity
