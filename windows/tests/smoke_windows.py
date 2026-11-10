@@ -368,7 +368,6 @@ class Fixture(BaseHTTPRequestHandler):
             html=b'''<!doctype html><html><body><video autoplay muted style="width:100%"></video><script>fetch('/api/tv/oha/media-resolve').then(r=>r.json()).then(data=>{const url=atob(data.encoded);if(new URL(url).origin===location.origin){document.querySelector('video').src=url;}else{document.body.innerText='Mixed content not rewritten';}});</script></body></html>'''
             return self.send(html,content_type="text/html")
         if path == "/api/tv/oha/media-resolve":
-            import base64
             return self.send({"encoded":base64.b64encode(b'http://media.example/fixture.webm').decode()})
         if path == "/ads/banner.js":
             raise AssertionError("An advertising request was not blocked")
