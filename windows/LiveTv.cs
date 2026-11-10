@@ -15,7 +15,7 @@ namespace Noctra.Windows;
 
 public partial class MainWindow
 {
-    private sealed record TvServer(string Label, LiveStream? Stream = null, string? Resolver = null, Uri? External = null, bool ManualOnly = false);
+    private sealed record TvServer(string Label, LiveStream? Stream = null, string? Resolver = null, Uri? External = null, bool ManualOnly = false, bool BowdAd = false);
     private TvSources? savedTvSources;
     private Jellyfin? savedTvOwner;
     private DateTime savedTvUntil;
@@ -453,8 +453,14 @@ public partial class MainWindow
         var choices = new List<TvServer>(); var seen = new HashSet<string>(StringComparer.Ordinal);
         var qualityChecks = new Dictionary<string, (LiveStream Stream, TextBlock Status)>();
         var actions = new WrapPanel { Margin = new Thickness(0, 0, 0, 22) };
-        var play = Action("▶   Lire le direct", () => StartLive(channel.Name, choices.Where(item => item.Stream != null && !item.ManualOnly)
-            .Select(item => item.Stream!).DistinctBy(stream => stream.Url.AbsoluteUri).OrderByDescending(IsHealthy).ThenByDescending(VerifiedHeight).ToArray()), "Primary");
+        var play = Action("▶   Lire le direct", () =>
+        {
+            var streams = choices.Where(item => item.Stream != null && !item.ManualOnly)
+                .Select(item => item.Stream!).DistinctBy(stream => stream.Url.AbsoluteUri).OrderByDescending(IsHealthy).ThenByDescending(VerifiedHeight).ToArray();
+            if (streams.Length > 0) StartLive(channel.Name, streams);
+            // BowdTV : le direct HLS n'est donné qu'après sa publicité (comme la PWA).
+            else if (choices.FirstOrDefault(item => item.BowdAd) is { Resolver: { } bowd }) _ = PlayBowd(service, channel.Name, bowd, cancellation);
+        }, "Primary");
         play.IsEnabled = false; actions.Children.Add(play);
         var retest = Action("Rechercher à nouveau", () => { tvResolutionCache.Clear(); _ = Navigate(TvDetail(channel), back: true); });
         retest.Margin = new Thickness(9, 0, 0, 0); actions.Children.Add(retest); PageContent.Children.Add(actions);
@@ -481,17 +487,18 @@ public partial class MainWindow
             var url = server.Stream?.Url.AbsoluteUri ?? server.Resolver ?? server.External?.AbsoluteUri;
             var key = url == null ? null : server.Label + "\n" + url;
             if (key == null || !seen.Add(key)) return;
-            choices.Add(server); play.IsEnabled = choices.Any(item => item.Stream != null && !item.ManualOnly);
-            var status = Text(server.Stream != null ? "Prêt à lire · test disponible" :
+            choices.Add(server); play.IsEnabled = choices.Any(item => item.Stream != null && !item.ManualOnly || item.BowdAd);
+            var status = Text(server.BowdAd ? "Direct HLS après une courte publicité BowdTV, comme sur la PWA" : server.Stream != null ? "Prêt à lire · test disponible" :
                 server.External != null ? "Lecture web protégée" : "Recherche disponible sans attendre les autres serveurs", 12, color: "Muted");
             var title = Text(server.Label, 15, true); title.TextTrimming = TextTrimming.CharacterEllipsis;
             var labels = new StackPanel { Margin = new Thickness(0, 0, 20, 0) }; labels.Children.Add(title); status.Margin = new Thickness(0, 6, 0, 0); labels.Children.Add(status);
             var bar = new DockPanel(); var buttons = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(buttons, Dock.Right); bar.Children.Add(buttons); bar.Children.Add(labels);
-            var button = Action(server.Label, () => { }); button.Content = server.External != null ? "Ouvrir le lecteur" : server.Resolver != null ? "Rechercher" : "Lire"; buttons.Children.Add(button);
+            var button = Action(server.Label, () => { }); button.Content = server.External != null ? "Ouvrir le lecteur" : server.BowdAd ? "Lire" : server.Resolver != null ? "Rechercher" : "Lire"; buttons.Children.Add(button);
             AutomationProperties.SetAutomationId(button, (server.External != null ? "ExternalServer" : "NativeServer") + serverNumber++);
             button.Click += async (_, _) =>
             {
                 if (server.Stream != null) StartLive(channel.Name, [server.Stream]);
+                else if (server.BowdAd && server.Resolver != null) await PlayBowd(service, channel.Name, server.Resolver, cancellation, status);
                 else if (server.External != null) OpenExternalPlayer(channel.Name, server.External, service);
                 else if (server.Resolver != null)
                 {
@@ -499,10 +506,11 @@ public partial class MainWindow
                     try
                     {
                         var result = await ResolveTv(service, account, server.Resolver, cancellation); if (cancellation.IsCancellationRequested) return;
-                        var resolved = DecodeServers(service, server.Label, result).ToArray();
+                        var resolved = DecodeServers(service, server.Label, result, server.Resolver).ToArray();
                         foreach (var found in resolved) AddServer(found);
                         var streams = resolved.Where(item => item.Stream != null && !item.ManualOnly).Select(item => item.Stream!).ToArray();
                         if (streams.Length > 0) StartLive(channel.Name, streams);
+                        else if (resolved.FirstOrDefault(item => item.BowdAd) is { Resolver: { } bowd }) await PlayBowd(service, channel.Name, bowd, cancellation, status);
                         else if (resolved.FirstOrDefault(item => item.External != null && !item.ManualOnly) is { External: { } page }) OpenExternalPlayer(channel.Name, page, service);
                         else status.Text = result.Warning ?? "Aucun lecteur disponible pour ce serveur.";
                     }
@@ -552,7 +560,7 @@ public partial class MainWindow
             {
                 var result = await ResolveTv(service, account, pair.Entry.ResolverUrl!, cancellation);
                 if (!cancellation.IsCancellationRequested)
-                    foreach (var server in DecodeServers(service, TvProviderLabel(channel, pair.Source, pair.Entry), result)) AddServer(server);
+                    foreach (var server in DecodeServers(service, TvProviderLabel(channel, pair.Source, pair.Entry), result, pair.Entry.ResolverUrl)) AddServer(server);
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException) { failures++; }
             finally { gate.Release(); completed++; if (!cancellation.IsCancellationRequested) MessageLabel(loading).Text = $"{completed}/{pending.Length} sources explorées · les lecteurs trouvés sont utilisables immédiatement"; }
@@ -577,7 +585,8 @@ public partial class MainWindow
             await Task.Delay(500, cancellation);
             value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false);
         }
-        if (!cancellation.IsCancellationRequested && client == account)
+        // Une publicité BowdTV n'est valable que deux minutes : jamais gardée en cache.
+        if (!cancellation.IsCancellationRequested && client == account && value.BowdAd == null)
         {
             if (tvResolutionCache.Count > 200) tvResolutionCache.Clear();
             tvResolutionCache[path] = (DateTime.UtcNow.AddMinutes(1), value);
@@ -585,8 +594,35 @@ public partial class MainWindow
         return value;
     }
 
-    private static IEnumerable<TvServer> DecodeServers(NoctraService service, string provider, TvResolved resolved)
+    // BowdTV : nouvelle demande au serveur (la publicité expire vite), publicité puis direct dans le lecteur.
+    private async Task PlayBowd(NoctraService service, string name, string resolver, CancellationToken cancellation, TextBlock? status = null)
     {
+        if (status != null) status.Text = "Demande du direct BowdTV…";
+        try
+        {
+            var result = await service.Read<TvResolved>(resolver, cancellation, timeoutSeconds: 30, retry: false);
+            if (cancellation.IsCancellationRequested) return;
+            if (result.BowdAd is { VideoUrl: { } video, ActionUrl: { } action } ad && service.Stream(video) is { } adStream && service.IsApi(action))
+            {
+                if (status != null) status.Text = "Publicité BowdTV, puis le direct";
+                StartBowdPreroll(name, service, adStream, action, ad.SkipAfter);
+                return;
+            }
+            var servers = DecodeServers(service, "BowdTV", result).ToArray();
+            var streams = servers.Where(item => item.Stream != null && !item.ManualOnly).Select(item => item.Stream!).ToArray();
+            if (streams.Length > 0) StartLive(name, streams);
+            else if (status != null) status.Text = result.Message ?? result.Warning ?? "BowdTV n’a fourni aucun direct. Utilisez le lecteur officiel.";
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+        {
+            if (status != null && !cancellation.IsCancellationRequested) status.Text = error is NoctraApiException ? error.Message : "BowdTV ne répond pas. Réessayez ou utilisez le lecteur officiel.";
+        }
+    }
+
+    private static IEnumerable<TvServer> DecodeServers(NoctraService service, string provider, TvResolved resolved, string? resolver = null)
+    {
+        // BowdTV : le flux HLS vient après une courte publicité, lue dans le lecteur Noctra (comme la PWA).
+        if (resolved.BowdAd != null && resolver != null && service.IsApi(resolver)) yield return new(provider + " · direct HLS après publicité", Resolver: resolver, BowdAd: true);
         foreach (var option in (resolved.Options ?? []).Concat(resolved.ServerChoices ?? []).Concat(resolved.Embeds ?? []))
         {
             var label = provider + " · " + (option.Label ?? "Serveur");

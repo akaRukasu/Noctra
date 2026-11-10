@@ -42,6 +42,7 @@ args = parser.parse_args()
 video = args.video.read_bytes()
 external_video=video
 events = []
+bowd_ad = {"started": None}
 catalog_calls = defaultdict(int)
 progress = defaultdict(lambda: 100_000_000, {"profile-b": 0})
 played = defaultdict(lambda: True)
@@ -396,8 +397,14 @@ class Fixture(BaseHTTPRequestHandler):
         if path == "/api/tv/sources":
             tv_provider = [{"id": "witv-public", "name": "WiTV", "section": "channels"}] if args.tv_quality_only else []
             # Test des nouveautés : un grand catalogue (4 000 chaînes, 80 bouquets) pour mesurer la réactivité de « Toutes les chaînes ».
-            if args.features_only: tv_provider += [{"id": "stress-test", "name": "Grand catalogue", "section": "channels"}]
+            if args.features_only: tv_provider += [{"id": "stress-test", "name": "Grand catalogue", "section": "channels"}, {"id": "bowdtv-guide", "name": "BowdTV", "section": "channels"}]
             return self.send({"sources": [{"id": "oha-live", "name": "OHA", "section":"channels"}, {"id":"movix-test","name":"Movix test","type":"additional","section":"channels"}, {"id":"progressive-test","name":"Catalogue progressif","section":"channels"}, {"id":"variants-test","name":"Variantes test","section":"channels"}, {"id":"countries-test","name":"Pays test","section":"channels"}, {"id":"quality-test","name":"Qualités test","section":"channels"}, {"id": "broken", "name": "Source indisponible", "section":"channels"}, {"id": "ppv", "name": "PPV", "section":"sports"}] + tv_provider})
+        if path == "/api/tv/resolve/bowd-test":
+            # Comme le serveur Noctra 200.0.181 : sans publicité, seul le lecteur officiel ; le direct vient après « continue ».
+            bowd_ad["started"] = None
+            return self.send({"options": [{"label": "Lecteur officiel BowdTV", "url": "https://bowdtv.example/player/test", "playbackType": "external", "manualOnly": True}],
+                              "externalUrl": "https://bowdtv.example/player/test",
+                              "bowdAd": {"videoUrl": "/api/tv/relay/index.m3u8", "actionUrl": "/api/tv/bowd/ad/test", "skipAfter": 3}})
         if path == "/api/tv/resolve/witv-fixture":
             events.append(("witv-server-options", user, {}))
             return self.send({"options": [
@@ -410,6 +417,8 @@ class Fixture(BaseHTTPRequestHandler):
                 events.append(("witv-server-catalog", user, {}))
                 return self.send({"channels": [{"name": "Chaîne WiTV de test", "provider": "WiTV", "country": "fr",
                                                 "resolverUrl": "/api/tv/resolve/witv-fixture"}]})
+            if q.get("source") == ["bowdtv-guide"]:
+                return self.send({"channels": [{"name": "Noctra BowdTV", "provider": "BowdTV", "resolverUrl": "/api/tv/resolve/bowd-test"}]})
             if q.get("source") == ["stress-test"]:
                 prefixes, words, suffixes = ["FR: ", "UK: ", "DE: ", "IT: ", "ES: ", "[FR] ", "", "PT | "], ["Sport", "Cinéma", "Info", "Musique", "Jeunesse", "Découverte", "Séries", "Histoire"], [" HD", " FHD", " SD", " .b", " (backup)", ""]
                 return self.send({"groups": [{"name": f"{['France', 'Italia', 'Deutschland', 'UK', 'Espana'][n % 5]} · bouquet {n}", "ref": f"stress-{n}"} for n in range(80)],
@@ -557,6 +566,15 @@ class Fixture(BaseHTTPRequestHandler):
             return self.send({"User": {"Id": "profile-a", "Name": "Camille", **({"Policy": {"IsAdministrator": True}} if features else {})}, "AccessToken": "profile-a"})
         user = self.user
         q = parse_qs(target.query)
+        if path == "/api/tv/bowd/ad/test":
+            if payload.get("action") == "start":
+                bowd_ad["started"] = bowd_ad["started"] or monotonic(); events.append(("bowd-start", user, {}))
+                return self.send({"ok": True})
+            if bowd_ad["started"] is None or monotonic() - bowd_ad["started"] < 3:
+                events.append(("bowd-continue-early", user, {}))
+                return self.send({"error": "La publicité BowdTV ne peut pas encore être passée."}, status=409)
+            events.append(("bowd-continue", user, {}))
+            return self.send({"options": [{"label": "BowdTV · AUTO · Serveur 1", "streamUrl": "/api/tv/relay/index.m3u8", "playbackType": "stream"}]})
         if path.startswith("/jellyfin/SyncPlay/"):
             action = path.rsplit("/", 1)[1]
             events.append(("syncplay-" + action, user, payload))
@@ -862,6 +880,25 @@ def check_tv_provider_options():
     assert not by_name("▶   Lire le direct").is_enabled()
     assert not window.child_window(title="Noctra · Lecteur externe", control_type="Window").exists(timeout=.1)
     print("OK · Windows receives the WiTV catalog and three separate manual options from the Noctra API.", flush=True)
+
+
+def check_bowd_preroll():
+    # BowdTV : publicité lue dans le lecteur Noctra (son coupé), « start », délai respecté, « continue », puis direct HLS (comme la PWA).
+    control("TvTab").invoke()
+    until(lambda: control("TvSearch").exists(timeout=.1), "TV search missing")
+    control("TvSearch").set_edit_text("Noctra BowdTV")
+    until(lambda: by_name("Noctra BowdTV").exists(timeout=.1), "BowdTV channel missing from all channels", timeout=40)
+    by_name("Noctra BowdTV").invoke()
+    until(lambda: window.child_window(title_re=".*direct HLS après publicité$", control_type="Text").exists(timeout=.1), "BowdTV live after the advert is not offered", timeout=30)
+    until(lambda: by_name("▶   Lire le direct").is_enabled(), "BowdTV cannot be played in Noctra")
+    by_name("▶   Lire le direct").invoke()
+    until(lambda: "Publicité BowdTV" in control("PlaybackMode").window_text(), "The BowdTV advert is not played in the player", timeout=30)
+    until(lambda: seen("bowd-start"), "The advert start was not reported to Noctra", timeout=30)
+    screenshot("bowdtv-publicite")
+    until(lambda: seen("bowd-continue") and control("PlaybackMode").window_text().startswith("EN DIRECT"), "The BowdTV live did not start after the advert", timeout=45)
+    assert not seen("bowd-continue-early"), "The advert was skipped before its delay"
+    control("ReturnButton").invoke()
+    print("OK · BowdTV : publicité dans le lecteur, délai respecté, puis direct HLS (comme la PWA).", flush=True)
 
 
 def check_tv_responsiveness():
@@ -1364,6 +1401,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         if args.features_only:
             check_new_features()
             check_tv_responsiveness()
+            check_bowd_preroll()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)

@@ -129,7 +129,8 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - les déclinaisons BowdTV (Caraïbes, Réunion, AF, différé) passent sous la chaîne principale, comme serveurs manuels ;
   - les éditions distinctes (France 3 Bretagne) gardent leur carte ;
   - comme sur le Web, la vue réunie charge les bouquets français ou sans pays, sauf si un autre pays est choisi.
-- **« en français »** : « Eurosport 1 en français », « … in French », « … version française » rejoignent la chaîne française (ajout Windows, à reporter côté serveur).
+- **« en français »** : « Eurosport 1 en français », « … in French », « … version française » et « beIN Sports Francais 1 » / « … French 2 » rejoignent la chaîne française (ajout Windows, à reporter côté serveur).
+- **BowdTV comme sur la PWA** : quand BowdTV demande une publicité avant le direct, Noctra la lit dans son lecteur (son coupé, « Publicité BowdTV · direct dans N s »), la signale au serveur au démarrage, attend le délai imposé, puis lance le direct HLS renvoyé par le serveur. Avant, seul le lecteur officiel (externe) était proposé. Le lecteur officiel reste disponible en secours.
 - **Vérification** : sur six catalogues de 5 000 entrées aux noms variés, le résultat est identique carte par carte à `noctra-tv-unified.js` 200.0.181 exécuté par Node (même règle « en français » ajoutée des deux côtés). Sur l'un d'eux, l'ancien regroupement Windows donnait 521 cartes françaises dont 91 noms en double ; le nouveau en donne 379, sans doublon.
 - Par défaut, uniquement les chaînes françaises. Le menu « Pays » permet d'en choisir un autre (ou « Tous les pays »).
 - Plus de grille « Choisir un bouquet » avec les bouquets de tous les pays dans cette vue, comme dans la PWA. Les bouquets sont ouverts et leurs chaînes rejoignent la liste, filtrée par pays.
@@ -169,6 +170,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - rangée infinie de l'accueil (fenêtre étroite, boucle) ;
   - menu SyncPlay du bandeau ;
   - suppression d'une séance oubliée, fermeture automatique d'une séance vide ;
+  - BowdTV : publicité dans le lecteur, délai respecté, puis direct HLS ;
   - TV « Toutes les chaînes » avec un grand catalogue (4 000 chaînes, 80 bouquets) : aucun blocage de l'interface de plus d'une seconde pendant le chargement, en France puis pour tous les pays.
 
 Le résultat du dernier passage est indiqué dans le message de livraison.

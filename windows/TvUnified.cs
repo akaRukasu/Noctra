@@ -195,12 +195,14 @@ internal static class TvUnified
         return clean.Length > 0 ? clean : name.Trim();
     });
     private static readonly Regex FrenchSuffix = R(@"\s+(?:france|fr|fra|french|francais|francaise)$");
+    private static readonly Regex FrenchBeforeNumber = R(@"\s+(?:en )?(?:france|francais|french|fr|fra|vf)(?=\s+\d{1,3}$)");
     private static readonly Regex FrenchMention = R(@"\s+(?:(?:en|in) (?:francais|french|vf)|version (?:francaise|french|fr))$");
     internal static readonly Func<string, string> BrandName = Remembered(name =>
     {
         var text = Normalize(CleanChannelName(name).Replace("+", " plus "));
         // Ajout Windows : « Eurosport 1 en français », « … in French », « … version française » = la chaîne française.
-        return text == "sport en france" ? text : FrenchSuffix.Replace(FrenchMention.Replace(text, "", 1), "", 1).Trim();
+        // Ajout Windows : « beIN Sports Francais 1 », « … French 2 » = « beIN Sports 1 », « beIN Sports 2 ».
+        return text == "sport en france" ? text : FrenchSuffix.Replace(FrenchMention.Replace(FrenchBeforeNumber.Replace(text, "", 1), "", 1), "", 1).Trim();
     });
 
     private static readonly HashSet<string> NoiseWords = ["channel", "live", "direct", "officiel", "official", "hq", "lq", "h264", "h265", "x264", "x265", "fps", "60fps", "50fps",

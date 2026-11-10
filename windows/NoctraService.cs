@@ -27,7 +27,10 @@ internal sealed record TvEntry(string? Name, string? Group, string? Country, str
     string? HomeName = null, string? AwayName = null, JsonElement? StartTime = null, JsonElement? IsLive = null);
 internal sealed record TvOption(string? Label, string? StreamUrl, string? ResolveUrl, string? Url, string? PlaybackType, bool ManualOnly,
     string? EmbedUrl = null, string? ExternalUrl = null);
-internal sealed record TvResolved(TvOption[]? Options, TvOption[]? ServerChoices, TvOption[]? Embeds, string? ExternalUrl, string? Warning);
+internal sealed record TvResolved(TvOption[]? Options, TvOption[]? ServerChoices, TvOption[]? Embeds, string? ExternalUrl, string? Warning,
+    TvBowdAd? BowdAd = null, string? Message = null);
+// BowdTV : publicité à lire avant le direct (comme la PWA : « start » au début de la vidéo, « continue » après le délai).
+internal sealed record TvBowdAd(string? VideoUrl, string? ActionUrl, double SkipAfter);
 internal sealed record LiveStream(Uri Url, string? NoctraToken);
 internal sealed record DiscoverItem(int Id, string MediaType, string? Title, string? Name, string? Overview, string? PosterPath,
     string? ReleaseDate, string? FirstAirDate, DiscoverStatus? MediaInfo, string? BackdropPath = null, double? VoteAverage = null)

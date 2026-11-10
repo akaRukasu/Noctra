@@ -553,6 +553,90 @@ public partial class MainWindow
         internal DateTime Deadline;
         internal bool Started;
         internal bool AutomaticQuality = true;
+        internal BowdPreroll? Ad;
+    }
+
+    // BowdTV : publicité lue (son coupé) avant le direct, comme la PWA (playBowdPreroll) : « start » quand l'image arrive,
+    // « continue » une fois le délai écoulé ; le serveur Noctra renvoie alors les serveurs HLS du direct.
+    private sealed class BowdPreroll(NoctraService service, string actionUrl, double skipAfter)
+    {
+        internal readonly NoctraService Service = service;
+        internal readonly string ActionUrl = actionUrl;
+        internal readonly double SkipAfter = skipAfter;
+        internal DateTime? ReadyAt;
+        internal bool Continuing;
+    }
+
+    private void StartBowdPreroll(string name, NoctraService service, LiveStream advert, string actionUrl, double skipAfter)
+    {
+        StartLive(name, [advert]);
+        if (pendingLive is not { } state || state.Streams[0] != advert) return;
+        state.Ad = new(service, actionUrl, Math.Clamp(skipAfter, 1, 60));
+        MediaEyebrow.Text = "PUBLICITÉ BOWDTV";
+        LiveDot.Visibility = LiveQualityButton.Visibility = LiveMultiButton.Visibility = LiveServerButton.Visibility = Visibility.Collapsed;
+        PlaybackMode.Text = "Publicité BowdTV…";
+        try { state.Engine?.Command("set", "mute", "yes"); } catch (InvalidOperationException) { }
+    }
+
+    private void TickPreroll(LivePlayback state, BowdPreroll ad)
+    {
+        if (state.Engine is { } engine)
+            foreach (var (kind, _) in engine.Poll())
+                if (kind == Mpv.Event.PlaybackRestart && !state.Started)
+                {
+                    state.Started = true;
+                    CorrectVideoDisplay();
+                    _ = StartPrerollOnServer(state, ad);
+                }
+        if (!state.Started)
+        {
+            if (state.Deadline <= DateTime.UtcNow) FailPreroll(state, "Impossible de lire la publicité BowdTV. Réessayez ou ouvrez le lecteur officiel.");
+            return;
+        }
+        if (ad.ReadyAt is not { } ready || ad.Continuing) return;
+        var remaining = (int)Math.Ceiling((ready - DateTime.UtcNow).TotalSeconds);
+        if (remaining > 0) { PlaybackMode.Text = $"Publicité BowdTV · direct dans {remaining} s"; return; }
+        ad.Continuing = true;
+        PlaybackMode.Text = "Chargement du direct BowdTV…";
+        _ = ContinuePreroll(state, ad);
+    }
+
+    private async Task StartPrerollOnServer(LivePlayback state, BowdPreroll ad)
+    {
+        try
+        {
+            await ad.Service.Send(ad.ActionUrl, "POST", new { action = "start" }, CancellationToken.None);
+            if (pendingLive == state) ad.ReadyAt = DateTime.UtcNow.AddSeconds(ad.SkipAfter + .3);
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+        { if (pendingLive == state) FailPreroll(state, error is NoctraApiException ? error.Message : "BowdTV n’a pas validé la publicité. Relancez la chaîne."); }
+    }
+
+    private async Task ContinuePreroll(LivePlayback state, BowdPreroll ad)
+    {
+        try
+        {
+            var data = await ad.Service.Send(ad.ActionUrl, "POST", new { action = "continue" }, CancellationToken.None);
+            if (pendingLive != state) return;
+            var resolved = data.ValueKind == JsonValueKind.Object ? data.Deserialize<TvResolved>(Jellyfin.Json) : null;
+            var servers = resolved == null ? [] : DecodeServers(ad.Service, "BowdTV", resolved).ToArray();
+            var streams = servers.Where(item => item.Stream != null && !item.ManualOnly).Select(item => item.Stream!).DistinctBy(stream => stream.Url.AbsoluteUri).ToArray();
+            var name = MediaTitle.Text;
+            if (streams.Length > 0) { FinishPlayback(); StartLive(name, streams); }
+            else FailPreroll(state, resolved?.Message ?? resolved?.Warning ?? "BowdTV n’a fourni aucun direct après la publicité. Utilisez le lecteur officiel.");
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+        { if (pendingLive == state) FailPreroll(state, error is NoctraApiException ? error.Message : "La lecture BowdTV reste indisponible. Utilisez le lecteur officiel."); }
+    }
+
+    private void FailPreroll(LivePlayback state, string message)
+    {
+        timer.Stop();
+        state.Engine?.Dispose();
+        state.Engine = null;
+        state.Ad = null;
+        PlaybackMode.Text = "";
+        Notice(message);
     }
 
     private void StartLive(string name, LiveStream[] streams)
@@ -634,6 +718,7 @@ public partial class MainWindow
 
     private void TickLive(LivePlayback state)
     {
+        if (state.Ad is { } ad) { TickPreroll(state, ad); return; }
         var engine = state.Engine!;
         foreach (var (kind, _) in engine.Poll())
         {
