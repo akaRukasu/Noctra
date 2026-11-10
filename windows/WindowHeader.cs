@@ -44,8 +44,9 @@ public partial class MainWindow
         HeaderSearch.Width = compact ? 160 : Math.Clamp(width * .18, 220, 380);
         HeaderSearch.Height = SearchBox.MinHeight = ProfileButton.Height = controlHeight;
         SearchBox.FontSize = SearchPlaceholder.FontSize = ProfileButton.FontSize = fontSize;
-        // Texte saisi centré verticalement, sans rognage (hauteur de ligne ≈ 1,36 × taille).
-        SearchBox.Padding = new Thickness(38, Math.Max(4, (controlHeight - 2 - fontSize * 1.36) / 2), 12, 0);
+        // Texte saisi aligné sur l'indication et centré verticalement (hauteur de ligne ≈ 1,36 × taille).
+        // Le gabarit des champs applique la marge intérieure deux fois : valeurs divisées par deux.
+        SearchBox.Padding = new Thickness(19.5, Math.Max(2, (controlHeight - 2 - fontSize * 1.36) / 4), 6, 0);
         ProfileName.MaxWidth = compact ? 65 : 120;
         ProfileAvatar.Width = ProfileAvatar.Height = controlHeight - 18;
         ProfileAvatar.CornerRadius = new CornerRadius((controlHeight - 18) / 2.0);
