@@ -42,7 +42,19 @@ public partial class MainWindow
         internal bool Buffering;
         internal DateTime NextDrift;
         internal CancellationTokenSource? Scheduled;
+        // 0.8 : fermeture automatique (plus de lecture, plus personne d'autre).
+        internal bool HadOthers;
+        internal DateTime? IdleSince;
     }
+
+    // 0.8 : suppression d'une séance ouverte : Noctra la rejoint sans rien lire puis la quitte ;
+    // Jellyfin supprime une séance dès que plus personne n'y est (il n'a pas de commande de suppression).
+    private string? closingGroupId;
+    private string closingGroupName = "";
+    private int closingOthers;
+    private readonly System.Windows.Threading.DispatcherTimer syncIdle = new() { Interval = TimeSpan.FromSeconds(10) };
+    private static readonly double SyncIdleLimit = double.TryParse(Environment.GetEnvironmentVariable("NOCTRA_SYNC_IDLE_SECONDS"),
+        System.Globalization.NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) && seconds > 0 ? seconds : 0;
 
     private DateTime ServerNow => DateTime.UtcNow + serverClockOffset;
 
@@ -73,6 +85,8 @@ public partial class MainWindow
         {
             syncClockConfigured = true;
             syncClock.Tick += (_, _) => { if (client is { } current && syncGroup != null) _ = SyncClock(current); };
+            syncIdle.Tick += (_, _) => SyncIdleTick();
+            if (SyncIdleLimit > 0) syncIdle.Interval = TimeSpan.FromSeconds(Math.Clamp(SyncIdleLimit / 3, 1, 10));
         }
     }
     private bool syncClockConfigured;
@@ -195,15 +209,26 @@ public partial class MainWindow
         switch (data.Str("Type"))
         {
             case "GroupJoined":
+                if (closingGroupId != null && data.Str("GroupId") == closingGroupId)
+                {
+                    // Séance rejointe seulement pour la supprimer : aucune lecture, départ immédiat.
+                    var people = payload.List("Participants").Select(member => member.Str()).Where(name => name.Length > 0).ToList();
+                    people.Remove(account.User.Name);
+                    closingOthers = people.Count;
+                    _ = SyncRequest("Leave");
+                    return;
+                }
                 syncGroup?.Scheduled?.Cancel();
                 syncGroup = new SyncGroup
                 {
                     Id = data.Str("GroupId"), Name = payload.Str("GroupName"), State = payload.Str("State"),
                     Members = payload.List("Participants").Select(member => member.Str()).Where(name => name.Length > 0).ToList()
                 };
+                syncGroup.HadOthers = syncGroup.Members.Count > 1;
                 ShowStatus("Vous regardez ensemble dans « " + syncGroup.Name + " ».");
                 _ = SyncClock(account);
                 syncClock.Start();
+                syncIdle.Start();
                 if (syncPendingItem is { } pending)
                 {
                     syncPendingItem = null;
@@ -214,6 +239,7 @@ public partial class MainWindow
                 if (syncGroup != null && payload.Str() is { Length: > 0 } joined)
                 {
                     if (!syncGroup.Members.Contains(joined)) syncGroup.Members.Add(joined);
+                    syncGroup.HadOthers = true;
                     ShowStatus(joined + " a rejoint le groupe.");
                 }
                 break;
@@ -225,10 +251,26 @@ public partial class MainWindow
                 }
                 break;
             case "GroupLeft":
+                if (closingGroupId != null && syncGroup?.Id != data.Str("GroupId"))
+                {
+                    var name = closingGroupName;
+                    closingGroupId = null;
+                    ShowStatus(closingOthers == 0 ? "Séance « " + name + " » supprimée."
+                        : "Vous avez quitté « " + name + " » ; elle reste ouverte tant que " + closingOthers + " autre(s) participant(s) y sont.");
+                    if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+                    return;
+                }
                 LeaveSyncLocally("Vous avez quitté le groupe.");
                 break;
             case "NotInGroup":
             case "GroupDoesNotExist":
+                if (closingGroupId != null && syncGroup == null)
+                {
+                    closingGroupId = null;
+                    ShowStatus("Cette séance n’existe déjà plus.");
+                    if (page?.Title == SyncPageTitle) _ = Navigate(SyncPlayPage, back: true);
+                    return;
+                }
                 LeaveSyncLocally(syncGroup == null ? "" : "Ce groupe n’existe plus.");
                 break;
             case "StateUpdate":
@@ -505,12 +547,48 @@ public partial class MainWindow
 
     private void SyncCreate(string name, MediaItem? item = null)
     {
+        closingGroupId = null;
         syncPendingItem = item;
         _ = SyncRequest("New", new { GroupName = string.IsNullOrWhiteSpace(name) ? "Soirée Noctra" : name.Trim()[..Math.Min(name.Trim().Length, 60)] });
     }
 
-    private void SyncJoin(string groupId) { if (PlayRequest.Identifier(groupId)) _ = SyncRequest("Join", new { GroupId = groupId }); }
+    private void SyncJoin(string groupId) { closingGroupId = null; if (PlayRequest.Identifier(groupId)) _ = SyncRequest("Join", new { GroupId = groupId }); }
     private void SyncLeave() => _ = SyncRequest("Leave");
+
+    // Supprime une séance ouverte (la sienne ou une séance oubliée).
+    private void SyncDelete(string groupId, string name)
+    {
+        if (!PlayRequest.Identifier(groupId)) return;
+        if (syncGroup?.Id == groupId)
+        {
+            if (syncGroup.Members.Count > 1)
+                ShowStatus("D’autres personnes sont encore dans « " + name + " » : vous la quittez, elle se fermera quand tout le monde sera parti.");
+            if (pendingMedia != null && active?.Synchronized == true) FinishPlayback();
+            SyncLeave();
+            return;
+        }
+        if (syncGroup != null) { ShowStatus("Quittez d’abord votre séance en cours pour supprimer une autre séance."); return; }
+        closingGroupId = groupId;
+        closingGroupName = name;
+        closingOthers = 0;
+        _ = SyncRequest("Join", new { GroupId = groupId });
+    }
+
+    // Fermeture automatique : plus aucune lecture et plus personne d'autre dans la séance.
+    // Délai : 1 min après le départ du dernier participant, 10 min si personne n'est jamais venu.
+    private void SyncIdleTick()
+    {
+        if (syncGroup is not { } group) { syncIdle.Stop(); return; }
+        var playing = pendingMedia != null || active != null || group.State is "Playing" or "Waiting";
+        if (playing || group.Members.Count > 1) { group.IdleSince = null; return; }
+        group.IdleSince ??= DateTime.UtcNow;
+        var limit = group.HadOthers ? SyncIdleLimit > 0 ? SyncIdleLimit : 60 : 600;
+        if ((DateTime.UtcNow - group.IdleSince.Value).TotalSeconds < limit) return;
+        Trace("séance fermée automatiquement " + group.Id);
+        var name = group.Name;
+        SyncLeave();
+        ShowStatus("Séance « " + name + " » fermée : plus de lecture ni d’autre participant.");
+    }
 
     // Un titre lancé pendant une séance commune démarre chez tous les participants.
     private void SyncPlayItem(MediaItem item, long startTicks)
@@ -553,6 +631,7 @@ public partial class MainWindow
             menu.Items.Add(new Separator());
             menu.Items.Add(Entry("Ouvrir le groupe", () => _ = Navigate(SyncPlayPage), "HomeSyncOpen"));
             menu.Items.Add(Entry("Quitter la séance", SyncLeave, "HomeSyncLeave"));
+            if (group.Members.Count <= 1) menu.Items.Add(Entry("Supprimer la séance", () => SyncDelete(group.Id, group.Name), "HomeSyncDelete"));
         }
         else
         {
@@ -581,7 +660,11 @@ public partial class MainWindow
                 {
                     var id = groups[number].Str("GroupId");
                     var name = groups[number].Str("GroupName");
-                    menu.Items.Insert(index + number, Entry("Rejoindre « " + (name.Length > 0 ? name : "séance") + " »", () => SyncJoin(id), "HomeSyncJoin" + number));
+                    var label = name.Length > 0 ? name : "séance";
+                    var join = Entry("« " + label + " » · " + groups[number].List("Participants").Length + " participant(s)", null);
+                    join.Items.Add(Entry("Rejoindre", () => SyncJoin(id), "HomeSyncJoin" + number));
+                    join.Items.Add(Entry("Supprimer", () => SyncDelete(id, label), "HomeSyncDelete" + number));
+                    menu.Items.Insert(index + number, join);
                 }
             }
         }
@@ -684,6 +767,13 @@ public partial class MainWindow
             foreach (var member in group.Members) members.Children.Add(Chip(member));
             card.Children.Add(members);
             card.Children.Add(Text("Lancez un film ou un épisode depuis Noctra : il démarre chez tout le monde au même instant.", 14, color: "Muted"));
+            if (group.Members.Count <= 1)
+            {
+                var alone = Text("Vous êtes seul dans cette séance : en la quittant, elle est supprimée. Sans lecture ni autre participant, elle se ferme seule.", 13, color: "Muted");
+                alone.TextWrapping = TextWrapping.Wrap;
+                alone.Margin = new Thickness(0, 10, 0, 0);
+                card.Children.Add(alone);
+            }
             var leave = Action("Quitter le groupe", SyncLeave);
             leave.HorizontalAlignment = HorizontalAlignment.Left;
             leave.Margin = new Thickness(0, 18, 0, 0);
@@ -713,8 +803,17 @@ public partial class MainWindow
             {
                 var id = open.Str("GroupId");
                 var people = open.List("Participants").Select(member => member.Str()).ToArray();
-                PageContent.Children.Add(Row(open.Str("GroupName"), people.Length + " participant" + (people.Length > 1 ? "s" : "") + " · " + string.Join(", ", people),
-                    Action("Rejoindre", () => SyncJoin(id), "Primary")));
+                var openName = open.Str("GroupName");
+                var others = people.Count(person => person != account.User.Name);
+                var delete = Action("Supprimer", () =>
+                {
+                    if (others > 0 && MessageBox.Show(this, string.Join(", ", people) + " y sont encore. Jellyfin ne supprime une séance que lorsque tout le monde l’a quittée : " +
+                        "vous en sortirez, elle restera ouverte pour eux.", "Supprimer « " + openName + " » ?", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                    SyncDelete(id, openName);
+                });
+                AutomationProperties.SetAutomationId(delete, "SyncDelete-" + id);
+                PageContent.Children.Add(Row(openName, people.Length + " participant" + (people.Length > 1 ? "s" : "") + " · " + string.Join(", ", people),
+                    delete, Action("Rejoindre", () => SyncJoin(id), "Primary")));
             }
         }
         catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized)

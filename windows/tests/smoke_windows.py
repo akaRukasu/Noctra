@@ -551,11 +551,15 @@ class Fixture(BaseHTTPRequestHandler):
         if path.startswith("/jellyfin/SyncPlay/"):
             action = path.rsplit("/", 1)[1]
             events.append(("syncplay-" + action, user, payload))
-            if action in ("New", "Join"):
+            if action == "Join" and sync["group"] and sync["group"]["GroupId"] == payload.get("GroupId"):
+                # Séance existante (0.8 : suppression d'une séance oubliée).
+                sync["group"]["Participants"] = list(dict.fromkeys(sync["group"]["Participants"] + ["Camille"]))
+                sync_update(user, "GroupJoined", dict(sync["group"]))
+            elif action in ("New", "Join"):
                 sync["group"] = {"GroupId": "group-1", "GroupName": payload.get("GroupName", "Soirée test"), "State": "Idle", "Participants": ["Camille"]}
                 sync_update(user, "GroupJoined", dict(sync["group"]))
             elif action == "Leave":
-                sync_update(user, "GroupLeft", "group-1")
+                sync_update(user, "GroupLeft", sync["group"]["GroupId"] if sync["group"] else "group-1")
                 sync["group"] = None
             elif action == "SetNewQueue" and sync["group"]:
                 item = payload["PlayingQueue"][0]
@@ -1072,6 +1076,29 @@ def check_new_features():
     by_name("Quitter le groupe").invoke()
     until(lambda: control("SyncCreate").exists(timeout=.1), "Group was not left")
 
+    # 0.8 : suppression d'une séance oubliée (rejointe sans lecture puis quittée : Jellyfin la supprime).
+    sync["group"] = {"GroupId": "group-old", "GroupName": "Séance oubliée", "State": "Idle", "Participants": []}
+    control("MoreTab").invoke()
+    by_name("Regarder ensemble").invoke()
+    until(lambda: control("SyncDelete-group-old").exists(timeout=.1), "Delete action missing for an open group")
+    screenshot("syncplay-supprimer")
+    leaves = sum(name == "syncplay-Leave" for name, _, _ in events)
+    control("SyncDelete-group-old").invoke()
+    until(lambda: sum(name == "syncplay-Leave" for name, _, _ in events) > leaves, "Forgotten group was not left")
+    until(lambda: not control("SyncDelete-group-old").exists(), "Deleted group still listed")
+    assert control("SyncCreate").exists(), "Deleting a group joined it for playback"
+
+    # 0.8 : fermeture automatique : plus de lecture et plus d'autre participant (délai réduit pour le test).
+    control("SyncCreate").invoke()
+    until(lambda: control("SyncGroupName").exists(timeout=.1), "Group was not created for the idle test")
+    sync_update("profile-a", "UserJoined", "Alex")
+    sleep(.5)
+    sync_update("profile-a", "UserLeft", "Alex")
+    leaves = sum(name == "syncplay-Leave" for name, _, _ in events)
+    until(lambda: sum(name == "syncplay-Leave" for name, _, _ in events) > leaves, "Idle group was not closed automatically", timeout=30)
+    until(lambda: control("SyncCreate").exists(timeout=.1), "Idle group still shown")
+    print("OK · SyncPlay : suppression d'une séance ouverte et fermeture automatique sans lecture ni participant.", flush=True)
+
     # Musique : album, file de lecture, paroles synchronisées.
     control("LibraryTab").invoke()
     by_name("Musique").invoke()
@@ -1186,7 +1213,7 @@ def open_app(profile, address=None):
     # 0.6 : grand visuel de l'accueil sans défilement automatique pendant le test (titre mis en avant stable).
     # 0.7 : aperçus au survol désactivés pendant le parcours principal (vérifiés dans --features-only).
     process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0",
-                                             "NOCTRA_TRACE": str(profile / "trace.log"),
+                                             "NOCTRA_TRACE": str(profile / "trace.log"), "NOCTRA_SYNC_IDLE_SECONDS": "6",
                                              **({} if args.features_only else {"NOCTRA_HOVER_PREVIEW": "0"})})
     try:
         app = Application(backend="uia").connect(process=process.pid, timeout=30)

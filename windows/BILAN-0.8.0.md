@@ -81,6 +81,15 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - ou, pendant une séance, son nom et ses participants, « Ouvrir le groupe » et « Quitter la séance ».
 - Un point d'accent sur l'icône signale qu'une séance est en cours.
 
+**Supprimer et fermer les séances**
+- Chaque séance ouverte a un bouton « Supprimer », dans la page « Regarder ensemble » et dans le menu de l'icône.
+- Jellyfin n'a pas de commande de suppression : une séance disparaît quand plus personne n'y est. Noctra la rejoint donc sans rien lire, puis la quitte aussitôt.
+  - Séance oubliée (personne d'autre dedans) : elle est supprimée.
+  - Séance où d'autres personnes sont encore : Noctra demande confirmation et prévient qu'elle restera ouverte pour eux.
+- Fermeture automatique quand il n'y a plus de lecture et plus d'autre participant :
+  - une minute après le départ du dernier participant ;
+  - dix minutes si personne n'a rejoint la séance (le temps d'inviter ses proches).
+
 ## Médiathèques et Découvrir
 
 - **Vos médiathèques** : les tuiles se partagent la hauteur de la fenêtre. Plus de grand vide sous la grille, et un visuel plus grand.
@@ -118,7 +127,8 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - grille d'affiches ;
   - recherche dans Découvrir ;
   - rangée infinie de l'accueil (fenêtre étroite, boucle) ;
-  - menu SyncPlay du bandeau.
+  - menu SyncPlay du bandeau ;
+  - suppression d'une séance oubliée, fermeture automatique d'une séance vide.
 
 Le résultat du dernier passage est indiqué dans le message de livraison.
 
