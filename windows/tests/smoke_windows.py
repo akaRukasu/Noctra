@@ -1,6 +1,9 @@
 import argparse
 from array import array
+import base64
 import ctypes
+from datetime import datetime, timedelta, timezone
+import hashlib
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -13,7 +16,7 @@ import shutil
 import subprocess
 import wave
 from tempfile import TemporaryDirectory
-from threading import Thread
+from threading import Lock, Thread
 from time import monotonic, sleep
 from urllib.parse import parse_qs, urlsplit
 
@@ -34,6 +37,7 @@ parser.add_argument("--header-only", action="store_true")
 parser.add_argument("--tv-quality-only", action="store_true")
 parser.add_argument("--external-only",action="store_true")
 parser.add_argument("--audio-inspector",type=Path)
+parser.add_argument("--features-only", action="store_true")
 args = parser.parse_args()
 video = args.video.read_bytes()
 external_video=video
@@ -55,6 +59,32 @@ movies = [{"Id": key, "Name": title, "Type": "Movie", "ProductionYear": year, "I
           for key, title, year in [("film", "Horizon polaire", 2024), ("orbit", "Dernière orbite", 2025),
                                    ("land", "Les Terres lointaines", 2023), ("blue", "Le Grand Bleu", 2024),
                                    ("dawn", "Après l’aube", 2026), ("desert", "Traverse", 2024)]]
+
+
+# 0.7 : données des nouveautés (musique, listes de lecture, fiche technique, vignettes de progression).
+features = args.features_only
+episode["Trickplay"] = {"source": {"320": {"Width": 320, "Height": 180, "TileWidth": 10, "TileHeight": 10, "ThumbnailCount": 12, "Interval": 10000}}}
+if features:
+    movies[0].update({"CommunityRating": 7.8, "OfficialRating": "Tous publics", "Genres": ["Science-fiction", "Aventure"],
+                      "Overview": "Une expédition traverse la banquise à la recherche d’un signal venu du pôle.",
+                      "Taglines": ["Le froid n’arrête pas la lumière."], "RemoteTrailers": [{"Name": "Bande-annonce", "Url": "https://www.youtube.com/watch?v=noctra"}],
+                      "ExternalUrls": [{"Name": "IMDb", "Url": "https://www.imdb.com/title/tt0000000/"}],
+                      "People": [{"Id": "person-1", "Name": "Lina Noor", "Type": "Actor", "Role": "Capitaine Hale"}],
+                      "MediaSources": [{"Id": "source", "Container": "mkv", "Size": 48_000_000_000, "Bitrate": 62_000_000, "MediaStreams": [
+                          {"Type": "Video", "Codec": "hevc", "Width": 3840, "Height": 2160, "VideoRangeType": "DOVIWithHDR10", "DisplayTitle": "4K HEVC Dolby Vision", "Index": 0, "RealFrameRate": 23.976},
+                          {"Type": "Audio", "Codec": "truehd", "Channels": 8, "Language": "fre", "DisplayTitle": "Français TrueHD Atmos 7.1", "Profile": "Dolby TrueHD + Dolby Atmos", "IsDefault": True, "Index": 1},
+                          {"Type": "Audio", "Codec": "eac3", "Channels": 6, "Language": "eng", "DisplayTitle": "English E-AC3 5.1", "Index": 2},
+                          {"Type": "Subtitle", "Codec": "srt", "Language": "fre", "DisplayTitle": "Français (SRT)", "IsExternal": True, "Index": 3}]}]})
+album = {"Id": "album", "Name": "Nuits polaires", "Type": "MusicAlbum", "AlbumArtist": "Aurore", "ProductionYear": 2025, "ImageTags": {"Primary": "album"}, "_lib": "music-lib"}
+tracks = [{"Id": key, "Name": name, "Type": "Audio", "Album": "Nuits polaires", "AlbumId": "album", "AlbumPrimaryImageTag": "album", "AlbumArtist": "Aurore",
+           "Artists": ["Aurore"], "IndexNumber": number, "RunTimeTicks": 1_200_000_000, "ParentId": "album", "_lib": "music-lib"}
+          for number, (key, name) in enumerate([("track1", "Première lueur"), ("track2", "Banquise")], 1)]
+playlists = []
+person = {"Id": "person-1", "Name": "Lina Noor", "Type": "Person", "Overview": "Actrice et réalisatrice."}
+quick = {"polls": 0}
+subtitle_downloaded = {"value": False}
+sockets = {}
+sync = {"group": None, "position": 0, "playing_since": None}
 
 
 def art(key, landscape):
@@ -82,10 +112,95 @@ def art(key, landscape):
 
 
 artwork = {(item["Id"], kind): art(item["Id"], kind == "Backdrop")
-           for item in [series, *movies] for kind in ("Backdrop", "Primary")}
+           for item in [series, *movies, album] for kind in ("Backdrop", "Primary")}
+
+
+def trickplay_tile():
+    image = Image.new("RGB", (3200, 360))
+    draw = ImageDraw.Draw(image)
+    for index in range(12):
+        x, y = index % 10 * 320, index // 10 * 180
+        draw.rectangle((x, y, x + 319, y + 179), fill=((index * 47) % 255, 80 + index * 12, 200 - index * 10))
+        draw.text((x + 140, y + 80), f"{index * 10}s", fill=(255, 255, 255))
+    out = BytesIO()
+    image.save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
+tile_jpeg = trickplay_tile()
+
+
+def now_iso(offset=0.0):
+    return (datetime.now(timezone.utc) + timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+
+
+def ws_frame(text):
+    data = text.encode()
+    header = bytes([0x81])
+    if len(data) < 126:
+        header += bytes([len(data)])
+    elif len(data) < 65536:
+        header += bytes([126]) + len(data).to_bytes(2, "big")
+    else:
+        header += bytes([127]) + len(data).to_bytes(8, "big")
+    return header + data
+
+
+def ws_send(user, message):
+    entry = sockets.get(user)
+    if not entry:
+        return False
+    handler, lock = entry
+    with lock:
+        try:
+            handler.wfile.write(ws_frame(json.dumps(message)))
+            handler.wfile.flush()
+            return True
+        except OSError:
+            return False
+
+
+def ws_read(stream, handler, lock):
+    while True:
+        head = stream.read(2)
+        if len(head) < 2:
+            return None
+        opcode, size = head[0] & 0x0F, head[1] & 0x7F
+        if size == 126:
+            size = int.from_bytes(stream.read(2), "big")
+        elif size == 127:
+            size = int.from_bytes(stream.read(8), "big")
+        mask = stream.read(4) if head[1] & 0x80 else b"\0\0\0\0"
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(stream.read(size)))
+        if opcode == 8:
+            return None
+        if opcode == 9:
+            with lock:
+                handler.wfile.write(bytes([0x8A, len(payload)]) + payload)
+                handler.wfile.flush()
+            continue
+        if opcode in (1, 2):
+            return payload.decode(errors="replace")
+
+
+def sync_command(user, command, position, delay=0.0):
+    group = sync["group"]
+    if not group:
+        return
+    ws_send(user, {"MessageType": "SyncPlayCommand", "Data": {"GroupId": group["GroupId"], "PlaylistItemId": group.get("PlaylistItemId", ""),
+                                                              "When": now_iso(delay), "PositionTicks": int(position), "Command": command, "EmittedAt": now_iso()}})
+
+
+def sync_update(user, kind, data):
+    group = sync["group"]
+    ws_send(user, {"MessageType": "SyncPlayGroupUpdate", "Data": {"GroupId": group["GroupId"] if group else "", "Type": kind, "Data": data}})
 
 
 def with_state(item, user):
+    item = {key: value for key, value in item.items() if not key.startswith("_")}
+    if item["Id"] == "episode" and subtitle_downloaded["value"]:
+        item["MediaSources"] = [{"Id": "source", "Container": "webm", "MediaStreams": [
+            {"Type": "Subtitle", "Codec": "srt", "Language": "fre", "DisplayTitle": "Français (OpenSubtitles)", "IsExternal": True, "Index": 3}]}]
     return dict(item, UserData={"Played": played[user, item["Id"]], "PlaybackPositionTicks": progress[user]
                                 if item["Id"] == "episode" else 0, "IsFavorite": (user, item["Id"]) in favorites})
 
@@ -120,6 +235,14 @@ class Fixture(BaseHTTPRequestHandler):
     def page(self, items):
         self.send({"Items": items, "TotalRecordCount": len(items)})
 
+    def media(self, data, content_type="video/webm"):
+        match = re.fullmatch(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
+        if match:
+            start = int(match[1])
+            end = min(int(match[2]), len(data) - 1) if match[2] else len(data) - 1
+            return self.send(data[start:end + 1], 206, content_type, {"Accept-Ranges": "bytes", "Content-Range": f"bytes {start}-{end}/{len(data)}"})
+        return self.send(data, content_type=content_type, headers={"Accept-Ranges": "bytes"})
+
     @property
     def user(self):
         match = re.search(r'Token="(profile-[ab])"', self.headers.get("Authorization", ""))
@@ -139,7 +262,82 @@ class Fixture(BaseHTTPRequestHandler):
             return self.send({"Version": "10.11.0"})
         if path == "/favicon.ico":
             return self.send(status=204)
+        if path == "/jellyfin/QuickConnect/Enabled":
+            return self.send(b"true")
+        if path == "/jellyfin/QuickConnect/Connect":
+            quick["polls"] += 1
+            events.append(("quick-connect-poll", "anonymous", {}))
+            return self.send({"Authenticated": quick["polls"] >= 2, "Secret": "qc-secret", "Code": "123456"})
+        if path == "/jellyfin/GetUtcTime":
+            return self.send({"RequestReceptionTime": now_iso(), "ResponseTransmissionTime": now_iso()})
         user = "public-fixture" if path == "/fixture-video.webm" else self.user
+        if path == "/jellyfin/socket" and self.headers.get("Upgrade", "").lower() == "websocket":
+            accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+            self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n").encode())
+            self.wfile.flush()
+            lock = Lock()
+            sockets[user] = (self, lock)
+            events.append(("socket-open", user, {}))
+            ws_send(user, {"MessageType": "ForceKeepAlive", "Data": 60})
+            try:
+                while True:
+                    message = ws_read(self.rfile, self, lock)
+                    if message is None:
+                        break
+                    events.append(("socket-message", user, json.loads(message)))
+            except (OSError, ValueError):
+                pass
+            finally:
+                if sockets.get(user, (None,))[0] is self:
+                    del sockets[user]
+            self.close_connection = True
+            return
+        if path == "/jellyfin/SyncPlay/List":
+            return self.send([dict(sync["group"])] if sync["group"] else [])
+        if path == "/jellyfin/Items/Filters":
+            return self.send({"Genres": ["Aventure", "Drame", "Science-fiction"], "Years": [2023, 2024, 2025, 2026], "OfficialRatings": ["Tous publics"]})
+        if path == "/jellyfin/Videos/episode/Trickplay/320/0.jpg":
+            events.append(("trickplay-tile", user, {}))
+            return self.send(tile_jpeg, content_type="image/jpeg")
+        if path == "/jellyfin/Items/episode/RemoteSearch/Subtitles/fre":
+            events.append(("subtitle-search", user, {}))
+            return self.send([{"Id": "opensub-1", "Name": "Teen.Wolf.S02E04.FR", "ProviderName": "OpenSubtitles", "Format": "srt", "DownloadCount": 1234}])
+        if path == "/jellyfin/Videos/episode/source/Subtitles/3/0/Stream.srt":
+            events.append(("subtitle-stream", user, {}))
+            return self.send(b"1\n00:00:00,000 --> 00:02:00,000\nSous-titre de test Noctra\n", content_type="text/plain")
+        if path == "/jellyfin/Audio/track1/Lyrics" or path == "/jellyfin/Audio/track2/Lyrics":
+            return self.send({"Lyrics": [{"Text": "Sous la lune pâle", "Start": 0}, {"Text": "Le froid se lève sur la banquise", "Start": 40_000_000},
+                                         {"Text": "Et la nuit danse encore", "Start": 90_000_000}]})
+        if path.startswith("/jellyfin/Audio/track") and "/stream." in path:
+            events.append(("audio-stream", user, {}))
+            return self.media(external_video)
+        if path == "/jellyfin/Items/film/Download":
+            events.append(("offline-download", user, {}))
+            return self.send(external_video, content_type="video/webm", headers={"Content-Disposition": 'attachment; filename="Horizon polaire.webm"'})
+        if path == "/jellyfin/Playlists/playlist-1/Items":
+            return self.page([dict(with_state(movies[0], user), PlaylistItemId="entry-1")] if playlists else [])
+        if path == "/jellyfin/Artists/AlbumArtists":
+            return self.page([{"Id": "artist-1", "Name": "Aurore", "Type": "MusicArtist"}])
+        if features and path == "/api/libraries/refresh":
+            return self.send({"message": "Médiathèques à jour."})
+        if features and path == "/api/files/storage":
+            return self.send({"capacity": {"source": "quota", "used": 6e12, "total": 8e12, "free": 2e12},
+                              "libraries": [{"id": "films", "label": "Films", "bytes": 4e12}, {"id": "series", "label": "Séries", "bytes": 2e12}]})
+        if features and path == "/jellyfin/System/Info":
+            return self.send({"ServerName": "Noctra test", "Version": "10.11.0"})
+        if features and path == "/jellyfin/Users":
+            return self.send([{"Id": "profile-a", "Name": "Camille", "Policy": {"IsAdministrator": True}}])
+        if features and path == "/jellyfin/ScheduledTasks":
+            return self.send([])
+        if features and path == "/jellyfin/Plugins":
+            return self.send([{"Name": "OpenSubtitles", "Version": "20.0.0.0", "Id": "plugin1", "Status": "Active", "Description": "Sous-titres en ligne"},
+                              {"Name": "Intro Skipper", "Version": "1.10.11.0", "Id": "plugin2", "Status": "Disabled", "Description": "Génériques"}])
+        if features and path == "/jellyfin/System/ActivityLog/Entries":
+            return self.send({"Items": [{"Name": "Camille s’est connecté depuis Noctra Windows", "Date": now_iso(), "Severity": "Information", "ShortOverview": "127.0.0.1"}]})
+        if features and path == "/jellyfin/Devices":
+            return self.send({"Items": [{"Id": "phone", "Name": "Téléphone de Camille", "AppName": "Jellyfin Android", "AppVersion": "2.6", "LastUserName": "Camille", "DateLastActivity": now_iso()}]})
+        if features and path == "/jellyfin/Library/VirtualFolders":
+            return self.send([{"Name": "Cinéma", "CollectionType": "movies", "Locations": ["/media/films"], "ItemId": "cinema"}])
         if "UserId" in q:
             assert q["UserId"] == [user]
         if path == "/api/session":
@@ -264,18 +462,27 @@ class Fixture(BaseHTTPRequestHandler):
             assert "NextUpDateCutoff" in q and q["EnableRewatching"] == ["true"]
             return self.page([next_episode] if user == "profile-a" else [])
         if path == f"/jellyfin/Users/{user}/Views":
-            return self.page([{"Id": "cinema", "Name": "Cinéma", "Type": "CollectionFolder"}, {"Id":"series-lib","Name":"Séries","Type":"CollectionFolder"}])
+            return self.page([{"Id": "cinema", "Name": "Cinéma", "Type": "CollectionFolder"}, {"Id":"series-lib","Name":"Séries","Type":"CollectionFolder"}]
+                             + ([{"Id": "music-lib", "Name": "Musique", "Type": "CollectionFolder", "CollectionType": "music"}] if features else []))
         if path == "/jellyfin/Items":
             events.append(("catalog-query",user,q))
             term = q.get("SearchTerm", [""])[0].lower()
             types = q["IncludeItemTypes"][0].split(",")
-            return self.page([with_state(item, user) for item in [series, *movies]
-                              if term in item["Name"].lower() and item["Type"] in types
-                              and (not q.get("ParentId") or (item["Type"] == "Series") == (q["ParentId"] == ["series-lib"]))
+            pool = [series, *movies] + ([album, *tracks, *playlists] if features else [])
+            def in_parent(item):
+                parent = q.get("ParentId", [None])[0]
+                if not parent:
+                    return True
+                if item.get("_lib") == "music-lib":
+                    return parent in ("music-lib", item.get("ParentId"))
+                return (item["Type"] == "Series") == (parent == "series-lib") and parent in ("cinema", "series-lib")
+            return self.page([with_state(item, user) for item in pool
+                              if term in item["Name"].lower() and item["Type"] in types and in_parent(item)
+                              and (not q.get("PersonIds") or item.get("People"))
                               and ("IsFavorite" not in q.get("Filters", [""])[0] or (user, item["Id"]) in favorites)])
         if path.startswith(f"/jellyfin/Users/{user}/Items/"):
             key = path.rsplit("/", 1)[1]
-            return self.send(with_state(next(item for item in [series, episode, next_episode, *movies] if item["Id"] == key), user))
+            return self.send(with_state(next(item for item in [series, episode, next_episode, *movies, album, *tracks, *playlists, person] if item["Id"] == key), user))
         if path == "/jellyfin/Shows/teen/Seasons":
             return self.page([{"Id": "season2", "Name": "Saison 2", "IndexNumber": 2}])
         if path == "/jellyfin/Shows/teen/Episodes":
@@ -327,8 +534,58 @@ class Fixture(BaseHTTPRequestHandler):
         if path == "/jellyfin/Users/AuthenticateByName":
             assert payload["Pw"] == "motdepasse", repr(payload["Pw"])
             user = "profile-a" if payload["Username"] == "Camille" else "profile-b"
-            return self.send({"User": {"Id": user, "Name": payload["Username"]}, "AccessToken": user})
+            return self.send({"User": {"Id": user, "Name": payload["Username"], **({"Policy": {"IsAdministrator": user == "profile-a"}} if features else {})}, "AccessToken": user})
+        if path == "/jellyfin/QuickConnect/Initiate":
+            events.append(("quick-connect-initiate", "anonymous", {}))
+            return self.send({"Secret": "qc-secret", "Code": "123456", "Authenticated": False})
+        if path == "/jellyfin/Users/AuthenticateWithQuickConnect":
+            assert payload["Secret"] == "qc-secret"
+            events.append(("quick-connect-login", "profile-a", {}))
+            return self.send({"User": {"Id": "profile-a", "Name": "Camille", **({"Policy": {"IsAdministrator": True}} if features else {})}, "AccessToken": "profile-a"})
         user = self.user
+        q = parse_qs(target.query)
+        if path.startswith("/jellyfin/SyncPlay/"):
+            action = path.rsplit("/", 1)[1]
+            events.append(("syncplay-" + action, user, payload))
+            if action in ("New", "Join"):
+                sync["group"] = {"GroupId": "group-1", "GroupName": payload.get("GroupName", "Soirée test"), "State": "Idle", "Participants": ["Camille"]}
+                sync_update(user, "GroupJoined", dict(sync["group"]))
+            elif action == "Leave":
+                sync_update(user, "GroupLeft", "group-1")
+                sync["group"] = None
+            elif action == "SetNewQueue" and sync["group"]:
+                item = payload["PlayingQueue"][0]
+                sync["group"]["PlaylistItemId"] = "pl-" + item
+                sync["position"] = payload.get("StartPositionTicks", 0)
+                sync_update(user, "PlayQueue", {"Reason": "NewPlaylist", "Playlist": [{"ItemId": item, "PlaylistItemId": "pl-" + item}], "PlayingItemIndex": 0,
+                                                 "StartPositionTicks": sync["position"], "IsPlaying": True, "LastUpdate": now_iso()})
+            elif action == "Ready" and not payload.get("IsPlaying"):
+                sync["position"] = payload.get("PositionTicks", 0)
+                sync["playing_since"] = monotonic() + .8
+                sync_command(user, "Unpause", sync["position"], .8)
+            elif action == "Pause":
+                elapsed = max(0.0, monotonic() - (sync["playing_since"] or monotonic()))
+                sync["position"] += int(elapsed * 10_000_000)
+                sync["playing_since"] = None
+                sync_command(user, "Pause", sync["position"])
+            elif action == "Unpause":
+                sync["playing_since"] = monotonic() + .5
+                sync_command(user, "Unpause", sync["position"], .5)
+            elif action == "Seek":
+                sync["position"] = payload["PositionTicks"]
+                sync_command(user, "Seek", sync["position"])
+            return self.send(status=204)
+        if path == "/jellyfin/QuickConnect/Authorize":
+            events.append(("quick-connect-authorize", user, {"code": q.get("code", [""])[0]}))
+            return self.send(b"true")
+        if path == "/jellyfin/Items/episode/RemoteSearch/Subtitles/opensub-1":
+            subtitle_downloaded["value"] = True
+            events.append(("subtitle-download", user, {}))
+            return self.send(status=204)
+        if path == "/jellyfin/Playlists":
+            playlists.append({"Id": "playlist-1", "Name": payload["Name"], "Type": "Playlist", "ChildCount": 1})
+            events.append(("playlist-create", user, payload))
+            return self.send({"Id": "playlist-1"})
         if path.endswith("/PlaybackInfo"):
             q = parse_qs(target.query)
             assert q["UserId"] == [user] and payload["EnableTranscoding"] is True
@@ -557,12 +814,253 @@ def enter_native_fullscreen():
     return True
 
 
+def process_controls(kind, name=None, auto_id=None, prefix=None):
+    return [item for root in Desktop(backend="uia").windows() if root.process_id() == process.pid
+            for item in root.descendants(control_type=kind)
+            if (name is None or item.window_text() == name) and (auto_id is None or item.element_info.automation_id == auto_id)
+            and (prefix is None or item.window_text().startswith(prefix))]
+
+
+def menu_item(prefix):
+    found = process_controls("MenuItem", prefix=prefix)
+    return found[0] if found else None
+
+
+def text_of(auto_id):
+    found = process_controls("Text", auto_id=auto_id)
+    return found[0].window_text() if found else ""
+
+
+def seen(name, predicate=lambda user, payload: True):
+    return any(event == name and predicate(user, payload) for event, user, payload in events)
+
+
+def position_seconds():
+    text = control("PositionLabel").window_text().split(" / ")[0]
+    hours, minutes, seconds = (int(part) for part in text.split(":"))
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def check_new_features():
+    # Connexion temps réel (SyncPlay, télécommande) et capacités annoncées.
+    until(lambda: "profile-a" in sockets, "Realtime WebSocket not connected", timeout=30)
+    until(lambda: seen("/jellyfin/Sessions/Capabilities/Full"), "Remote control capabilities not announced")
+    print("OK · WebSocket Jellyfin (en-tête Authorization) et capacités de télécommande.", flush=True)
+
+    # Aperçu au survol d'une carte.
+    card = window.child_window(title="Horizon polaire", control_type="Button", found_index=0)
+    card.set_focus()
+    sleep(.8)
+    rect = card.rectangle()
+    for step in range(8):
+        win32api.SetCursorPos(((rect.left + rect.right) // 2 - 16 + step * 4, (rect.top + rect.bottom) // 2))
+        sleep(.07)
+    until(lambda: process_controls("Button", name="Aperçu · Lire"), "Hover preview did not open", timeout=6)
+    sleep(.5)
+    screenshot("apercu-survol")
+    caption = win32gui.GetWindowRect(window.handle)
+    win32api.SetCursorPos((caption[0] + 300, caption[1] + 18))
+    until(lambda: not process_controls("Button", name="Aperçu · Lire"), "Hover preview did not close", timeout=5)
+    print("OK · Aperçu au survol (visuel, synopsis, lecture, fiche, favori).", flush=True)
+
+    # Filtres de médiathèque (genre).
+    control("LibraryTab").invoke()
+    by_name("Cinéma").invoke()
+    until(lambda: by_name("Horizon polaire").exists(timeout=.1), "Library contents missing")
+    genre = window.child_window(title="Genre", control_type="ComboBox")
+    until(lambda: genre.select("Science-fiction") or True, "Genre filter choices did not load", timeout=15)
+    until(lambda: any(name == "catalog-query" and body.get("Genres") == ["Science-fiction"] for name, _, body in events), "Genre filter not applied")
+    until(lambda: by_name("Effacer les filtres").exists(timeout=.1), "Filtered page missing")
+    screenshot("filtres")
+    print("OK · Filtres genre / année / note et tris supplémentaires.", flush=True)
+
+    # Fiche enrichie : badges techniques, informations techniques, actions.
+    by_name("Effacer les filtres").invoke()
+    until(lambda: by_name("Horizon polaire").exists(timeout=.1), "Unfiltered library missing")
+    by_name("Horizon polaire").invoke()
+    until(lambda: by_name("Dolby Vision", "Text").exists(timeout=.1), "Technical badges missing")
+    for label in ["4K", "Dolby Atmos", "7.1", "HEVC"]:
+        assert by_name(label, "Text").exists(timeout=.1), label
+    assert control("TechnicalInfo").exists(timeout=.1) and control("TogetherButton").exists(timeout=.1)
+    screenshot("fiche-film")
+    print("OK · Fiche : 4K, Dolby Vision, Atmos 7.1, HEVC, fiche technique, regarder ensemble, bande-annonce.", flush=True)
+
+    # Hors connexion : téléchargement, lecture du fichier local, reprise reportée au serveur.
+    control("OfflineDownload").invoke()
+    until(lambda: seen("offline-download"), "Offline download not requested")
+    until(lambda: control("OfflineDownload").window_text() == "Disponible hors connexion", "Offline download did not finish", timeout=40)
+    control("MoreTab").invoke()
+    by_name("Téléchargements sur ce PC").invoke()
+    play = window.child_window(title_re=r"^▶\s+Lire$", control_type="Button")
+    until(lambda: play.exists(timeout=.1), "Offline entry missing")
+    screenshot("hors-connexion")
+    play.invoke()
+    until(lambda: control("PlaybackMode").window_text().startswith("Hors connexion"), "Offline file did not play", timeout=40)
+    sleep(2.5)
+    control("ReturnButton").invoke()
+    until(lambda: seen("/jellyfin/UserItems/film/UserData"), "Offline position was not reported to the server")
+    print("OK · Hors connexion : fichier copié sur le PC, lu localement, position reportée.", flush=True)
+
+    # SyncPlay : groupe, lecture synchronisée, pause et déplacement passés par le serveur.
+    until(lambda: control("MoreTab").is_visible(), "Library not restored after offline playback")
+    control("MoreTab").invoke()
+    by_name("Regarder ensemble").invoke()
+    until(lambda: control("SyncCreate").exists(timeout=.1), "SyncPlay page missing")
+    control("SyncCreate").invoke()
+    until(lambda: control("SyncGroupName").exists(timeout=.1), "Group was not joined")
+    screenshot("syncplay-groupe")
+    control("HomeTab").invoke()
+    until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Home missing")
+    control("PrimaryPlayback", "Button").invoke()
+    until(lambda: seen("syncplay-SetNewQueue", lambda user, body: body["PlayingQueue"] == ["episode"]), "Item was not queued for the group")
+    until(lambda: seen("syncplay-Ready"), "Ready was not reported after loading", timeout=60)
+    until(lambda: control("PauseButton").window_text() == "Pause", "Group playback did not start")
+    first = position_seconds()
+    until(lambda: position_seconds() >= first + 2, "Group playback is not advancing", timeout=10)
+    until(lambda: text_of("SyncBadgeText") == "Ensemble · 1", "Group badge missing")
+    sync_update("profile-a", "UserJoined", "Alex")
+    until(lambda: text_of("SyncBadgeText") == "Ensemble · 2", "Participant join not shown")
+    control("PauseButton").invoke()
+    until(lambda: seen("syncplay-Pause"), "Pause was not sent to the group")
+    until(lambda: control("PauseButton").window_text() == "Reprendre", "Group pause was not applied")
+    sync_command("profile-a", "Seek", 600_000_000)
+    until(lambda: seen("syncplay-Ready", lambda user, body: body.get("PositionTicks", 0) >= 590_000_000), "Seek was not acknowledged")
+    until(lambda: control("PauseButton").window_text() == "Pause" and position_seconds() >= 60, "Group did not resume after seek", timeout=20)
+    screenshot("syncplay-lecture")
+    print("OK · SyncPlay : création, file commune, prêt, départ synchronisé, pause et déplacement par le serveur, participants.", flush=True)
+
+    # Télécommande depuis un autre appareil (passe par le groupe).
+    ws_send("profile-a", {"MessageType": "Playstate", "Data": {"Command": "Pause"}})
+    until(lambda: control("PauseButton").window_text() == "Reprendre", "Remote pause was not applied")
+    assert sum(name == "syncplay-Pause" for name, _, _ in events) >= 2
+    control("PauseButton").invoke()
+    until(lambda: control("PauseButton").window_text() == "Pause", "Group resume failed")
+    print("OK · Télécommande (Playstate) depuis un autre appareil.", flush=True)
+
+    # Vignettes de progression (trickplay) au survol de la barre.
+    timeline = control("Timeline").rectangle()
+    for step in range(8):
+        win32api.SetCursorPos((timeline.left + timeline.width() // 3 + step * 6, (timeline.top + timeline.bottom) // 2))
+        sleep(.1)
+    until(lambda: seen("trickplay-tile"), "Trickplay tile not requested", timeout=10)
+    win32api.SetCursorPos((timeline.left + timeline.width() // 3 + 60, (timeline.top + timeline.bottom) // 2))
+    sleep(.8)
+    screenshot("vignettes-progression")
+    print("OK · Vignettes de progression (trickplay) sur la barre.", flush=True)
+
+    # Statistiques de lecture.
+    control("SettingsButton").invoke()
+    until(lambda: menu_item("Statistiques de lecture"), "Player settings menu missing")
+    menu_item("Statistiques de lecture").invoke()
+    until(lambda: "Décodage" in text_of("PlaybackStats"), "Playback statistics missing")
+    screenshot("statistiques")
+    print("OK · Réglages du lecteur et statistiques.", flush=True)
+
+    # Recherche de sous-titres en ligne, téléchargés par le serveur puis ajoutés à la lecture.
+    control("SubtitleButton").invoke()
+    until(lambda: menu_item("Rechercher des sous-titres"), "Subtitle search entry missing")
+    menu_item("Rechercher des sous-titres").expand()
+    until(lambda: menu_item("Français"), "Subtitle languages missing")
+    menu_item("Français").invoke()
+    until(lambda: menu_item("Teen.Wolf.S02E04.FR"), "Subtitle results missing", timeout=15)
+    menu_item("Teen.Wolf.S02E04.FR").invoke()
+    until(lambda: seen("subtitle-download"), "Subtitle download not requested")
+    until(lambda: seen("subtitle-stream"), "Downloaded subtitle not added to playback", timeout=30)
+    print("OK · Sous-titres : recherche en ligne, téléchargement, ajout à la lecture.", flush=True)
+
+    # Mini-lecteur au premier plan.
+    original = tuple(win32gui.GetWindowRect(window.handle))
+    control("MiniButton").invoke()
+    until(lambda: win32gui.GetWindowRect(window.handle)[2] - win32gui.GetWindowRect(window.handle)[0] < 900, "Mini player did not shrink")
+    assert win32gui.GetWindowLong(window.handle, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOPMOST, "Mini player is not topmost"
+    sleep(.6)
+    screenshot("mini-lecteur")
+    process_controls("Button", auto_id="MiniButton")[0].invoke()
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "Window was not restored after the mini player")
+    print("OK · Mini-lecteur au premier plan et restauration.", flush=True)
+
+    control("ReturnButton").invoke()
+    until(lambda: control("MoreTab").is_visible(), "Library not restored after group playback")
+    control("MoreTab").invoke()
+    by_name("Regarder ensemble").invoke()
+    until(lambda: by_name("Quitter le groupe").exists(timeout=.1), "Leave action missing")
+    by_name("Quitter le groupe").invoke()
+    until(lambda: control("SyncCreate").exists(timeout=.1), "Group was not left")
+
+    # Musique : album, file de lecture, paroles synchronisées.
+    control("LibraryTab").invoke()
+    by_name("Musique").invoke()
+    until(lambda: by_name("Nuits polaires").exists(timeout=.1), "Album missing")
+    by_name("Nuits polaires").invoke()
+    until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Album page missing")
+    screenshot("album")
+    control("PrimaryPlayback", "Button").invoke()
+    until(lambda: seen("audio-stream"), "Audio stream not requested", timeout=40)
+    until(lambda: text_of("AudioTitle") == "Première lueur", "Now playing title missing")
+    until(lambda: text_of("LyricCurrent") not in ("", "♪"), "Synced lyrics missing", timeout=15)
+    screenshot("musique")
+    assert control("QueueNext").is_visible()
+    control("QueueNext").invoke()
+    until(lambda: text_of("AudioTitle") == "Banquise", "Queue did not advance", timeout=30)
+    control("ReturnButton").invoke()
+    print("OK · Musique : albums, lecture en file, titre suivant, paroles synchronisées.", flush=True)
+
+    # Listes de lecture.
+    until(lambda: control("MoreTab").is_visible(), "Library not restored after music")
+    control("MoreTab").invoke()
+    by_name("Listes de lecture").invoke()
+    until(lambda: by_name("Nouvelle liste").exists(timeout=.1), "Playlists page missing")
+    by_name("Nouvelle liste").invoke()
+    dialog = window.child_window(title="Nouvelle liste de lecture", control_type="Window")
+    dialog.wait("visible", timeout=10)
+    dialog.child_window(title="Nom de la liste", control_type="Edit").set_edit_text("Soirée glaciale")
+    dialog.child_window(title="Valider", control_type="Button").invoke()
+    until(lambda: seen("playlist-create", lambda user, body: body["Name"] == "Soirée glaciale"), "Playlist not created")
+    until(lambda: by_name("Soirée glaciale", "Text").exists(timeout=.1), "Playlist page missing")
+    screenshot("liste-de-lecture")
+    print("OK · Listes de lecture : création et page de la liste.", flush=True)
+
+    # Quick Connect : autoriser un autre appareil depuis le profil.
+    control("ProfileButton").invoke()
+    until(lambda: control("QuickConnectInput").exists(timeout=.1), "Quick Connect form missing")
+    control("QuickConnectInput").set_edit_text("654321")
+    control("QuickConnectAuthorize").invoke()
+    until(lambda: seen("quick-connect-authorize", lambda user, body: body["code"] == "654321"), "Quick Connect authorization not sent")
+
+    # Administration : extensions et stockage.
+    control("MoreTab").invoke()
+    by_name("Jellyfin et médiathèques").invoke()
+    until(lambda: by_name("Extensions").exists(timeout=.1), "Jellyfin admin shortcuts missing", timeout=20)
+    by_name("Extensions").invoke()
+    until(lambda: by_name("OpenSubtitles · 20.0.0.0", "Text").exists(timeout=.1), "Plugins missing")
+    screenshot("extensions")
+    control("BackButton").invoke()
+    until(lambda: by_name("Stockage du serveur").exists(timeout=.1), "Storage shortcut missing")
+    by_name("Stockage du serveur").invoke()
+    until(lambda: window.child_window(title_re=".*utilisés sur.*", control_type="Text").exists(timeout=.1), "Storage summary missing")
+    screenshot("stockage")
+    print("OK · Quick Connect (autoriser), extensions, stockage du serveur.", flush=True)
+
+    # Connexion par code (Quick Connect).
+    control("ProfileButton").invoke()
+    by_name("Se déconnecter").invoke()
+    until(lambda: control("SignInButton").is_enabled(), "Login screen missing")
+    control("QuickConnectButton").invoke()
+    until(lambda: text_of("QuickConnectCode") == "123456", "Quick Connect code not shown")
+    screenshot("quick-connect")
+    until(lambda: seen("quick-connect-login"), "Quick Connect login not completed", timeout=30)
+    until(lambda: by_name("CONTINUER À REGARDER", "Text").exists(timeout=.1), "Home not shown after Quick Connect", timeout=30)
+    print("OK · Connexion Quick Connect par code.", flush=True)
+
+
 def open_app(profile, address=None):
     command = [str(args.exe.resolve())]
     if address:
         command += ["--server", address]
     # 0.6 : grand visuel de l'accueil sans défilement automatique pendant le test (titre mis en avant stable).
-    process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0"})
+    # 0.7 : aperçus au survol désactivés pendant le parcours principal (vérifiés dans --features-only).
+    process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0",
+                                             **({} if args.features_only else {"NOCTRA_HOVER_PREVIEW": "0"})})
     try:
         app = Application(backend="uia").connect(process=process.pid, timeout=30)
         dialog = app.window(title="Noctra", control_type="Window")
@@ -609,6 +1107,11 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         if args.header_only:
             window.close(); process.wait(timeout=12)
             print("OK · Responsive header, control alignment and maximized caption visibility.",flush=True)
+            raise SystemExit(0)
+        if args.features_only:
+            check_new_features()
+            window.close(); process.wait(timeout=12)
+            print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)
         if args.tv_quality_only:
             check_tv_provider_options()

@@ -263,6 +263,7 @@ public partial class MainWindow : Window
         else if (!back && page != null) history.Push(page);
         page = destination;
 
+        CloseHoverPreview();
         pageRequest?.Cancel();
         pageRequest?.Dispose();
         pageRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
@@ -330,6 +331,7 @@ public partial class MainWindow : Window
         UpdateDisplayReadout();
         PageContent.Children.Add(displayReadout);
         PageContent.Children.Add(PlaybackSettings(account));
+        PageContent.Children.Add(AccountTools(account, cancellation));
         var signOut = Action("Se déconnecter", () => SignOut(this, new RoutedEventArgs()));
         signOut.HorizontalAlignment = HorizontalAlignment.Left;
         PageContent.Children.Add(signOut);

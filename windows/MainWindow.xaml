@@ -752,6 +752,13 @@
                                TextTrimming="CharacterEllipsis" MaxWidth="640" AutomationProperties.AutomationId="AudioTitle"/>
                     <TextBlock x:Name="AudioArtist" FontSize="17" Foreground="{StaticResource Accent}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
                     <TextBlock x:Name="AudioAlbum" FontSize="14" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    <!-- Paroles synchronisées (Jellyfin 10.9+) : ligne en cours mise en avant. -->
+                    <StackPanel x:Name="LyricsPanel" Margin="0,28,0,0" Visibility="Collapsed" MaxWidth="760">
+                        <TextBlock x:Name="LyricPrevious" FontSize="15" Foreground="#66FFFFFF" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="LyricCurrent" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,10" AutomationProperties.AutomationId="LyricCurrent"/>
+                        <TextBlock x:Name="LyricNext" FontSize="15" Foreground="#66FFFFFF" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                    </StackPanel>
                 </StackPanel>
             </Grid>
             <StackPanel Grid.Row="1" x:Name="PlaybackNotice" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="600" Margin="28">

@@ -125,6 +125,13 @@ jobs:
         run: |
           python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures
           if ($LASTEXITCODE) { throw "Test de l'interface : code $LASTEXITCODE" }
+      # 0.7 : SyncPlay (WebSocket simulé), musique, listes, hors connexion, Quick Connect, administration, aperçus.
+      - name: Test des nouveautés (API locale simulée)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' && !github.event.inputs.sources }}
+        timeout-minutes: 25
+        run: |
+          python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures --features-only
+          if ($LASTEXITCODE) { throw "Test des nouveautés : code $LASTEXITCODE" }
       - name: Archive des sources
         if: always()
         working-directory: .

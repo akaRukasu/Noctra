@@ -45,6 +45,60 @@ public partial class MainWindow
             : new MediaItem { Id = item.AlbumId, Name = item.Album ?? item.Name, ImageTags = item.AlbumPrimaryImageTag is { } tag ? new() { ["Primary"] = tag } : null };
         _ = artwork?.Load(AudioCover, cover, false, 900, lifetime.Token);
         _ = artwork?.Load(AudioBackdrop, cover, false, 400, lifetime.Token);
+        if (client is { } account && pendingLocalFile == null) _ = LoadLyrics(account, item);
+    }
+
+    // ---------- Paroles synchronisées ----------
+
+    private (double Start, string Text)[] lyrics = [];
+    private string? lyricsItem;
+    private int lyricIndex = -2;
+
+    private async Task LoadLyrics(Jellyfin account, MediaItem item)
+    {
+        lyrics = [];
+        lyricsItem = item.Id;
+        lyricIndex = -2;
+        LyricsPanel.Visibility = Visibility.Collapsed;
+        try
+        {
+            var data = await account.ReadJson("Audio/" + item.Id + "/Lyrics", lifetime.Token);
+            if (lyricsItem != item.Id) return;
+            lyrics = data.List("Lyrics").Where(line => line.Field("Start").ValueKind == JsonValueKind.Number)
+                .Select(line => (line.Num("Start") / TimeSpan.TicksPerSecond, line.Str("Text").Trim())).OrderBy(line => line.Item1).ToArray();
+            LyricsPanel.Visibility = lyrics.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+    }
+
+    private void UpdateLyrics(ActivePlayback state)
+    {
+        if (lyrics.Length == 0 || lyricsItem != state.Session.ItemId) return;
+        var index = Array.FindLastIndex(lyrics, line => line.Start <= state.Position + .15);
+        if (index == lyricIndex) return;
+        lyricIndex = index;
+        LyricPrevious.Text = index > 0 ? lyrics[index - 1].Text : "";
+        LyricCurrent.Text = index >= 0 ? lyrics[index].Text : "♪";
+        LyricNext.Text = index + 1 < lyrics.Length ? lyrics[index + 1].Text : "";
+        if (SystemParameters.ClientAreaAnimation)
+            LyricCurrent.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(.25, 1, TimeSpan.FromMilliseconds(260)));
+    }
+
+    // ---------- Chapitres ----------
+
+    private MenuItem? ChaptersMenu()
+    {
+        if (active is not { Chapters.Length: > 1 } state) return null;
+        var root = new MenuItem { Header = "Chapitres" };
+        foreach (var chapter in state.Chapters.Take(80))
+        {
+            var seconds = chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond;
+            var entry = new MenuItem { Header = FormatTime(seconds) + "   " + (string.IsNullOrWhiteSpace(chapter.Name) ? "Chapitre" : chapter.Name),
+                IsCheckable = true, IsChecked = seconds <= state.Position && state.Chapters.All(other => other.StartPositionTicks <= chapter.StartPositionTicks || other.StartPositionTicks / (double)TimeSpan.TicksPerSecond > state.Position) };
+            entry.Click += (_, _) => UserSeek(seconds);
+            root.Items.Add(entry);
+        }
+        return root;
     }
 
     // ---------- Détails de lecture : vignettes de progression ----------
@@ -278,6 +332,7 @@ public partial class MainWindow
             speed.Items.Add(entry);
         }
         menu.Items.Add(speed);
+        if (ChaptersMenu() is { } chapters) menu.Items.Add(chapters);
         menu.Items.Add(DelayMenu(engine, "Décalage des sous-titres", "sub-delay"));
         menu.Items.Add(DelayMenu(engine, "Décalage audio", "audio-delay"));
         var aspect = new MenuItem { Header = "Format de l’image", IsEnabled = active?.Session.Audio != true };

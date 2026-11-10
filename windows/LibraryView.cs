@@ -53,7 +53,7 @@ public partial class MainWindow
             var shine = new Border { BorderBrush = ColorOf("#40FFFFFF"), BorderThickness = new Thickness(1.5), CornerRadius = new CornerRadius(18), Opacity = 0 };
             tile.Children.Add(shine);
             tile.SizeChanged += (_, _) => tile.Clip = new RectangleGeometry(new Rect(tile.RenderSize), 18, 18);
-            var button = Action(library.Name, () => _ = Navigate(BrowsePage(library.Name, ButtonTab.Library, parent: library.Id)), "Card");
+            var button = Action(library.Name, () => OpenLibrary(library), "Card");
             System.Windows.Automation.AutomationProperties.SetAutomationId(button, "LibraryTile-" + library.Id);
             button.Content = tile;
             button.Margin = new Thickness(9, 0, 9, 18);
@@ -85,7 +85,7 @@ public partial class MainWindow
             else
             {
                 await libraryPreviewGate.WaitAsync(cancellation);
-                try { result = await account.Browse(null, library.Id, null, 0, true, cancellation); }
+                try { result = await account.Browse(LibraryTypes(library), library.Id, null, 0, true, cancellation); }
                 finally { libraryPreviewGate.Release(); }
             }
             if (cancellation.IsCancellationRequested || client != account) return;
@@ -93,6 +93,8 @@ public partial class MainWindow
                 total == 1 ? "1 titre à découvrir" : $"{total:N0} titres à découvrir" : "Explorer les titres";
             var items = (result?.Items ?? []).Where(item => item.BackdropImageTags is { Length: > 0 } || item.ParentBackdropItemId != null)
                 .Concat(result?.Items ?? []).Take(images.Length).ToArray();
+            var noun = library.CollectionType switch { "music" => "album", "photos" or "homevideos" => "souvenir", _ => "titre" };
+            if (result?.TotalRecordCount is int all) count.Text = all == 1 ? "1 " + noun + " à découvrir" : $"{all:N0} {noun}s à découvrir";
             if (artwork is not { } art) return;
             // Visuel paysage d'un titre récent ; sinon l'image de la médiathèque.
             await Task.WhenAll(images.Select((image, index) => items.Length == 0

@@ -10,7 +10,8 @@ using System.Windows.Controls;
 namespace Noctra.Windows;
 
 internal sealed record PlaybackPreferences(double Volume = 85, double SubtitleScale = 1.1, string AudioLanguage = "fra,fre,fr",
-    string SubtitleLanguage = "fra,fre,fr", bool HardwareDecoding = true, string[]? TvFavorites = null);
+    string SubtitleLanguage = "fra,fre,fr", bool HardwareDecoding = true, string[]? TvFavorites = null,
+    string SubtitleColor = "white", string SubtitleBackground = "shadow", double SubtitlePosition = 100);
 
 public partial class MainWindow
 {
@@ -69,6 +70,15 @@ public partial class MainWindow
         engine.Command("set", "sub-scale", preferences.SubtitleScale.ToString(System.Globalization.CultureInfo.InvariantCulture));
         engine.Command("set", "alang", preferences.AudioLanguage);
         engine.Command("set", "slang", preferences.SubtitleLanguage);
+        // 0.7 : apparence des sous-titres texte (couleur, contour ou bandeau, hauteur).
+        void Optional(string name, string value) { try { engine.Command("set", name, value); } catch (InvalidOperationException) { } }
+        Optional("sub-color", preferences.SubtitleColor == "yellow" ? "#FFF1C40F" : "#FFFFFFFF");
+        Optional("sub-border-color", "#FF000000");
+        Optional("sub-border-size", preferences.SubtitleBackground == "none" ? "1.5" : "3");
+        Optional("sub-shadow-offset", preferences.SubtitleBackground == "shadow" ? "1.5" : "0");
+        Optional("sub-back-color", preferences.SubtitleBackground == "box" ? "#B0000000" : "#00000000");
+        Optional("sub-border-style", preferences.SubtitleBackground == "box" ? "background-box" : "outline-and-shadow");
+        Optional("sub-pos", Math.Clamp(preferences.SubtitlePosition, 70, 100).ToString("0", System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private FrameworkElement PlaybackSettings(Jellyfin account)
@@ -83,6 +93,23 @@ public partial class MainWindow
         form.Children.Add(label);
         var scale = new Slider { Minimum = .5, Maximum = 2.5, Value = preferences.SubtitleScale, Width = 250, HorizontalAlignment = HorizontalAlignment.Left };
         form.Children.Add(scale);
+        ComboBox Choice(string label, (string Value, string Label)[] options, string current)
+        {
+            var caption = Text(label, 13, true, "Muted");
+            caption.Margin = new Thickness(0, 15, 0, 5);
+            form.Children.Add(caption);
+            var combo = new ComboBox { ItemsSource = options.Select(option => option.Label).ToArray(), Width = 250, MinHeight = 36, HorizontalAlignment = HorizontalAlignment.Left,
+                SelectedIndex = Math.Max(0, Array.FindIndex(options, option => option.Value == current)) };
+            System.Windows.Automation.AutomationProperties.SetName(combo, label);
+            form.Children.Add(combo);
+            return combo;
+        }
+        (string, string)[] colors = [("white", "Blanc"), ("yellow", "Jaune")];
+        (string, string)[] backgrounds = [("shadow", "Contour et ombre"), ("none", "Contour fin"), ("box", "Bandeau sombre")];
+        (string, string)[] positions = [("100", "En bas"), ("92", "Un peu plus haut"), ("84", "Au-dessus des bandeaux")];
+        var color = Choice("Couleur des sous-titres", colors, preferences.SubtitleColor);
+        var background = Choice("Style des sous-titres", backgrounds, preferences.SubtitleBackground);
+        var position = Choice("Position des sous-titres", positions, preferences.SubtitlePosition.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
         var hardware = new CheckBox { Content = "Utiliser le décodage matériel", IsChecked = preferences.HardwareDecoding,
             Foreground = BrushFor("Ink"), Margin = new Thickness(0, 15, 0, 15) };
         form.Children.Add(hardware);
@@ -91,7 +118,9 @@ public partial class MainWindow
             preferences = preferences with
             {
                 AudioLanguage = language.Text.Trim(), SubtitleLanguage = subtitles.Text.Trim(),
-                SubtitleScale = scale.Value, Volume = VolumeControl.Value, HardwareDecoding = hardware.IsChecked == true
+                SubtitleScale = scale.Value, Volume = VolumeControl.Value, HardwareDecoding = hardware.IsChecked == true,
+                SubtitleColor = colors[Math.Max(0, color.SelectedIndex)].Item1, SubtitleBackground = backgrounds[Math.Max(0, background.SelectedIndex)].Item1,
+                SubtitlePosition = double.Parse(positions[Math.Max(0, position.SelectedIndex)].Item1, System.Globalization.CultureInfo.InvariantCulture)
             };
             await SavePreferences(account);
             if (CurrentEngine is { } engine) ApplyPlayerPreferences(engine);

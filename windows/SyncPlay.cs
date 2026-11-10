@@ -361,6 +361,8 @@ public partial class MainWindow
     {
         if (syncGroup is not { AwaitingReady: true } group) return;
         group.AwaitingReady = false;
+        // Position réelle après le déplacement (le minuteur ne l'a pas encore relue).
+        state.Position = state.Engine?.Seconds("time-pos") ?? state.Position;
         _ = SyncReady(group, state, false);
     }
 

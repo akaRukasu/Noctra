@@ -56,4 +56,4 @@ Résultats détaillés : voir le message de livraison.
 ## Limites
 
 - **Pas vérifié sur ton PC** : écran à haute fréquence, GPU réel, Chromecast physique, HDR, fournisseurs TV réels, audio DLStreams. La machine de GitHub n'a ni sortie audio ni GPU.
-- **Toujours absent par rapport à la PWA** (voir AUDIT-PWA-0.6.0.md) : SyncPlay, hors connexion, vignettes de progression, recherche de sous-titres, administration Jellyfin complète, outils avancés de métadonnées.
+- **Toujours absent par rapport à la PWA** (voir AUDIT-PWA-0.7.0.md) : SyncPlay, hors connexion, vignettes de progression, recherche de sous-titres, administration Jellyfin complète, outils avancés de métadonnées.

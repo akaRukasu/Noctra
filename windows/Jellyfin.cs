@@ -14,7 +14,7 @@ namespace Noctra.Windows;
 internal sealed record UserPolicy(bool IsAdministrator);
 internal sealed record Viewer(string Id, string Name, UserPolicy? Policy = null);
 internal sealed record LoginReply(Viewer User, string AccessToken);
-internal sealed record WatchData(bool Played, long PlaybackPositionTicks, bool IsFavorite);
+internal sealed record WatchData(bool Played, long PlaybackPositionTicks, bool IsFavorite, int? UnplayedItemCount = null);
 internal sealed record MediaItem
 {
     public string Id { get; init; } = "";
@@ -42,6 +42,7 @@ internal sealed record MediaItem
     public string? CollectionType { get; init; }
     public MediaPerson[]? People { get; init; }
     // 0.7 : musique, listes de lecture, fiche technique, bandes-annonces, vignettes de progression.
+    public string? ParentId { get; init; }
     public string? Album { get; init; }
     public string? AlbumId { get; init; }
     public string? AlbumArtist { get; init; }

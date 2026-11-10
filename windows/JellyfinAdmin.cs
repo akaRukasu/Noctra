@@ -19,6 +19,7 @@ public partial class MainWindow
         if (scan.Str("message").Length > 0) PageContent.Children.Add(Message(scan.Str("message")));
         PageContent.Children.Add(Action("Actualiser l’état", () => _ = Navigate(JellyfinAdminPage, back: true)));
         if (account.User.Policy?.IsAdministrator != true) { PageContent.Children.Add(Message("Les fonctions Jellyfin nécessitent aussi les droits administrateur Jellyfin.")); return; }
+        PageContent.Children.Add(AdminShortcuts(account));
         var info = await account.ReadJson("System/Info", cancellation);
         var users = await account.ReadJson("Users", cancellation);
         var tasks = await account.ReadJson("ScheduledTasks", cancellation);

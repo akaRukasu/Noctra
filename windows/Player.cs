@@ -162,6 +162,7 @@ public partial class MainWindow
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
         }
         var named = chapters.OrderBy(chapter => chapter.StartPositionTicks).ToArray();
+        if (active == state) state.Chapters = named;
         var fallback = new System.Collections.Generic.List<MediaSegment>();
         for (var index = 0; index < named.Length; index++)
         {
@@ -284,6 +285,7 @@ public partial class MainWindow
         }
         PositionLabel.Text = FormatTime(state.Position) + " / " + FormatTime(state.Duration);
         if (state.Synchronized) SyncTick(state, engine);
+        if (state.Session.Audio) UpdateLyrics(state);
         UpdateStats(engine, state);
         if (state.NextReport <= DateTime.UtcNow || paused != state.Paused)
         {
@@ -520,6 +522,7 @@ public partial class MainWindow
         internal bool Started, Paused, TriedFallback, Software, Synchronized;
         internal MediaItem? Item;
         internal Trickplay? Thumbnails;
+        internal Chapter[] Chapters = [];
         internal double Position, Duration;
         internal DateTime NextReport;
         internal MediaSegment[] Credits = [];

@@ -66,11 +66,15 @@ public partial class MainWindow
             var glyph = title switch
             {
                 "Profil et lecture" => "\uE77B", "Favoris" => "\uE734", "Sessions" => "\uE7F4", "Diffuser" => "\uEC15",
-                "Découverte et demandes" => "\uE721", "TV et multivue" => "\uE7F4", "Ma multivue" => "\uF0E2", _ => "\uE8A9"
+                "Découverte et demandes" => "\uE721", "TV et multivue" => "\uE7F4", "Ma multivue" => "\uF0E2",
+                "Regarder ensemble" => "\uE716", "Téléchargements sur ce PC" => "\uE896", "Listes de lecture" => "\uE90B", _ => "\uE8A9"
             };
             choices.Children.Add(Tile(title, description, glyph, open));
         }
-        Entry("Profil et lecture", "Compte, volume et préférences du lecteur.", () => OpenProfile(this, new RoutedEventArgs()));
+        Entry("Regarder ensemble", "SyncPlay : une séance synchronisée entre plusieurs écrans.", () => _ = Navigate(SyncPlayPage));
+        Entry("Téléchargements sur ce PC", "Films et épisodes lisibles sans connexion.", () => _ = Navigate(OfflinePage));
+        Entry("Listes de lecture", "Vos programmations à enchaîner.", () => _ = Navigate(PlaylistsPage));
+        Entry("Profil et lecture", "Compte, Quick Connect, sous-titres et lecteur.", () => OpenProfile(this, new RoutedEventArgs()));
         Entry("Favoris", "Retrouvez vos films et séries enregistrés.", () => OpenFavorites(this, new RoutedEventArgs()));
         Entry("Sessions", "Vos appareils et leur lecture en cours.", () => _ = Navigate(SessionsPage));
         Entry("Diffuser", "Chromecast et appareils Jellyfin.", () => _ = Navigate(CastPage()));

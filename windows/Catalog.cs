@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -145,7 +146,7 @@ public partial class MainWindow
             await libraryGate.WaitAsync(cancellation);
             try
             {
-                try { return (library.Id, Page: await account.Browse(null, library.Id, null, 0, true, cancellation)); }
+                try { return (library.Id, Page: await account.Browse(LibraryTypes(library), library.Id, null, 0, true, cancellation)); }
                 catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException)
                 { return (library.Id, Page: (ItemPage?)null); }
             }
@@ -279,7 +280,7 @@ public partial class MainWindow
 
     private FrameworkElement Hero(MediaItem item, string eyebrow, string title, string caption, string? synopsis,
         string primaryLabel, Action primary, Button? secondary, CancellationToken cancellation, Button? extra = null,
-        Action<Button>? configurePrimary = null)
+        Action<Button>? configurePrimary = null, FrameworkElement? facts = null)
     {
         // 0.6 : visuel pleine largeur (sous le bandeau), image gardée dans ses proportions
         // et calée à droite, fond flouté du même visuel, fondus vers la page.
@@ -335,6 +336,7 @@ public partial class MainWindow
         metadata.TextTrimming = TextTrimming.CharacterEllipsis;
         metadata.Margin = new Thickness(0, 8, 0, 0);
         copy.Children.Add(metadata);
+        if (facts != null) copy.Children.Add(facts);
         if (!string.IsNullOrWhiteSpace(synopsis))
         {
             var summary = Text(synopsis, 15, color: "Ink");
@@ -476,11 +478,12 @@ public partial class MainWindow
 
     private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation)
     {
-        var width = landscape ? 264 : 168;
+        var square = !landscape && item.Square;
+        var width = landscape ? 264 : square ? 200 : 168;
         var image = new Image { Stretch = Stretch.UniformToFill };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         FadeInWhenLoaded(image);
-        var surface = new Grid { Height = landscape ? 148 : 252, ClipToBounds = true, RenderTransformOrigin = new Point(.5, .5) };
+        var surface = new Grid { Height = landscape ? 148 : square ? 200 : 252, ClipToBounds = true, RenderTransformOrigin = new Point(.5, .5) };
         var zoom = new ScaleTransform(1, 1);
         surface.RenderTransform = zoom;
         surface.Background = new LinearGradientBrush(Color.FromRgb(30, 32, 46), Color.FromRgb(18, 19, 28), 60);
@@ -503,6 +506,18 @@ public partial class MainWindow
             track.Children.Add(rail);
             track.Children.Add(new Border { CornerRadius = new CornerRadius(2), Background = BrushFor("AccentGradient") });
             surface.Children.Add(track);
+        }
+        else if (item.Type == "Series" && item.UserData?.UnplayedItemCount is > 0 and var unplayed)
+        {
+            // 0.7 : épisodes non vus de la série.
+            surface.Children.Add(new Border
+            {
+                MinWidth = 26, Height = 24, CornerRadius = new CornerRadius(12), Background = BrushFor("AccentGradient"), Padding = new Thickness(7, 0, 7, 0),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8),
+                Child = new TextBlock { Text = unplayed > 99 ? "99+" : unplayed.ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 11.5, FontWeight = FontWeights.Bold,
+                    Foreground = ColorOf("#0A0A12"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            });
+            AutomationProperties.SetHelpText(surface, unplayed + " épisodes non vus");
         }
         else if (item.UserData?.Played == true)
         {
@@ -532,7 +547,7 @@ public partial class MainWindow
         content.Children.Add(labels);
         var button = Action(item.DisplayTitle, () =>
         {
-            if (landscape && item.CanPlay) StartPlayback(item);
+            if (landscape && item.CanPlay || item.IsAudio) StartPlayback(item);
             else OpenDetail(item, tab);
         }, "Card");
         button.Content = content;
@@ -555,6 +570,7 @@ public partial class MainWindow
         button.LostKeyboardFocus += (_, _) => Lift(false);
         _ = artwork?.Load(image, item, landscape, landscape ? 560 : 360, cancellation);
         button.ContextMenu = CardMenu(item, button, tab, cancellation);
+        AttachHoverPreview(button, item, cancellation);
         // Flèches gauche / droite : carte voisine de la rangée (la rangée suit le focus).
         button.PreviewKeyDown += (_, args) =>
         {
@@ -591,6 +607,20 @@ public partial class MainWindow
         var favorite = item.UserData?.IsFavorite == true;
         Add(favorite ? "Retirer des favoris" : "Ajouter aux favoris", account => account.Favorite(item.Id, !favorite, cancellation),
             favorite ? "Retiré des favoris." : "Ajouté aux favoris.");
+        if (item.CanPlay || item.Type is "Series" or "MusicAlbum" or "Season" or "BoxSet")
+            menu.Items.Add(PlaylistMenu(item, cancellation));
+        if (item.Type is "Movie" or "Episode" && client is { } owner && !IsOffline(item.Id))
+        {
+            var download = new MenuItem { Header = "Télécharger sur ce PC", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            download.Click += (_, _) => _ = DownloadOffline(owner, item);
+            menu.Items.Add(download);
+        }
+        if (item.CanPlay && !item.IsAudio && syncGroup != null)
+        {
+            var together = new MenuItem { Header = "Lancer pour le groupe « " + syncGroup.Name + " »", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            together.Click += (_, _) => SyncPlayItem(item, item.Resume);
+            menu.Items.Add(together);
+        }
         if (item.Progress > 0)
             Add("Retirer de « Continuer à regarder »", async account =>
             {
@@ -628,15 +658,17 @@ public partial class MainWindow
     }
 
     private Page BrowsePage(string title, ButtonTab tab, string? type = null, string? parent = null, string? search = null,
-        int start = 0, bool favorite = false, string? watched = null, string? sort = null) =>
+        int start = 0, bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null) =>
         new(title, tab, async (account, cancellation) =>
         {
-            var result = await account.Browse(type, parent, search, start, false, cancellation, favorite, watched, sort);
+            Page Again(int offset, string? newWatched, string? newSort, string? newGenre, int? newYear, double? newRating) =>
+                BrowsePage(title, tab, type, parent, search, offset, favorite, newWatched, newSort, newGenre, newYear, newRating);
+            var result = await account.Browse(type, parent, search, start, false, cancellation, favorite, watched, sort, genre, year, rating);
             if (cancellation.IsCancellationRequested) return;
             var items = (result.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
             PageContent.Children.Clear();
             PageContent.Children.Add(Heading(search == null ? title : "« " + search + " »",
-                result.TotalRecordCount is int count ? count == 1 ? "1 titre" : $"{count} titres" : "Catalogue Jellyfin"));
+                result.TotalRecordCount is int count ? count == 1 ? "1 titre" : $"{count:N0} titres" : "Catalogue Jellyfin"));
             if (search != null && account.NoctraRoot != null)
             {
                 var discoverySearch = Action("Rechercher aussi dans Découverte", () => _ = Navigate(DiscoverySearchPage(search)));
@@ -644,42 +676,85 @@ public partial class MainWindow
                 discoverySearch.Margin = new Thickness(0, 0, 0, 18);
                 PageContent.Children.Add(discoverySearch);
             }
-            var filters = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+            var filters = new WrapPanel { Margin = new Thickness(0, 0, 0, 16) };
             (string Label, string? Value)[] statuses = [("Tous les statuts", null), ("Vu", "IsPlayed"), ("Non vu", "IsUnplayed")];
-            (string Label, string? Value)[] orders = [("Ordre alphabétique", null), ("Ajouts récents", "DateCreated"), ("Année de sortie", "ProductionYear")];
-            var status = new ComboBox { ItemsSource = statuses.Select(x => x.Item1), Width = 154, MinHeight = 36,
-                SelectedIndex = Array.FindIndex(statuses, option => option.Item2 == watched), Margin = new Thickness(0, 0, 8, 0) };
-            var order = new ComboBox { ItemsSource = orders.Select(x => x.Item1), Width = 168, MinHeight = 36,
-                SelectedIndex = Array.FindIndex(orders, option => option.Item2 == sort) };
-            AutomationProperties.SetName(status, "Statut de lecture");
-            AutomationProperties.SetName(order, "Trier");
+            (string Label, string? Value)[] orders = [("Ordre alphabétique", null), ("Ajouts récents", "DateCreated"), ("Année de sortie", "ProductionYear"),
+                ("Mieux notés", "CommunityRating"), ("Date de première diffusion", "PremiereDate"), ("Plus courts d’abord", "Runtime"), ("Au hasard", "Random")];
+            (string Label, double? Value)[] ratings = [("Toutes les notes", null), ("★ 6 et plus", 6), ("★ 7 et plus", 7), ("★ 8 et plus", 8)];
+            ComboBox Combo(string name, IEnumerable<string> labels, int selected, double width)
+            {
+                var combo = new ComboBox { ItemsSource = labels.ToArray(), Width = width, MinHeight = 36, SelectedIndex = Math.Max(0, selected), Margin = new Thickness(0, 0, 8, 8) };
+                AutomationProperties.SetName(combo, name);
+                filters.Children.Add(combo);
+                return combo;
+            }
+            var status = Combo("Statut de lecture", statuses.Select(x => x.Label), Array.FindIndex(statuses, option => option.Value == watched), 154);
+            var order = Combo("Trier", orders.Select(x => x.Label), Array.FindIndex(orders, option => option.Value == sort), 200);
+            var stars = Combo("Note minimale", ratings.Select(x => x.Label), Array.FindIndex(ratings, option => option.Value == rating), 160);
+            // Genres et années de la médiathèque (chargés à part : la page s'affiche sans attendre).
+            var genres = Combo("Genre", [genre ?? "Tous les genres"], 0, 170);
+            var years = Combo("Année", [year?.ToString(CultureInfo.InvariantCulture) ?? "Toutes les années"], 0, 150);
+            var ready = false;
             void ApplyFilters()
             {
-                if (status.SelectedIndex < 0 || order.SelectedIndex < 0 || cancellation.IsCancellationRequested) return;
-                _ = Navigate(BrowsePage(title, tab, type, parent, search, favorite: favorite,
-                    watched: statuses[status.SelectedIndex].Value, sort: orders[order.SelectedIndex].Value), back: true);
+                if (!ready || genres.Tag is "loading" || years.Tag is "loading" || cancellation.IsCancellationRequested || status.SelectedIndex < 0 || order.SelectedIndex < 0 || stars.SelectedIndex < 0) return;
+                var chosenGenre = genres.SelectedIndex > 0 ? genres.SelectedItem as string : null;
+                var chosenYear = years.SelectedIndex > 0 && int.TryParse(years.SelectedItem as string, out var value) ? value : (int?)null;
+                _ = Navigate(Again(0, statuses[status.SelectedIndex].Value, orders[order.SelectedIndex].Value, chosenGenre, chosenYear, ratings[stars.SelectedIndex].Value), back: true);
             }
-            status.SelectionChanged += (_, _) => ApplyFilters();
-            order.SelectionChanged += (_, _) => ApplyFilters();
-            filters.Children.Add(status);
-            filters.Children.Add(order);
+            foreach (var combo in new[] { status, order, stars, genres, years }) combo.SelectionChanged += (_, _) => ApplyFilters();
+            if (search == null && !favorite) _ = LoadFilterChoices(account, parent, type ?? "Movie,Series", genres, years, genre, year, cancellation);
+            ready = true;
             PageContent.Children.Add(filters);
-            if (items.Length == 0) PageContent.Children.Add(Message("Aucun titre sur cette page."));
+            if (genre != null || year != null || rating != null)
+            {
+                var reset = Action("Effacer les filtres", () => _ = Navigate(Again(0, watched, sort, null, null, null), back: true));
+                reset.HorizontalAlignment = HorizontalAlignment.Left;
+                reset.Margin = new Thickness(0, -6, 0, 16);
+                PageContent.Children.Add(reset);
+            }
+            if (items.Length == 0) PageContent.Children.Add(Message(genre != null || year != null || rating != null ? "Aucun titre ne correspond à ces filtres." : "Aucun titre sur cette page."));
             var cards = new WrapPanel();
             foreach (var item in items) cards.Children.Add(Card(item, false, tab, cancellation));
             PageContent.Children.Add(cards);
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
             if (start > 0)
-                actions.Children.Add(Action("Page précédente", () => _ = Navigate(BrowsePage(title, tab, type, parent, search, start - 48, favorite, watched, sort), back: true)));
+                actions.Children.Add(Action("Page précédente", () => _ = Navigate(Again(start - 48, watched, sort, genre, year, rating), back: true)));
             if (result.TotalRecordCount > start + 48 || result.TotalRecordCount == null && items.Length == 48)
             {
-                var more = Action("Page suivante", () => _ = Navigate(BrowsePage(title, tab, type, parent, search, start + 48, favorite, watched, sort), back: true));
+                var more = Action("Page suivante", () => _ = Navigate(Again(start + 48, watched, sort, genre, year, rating), back: true));
                 more.Margin = new Thickness(start > 0 ? 8 : 0, 0, 0, 0);
                 actions.Children.Add(more);
             }
             if (actions.Children.Count > 0) PageContent.Children.Add(actions);
         });
 
+    private async Task LoadFilterChoices(Jellyfin account, string? parent, string types, ComboBox genres, ComboBox years, string? genre, int? year, CancellationToken cancellation)
+    {
+        try
+        {
+            var data = await account.Filters(parent, types, cancellation);
+            if (cancellation.IsCancellationRequested) return;
+            var genreList = data.List("Genres").Select(value => value.Str()).Where(value => value.Length is > 0 and < 80).OrderBy(value => value, StringComparer.Create(CultureInfo.GetCultureInfo("fr-FR"), true)).ToList();
+            var yearList = data.List("Years").Select(value => value.Str()).Where(value => value.Length == 4).OrderByDescending(value => value).ToList();
+            if (genre != null && !genreList.Contains(genre)) genreList.Insert(0, genre);
+            var yearText = year?.ToString(CultureInfo.InvariantCulture);
+            if (yearText != null && !yearList.Contains(yearText)) yearList.Insert(0, yearText);
+            void Fill(ComboBox combo, string all, List<string> values, string? selected)
+            {
+                var choices = new List<string> { all };
+                choices.AddRange(values);
+                combo.Tag = "loading";
+                var index = selected == null ? 0 : choices.IndexOf(selected);
+                combo.ItemsSource = choices;
+                combo.SelectedIndex = Math.Max(0, index);
+                combo.Tag = null;
+            }
+            Fill(genres, "Tous les genres", genreList, genre);
+            Fill(years, "Toutes les années", yearList, yearText);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+    }
     private async Task RenderLibraries(Jellyfin account, CancellationToken cancellation)
     {
         var libraries = await HomeLibraries(account, cancellation);
@@ -690,13 +765,29 @@ public partial class MainWindow
         else PageContent.Children.Add(LibraryTiles(account, libraries, cancellation));
     }
 
-    private void OpenDetail(MediaItem item, ButtonTab tab) =>
+    private void OpenDetail(MediaItem item, ButtonTab tab)
+    {
+        if (item.Type == "Photo") { _ = OpenPhoto(item); return; }
+        if (item.Type == "Audio" && item.AlbumId is { } album && PlayRequest.Identifier(album)) item = new MediaItem { Id = album, Name = item.Album ?? item.Name, Type = "MusicAlbum" };
+        if (item.Type is "PhotoAlbum" or "Folder" or "CollectionFolder")
+        {
+            _ = Navigate(BrowsePage(item.Name, tab, "Photo,Video,PhotoAlbum", item.Id, sort: "DateCreated"));
+            return;
+        }
         _ = Navigate(new(item.DisplayTitle, tab, (account, cancellation) => RenderDetail(account, item.Id, cancellation)));
+    }
 
     private async Task RenderDetail(Jellyfin account, string id, CancellationToken cancellation)
     {
         var item = await account.Detail(id, cancellation);
         if (cancellation.IsCancellationRequested) return;
+        switch (item.Type)
+        {
+            case "MusicAlbum": await RenderAlbum(account, item, cancellation); return;
+            case "MusicArtist": await RenderArtist(account, item, cancellation); return;
+            case "Playlist": await RenderPlaylist(account, item, cancellation); return;
+            case "Person": await RenderPerson(account, item, cancellation); return;
+        }
         PageContent.Children.Clear();
         var type = item.Type switch { "Series" => "SÉRIE", "Episode" => "ÉPISODE", "BoxSet" => "COLLECTION", _ => "FILM" };
         var metadata = string.Join(" · ", new[] { item.Caption, item.OfficialRating }.Concat(item.Genres?.Take(2) ?? []).Where(value => !string.IsNullOrWhiteSpace(value)));
@@ -712,18 +803,29 @@ public partial class MainWindow
         {
             var mark = MarkButton(account, item, cancellation);
             PageContent.Children.Add(Hero(item, type, item.DisplayTitle, metadata, synopsis, item.Resume > 0 ? "▶   Reprendre" : "▶   Lire",
-                () => StartPlayback(item), mark, cancellation, favorite));
-            var castButton = Action("Diffuser sur un autre écran", () => _ = Navigate(CastPage(item)));
-            castButton.Margin = new Thickness(0, 14, 0, 0);
-            castButton.HorizontalAlignment = HorizontalAlignment.Left;
-            PageContent.Children.Add(castButton);
+                () => StartPlayback(item), mark, cancellation, favorite, facts: DetailFacts(item)));
+            // 0.7 : actions secondaires regroupées sur une ligne.
+            var extras = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
+            void Extra(Button button) { button.Margin = new Thickness(0, 0, 9, 9); extras.Children.Add(button); }
             if (item.SeriesId is { } series && PlayRequest.Identifier(series))
+                Extra(Action("Voir la série", () => OpenDetail(item with { Id = series }, page?.Tab ?? ButtonTab.Home)));
+            Extra(Action("Diffuser sur un autre écran", () => _ = Navigate(CastPage(item))));
+            Extra(TogetherButton(item));
+            foreach (var link in DetailLinks(account, item, cancellation)) Extra(link);
+            if (item.Type is "Movie" or "Episode") Extra(OfflineButtonFor(account, item, cancellation));
+            Extra(PlaylistButton(item));
+            if (account.User.Policy?.IsAdministrator == true && account.NoctraRoot != null && item.Type is "Movie" or "Episode")
+                Extra(Action("Corriger l’identification", () => _ = Navigate(IdentifyPage(item))));
+            PageContent.Children.Add(extras);
+            if (item.Taglines?.FirstOrDefault() is { Length: > 0 } tagline)
             {
-                var open = Action("Voir la série", () => OpenDetail(item with { Id = series }, page?.Tab ?? ButtonTab.Home));
-                open.HorizontalAlignment = HorizontalAlignment.Left;
-                open.Margin = new Thickness(0, 12, 0, 0);
-                PageContent.Children.Add(open);
+                var quote = Text("« " + tagline + " »", 17, color: "Muted");
+                quote.FontStyle = FontStyles.Italic;
+                quote.Margin = new Thickness(0, 14, 0, 0);
+                quote.TextWrapping = TextWrapping.Wrap;
+                PageContent.Children.Add(quote);
             }
+            if (TechnicalInfo(item) is { } technical) PageContent.Children.Add(technical);
             AddPeople(item, cancellation);
             _ = AddRecommendations(account, item, cancellation);
             return;
@@ -735,8 +837,18 @@ public partial class MainWindow
         {
             if (playable != null) StartPlayback(playable);
             else episodes.BringIntoView();
-        }, favorite, cancellation, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; });
+        }, favorite, cancellation, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item));
         PageContent.Children.Add(seriesHero);
+        if (item.Type == "Series")
+        {
+            var links = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
+            foreach (var link in DetailLinks(account, item, cancellation).Append(PlaylistButton(item)))
+            {
+                link.Margin = new Thickness(0, 0, 9, 9);
+                links.Children.Add(link);
+            }
+            PageContent.Children.Add(links);
+        }
         if (item.Type == "Series") PageContent.Children.Add(SeriesBadge(item.Id, cancellation, true));
         PageContent.Children.Add(episodes);
         if (item.Type != "Series") return;
@@ -807,9 +919,18 @@ public partial class MainWindow
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         foreach (var person in actors)
         {
-            var image = new Image { Width = 74, Height = 94, Stretch = Stretch.UniformToFill };
-            var card = new StackPanel { Width = 105, Margin = new Thickness(0, 0, 12, 0) };
-            card.Children.Add(new Border { Background = BrushFor("Panel"), Child = image, CornerRadius = new CornerRadius(9) });
+            // 0.7 : portrait rond, cliquable (filmographie dans vos médiathèques).
+            var image = new Image { Width = 88, Height = 88, Stretch = Stretch.UniformToFill };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+            FadeInWhenLoaded(image);
+            image.Clip = new EllipseGeometry(new Point(44, 44), 44, 44);
+            var card = new StackPanel { Width = 112 };
+            card.Children.Add(new Grid { Width = 88, Height = 88, HorizontalAlignment = HorizontalAlignment.Left, Children =
+            {
+                new Border { CornerRadius = new CornerRadius(44), Background = BrushFor("Panel"), Child = new TextBlock { Text = person.Name.Length > 0 ? person.Name[..1] : "?",
+                    FontSize = 30, Foreground = ColorOf("#4D5268"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } },
+                image
+            } });
             var name = Text(person.Name, 12, true);
             name.TextTrimming = TextTrimming.CharacterEllipsis;
             name.Margin = new Thickness(0, 6, 0, 0);
@@ -817,8 +938,12 @@ public partial class MainWindow
             var role = Text(person.Role ?? "", 11, color: "Muted");
             role.TextTrimming = TextTrimming.CharacterEllipsis;
             card.Children.Add(role);
-            row.Children.Add(card);
-            _ = artwork?.Load(image, new MediaItem { Id = person.Id, Name = person.Name }, false, 150, cancellation);
+            var open = Action(person.Name, () => OpenDetail(new MediaItem { Id = person.Id, Name = person.Name, Type = "Person" }, page?.Tab ?? ButtonTab.Home), "Card");
+            open.Content = card;
+            open.Margin = new Thickness(0, 0, 14, 0);
+            open.ToolTip = person.Name + (string.IsNullOrWhiteSpace(person.Role) ? "" : " · " + person.Role);
+            row.Children.Add(open);
+            if (PlayRequest.Identifier(person.Id)) _ = artwork?.Load(image, new MediaItem { Id = person.Id, Name = person.Name }, false, 200, cancellation);
         }
         PageContent.Children.Add(new ScrollViewer { Content = row, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
