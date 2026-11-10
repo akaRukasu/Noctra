@@ -1,89 +1,80 @@
-# Noctra Windows face à la PWA : état des lieux (0.6.0)
+# Noctra Windows face à la PWA : état des lieux (0.7.0)
 
 Comparaison écran par écran entre :
 - **Windows** : le client natif WPF, sources de ce dossier ;
 - **PWA** : la version web Noctra 200.0.176, c'est-à-dire Jellyfin Web avec les modules `public/noctra-*.js` du serveur.
 
 Légende : ✅ présent · 🟡 partiel · ❌ absent.
-La colonne « Priorité » ordonne le travail restant :
-- **P1** : usage quotidien ;
-- **P2** : confort et gestion courante ;
-- **P3** : administration rare.
 
 ## Accueil et navigation
 
-| Fonction | PWA | Windows | Priorité / remarque |
+| Fonction | PWA | Windows | Remarque |
 |---|---|---|---|
-| Grand visuel (reprise, logo du titre, synopsis) | ✅ | ✅ | 0.6 : pleine largeur, défilement automatique, fondu enchaîné, points de pagination. |
-| Continuer à regarder (compte connecté) | ✅ | ✅ | `Resume` du compte. Vérifié avec deux profils simulés (test d'interface). |
-| Ajouts récents par médiathèque | ✅ | ✅ | Une rangée par médiathèque. |
-| À suivre (30 jours) | ✅ | ✅ | `NextUp` du compte. Dédoublonné avec « Continuer ». |
-| Médiathèques en 2 × 2 | ✅ | ✅ | 0.6 : tuiles illustrées (visuel d'un ajout récent). |
-| Bandeau adaptatif, recherche, profil | ✅ | ✅ | 0.6 : bandeau flottant, opaque au défilement. |
-| Navigation clavier et focus visible | 🟡 | ✅ | 0.6 : anneau d'accent sur boutons et cartes, flèches gauche / droite entre cartes, rangées qui suivent le focus. |
-| Retirer un titre de « Continuer à regarder » | ✅ (Jellyfin) | ✅ | 0.6 : clic droit sur une carte (voir la fiche, vu / non vu, favori, retirer de la reprise). |
+| Grand visuel, continuer à regarder, ajouts récents, à suivre | ✅ | ✅ | |
+| Médiathèques en 2 × 2 (films, séries, musique, photos) | ✅ | ✅ | 0.7 : musique et photos ouvertes dans leur propre vue. |
+| Aperçu au survol d'une affiche | ❌ | ✅ | 0.7 : visuel, note, durée, synopsis, lecture, fiche, favori. |
+| Retirer de « Continuer à regarder », menu clic droit | ✅ | ✅ | 0.7 : + ajouter à une liste, télécharger sur ce PC, lancer pour le groupe. |
+| Épisodes non vus sur les cartes de séries | ✅ | ✅ | 0.7 |
 
 ## Médiathèques, fiches, recherche
 
-| Fonction | PWA | Windows | Priorité / remarque |
+| Fonction | PWA | Windows | Remarque |
 |---|---|---|---|
-| Parcours, filtres vu / non vu, tris | ✅ | ✅ | Filtres par genre, année et note : PWA seulement (P2). |
-| Fiche film / série, saisons, épisodes | ✅ | ✅ | 0.6 : grand visuel commun, lignes d'épisodes avec vignette, durée et progression. |
-| Vu / non vu, favoris | ✅ | ✅ | |
-| Distribution, titres similaires | ✅ | ✅ | |
-| Badges de complétude des séries | ✅ | ✅ | `api/library/series-status`. |
-| Collections et listes de lecture | ✅ | 🟡 | Collections ouvertes depuis une fiche, retirées des médiathèques. Listes de lecture : non (P3). |
-| Musique, livres, photos | ✅ (Jellyfin) | ❌ | Hors périmètre vidéo (P3). |
-| Recherche Jellyfin et Découverte | ✅ | ✅ | |
+| Filtres vu / non vu, genre, année, note ; tris | ✅ | ✅ | 0.7 : genre, année, note, mieux notés, durée, hasard. |
+| Fiche : badges techniques (4K, HDR, Dolby Vision, Atmos, 5.1…) | 🟡 | ✅ | 0.7 |
+| Fiche technique (fichier, pistes, sous-titres) | ✅ | ✅ | 0.7 |
+| Heure de fin, slogan, liens IMDb / TMDb | ✅ | ✅ | 0.7 |
+| Bandes-annonces | ✅ | ✅ | 0.7 : locales dans le lecteur, YouTube dans le navigateur. |
+| Pages des personnes (filmographie) | ✅ | ✅ | 0.7 |
+| Collections | ✅ | ✅ | |
+| Listes de lecture (créer, ajouter, retirer, lire, supprimer) | ✅ | ✅ | 0.7 |
+| Musique (albums, artistes, titres, file, paroles) | ✅ | ✅ | 0.7 : paroles synchronisées (Jellyfin 10.9+). |
+| Photos | ✅ | ✅ | 0.7 : visionneuse, flèches gauche / droite. |
+| Livres | ✅ | ❌ | Renvoi vers la PWA (lecteur EPUB / PDF du navigateur). |
 
 ## Lecteur
 
-| Fonction | PWA | Windows | Priorité / remarque |
+| Fonction | PWA | Windows | Remarque |
 |---|---|---|---|
-| Lecture directe, décodage de secours, HLS | ✅ | ✅ | libmpv. |
-| ±15 s, pistes audio, sous-titres, plein écran | ✅ | ✅ | 0.6 : barre à icônes, raccourcis indiqués. |
-| Passer le générique (segments, chapitres) | ✅ | ✅ | Bouton seulement si un marqueur existe. |
-| Rapports démarrage / progression / arrêt | ✅ | ✅ | Ordre vérifié par le test d'interface. |
-| Apparence des sous-titres (taille, fond) | ✅ | 🟡 | Réglages de profil partiels (P2). |
-| Recherche et téléchargement de sous-titres | ✅ (Jellyfin) | ❌ | P2. |
-| Vignettes de la barre de progression (trickplay) | ✅ (Jellyfin 10.9+) | ❌ | P2 : fort effet « plateforme ». |
-| Épisode suivant automatique en fin d'épisode | 🟡 (carte « À suivre » web) | ❌ | Non prioritaire : tu as préféré « Passer le générique » à un bouton d'épisode suivant. |
-| SyncPlay (visionnage à plusieurs) | ✅ | ❌ | P2. |
-| Lecture hors connexion | ❌ (web) | ❌ | Prévu dans la demande, P3. |
+| Lecture directe, flux adapté, ±15 s, pistes, plein écran | ✅ | ✅ | |
+| Passer le générique | ✅ | ✅ | |
+| Vignettes de la barre de progression (trickplay) | ✅ | ✅ | 0.7 (Jellyfin 10.9+, si les vignettes sont générées). |
+| Sous-titres externes (.srt, .ass) | ✅ | ✅ | 0.7 : servis à part par Jellyfin, jamais incrustés. |
+| Recherche et téléchargement de sous-titres | ✅ | ✅ | 0.7 (extension de sous-titres du serveur requise). |
+| Apparence des sous-titres (taille, couleur, style, position) | ✅ | ✅ | 0.7 |
+| Vitesse, décalage audio / sous-titres, format d'image, chapitres | ✅ | ✅ | 0.7 |
+| Statistiques de lecture | ✅ | ✅ | 0.7 (touche I). |
+| Image dans l'image | ✅ | ✅ | 0.7 : mini-lecteur au premier plan (touche P). |
+| SyncPlay (regarder ensemble) | ✅ | ✅ | 0.7 : compatible avec les autres clients Jellyfin. |
+| Télécommande de ce client depuis un autre appareil | ✅ | ✅ | 0.7 |
+| Épisode suivant automatique | 🟡 | ❌ | Volontairement absent (tu as préféré « Passer le générique »). Les listes et albums enchaînent. |
+| Lecture hors connexion | ❌ | ✅ | 0.7 : fichier copié sur le PC, reprise reportée au serveur. |
 
 ## TV et sports
 
-| Fonction | PWA | Windows | Priorité / remarque |
+| Fonction | PWA | Windows | Remarque |
 |---|---|---|---|
-| Chaînes réunies, pays, variantes par serveur | ✅ | ✅ | Regroupement testé : 18 variantes conservées. |
-| Sports et PPV séparés | ✅ | ✅ | |
-| Choix manuel, secours manuel visible | ✅ | ✅ | |
-| Qualité réelle (image décodée) | ✅ (200.0.176 : « Auto · 1080p ») | ✅ | La vérification mpv exige une image qui avance. |
-| Guide des programmes (maintenant / ensuite) | ✅ | ✅ | 0.6 : fiche de chaîne, avec l'avancement du programme (`api/tv/programme`). |
-| Favoris TV | ✅ | ✅ | 0.6 : étoile sur la fiche ; favorites en tête de liste, par profil sur ce PC (pas partagées avec la PWA). |
+| Chaînes, pays, serveurs, PPV, qualité réelle, guide, favoris | ✅ | ✅ | |
 | Multivue | ✅ (9) | ✅ (4) | |
-| Diagnostic du lecteur TV | ✅ | 🟡 | État et qualité seulement (P3). |
-| Lecteurs web tiers, blocage pub, audio vers Noctra | 🟡 (iframe) | ✅ | Plus abouti sous Windows. |
+| Diagnostic du lecteur TV | ✅ | ✅ | 0.7 : statistiques aussi en direct. |
+
+## Compte
+
+| Fonction | PWA | Windows | Remarque |
+|---|---|---|---|
+| Quick Connect : se connecter avec un code | ✅ | ✅ | 0.7 |
+| Quick Connect : autoriser un autre appareil | ✅ | ✅ | 0.7 |
+| Changer le mot de passe | ✅ | ✅ | 0.7 |
 
 ## Découverte, demandes, gestion
 
-| Fonction | PWA | Windows | Priorité / remarque |
+| Fonction | PWA | Windows | Remarque |
 |---|---|---|---|
-| Découverte, catégories, détail, roulette | ✅ | ✅ | |
-| Demandes (auto / manuel, serveur, profil) | ✅ | ✅ | Choix du dossier réservé aux administrateurs. |
-| Suivi des demandes | ✅ | ✅ | |
-| Téléchargements serveur (qBittorrent) | ✅ | ✅ | Envoi d'un fichier .torrent : PWA seulement (P3). |
-| Fichiers, corbeille | ✅ | ✅ | |
-| Radarr / Sonarr, recherche de versions | ✅ | ✅ | |
-| Complétude, doublons, identification d'un média | ✅ | ❌ | P3 (outils avancés de métadonnées). |
-| Prowlarr | ✅ | ✅ | |
-| Sources TV et accès LiveWatch | ✅ | ✅ | |
-| Administration Jellyfin (comptes, extensions, médiathèques) | ✅ | 🟡 | Comptes, accès, tâches, actualisation. Extensions et configuration : non (P3). |
-| Sessions, télécommande, Chromecast | ✅ | ✅ | Chromecast physique : non validé. |
-
-## Ce que fait la 0.6.0
-
-1. **Esthétique (priorité de l'utilisateur)** : refonte visuelle complète de l'accueil, des fiches, des médiathèques, du bandeau, du lecteur, des messages et de la connexion.
-2. **Parcours principaux sécurisés** par le test d'interface existant, qui passe sur une machine Windows à chaque envoi. Il couvre deux profils, la reprise de Teen Wolf, « À suivre », vu / non vu et le retour du lecteur.
-3. **Ajouté en 0.6** : guide des programmes TV, favoris TV, retrait de « Continuer à regarder », flèches entre cartes.
-4. **Suite (P2)** : vignettes de progression (trickplay), recherche de sous-titres, SyncPlay.
+| Découverte, demandes, suivi, roulette | ✅ | ✅ | |
+| Téléchargements serveur, envoi de .torrent, fichiers, corbeille | ✅ | ✅ | |
+| Doublons, complétude des sagas et séries | ✅ | ✅ | |
+| Correction d'identification d'un média | ✅ | ✅ | 0.7 |
+| Stockage du serveur | ✅ | ✅ | 0.7 |
+| Radarr / Sonarr, Prowlarr, sources TV | ✅ | ✅ | |
+| Administration Jellyfin : comptes, tâches, extensions, journal, appareils, dossiers, redémarrage | ✅ | ✅ | 0.7 |
+| Administration Jellyfin : catalogue d'extensions, transcodage, réseau, clés d'API | ✅ | ❌ | Réglages rares du serveur : tableau de bord Jellyfin. |
