@@ -186,6 +186,9 @@ jobs:
       # Aucune branche n'est modifiée et cette référence ne déclenche aucune action.
       - name: Captures (référence Git)
         if: always()
+        # Copie de confort (les captures sont aussi en fichier de build) : un refus passager de
+        # GitHub sur cette référence ne doit pas faire échouer un build dont les tests sont verts.
+        continue-on-error: true
         working-directory: windows
         env:
           GH_TOKEN: ${{ github.token }}
