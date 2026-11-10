@@ -663,14 +663,20 @@ class Lookup:
 
     def _find(self):
         spec = window.child_window(auto_id=self.auto_id, **({"control_type": self.kind} if self.kind else {}))
-        if spec.exists(timeout=0):
-            return spec.wrapper_object()
-        for root in Desktop(backend="uia").windows():
-            if root.process_id() != process.pid or root.handle == window.handle:
-                continue
-            for item in root.descendants(**({"control_type": self.kind} if self.kind else {})):
-                if item.element_info.automation_id == self.auto_id:
-                    return item
+        try:
+            if spec.exists(timeout=0):
+                return spec.wrapper_object()
+        except Exception:
+            pass  # disparu entre la recherche et la lecture (commandes qui s'effacent)
+        try:
+            for root in Desktop(backend="uia").windows():
+                if root.process_id() != process.pid or root.handle == window.handle:
+                    continue
+                for item in root.descendants(**({"control_type": self.kind} if self.kind else {})):
+                    if item.element_info.automation_id == self.auto_id:
+                        return item
+        except Exception:
+            pass
         return None
 
     def exists(self, timeout=0):
@@ -694,7 +700,20 @@ class Lookup:
         return self._resolve()
 
     def __getattr__(self, name):
-        return getattr(self._resolve(), name)
+        value = getattr(self._resolve(), name)
+        if not callable(value):
+            return value
+
+        def call(*args, **kwargs):
+            # Commandes du lecteur : si l'élément s'efface pendant l'action, on les réveille et on recommence.
+            for attempt in range(3):
+                try:
+                    return getattr(self._resolve(), name)(*args, **kwargs)
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    wake_player()
+        return call
 
 
 def wake_player():
