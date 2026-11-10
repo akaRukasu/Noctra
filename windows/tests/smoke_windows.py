@@ -664,12 +664,6 @@ class Lookup:
         self.auto_id, self.kind = auto_id, kind
 
     def _find(self):
-        spec = window.child_window(auto_id=self.auto_id, **({"control_type": self.kind} if self.kind else {}))
-        try:
-            if spec.exists(timeout=0):
-                return spec.wrapper_object()
-        except Exception:
-            pass  # disparu entre la recherche et la lecture (commandes qui s'effacent)
         criteria = {"control_type": self.kind} if self.kind else {}
         # Fenêtre superposée où l'élément a été vu la dernière fois : cherchée en premier (plus rapide).
         cached = Lookup.roots.get(self.auto_id)
@@ -680,6 +674,12 @@ class Lookup:
                         return item
             except Exception:
                 Lookup.roots.pop(self.auto_id, None)
+        spec = window.child_window(auto_id=self.auto_id, **criteria)
+        try:
+            if spec.exists(timeout=0):
+                return spec.wrapper_object()
+        except Exception:
+            pass  # disparu entre la recherche et la lecture (commandes qui s'effacent)
         try:
             for root in Desktop(backend="uia").windows():
                 if root.process_id() != process.pid or root.handle == window.handle:
@@ -1382,9 +1382,11 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         until(lambda: report("", "episode", "DirectPlay"), "Direct playback did not start", timeout=110)
         assert report("", "episode")["PositionTicks"] >= 95_000_000
         until(lambda: control("SkipCredits").is_visible(), "Skip credits button not visible")
+        # 0.8 : la lecture normale mettrait plus de 10 s à atteindre 0:23 ; le saut doit y arriver en quelques secondes.
+        skipped_at = monotonic()
         control("SkipCredits").invoke()
-        until(lambda: re.search(r"^0:00:2[45] ", control("PositionLabel").window_text()),
-              "Skip credits did not seek")
+        until(lambda: position_seconds() >= 23, "Skip credits did not seek", timeout=8)
+        assert monotonic() - skipped_at < 8, "Skip credits reached the end of the credits too late"
         wake_player()
         screenshot("lecture")
         control("PauseButton").invoke()
