@@ -936,6 +936,8 @@
                                     AutomationProperties.Name="Serveur suivant" ToolTip="Passer au serveur suivant (image figée, coupures)"/>
                             <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource PlayerPill}" Click="ChooseLiveQuality" Visibility="Collapsed"
                                     AutomationProperties.Name="Qualités TV" ToolTip="Afficher toutes les qualités du flux" Margin="0,0,8,0" MinWidth="76"/>
+                            <Button x:Name="ChaptersButton" Content="&#xE8FD;" Style="{StaticResource PlayerGlass}" Click="ShowChapters" Visibility="Collapsed"
+                                    ToolTip="Chapitres · Page préc. / Page suiv." AutomationProperties.Name="Chapitres" Margin="0,0,4,0"/>
                             <Button x:Name="SubtitleButton" Content="&#xED1E;" Style="{StaticResource PlayerGlass}" Click="SubtitleTrack" ToolTip="Audio et sous-titres · C"
                                     AutomationProperties.Name="Audio et sous-titres" Margin="0,0,4,0"/>
                             <Button x:Name="SettingsButton" Content="&#xE713;" Style="{StaticResource PlayerGlass}" Click="PlayerSettings"
@@ -984,13 +986,32 @@
             </Border>
             <!-- Passer le générique : visible pendant le générique, même quand les commandes sont masquées. -->
             <Border x:Name="SkipCreditsHost" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,32,150" Padding="0">
-                <Button x:Name="SkipCredits" Style="{StaticResource Primary}" Click="SkipCreditsClick" Visibility="Collapsed" MinHeight="48"
-                        AutomationProperties.Name="Passer le générique" ToolTip="Passer le générique · S">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE893;" FontFamily="{StaticResource IconFont}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#0A0A12"/>
-                        <TextBlock Text="Passer le générique" VerticalAlignment="Center" Foreground="#0A0A12"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel HorizontalAlignment="Right">
+                    <!-- 0.8 : « À suivre » (comme la PWA) : épisode suivant lancé seul après 10 s, « Lire maintenant » ou « Plus tard ». -->
+                    <Border x:Name="UpNextCard" Visibility="Collapsed" Width="400" Margin="0,0,0,12" Padding="20,16,20,18" CornerRadius="18"
+                            Background="#F20D0F18" BorderBrush="#2EFFFFFF" BorderThickness="1" AutomationProperties.AutomationId="UpNextCard">
+                        <StackPanel>
+                            <TextBlock Text="À SUIVRE" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                            <TextBlock x:Name="UpNextSeries" FontSize="13" Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="UpNextTitle" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"
+                                       AutomationProperties.AutomationId="UpNextTitle"/>
+                            <TextBlock x:Name="UpNextStatus" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,6,0,12" AutomationProperties.AutomationId="UpNextStatus"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="UpNextPlay" Style="{StaticResource Primary}" Content="▶  Lire maintenant" MinHeight="42" Click="UpNextPlayClick"
+                                        AutomationProperties.AutomationId="UpNextPlay"/>
+                                <Button x:Name="UpNextLater" Content="Plus tard" MinHeight="42" Margin="10,0,0,0" Click="UpNextLaterClick"
+                                        AutomationProperties.AutomationId="UpNextLater"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="SkipCredits" Style="{StaticResource Primary}" Click="SkipCreditsClick" Visibility="Collapsed" MinHeight="48" HorizontalAlignment="Right"
+                            AutomationProperties.Name="Passer le générique" AutomationProperties.AutomationId="SkipCredits" ToolTip="Passer le générique · S">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE893;" FontFamily="{StaticResource IconFont}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#0A0A12"/>
+                            <TextBlock x:Name="SkipCreditsLabel" Text="Passer le générique" VerticalAlignment="Center" Foreground="#0A0A12"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

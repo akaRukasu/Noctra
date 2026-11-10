@@ -200,7 +200,7 @@ public partial class MainWindow
     // « Passer le générique » : bouton à part, visible même quand les commandes sont masquées.
     private void UpdateSkipOverlay()
     {
-        var show = SkipCredits.Visibility == Visibility.Visible && Player.Visibility == Visibility.Visible && !miniPlayer && !closing &&
+        var show = (SkipCredits.Visibility == Visibility.Visible || UpNextCard.Visibility == Visibility.Visible) && Player.Visibility == Visibility.Visible && !miniPlayer && !closing &&
             WindowState != WindowState.Minimized;
         if (show && skipOverlay == null)
         {
@@ -280,7 +280,9 @@ public partial class MainWindow
         else if (key == Key.S) { if (SkipCredits.Visibility == Visibility.Visible) SkipCreditsClick(this, new RoutedEventArgs()); }
         else if (key == Key.I) ShowStats(statsPopup?.IsOpen != true);
         else if (key == Key.P) SetMiniPlayer(!miniPlayer);
-        else if (key == Key.N) PlayQueueStep(1);
+        else if (key == Key.N) StepEpisode(1);
+        else if (key == Key.PageDown) StepChapter(1);
+        else if (key == Key.PageUp) StepChapter(-1);
         else if (key is >= Key.D0 and <= Key.D9 or >= Key.NumPad0 and <= Key.NumPad9)
         {
             // 0 à 9 : se placer à 0 %, 10 %… 90 % de la vidéo.

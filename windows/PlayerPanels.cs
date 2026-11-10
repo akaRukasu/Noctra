@@ -323,6 +323,36 @@ public partial class MainWindow
 
     // ---------- Réglages ----------
 
+    // 0.8 : chapitres : liste avec l'heure de début, chapitre en cours surligné ; un clic s'y place.
+    private FrameworkElement ChapterList(double height)
+    {
+        var list = new StackPanel();
+        if (active is not { } state) return list;
+        var currentIndex = Array.FindLastIndex(state.Chapters, chapter => chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond <= state.Position + .5);
+        for (var index = 0; index < Math.Min(state.Chapters.Length, 200); index++)
+        {
+            var chapter = state.Chapters[index];
+            var seconds = chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond;
+            list.Children.Add(PanelRow(string.IsNullOrWhiteSpace(chapter.Name) ? "Chapitre " + (index + 1) : chapter.Name, index == currentIndex,
+                () => { UserSeek(seconds); RebuildLater(); }, FormatTime(seconds), "Chapter" + index));
+        }
+        return new ScrollViewer { Content = list, MaxHeight = height, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+    }
+
+    private void ShowChapters(object sender, RoutedEventArgs args)
+    {
+        if (active is not { Chapters.Length: > 1 }) return;
+        ShowPlayerPanel((Button)sender, "Chapitres", () =>
+        {
+            var panel = new StackPanel { Width = 380 };
+            panel.Children.Add(ChapterList(420));
+            var keys = Text("Page préc. / Page suiv. : chapitre précédent / suivant", 11.5, color: "Muted");
+            keys.Margin = new Thickness(2, 10, 0, 0);
+            panel.Children.Add(keys);
+            return panel;
+        }, "ChaptersPanel");
+    }
+
     private void PlayerSettings(object sender, RoutedEventArgs args)
     {
         if (CurrentEngine == null) return;
@@ -364,19 +394,10 @@ public partial class MainWindow
                 panel.Children.Add(DelayRow(engine, "DÉCALAGE DES SOUS-TITRES", "sub-delay", "Sous-titres"));
             }
             panel.Children.Add(DelayRow(engine, "DÉCALAGE AUDIO", "audio-delay", "Audio"));
-            if (active is { Chapters.Length: > 1 } state && !live)
+            if (active is { Chapters.Length: > 1 } && !live)
             {
                 panel.Children.Add(PanelSection("CHAPITRES"));
-                var list = new StackPanel();
-                var currentIndex = Array.FindLastIndex(state.Chapters, chapter => chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond <= state.Position + .5);
-                for (var index = 0; index < Math.Min(state.Chapters.Length, 80); index++)
-                {
-                    var chapter = state.Chapters[index];
-                    var seconds = chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond;
-                    list.Children.Add(PanelRow(string.IsNullOrWhiteSpace(chapter.Name) ? "Chapitre " + (index + 1) : chapter.Name, index == currentIndex,
-                        () => { UserSeek(seconds); RebuildLater(); }, FormatTime(seconds)));
-                }
-                panel.Children.Add(new ScrollViewer { Content = list, MaxHeight = 220, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
+                panel.Children.Add(ChapterList(220));
             }
             panel.Children.Add(PanelSection("OUTILS"));
             var tools = new WrapPanel();
@@ -385,7 +406,7 @@ public partial class MainWindow
             tools.Children.Add(PanelChip(miniPlayer ? "Quitter le mini-lecteur · P" : "Mini-lecteur · P", miniPlayer, () => { ClosePlayerPanel(); SetMiniPlayer(!miniPlayer); },
                 "MiniToggle"));
             panel.Children.Add(tools);
-            var keys = Text("Raccourcis : Espace pause · ← → 15 s · ↑ ↓ volume · F plein écran · C sous-titres · A audio · M son · 0-9 position", 11.5, color: "Muted");
+            var keys = Text("Raccourcis : Espace pause · ← → 15 s · ↑ ↓ volume · F plein écran · C sous-titres · A audio · M son · 0-9 position · Page préc./suiv. chapitres · N épisode suivant", 11.5, color: "Muted");
             keys.TextWrapping = TextWrapping.Wrap;
             keys.Margin = new Thickness(2, 10, 0, 0);
             panel.Children.Add(keys);

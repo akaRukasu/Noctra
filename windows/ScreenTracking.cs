@@ -53,14 +53,10 @@ public partial class MainWindow
 
     private void CorrectVideoDisplay()
     {
-        if (displayHz is not { } hz || CurrentEngine is not { } engine) return;
-        try
-        {
-            // Correct only a clearly wrong monitor, preserving the player's precise automatic estimate otherwise.
-            if (engine.Seconds("display-fps") is > 0 and var detected && Math.Abs(detected - hz) > 2)
-                engine.Command("set", "display-fps-override", hz.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-        catch (InvalidOperationException) { }
+        // 0.8 : plus de fréquence imposée au lecteur. La valeur annoncée par Windows est fausse avec une fréquence
+        // dynamique (60 ↔ 120 Hz) : imposée, elle faisait défiler la vidéo trop vite (× 1,5) et saccader le son.
+        // L'image est désormais calée sur le son (Mpv.cs) ; la fréquence reste affichée dans les réglages.
+        _ = displayHz;
     }
 
     private void UpdateDisplayReadout()

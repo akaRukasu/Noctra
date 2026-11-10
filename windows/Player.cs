@@ -102,15 +102,18 @@ public partial class MainWindow
         QueuePrevious.Visibility = QueueNext.Visibility = playQueue.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
         QueuePrevious.IsEnabled = playQueueIndex > 0;
         QueueNext.IsEnabled = playQueueIndex + 1 < playQueue.Length;
+        ChaptersButton.Visibility = Visibility.Collapsed;
         LibraryShell.Visibility = Visibility.Collapsed;
         Player.Visibility = Visibility.Visible;
         Timeline.Value = 0;
         Timeline.IsEnabled = false;
         PositionLabel.Text = "";
         SkipCredits.Visibility = Visibility.Collapsed;
+        UpNextCard.Visibility = Visibility.Collapsed;
         UpdateSkipOverlay();
         PlaybackMode.Text = "";
         ShowPauseState(false);
+        BoostPlayback(true);
         if (File.Exists(Mpv.LibraryPath)) _ = OpenPlayback(item);
         else InstallPlayer(this, new RoutedEventArgs());
     }
@@ -134,8 +137,36 @@ public partial class MainWindow
         playQueueIndex = target;
         StartPlayback(queue[target], 0, keepQueue: true);
     }
-    private void QueuePreviousClick(object sender, RoutedEventArgs args) => PlayQueueStep(-1);
-    private void QueueNextClick(object sender, RoutedEventArgs args) => PlayQueueStep(1);
+    private void QueuePreviousClick(object sender, RoutedEventArgs args) => StepEpisode(-1);
+    private void QueueNextClick(object sender, RoutedEventArgs args) => StepEpisode(1);
+
+    // 0.8 : titre précédent / suivant : file de lecture, sinon épisode précédent / suivant de la série.
+    private void StepEpisode(int step)
+    {
+        if (playQueue.Length > 1 && playQueueIndex + step >= 0 && playQueueIndex + step < playQueue.Length) { PlayQueueStep(step); return; }
+        if (active is not { } state || InSyncGroup) return;
+        if (step > 0) PlayNextEpisode(state);
+        else if (state.Previous is { } previous && !state.Advancing)
+        {
+            state.Advancing = true;
+            FinishPlayback(refresh: false);
+            StartPlayback(previous, 0);
+        }
+    }
+
+    private void UpdateEpisodeButtons()
+    {
+        var queue = playQueue.Length > 1;
+        var previous = queue ? playQueueIndex > 0 : active?.Previous != null;
+        var next = queue ? playQueueIndex + 1 < playQueue.Length : active?.Next != null;
+        var episode = active?.Item?.Type == "Episode";
+        QueuePrevious.Visibility = QueueNext.Visibility = queue || episode && (previous || next) ? Visibility.Visible : Visibility.Collapsed;
+        QueuePrevious.IsEnabled = previous && !InSyncGroup; QueueNext.IsEnabled = next && !InSyncGroup;
+        var noun = queue ? "Titre" : "Épisode";
+        QueuePrevious.ToolTip = noun + " précédent"; QueueNext.ToolTip = noun + " suivant · N";
+        System.Windows.Automation.AutomationProperties.SetName(QueuePrevious, noun + " précédent");
+        System.Windows.Automation.AutomationProperties.SetName(QueueNext, noun + " suivant");
+    }
 
     private async Task OpenPlayback(MediaItem item)
     {
@@ -163,8 +194,88 @@ public partial class MainWindow
         {
             _ = FindCredits(account, item, state);
             _ = LoadPlaybackDetails(account, item, state);
+            _ = FindNextEpisode(account, item, state);
         }
         await LoadMedia(state, allowDirect: true);
+    }
+
+    private async Task FindNextEpisode(Jellyfin account, MediaItem item, ActivePlayback state)
+    {
+        if (item.Type != "Episode") return;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            var (previous, next) = await account.AdjacentEpisodes(item, timeout.Token);
+            if (active != state) return;
+            state.Previous = previous; state.Next = next;
+            UpdateEpisodeButtons();
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
+    }
+
+    // « À suivre » (comme la PWA) : après le générique de fin, sinon 30 s avant la fin (15 s pour un épisode court) ;
+    // l'épisode suivant démarre seul au bout de 10 s de lecture.
+    private void UpdateUpNext(ActivePlayback state, bool paused)
+    {
+        if (state.Item?.Type != "Episode" || state.Next is not { } next || InSyncGroup || state.Advancing || state.Duration <= 0)
+        {
+            if (UpNextCard.Visibility == Visibility.Visible) { UpNextCard.Visibility = Visibility.Collapsed; UpdateSkipOverlay(); }
+            return;
+        }
+        var at = state.Position; var duration = state.Duration;
+        var outro = state.Credits.FirstOrDefault(segment => segment.Type == "Outro" && segment.StartTicks / (double)TimeSpan.TicksPerSecond > duration - 240);
+        var trigger = outro != null ? Math.Max(outro.EndTicks / (double)TimeSpan.TicksPerSecond, duration - 10) : duration - (duration > 600 ? 30 : 15);
+        if (state.UpNextShown && at < trigger - 5)
+        {
+            // Retour en arrière : la carte disparaît et reviendra au même moment.
+            state.UpNextShown = false; state.StopAtEnd = false;
+            UpNextCard.Visibility = Visibility.Collapsed; UpdateSkipOverlay();
+            return;
+        }
+        if (!state.UpNextShown)
+        {
+            if (state.StopAtEnd || state.CurrentCredits != null || at < trigger || duration - at <= 1.5) return;
+            state.UpNextShown = true; state.UpNextLeft = 10; state.UpNextTick = DateTime.UtcNow.AddSeconds(1);
+            UpNextSeries.Text = next.SeriesName ?? "";
+            UpNextSeries.Visibility = UpNextSeries.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            UpNextTitle.Text = (next.ParentIndexNumber is { } season ? $"S{season} · " : "") + (next.IndexNumber is { } number ? $"É{number} — " : "") + next.Name;
+            UpNextCard.Visibility = Visibility.Visible;
+            UpdateSkipOverlay();
+        }
+        if (UpNextCard.Visibility != Visibility.Visible) return;
+        if (!paused && DateTime.UtcNow >= state.UpNextTick)
+        {
+            state.UpNextLeft--; state.UpNextTick = DateTime.UtcNow.AddSeconds(1);
+            if (state.UpNextLeft <= 0) { PlayNextEpisode(state); return; }
+        }
+        UpNextStatus.Text = paused ? "En pause · lecture automatique à la reprise" : $"Lecture automatique dans {state.UpNextLeft} s";
+    }
+
+    private void PlayNextEpisode(ActivePlayback state)
+    {
+        if (state.Next is not { } next || state.Advancing || active != state) return;
+        state.Advancing = true;
+        UpNextCard.Visibility = Visibility.Collapsed;
+        if (playQueueIndex + 1 < playQueue.Length && playQueue[playQueueIndex + 1].Id == next.Id) { PlayQueueStep(1); return; }
+        FinishPlayback(refresh: false);
+        StartPlayback(next, 0);
+    }
+
+    private void UpNextPlayClick(object sender, RoutedEventArgs args) { if (active is { } state) PlayNextEpisode(state); }
+    private void UpNextLaterClick(object sender, RoutedEventArgs args)
+    {
+        // « Plus tard » : la lecture s'arrête à la fin de l'épisode.
+        if (active is { } state) state.StopAtEnd = true;
+        UpNextCard.Visibility = Visibility.Collapsed;
+        UpdateSkipOverlay();
+    }
+
+    // 0.8 : priorité un peu plus haute pendant une lecture : moins de saccades quand le PC est très sollicité.
+    private static void BoostPlayback(bool on)
+    {
+        try { System.Diagnostics.Process.GetCurrentProcess().PriorityClass = on ? System.Diagnostics.ProcessPriorityClass.AboveNormal : System.Diagnostics.ProcessPriorityClass.Normal; }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
     }
 
     private async Task FindCredits(Jellyfin account, MediaItem item, ActivePlayback state)
@@ -179,7 +290,8 @@ public partial class MainWindow
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
         if (active != state) return;
         var chapters = item.Chapters ?? [];
-        if (credits.Length == 0 && chapters.Length == 0)
+        // 0.8 : chapitres toujours chargés (avant : seulement sans segments de générique côté serveur).
+        if (chapters.Length == 0)
         {
             try { chapters = (await account.Detail(item.Id, state.Cancellation.Token)).Chapters ?? []; }
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
@@ -189,16 +301,55 @@ public partial class MainWindow
         var fallback = new System.Collections.Generic.List<MediaSegment>();
         for (var index = 0; index < named.Length; index++)
         {
-            var title = named[index].Name ?? "";
-            var type = Regex.IsMatch(title, @"(?i)(outro|credits|crédits|ending|générique de fin)") ? "Outro" :
-                Regex.IsMatch(title, @"(?i)(^intro|opening|générique|generique|^op\d*$)") ? "Intro" : null;
+            var title = (named[index].Name ?? "").Trim();
+            // Mêmes noms de chapitres que la PWA (noctra-episode-flow.js).
+            var type = Regex.IsMatch(title, @"(?i)(end ?credits|credits|crédits|ending|outro|générique de fin|generique de fin)") || Regex.IsMatch(title, @"(?i)^ed\d*$") ? "Outro" :
+                Regex.IsMatch(title, @"(?i)(^intro|introduction|opening|générique|generique|ouverture)") || Regex.IsMatch(title, @"(?i)^op\d*$") ? "Intro" :
+                Regex.IsMatch(title, @"(?i)(recap|récap|previously|précédemment)") ? "Recap" :
+                Regex.IsMatch(title, @"(?i)(preview|aperçu|prochainement|next time)") ? "Preview" : null;
             var end = index + 1 < named.Length ? named[index + 1].StartPositionTicks : item.RunTimeTicks ?? 0;
             var length = end - named[index].StartPositionTicks;
             if (type != null && length is >= 5 * TimeSpan.TicksPerSecond and <= 900 * TimeSpan.TicksPerSecond &&
                 !credits.Any(segment => segment.Type == type))
                 fallback.Add(new MediaSegment(type, named[index].StartPositionTicks, end));
         }
-        if (active == state) state.Credits = credits.Concat(fallback).ToArray();
+        if (active != state) return;
+        state.Credits = credits.Concat(fallback).ToArray();
+        // 0.8 : fichier sans chapitres : chapitrage tiré des segments détectés (récap, générique, épisode, générique de fin…).
+        if (named.Length <= 1 && state.Credits.Length > 0 && (item.RunTimeTicks ?? 0) > 0)
+            state.Chapters = SegmentChapters(state.Credits, item.RunTimeTicks!.Value, item.Type == "Episode" ? "Épisode" : item.Type == "Movie" ? "Film" : "Programme");
+        UpdateChapterButton();
+    }
+
+    private static Chapter[] SegmentChapters(MediaSegment[] segments, long runtime, string content)
+    {
+        var chapters = new System.Collections.Generic.List<Chapter>();
+        var cursor = 0L;
+        foreach (var segment in segments.OrderBy(segment => segment.StartTicks))
+        {
+            if (segment.StartTicks < cursor) continue;
+            if (segment.StartTicks - cursor >= 5 * TimeSpan.TicksPerSecond) chapters.Add(new Chapter(content, cursor));
+            chapters.Add(new Chapter(segment.Type switch { "Intro" => "Générique", "Outro" => "Générique de fin", "Recap" => "Récap", "Preview" => "Aperçu", _ => "Segment" }, segment.StartTicks));
+            cursor = segment.EndTicks;
+        }
+        if (runtime - cursor >= 5 * TimeSpan.TicksPerSecond) chapters.Add(new Chapter(content, cursor));
+        return chapters.Count > 1 ? chapters.ToArray() : [];
+    }
+
+    private void UpdateChapterButton() =>
+        ChaptersButton.Visibility = active is { Chapters.Length: > 1 } && pendingLive == null ? Visibility.Visible : Visibility.Collapsed;
+
+    // Chapitre précédent / suivant (Page préc. / Page suiv.) : au-delà de 3 s dans un chapitre, « précédent » revient à son début.
+    private void StepChapter(int step)
+    {
+        if (active is not { Chapters.Length: > 1 } state || pendingLive != null) return;
+        var starts = state.Chapters.Select(chapter => chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond).ToArray();
+        var current = Array.FindLastIndex(starts, start => start <= state.Position + .5);
+        var target = step > 0 ? current + 1 : state.Position - (current >= 0 ? starts[current] : 0) > 3 ? current : current - 1;
+        if (target < 0 || target >= starts.Length) return;
+        UserSeek(starts[target]);
+        var name = state.Chapters[target].Name;
+        Osd(string.IsNullOrWhiteSpace(name) ? "Chapitre " + (target + 1) : name);
     }
 
     private async Task LoadMedia(ActivePlayback state, bool allowDirect)
@@ -277,7 +428,8 @@ public partial class MainWindow
                 {
                     state.Position = engine.Seconds("duration") ?? state.Duration;
                     if (state.Session.Local) SaveOfflinePosition(state, finished: true);
-                    if (!InSyncGroup && playQueueIndex + 1 < playQueue.Length) PlayQueueStep(1);
+                    if (!InSyncGroup && state.Next != null && !state.StopAtEnd) PlayNextEpisode(state);
+                    else if (!InSyncGroup && !state.StopAtEnd && playQueueIndex + 1 < playQueue.Length) PlayQueueStep(1);
                     else FinishPlayback(capture: false);
                 }
                 else FailPlayback("Le lecteur a interrompu la vidéo. " + (engine.LastError ?? "Essayez à nouveau."));
@@ -296,10 +448,17 @@ public partial class MainWindow
         state.Position = engine.Seconds("time-pos") ?? state.Position;
         state.Duration = engine.Seconds("duration") ?? state.Duration;
         var positionTicks = state.Position * TimeSpan.TicksPerSecond;
-        state.CurrentCredits = state.Credits.FirstOrDefault(segment => segment.StartTicks <= positionTicks &&
-            segment.EndTicks - TimeSpan.TicksPerMillisecond * 250 > positionTicks);
+        // Comme la PWA : bouton du début du segment (−0,5 s) jusqu'à 1,5 s avant sa fin ; un segment passé ne revient pas.
+        state.CurrentCredits = state.Credits.FirstOrDefault(segment => !state.Dismissed.Contains(segment) &&
+            segment.StartTicks - TimeSpan.TicksPerMillisecond * 500 <= positionTicks && segment.EndTicks - TimeSpan.TicksPerMillisecond * 1500 > positionTicks);
+        if (state.CurrentCredits is { } current)
+        {
+            var label = current.Type switch { "Outro" => "Passer le générique de fin", "Recap" => "Passer le récap", "Preview" => "Passer l’aperçu", _ => "Passer le générique" };
+            if (SkipCreditsLabel.Text != label) { SkipCreditsLabel.Text = label; System.Windows.Automation.AutomationProperties.SetName(SkipCredits, label); }
+        }
         var credits = state.CurrentCredits != null ? Visibility.Visible : Visibility.Collapsed;
         if (SkipCredits.Visibility != credits) { SkipCredits.Visibility = credits; UpdateSkipOverlay(); }
+        UpdateUpNext(state, engine.Paused);
         var paused = engine.Paused;
         ShowPauseState(paused);
         if (!seeking && state.Duration > 0)
@@ -393,6 +552,8 @@ public partial class MainWindow
 
     private void FinishPlayback(bool capture = true, bool refresh = true)
     {
+        BoostPlayback(false);
+        UpNextCard.Visibility = Visibility.Collapsed;
         if (miniPlayer) SetMiniPlayer(false);
         ShowStats(false);
         if (pendingLive is { } live)
@@ -494,7 +655,13 @@ public partial class MainWindow
     }
     private void SkipCreditsClick(object sender, RoutedEventArgs args)
     {
-        if (active?.CurrentCredits is { } segment) UserSeek(segment.EndTicks / (double)TimeSpan.TicksPerSecond);
+        if (active is not { CurrentCredits: { } segment } state) return;
+        // Fin du segment (le générique de fin jusqu'au bout du fichier mène à l'enchaînement habituel), jamais automatique.
+        state.Dismissed.Add(segment);
+        state.CurrentCredits = null;
+        SkipCredits.Visibility = Visibility.Collapsed;
+        UpdateSkipOverlay();
+        UserSeek(segment.EndTicks / (double)TimeSpan.TicksPerSecond);
     }
     private void Fullscreen(object sender, RoutedEventArgs args) => SetFullscreen(!fullscreen);
     private void BeginSeek(object sender, MouseButtonEventArgs args)
@@ -543,6 +710,12 @@ public partial class MainWindow
         internal DateTime NextReport;
         internal MediaSegment[] Credits = [];
         internal MediaSegment? CurrentCredits;
+        // 0.8 : « À suivre » et segments passés (comme la PWA).
+        internal MediaItem? Next, Previous;
+        internal bool UpNextShown, StopAtEnd, Advancing;
+        internal int UpNextLeft;
+        internal DateTime UpNextTick;
+        internal readonly System.Collections.Generic.HashSet<MediaSegment> Dismissed = [];
     }
 
     private sealed class LivePlayback(LiveStream[] streams)
@@ -645,6 +818,7 @@ public partial class MainWindow
         externalPlayer?.Close();
         externalPlayer = null;
         pendingLive = new LivePlayback(streams);
+        BoostPlayback(true);
         MediaEyebrow.Text = "EN DIRECT";
         MediaTitle.Text = name;
         MediaSubtitle.Visibility = Visibility.Collapsed;

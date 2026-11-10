@@ -517,7 +517,7 @@ class Fixture(BaseHTTPRequestHandler):
             _, _, _, key, _, kind = path.split("/")
             data = artwork.get((key, kind))
             return self.send(data or b"", status=200 if data else 404, content_type="image/jpeg")
-        if path in ["/jellyfin/Videos/episode/stream.webm", "/fixture-video.webm", "/api/tv/oha/http/mixed-test"]:
+        if path in ["/jellyfin/Videos/episode/stream.webm", "/jellyfin/Videos/episode-next/stream.webm", "/fixture-video.webm", "/api/tv/oha/http/mixed-test"]:
             if path=="/fixture-video.webm":
                 assert not self.headers.get("x-noctra-token"),"Session token leaked outside the TV API"
                 return self.send(external_video,content_type="video/webm")
@@ -880,6 +880,35 @@ def check_tv_provider_options():
     assert not by_name("▶   Lire le direct").is_enabled()
     assert not window.child_window(title="Noctra · Lecteur externe", control_type="Window").exists(timeout=.1)
     print("OK · Windows receives the WiTV catalog and three separate manual options from the Noctra API.", flush=True)
+
+
+def check_episode_flow():
+    # 0.8 : comme la PWA : boutons épisode précédent / suivant, chapitres, « À suivre » en fin d'épisode, épisode suivant lancé seul.
+    def plays(item):
+        return sum(1 for path, user, p in events if path == "/jellyfin/Sessions/Playing" and p.get("ItemId") == item)
+    started = plays("episode")
+    control("HomeTab").invoke()
+    until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Home missing before the episode flow")
+    control("PrimaryPlayback", "Button").invoke()
+    until(lambda: plays("episode") > started, "The episode did not start", timeout=60)
+    until(lambda: wake_player() is not False and control("QueueNext").is_visible() and control("QueueNext").is_enabled(), "No next-episode button in the player", timeout=20)
+    assert not control("QueuePrevious").is_enabled(), "First episode offers a previous episode"
+    until(lambda: wake_player() is not False and control("ChaptersButton").is_visible(), "No chapters for an episode with detected segments", timeout=20)
+    control("ChaptersButton").invoke()
+    until(lambda: control("Chapter2").exists(timeout=.1), "Chapter list missing")
+    control("Chapter2").invoke()
+    until(lambda: position_seconds() >= 23, "Choosing a chapter did not seek", timeout=10)
+    control("ChaptersButton").invoke()
+    wake_player()
+    timeline = control("Timeline").rectangle()
+    win32api.SetCursorPos((timeline.left + int(timeline.width() * .92), (timeline.top + timeline.bottom) // 2)); sleep(.2)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0); sleep(.05); win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+    until(lambda: control("UpNextTitle").exists(timeout=.1) and "Venomous" in control("UpNextTitle").window_text(), "« À suivre » missing at the end of the episode", timeout=20)
+    screenshot("a-suivre")
+    until(lambda: plays("episode-next") > 0, "The next episode did not start by itself", timeout=40)
+    until(lambda: control("MediaTitle").window_text() == "Venomous", "The player did not switch to the next episode")
+    control("ReturnButton").invoke()
+    print("OK · Série : épisode précédent / suivant, chapitres, « À suivre » et épisode suivant lancé seul (comme la PWA).", flush=True)
 
 
 def check_bowd_preroll():
@@ -1402,6 +1431,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             check_new_features()
             check_tv_responsiveness()
             check_bowd_preroll()
+            check_episode_flow()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)

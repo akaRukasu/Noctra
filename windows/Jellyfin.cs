@@ -334,10 +334,24 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         }
     }
 
+    // 0.8 : épisodes précédent et suivant (Shows/{série}/Episodes?AdjacentTo=…, comme le lecteur Jellyfin).
+    internal async Task<(MediaItem? Previous, MediaItem? Next)> AdjacentEpisodes(MediaItem item, CancellationToken cancellation)
+    {
+        if (item.Type != "Episode" || string.IsNullOrWhiteSpace(item.SeriesId)) return (null, null);
+        var page = await Get<ItemPage>("Shows/" + item.SeriesId + "/Episodes", new()
+        {
+            ["UserId"] = user.Id, ["AdjacentTo"] = item.Id, ["EnableUserData"] = "true", ["Fields"] = Details
+        }, cancellation);
+        var items = page.Items ?? [];
+        var index = Array.FindIndex(items, episode => episode.Id == item.Id);
+        if (index < 0) return (null, null);
+        return (index > 0 && items[index - 1].CanPlay ? items[index - 1] : null, index + 1 < items.Length && items[index + 1].CanPlay ? items[index + 1] : null);
+    }
+
     internal async Task<MediaSegment[]> Credits(string id, CancellationToken cancellation)
     {
         var data = await Get<SegmentPage>("MediaSegments/" + id, null, cancellation);
-        return (data.Items ?? []).Where(segment => segment.Type is "Intro" or "Outro" &&
+        return (data.Items ?? []).Where(segment => segment.Type is "Intro" or "Outro" or "Recap" or "Preview" &&
             segment.StartTicks >= 0 && segment.EndTicks > segment.StartTicks && segment.EndTicks <= TimeSpan.TicksPerDay).ToArray();
     }
 

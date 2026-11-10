@@ -45,7 +45,21 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - Chapitres.
 - Statistiques et mini-lecteur.
 
-**Passer le générique** : bouton à part, visible même quand les commandes sont masquées.
+**Passer le générique** : bouton à part, visible même quand les commandes sont masquées. Comme la PWA : générique, générique de fin, récap et aperçu (segments du serveur Jellyfin, sinon chapitres nommés « Opening », « Introduction », « Ending », « ED »…), du début du segment jusqu'à 1,5 s avant sa fin ; un segment passé ne revient pas.
+
+**Séries**
+- **À suivre** (comme la PWA) : après le générique de fin, sinon 30 s avant la fin, une carte présente l'épisode suivant ; il démarre seul au bout de 10 s de lecture. « Lire maintenant » ou « Plus tard » (la lecture s'arrête alors à la fin).
+- En fin d'épisode, l'épisode suivant démarre même sans file de lecture (avant : seulement dans une file).
+- Boutons **Épisode précédent / suivant** dans le lecteur (touche N : suivant).
+
+**Chapitres**
+- Bouton « Chapitres » dans le lecteur : liste avec l'heure de début, chapitre en cours surligné ; Page préc. / Page suiv. pour passer d'un chapitre à l'autre.
+- Les chapitres du fichier sont toujours chargés (avant : seulement quand le serveur n'avait pas de segments de générique).
+- Fichier sans chapitres : chapitrage tiré des segments détectés (Récap, Générique, Épisode, Générique de fin, Aperçu).
+
+**Fluidité quand le PC est très sollicité**
+- L'image est calée sur le son (réglage par défaut de mpv). Avant, elle suivait la fréquence de l'écran, imposée d'après Windows : avec une fréquence dynamique (60 / 90 / 120 Hz), la vidéo pouvait défiler trop vite (× 1,5) et le son saccader.
+- Réserve audio portée à 0,5 s ; priorité de Noctra un peu relevée pendant une lecture.
 
 **TV**
 - Pastille rouge « EN DIRECT ».
@@ -170,6 +184,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - rangée infinie de l'accueil (fenêtre étroite, boucle) ;
   - menu SyncPlay du bandeau ;
   - suppression d'une séance oubliée, fermeture automatique d'une séance vide ;
+  - série : épisode précédent / suivant, chapitres, « À suivre », épisode suivant lancé seul ;
   - BowdTV : publicité dans le lecteur, délai respecté, puis direct HLS ;
   - TV « Toutes les chaînes » avec un grand catalogue (4 000 chaînes, 80 bouquets) : aucun blocage de l'interface de plus d'une seconde pendant le chargement, en France puis pour tous les pays.
 

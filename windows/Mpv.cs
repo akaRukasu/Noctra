@@ -37,7 +37,10 @@ internal sealed class Mpv : IDisposable
             if (probe) Option("audio", "no");
             if (!software && !probe)
             {
-                Option("video-sync", "display-resample");
+                // 0.8 : image calée sur le son (réglage par défaut de mpv). « display-resample » suivait la fréquence de l'écran :
+                // avec une fréquence dynamique (60 / 90 / 120 Hz) ou un PC très chargé, la vidéo pouvait défiler trop vite (× 1,5)
+                // et le son être rééchantillonné ou coupé pour suivre.
+                Option("video-sync", "audio");
                 Option("d3d11-sync-interval", "1");
                 Option("d3d11-flip", "yes");
             }
@@ -61,6 +64,8 @@ internal sealed class Mpv : IDisposable
             if (audioOnly) Option("vid", "no");
             // Sans périphérique audio utilisable (casque débranché, pilote absent) : lecture muette plutôt qu'un arrêt.
             _ = mpv_set_option_string(handle, "audio-fallback-to-null", "yes");
+            // 0.8 : réserve audio plus large (0,2 s par défaut) : pas de coupure du son quand le PC est très sollicité.
+            _ = mpv_set_option_string(handle, "audio-buffer", "0.5");
             // 0.8 : messages sur l'image (volume, piste, serveur…) : sobres, centrés, sur fond sombre.
             foreach (var (key, value) in new[] { ("osd-level", "1"), ("osd-duration", "1300"), ("osd-font", "Segoe UI Variable Display"),
                 ("osd-font-size", "38"), ("osd-bold", "yes"), ("osd-color", "#FFF5F4FA"), ("osd-border-size", "3"), ("osd-border-color", "#C80A0B12"), ("osd-shadow-offset", "0"),
