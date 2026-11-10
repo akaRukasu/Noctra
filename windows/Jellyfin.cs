@@ -263,10 +263,13 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
 
     internal async Task<JsonElement> CommandJson(string path, object? body, CancellationToken cancellation)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(root, path));
-        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
-        if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var response = await Http.SendAsync(request, cancellation);
+        using var response = await Transmit(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, new Uri(root, path));
+            request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+            if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            return request;
+        }, HttpCompletionOption.ResponseContentRead, false, cancellation);
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync(cancellation);
         return text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone();
@@ -345,11 +348,32 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
 
     internal async Task Command(string path, object? body, CancellationToken cancellation, HttpMethod? method = null)
     {
-        using var request = new HttpRequestMessage(method ?? HttpMethod.Post, new Uri(root, path));
-        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
-        if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var response = await Http.SendAsync(request, cancellation);
+        var verb = method ?? HttpMethod.Post;
+        using var response = await Transmit(() =>
+        {
+            var request = new HttpRequestMessage(verb, new Uri(root, path));
+            request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+            if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            return request;
+        }, HttpCompletionOption.ResponseContentRead, verb != HttpMethod.Post, cancellation);
         response.EnsureSuccessStatusCode();
+    }
+
+    // 0.7 : coupure réseau passagère. Lectures et suppressions sont rejouées ; une écriture ne l'est
+    // que si la connexion n'a jamais été établie (la requête n'est donc pas partie).
+    private static async Task<HttpResponseMessage> Transmit(Func<HttpRequestMessage> build, HttpCompletionOption option, bool idempotent, CancellationToken cancellation)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var request = build();
+            try { return await Http.SendAsync(request, option, cancellation); }
+            catch (HttpRequestException error) when (attempt < 2 && !cancellation.IsCancellationRequested &&
+                (error.HttpRequestError == HttpRequestError.ConnectionError || idempotent && error.StatusCode == null))
+            {
+                request.Dispose();
+                await Task.Delay(250 * (attempt + 1), cancellation);
+            }
+        }
     }
 
     internal static string Authorization(string device, string? token) =>
@@ -366,12 +390,17 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         return await JsonSerializer.DeserializeAsync<T>(stream, Json, timeout.Token) ?? throw new InvalidOperationException("Réponse Jellyfin vide.");
     }
 
-    private async Task<HttpResponseMessage> Send(HttpMethod method, string path, Dictionary<string, string>? query, CancellationToken cancellation)
+    private Task<HttpResponseMessage> Send(HttpMethod method, string path, Dictionary<string, string>? query, CancellationToken cancellation)
     {
-        using var request = new HttpRequestMessage(method, new Uri(root, path + (query == null ? "" : "?" +
-            string.Join("&", query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value))))));
-        request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
-        return await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation);
+        var address = new Uri(root, path + (query == null ? "" : "?" +
+            string.Join("&", query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)))));
+        // Favoris et « vu » (POST / DELETE sans corps) sont idempotents : rejouables comme une lecture.
+        return Transmit(() =>
+        {
+            var request = new HttpRequestMessage(method, address);
+            request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+            return request;
+        }, HttpCompletionOption.ResponseHeadersRead, true, cancellation);
     }
 }
 
