@@ -797,6 +797,15 @@
                             </Grid>
                             <Button x:Name="SearchButton" Style="{StaticResource DockIcon}" Content="&#xE721;" Click="Search"
                                     ToolTip="Rechercher" AutomationProperties.Name="Rechercher" Margin="4,0"/>
+                            <!-- 0.8 : SyncPlay discret, comme Jellyfin et la PWA : icône du bandeau, menu au clic, point d'accent en séance. -->
+                            <Button x:Name="SyncHeaderButton" Style="{StaticResource DockIcon}" Click="HeaderSyncMenu" Margin="0,0,6,0"
+                                    ToolTip="Regarder ensemble (SyncPlay)" AutomationProperties.Name="Séances SyncPlay">
+                                <Grid>
+                                    <TextBlock x:Name="SyncHeaderGlyph" Text="&#xE716;" FontFamily="{StaticResource IconFont}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Ellipse x:Name="SyncHeaderDot" Width="8" Height="8" Fill="{StaticResource AccentGradient}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                             Margin="0,-3,-5,0" Visibility="Collapsed"/>
+                                </Grid>
+                            </Button>
                             <Button x:Name="ProfileButton" Style="{StaticResource Action}" Click="OpenProfile" Height="44" Padding="6,0,14,0" ToolTip="Profil et réglages"
                                     Background="#14FFFFFF" AutomationProperties.Name="Profil et réglages">
                                 <StackPanel Orientation="Horizontal">

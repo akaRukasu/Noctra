@@ -15,6 +15,7 @@ Connectez-vous ensuite avec votre compte Jellyfin. L’adresse Noctra est prére
 - **Panneaux du lecteur** : « Audio et sous-titres » (pistes et recherche en ligne au même endroit) et « Réglages » (vitesse, format, décalages, chapitres, outils).
 - **Barre de progression** : mémoire tampon, repères de chapitres, heure de fin ; « Passer le générique » reste visible même commandes masquées.
 - **TV** : pastille « EN DIRECT », serveur en cours et bouton « Serveur suivant » sans quitter la lecture.
+- **Rangées infinies** sur l'accueil (suite chargée à la volée, puis boucle) ; **SyncPlay** dans une icône discrète du bandeau, comme Jellyfin et la PWA.
 - **Accueil plus fluide** : plus d'effets de flou recalculés en continu, images en cache sur le disque, affichage progressif.
 - **Médiathèques** : tuiles à la hauteur de l'écran, grilles d'affiches sur toute la largeur.
 - **Découvrir** : champ de recherche pour trouver un film ou une série à demander.

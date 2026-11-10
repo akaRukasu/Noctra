@@ -65,6 +65,22 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - chaque rangée de médiathèque se remplit à son arrivée.
 - Les menus du clic droit sont préparés seulement quand on les ouvre.
 
+## Rangées infinies et SyncPlay discret
+
+**Rangées de l'accueil infinies**
+- En approchant de la fin d'une rangée « Ajouts récents », la suite de la médiathèque se charge seule.
+- Une fois tout chargé, la rangée repart du début, sans fin.
+- La flèche « précédent » au début d'une rangée mène à sa fin.
+- Le grand visuel tournait déjà en boucle.
+
+**SyncPlay discret**
+- Le grand bandeau « Regarder ensemble » de l'accueil est remplacé par une icône dans le bandeau du haut, comme dans Jellyfin et la PWA.
+- Au clic, un menu :
+  - créer une séance ;
+  - rejoindre une séance ouverte ;
+  - ou, pendant une séance, son nom et ses participants, « Ouvrir le groupe » et « Quitter la séance ».
+- Un point d'accent sur l'icône signale qu'une séance est en cours.
+
 ## Médiathèques et Découvrir
 
 - **Vos médiathèques** : les tuiles se partagent la hauteur de la fenêtre. Plus de grand vide sous la grille, et un visuel plus grand.
@@ -100,7 +116,9 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - musique ;
   - page « Vos médiathèques » ;
   - grille d'affiches ;
-  - recherche dans Découvrir.
+  - recherche dans Découvrir ;
+  - rangée infinie de l'accueil (fenêtre étroite, boucle) ;
+  - menu SyncPlay du bandeau.
 
 Le résultat du dernier passage est indiqué dans le message de livraison.
 

@@ -36,12 +36,12 @@ public partial class MainWindow
             button.FontSize = fontSize;
             button.Padding = new Thickness(padding, 0, padding, 0);
         }
-        foreach (var button in new[] { MoreTab, SearchButton, BackButton })
+        foreach (var button in new[] { MoreTab, SearchButton, BackButton, SyncHeaderButton })
         {
             button.Width = button.Height = controlHeight;
             button.FontSize = fontSize + 2;
         }
-        HeaderSearch.Width = compact ? 160 : Math.Clamp(width * .18, 220, 380);
+        HeaderSearch.Width = compact ? 130 : Math.Clamp(width * .18, 220, 380);
         HeaderSearch.Height = SearchBox.MinHeight = ProfileButton.Height = controlHeight;
         SearchBox.FontSize = SearchPlaceholder.FontSize = ProfileButton.FontSize = fontSize;
         // Texte saisi aligné sur l'indication et centré verticalement (hauteur de ligne ≈ 1,36 × taille).

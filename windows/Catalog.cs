@@ -165,8 +165,6 @@ public partial class MainWindow
             PageContent.Children.Add(FeaturedCarousel(candidates, label, cancellation));
         }
         else PageContent.Children.Add(Heading("Votre espace", "Retrouvez ici vos films et séries."));
-        // 0.7 : regarder ensemble (SyncPlay) accessible depuis l'accueil.
-        PageContent.Children.Add(HomeSyncStrip(account, cancellation));
         AddShelf("Continuer à regarder", resume, "Vos films et épisodes en cours apparaîtront ici.", true, cancellation);
         foreach (var library in libraries)
         {
@@ -174,7 +172,12 @@ public partial class MainWindow
             var slot = new StackPanel();
             PageContent.Children.Add(slot);
             var preview = previews[library.Id];
-            if (preview.IsCompleted) AddShelf(title, preview.Result?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot);
+            async Task<MediaItem[]?> More(int start)
+            {
+                try { return (await account.Browse(LibraryTypes(library), library.Id, null, start, true, cancellation)).Items; }
+                catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException) { return null; }
+            }
+            if (preview.IsCompleted) AddShelf(title, preview.Result?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot, More);
             else
             {
                 slot.Children.Add(ShelfPlaceholder(title));
@@ -184,7 +187,7 @@ public partial class MainWindow
                     var loaded = await preview;
                     if (cancellation.IsCancellationRequested) return;
                     slot.Children.Clear();
-                    AddShelf(title, loaded?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot);
+                    AddShelf(title, loaded?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot, More);
                     if (slot.Children.Count > 1) Reveal(slot.Children[1], 0, 10);
                 }
             }
@@ -463,7 +466,8 @@ public partial class MainWindow
         text.Visibility = Visibility.Collapsed;
     }
 
-    private void AddShelf(string title, MediaItem[]? items, string empty, bool landscape, CancellationToken cancellation, Panel? into = null)
+    private void AddShelf(string title, MediaItem[]? items, string empty, bool landscape, CancellationToken cancellation, Panel? into = null,
+        Func<int, Task<MediaItem[]?>>? more = null)
     {
         into ??= PageContent;
         var head = new DockPanel { Margin = new Thickness(0, 30, 0, 4) };
@@ -484,12 +488,61 @@ public partial class MainWindow
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, CanContentScroll = false,
             Margin = new Thickness(-12, 0, -12, 0), Focusable = false
         };
+        // 0.8 : rangées infinies. Près de la fin, la page suivante de la médiathèque est chargée ;
+        // une fois tout chargé, la rangée reprend au début (boucle sans fin, dans les deux sens).
+        var loaded = items.ToList();
+        var exhausted = more == null;
+        var extending = false;
+        const int CardLimit = 360;
+        bool Overflowing() => scroll.ScrollableWidth > 1;
+        bool NearEnd() => Overflowing() && scroll.HorizontalOffset >= scroll.ScrollableWidth - scroll.ViewportWidth * 1.2;
+        async Task Extend()
+        {
+            if (extending || cancellation.IsCancellationRequested || row.Children.Count >= CardLimit) return;
+            extending = true;
+            try
+            {
+                MediaItem[] batch = [];
+                if (!exhausted)
+                {
+                    var page = await more!(loaded.Count);
+                    var known = loaded.Select(item => item.Id).ToHashSet();
+                    batch = (page ?? []).Where(item => PlayRequest.Identifier(item.Id) && known.Add(item.Id)).ToArray();
+                    if (page == null || page.Length < 16 || batch.Length == 0) exhausted = true;
+                    loaded.AddRange(batch);
+                }
+                if (batch.Length == 0) batch = loaded.ToArray();
+                if (cancellation.IsCancellationRequested) return;
+                foreach (var item in batch)
+                {
+                    if (row.Children.Count >= CardLimit) break;
+                    row.Children.Add(Card(item, landscape, ButtonTab.Home, cancellation));
+                }
+            }
+            finally { extending = false; }
+        }
+        scroll.ScrollChanged += (_, args) => { if (args.HorizontalChange > 0 && NearEnd()) _ = Extend(); };
         if (items.Length > 1)
         {
             var arrows = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(arrows, Dock.Right);
-            var previous = Action("‹", () => GlideTo(scroll, scroll.HorizontalOffset - scroll.ViewportWidth * .8), "DockIcon");
-            var next = Action("›", () => GlideTo(scroll, scroll.HorizontalOffset + scroll.ViewportWidth * .8), "DockIcon");
+            var previous = Action("‹", () =>
+            {
+                // Au début : la rangée boucle vers la fin.
+                if (scroll.HorizontalOffset <= 1) GlideTo(scroll, scroll.ScrollableWidth);
+                else GlideTo(scroll, scroll.HorizontalOffset - scroll.ViewportWidth * .8);
+            }, "DockIcon");
+            var next = Action("›", async () =>
+            {
+                if (scroll.HorizontalOffset >= scroll.ScrollableWidth - 1)
+                {
+                    if (row.Children.Count >= CardLimit) { GlideTo(scroll, 0); return; }
+                    await Extend();
+                    scroll.UpdateLayout();
+                }
+                else if (NearEnd()) _ = Extend();
+                GlideTo(scroll, scroll.HorizontalOffset + scroll.ViewportWidth * .8);
+            }, "DockIcon");
             previous.Content = "\uE76B";
             next.Content = "\uE76C";
             AutomationProperties.SetName(previous, title + " précédent");
@@ -502,12 +555,8 @@ public partial class MainWindow
                 arrow.Background = ColorOf("#14FFFFFF");
                 arrows.Children.Add(arrow);
             }
-            previous.IsEnabled = false;
-            scroll.ScrollChanged += (_, _) =>
-            {
-                previous.IsEnabled = scroll.HorizontalOffset > 1;
-                next.IsEnabled = scroll.HorizontalOffset < scroll.ScrollableWidth - 1;
-            };
+            previous.IsEnabled = next.IsEnabled = false;
+            scroll.ScrollChanged += (_, _) => previous.IsEnabled = next.IsEnabled = Overflowing();
             head.Children.Add(arrows);
         }
         head.Children.Add(label);

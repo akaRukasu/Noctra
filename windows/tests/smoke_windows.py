@@ -971,10 +971,12 @@ def check_new_features():
     print("OK · Hors connexion : fichier copié sur le PC, lu localement, position reportée.", flush=True)
 
     # SyncPlay : groupe, lecture synchronisée, pause et déplacement passés par le serveur.
-    # Séance créée depuis le bandeau « Regarder ensemble » de l'accueil.
+    # 0.8 : séance créée depuis l'icône SyncPlay du bandeau (discrète, comme Jellyfin et la PWA).
     until(lambda: control("HomeTab").is_visible(), "Library not restored after offline playback")
     control("HomeTab").invoke()
-    until(lambda: control("HomeSyncCreate").exists(timeout=.1), "Home SyncPlay strip missing")
+    until(lambda: control("SyncHeaderButton").exists(timeout=.1), "SyncPlay header button missing")
+    control("SyncHeaderButton").invoke()
+    until(lambda: control("HomeSyncCreate").exists(timeout=.1), "SyncPlay header menu missing")
     control("HomeSyncCreate").invoke()
     until(lambda: control("SyncGroupName").exists(timeout=.1), "Group was not joined")
     screenshot("syncplay-groupe")
@@ -1057,10 +1059,13 @@ def check_new_features():
 
     control("ReturnButton").invoke()
     until(lambda: control("MoreTab").is_visible(), "Library not restored after group playback")
-    until(lambda: control("HomeSyncOpen").exists(timeout=.1), "Home strip does not show the current group")
-    control("HomeSyncOpen").set_focus()
-    sleep(.8)
-    screenshot("accueil-ensemble")
+    control("SyncHeaderButton").invoke()
+    until(lambda: control("HomeSyncOpen").exists(timeout=.1), "SyncPlay menu does not show the current group")
+    sleep(.6)
+    if args.screens:
+        ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "accueil-ensemble.png")
+    send_keys("{ESC}")
+    until(lambda: not control("HomeSyncOpen").exists(), "SyncPlay menu did not close")
     control("MoreTab").invoke()
     by_name("Regarder ensemble").invoke()
     until(lambda: by_name("Quitter le groupe").exists(timeout=.1), "Leave action missing")
@@ -1121,6 +1126,25 @@ def check_new_features():
     sleep(1)
     screenshot("decouvrir-recherche")
     print("OK · Médiathèques plein écran, grille d'affiches, recherche dans Découvrir.", flush=True)
+
+    # 0.8 : rangées infinies de l'accueil (fenêtre étroite : la rangée Cinéma déborde, puis boucle).
+    original = tuple(win32gui.GetWindowRect(window.handle))
+    dpi = ctypes.windll.user32.GetDpiForWindow(window.handle) / 96
+    win32gui.ShowWindow(window.handle, win32con.SW_RESTORE)
+    win32gui.SetWindowPos(window.handle, 0, 40, 40, round(960 * dpi), round(880 * dpi), win32con.SWP_NOZORDER)
+    control("HomeTab").invoke()
+    arrow = by_name("Ajouts récents · Cinéma suivant")
+    until(lambda: arrow.exists(timeout=.1) and arrow.is_enabled(), "Home row arrows missing", timeout=20)
+    before = len(window.descendants(title="Horizon polaire", control_type="Button"))
+    for _ in range(5):
+        arrow.invoke()
+        sleep(.7)
+    until(lambda: len(window.descendants(title="Horizon polaire", control_type="Button")) > before, "Home row did not loop")
+    assert by_name("Ajouts récents · Cinéma précédent").is_enabled(), "Previous arrow disabled in an infinite row"
+    screenshot("accueil-rangee-infinie")
+    win32gui.SetWindowPos(window.handle, 0, original[0], original[1], original[2] - original[0], original[3] - original[1], win32con.SWP_NOZORDER)
+    control("LibraryTab").invoke()
+    print("OK · Rangées infinies de l'accueil (page suivante puis boucle) et menu SyncPlay du bandeau.", flush=True)
 
     # Quick Connect : autoriser un autre appareil depuis le profil.
     control("ProfileButton").invoke()

@@ -525,7 +525,7 @@ public partial class MainWindow
         SyncBadge.Visibility = group == null ? Visibility.Collapsed : Visibility.Visible;
         SyncBadgeText.Text = group == null ? "" : "Ensemble · " + Math.Max(1, group.Members.Count);
         SyncBadge.ToolTip = group == null ? null : group.Name + " · " + string.Join(", ", group.Members);
-        refreshHomeSync?.Invoke();
+        RefreshHeaderSync();
         if (page?.Title == SyncPageTitle && LibraryShell.Visibility == Visibility.Visible && pageRequest != null && !rerenderingSync)
         {
             rerenderingSync = true;
@@ -533,92 +533,70 @@ public partial class MainWindow
         }
     }
     private bool rerenderingSync;
-    private Action? refreshHomeSync;
-
-    // Bandeau « Regarder ensemble » de l'accueil : créer une séance, rejoindre une séance ouverte,
-    // ou voir son groupe ; mis à jour quand un participant arrive ou part.
-    private FrameworkElement HomeSyncStrip(Jellyfin account, CancellationToken cancellation)
+    // 0.8 : SyncPlay depuis le bandeau (icône discrète, comme Jellyfin et la PWA) : créer une séance,
+    // rejoindre une séance ouverte, ou voir son groupe et le quitter.
+    private void HeaderSyncMenu(object sender, RoutedEventArgs args)
     {
-        var strip = new Border
+        if (client is not { } account) return;
+        var button = (Button)sender;
+        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom, MinWidth = 280 };
+        MenuItem Entry(string header, Action? click, string? id = null, bool enabled = true)
         {
-            CornerRadius = new CornerRadius(20), Padding = new Thickness(22, 18, 22, 18), Margin = new Thickness(0, 26, 0, 0),
-            BorderBrush = ColorOf("#33BCAAFF"), BorderThickness = new Thickness(1),
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0), EndPoint = new Point(1, 1),
-                GradientStops = { new GradientStop(Color.FromRgb(40, 30, 78), 0), new GradientStop(Color.FromRgb(20, 24, 44), .6), new GradientStop(Color.FromRgb(12, 42, 58), 1) }
-            }
-        };
-        AutomationProperties.SetAutomationId(strip, "HomeSyncPlay");
-        var openGroups = Array.Empty<JsonElement>();
-        void Render()
+            var entry = new MenuItem { Header = header, IsEnabled = enabled, Padding = new Thickness(6, 8, 18, 8) };
+            if (id != null) AutomationProperties.SetAutomationId(entry, id);
+            if (click != null) entry.Click += (_, _) => click();
+            return entry;
+        }
+        if (syncGroup is { } group)
         {
-            if (cancellation.IsCancellationRequested) return;
-            var row = new DockPanel();
-            var icon = new Border { Width = 52, Height = 52, CornerRadius = new CornerRadius(26), Background = BrushFor("AccentGradient"), Margin = new Thickness(0, 0, 18, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock { Text = "\uE716", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 22, Foreground = ColorOf("#0A0A12"),
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
-            DockPanel.SetDock(icon, Dock.Left);
-            row.Children.Add(icon);
-            var actions = new WrapPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
-            DockPanel.SetDock(actions, Dock.Right);
-            void Add(Button button, string id) { button.Margin = new Thickness(8, 4, 0, 4); AutomationProperties.SetAutomationId(button, id); actions.Children.Add(button); }
-            var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-            copy.Children.Add(Text("REGARDER ENSEMBLE", 11, true, "Accent"));
-            string title, caption;
-            if (syncGroup is { } group)
+            menu.Items.Add(Entry("« " + group.Name + " » · " + string.Join(", ", group.Members), null, enabled: false));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Entry("Ouvrir le groupe", () => _ = Navigate(SyncPlayPage), "HomeSyncOpen"));
+            menu.Items.Add(Entry("Quitter la séance", SyncLeave, "HomeSyncLeave"));
+        }
+        else
+        {
+            menu.Items.Add(Entry("Créer une séance", () =>
             {
-                title = "Vous êtes dans « " + group.Name + " »";
-                caption = string.Join(", ", group.Members) + " · lancez un film ou un épisode : il démarre chez tout le monde.";
-                Add(Action("Ouvrir le groupe", () => _ = Navigate(SyncPlayPage), "Primary"), "HomeSyncOpen");
-                Add(Action("Quitter", SyncLeave), "HomeSyncLeave");
-            }
-            else
+                if (!realtimeConnected) { ShowStatus("Connexion temps réel au serveur indisponible : SyncPlay ne peut pas démarrer."); return; }
+                SyncCreate("Soirée de " + account.User.Name);
+                _ = Navigate(SyncPlayPage);
+            }, "HomeSyncCreate"));
+            var searching = Entry("Recherche des séances ouvertes…", null, enabled: false);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(searching);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Entry("Regarder ensemble…", () => _ = Navigate(SyncPlayPage), "HomeSyncList"));
+            _ = LoadOpenGroups();
+            async Task LoadOpenGroups()
             {
-                title = "Une séance, plusieurs écrans";
-                caption = openGroups.Length == 0
-                    ? "Créez une séance : lecture, pause et déplacements synchronisés avec vos proches (PC, PWA, Android)."
-                    : openGroups.Length == 1 ? "1 séance ouverte : « " + openGroups[0].Str("GroupName") + " »." : openGroups.Length + " séances ouvertes en ce moment.";
-                Add(Action("Créer une séance", () =>
+                JsonElement[] groups;
+                try { groups = (await account.ReadJson("SyncPlay/List", lifetime.Token)).List(); }
+                catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { groups = []; }
+                var index = menu.Items.IndexOf(searching);
+                if (index < 0) return;
+                menu.Items.RemoveAt(index);
+                if (groups.Length == 0) menu.Items.Insert(index, Entry("Aucune séance ouverte", null, enabled: false));
+                for (var number = 0; number < Math.Min(groups.Length, 8); number++)
                 {
-                    if (!realtimeConnected) { ShowStatus("Connexion temps réel au serveur indisponible : SyncPlay ne peut pas démarrer."); return; }
-                    SyncCreate("Soirée de " + account.User.Name);
-                    _ = Navigate(SyncPlayPage);
-                }, "Primary"), "HomeSyncCreate");
-                if (openGroups.Length == 1)
-                {
-                    var id = openGroups[0].Str("GroupId");
-                    Add(Action("Rejoindre", () => SyncJoin(id)), "HomeSyncJoin");
+                    var id = groups[number].Str("GroupId");
+                    var name = groups[number].Str("GroupName");
+                    menu.Items.Insert(index + number, Entry("Rejoindre « " + (name.Length > 0 ? name : "séance") + " »", () => SyncJoin(id), "HomeSyncJoin" + number));
                 }
-                else if (openGroups.Length > 1) Add(Action("Voir les séances", () => _ = Navigate(SyncPlayPage)), "HomeSyncList");
             }
-            var heading = Text(title, 20, true);
-            heading.TextTrimming = TextTrimming.CharacterEllipsis;
-            heading.Margin = new Thickness(0, 4, 0, 3);
-            copy.Children.Add(heading);
-            var detail = Text(caption, 13, color: "Muted");
-            detail.TextWrapping = TextWrapping.Wrap;
-            copy.Children.Add(detail);
-            row.Children.Add(actions);
-            row.Children.Add(copy);
-            strip.Child = row;
         }
-        Render();
-        refreshHomeSync = Render;
-        strip.Unloaded += (_, _) => { if (refreshHomeSync == Render) refreshHomeSync = null; };
-        strip.Loaded += (_, _) => refreshHomeSync = Render;
-        async Task LoadGroups()
-        {
-            try
-            {
-                openGroups = (await account.ReadJson("SyncPlay/List", cancellation)).List();
-                Render();
-            }
-            catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
-        }
-        _ = LoadGroups();
-        return strip;
+        trackMenu = menu;
+        menu.IsOpen = true;
+    }
+
+    private void RefreshHeaderSync()
+    {
+        var inGroup = syncGroup != null;
+        SyncHeaderDot.Visibility = inGroup ? Visibility.Visible : Visibility.Collapsed;
+        if (inGroup) SyncHeaderGlyph.Foreground = BrushFor("Accent");
+        else SyncHeaderGlyph.ClearValue(TextBlock.ForegroundProperty);
+        SyncHeaderButton.ToolTip = syncGroup is { } group ? "En séance : « " + group.Name + " » · " + Math.Max(1, group.Members.Count) + " participant(s)"
+            : "Regarder ensemble (SyncPlay)";
     }
 
     private void SyncMenu(object sender, RoutedEventArgs args)
