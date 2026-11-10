@@ -18,6 +18,14 @@ public partial class MainWindow
         var heading = Text(title, 23, true);
         body.Children.Add(heading);
         var input = Input(body, label, initial);
+        // Fenêtre séparée : les styles de la fenêtre principale sont repris explicitement, barre de titre sombre.
+        input.Style = (Style)Resources[typeof(TextBox)];
+        input.MinWidth = 400;
+        dialog.SourceInitialized += (_, _) =>
+        {
+            var dark = 1;
+            _ = DwmSetWindowAttribute(new System.Windows.Interop.WindowInteropHelper(dialog).Handle, 20, ref dark, sizeof(int));
+        };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 20, 0, 0) };
         var accept = Action("Valider", () => dialog.DialogResult = true, "Primary");
         accept.IsDefault = true;

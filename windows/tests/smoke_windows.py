@@ -1010,10 +1010,11 @@ def check_new_features():
     by_name("Listes de lecture").invoke()
     until(lambda: by_name("Nouvelle liste").exists(timeout=.1), "Playlists page missing")
     by_name("Nouvelle liste").invoke()
-    # Boîte de dialogue modale : champ et bouton cherchés dans toutes les fenêtres de Noctra.
-    until(lambda: process_controls("Edit", name="Nom de la liste"), "Playlist name dialog missing", timeout=10)
-    process_controls("Edit", name="Nom de la liste")[0].set_edit_text("Soirée glaciale")
-    process_controls("Button", name="Valider")[0].invoke()
+    # Boîte de dialogue modale : le champ a le focus à l'ouverture, « Valider » est le bouton par défaut.
+    until(lambda: win32gui.FindWindow(None, "Nouvelle liste de lecture"), "Playlist name dialog missing", timeout=10)
+    sleep(.6)
+    send_keys("Soirée glaciale", with_spaces=True)
+    send_keys("{ENTER}")
     until(lambda: seen("playlist-create", lambda user, body: body["Name"] == "Soirée glaciale"), "Playlist not created")
     until(lambda: by_name("Soirée glaciale", "Text").exists(timeout=.1), "Playlist page missing")
     screenshot("liste-de-lecture")
