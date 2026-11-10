@@ -413,10 +413,10 @@ class Fixture(BaseHTTPRequestHandler):
             if q.get("source") == ["stress-test"]:
                 prefixes, words, suffixes = ["FR: ", "UK: ", "DE: ", "IT: ", "ES: ", "[FR] ", "", "PT | "], ["Sport", "Cinéma", "Info", "Musique", "Jeunesse", "Découverte", "Séries", "Histoire"], [" HD", " FHD", " SD", " .b", " (backup)", ""]
                 return self.send({"groups": [{"name": f"{['France', 'Italia', 'Deutschland', 'UK', 'Espana'][n % 5]} · bouquet {n}", "ref": f"stress-{n}"} for n in range(80)],
-                                  "channels": [{"name": f"{prefixes[i % 8]}{words[i % 7]} {i}{suffixes[i % 6]}", "streamUrl": "/api/tv/relay/index.m3u8"} for i in range(4000)]})
+                                  "channels": [{"name": f"{prefixes[i % 8]}{words[i % 7]} {i}{suffixes[i % 6]}", "country": "", "streamUrl": "/api/tv/relay/index.m3u8"} for i in range(4000)]})
             if (q.get("ref") or [""])[0].startswith("stress-"):
                 n = int(q["ref"][0].split("-")[1]); events.append(("stress-bouquet", user, {"n": n}))
-                return self.send({"channels": [{"name": f"Bouquet {n} chaîne {k} HD", "streamUrl": "/api/tv/relay/index.m3u8"} for k in range(60)]})
+                return self.send({"channels": [{"name": f"Bouquet {n} chaîne {k} HD", "country": "", "streamUrl": "/api/tv/relay/index.m3u8"} for k in range(60)]})
             if q.get("ref") == ["bouquet-de"]:
                 events.append(("german-bouquet",user,{}))
                 return self.send({"channels":[{"name":"ZDF régional","country":"Germany","streamUrl":"/api/tv/relay/index.m3u8"}]})
@@ -876,7 +876,8 @@ def check_tv_responsiveness():
             if done is None and len({body["n"] for name, _, body in events if name == "stress-bouquet"}) >= bouquets: done = monotonic() - start
             if done is not None and monotonic() - start > done + 4: break
             sleep(.05)
-        print(json.dumps({"tv_responsiveness": label, "worst_ui_block_s": round(worst, 3), "bouquets_loaded_after_s": done and round(done, 1)}), flush=True)
+        loaded = sorted({body["n"] for name, _, body in events if name == "stress-bouquet"})
+        print(json.dumps({"tv_responsiveness": label, "worst_ui_block_s": round(worst, 3), "bouquets_loaded_after_s": done and round(done, 1), "bouquets": loaded}), flush=True)
         assert done is not None, f"{label}: bouquets not loaded"
         assert worst < 1.0, f"{label}: the interface froze for {worst:.2f} s while loading all channels"
     control("TvTab").invoke()

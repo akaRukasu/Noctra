@@ -124,8 +124,9 @@ public partial class MainWindow
             var page = matches.Skip(offset).Take(60).ToArray();
             var empty = matches.Length == 0 && !loadingCatalogs && (selected == null && group == null || !catalogs.Any(catalog => catalog?.Groups?.Length > 0));
             // 0.8 : les cartes ne sont refaites que si la page affichée change (avant : à chaque catalogue reçu).
-            var signature = string.Join("\n", page.Select(channel => channel.Name + "|" + channel.Entries.Length + "|" + IsTvFavorite(channel.Name) + "|" +
-                channel.Entries.Select(pair => pair.Entry.Logo).FirstOrDefault(url => !string.IsNullOrWhiteSpace(url)))) + "#" + offset + "#" + matches.Length + "#" + empty;
+            var signature = string.Join("\n", page.Select(channel => channel.Name + "|" + IsTvFavorite(channel.Name) + "|" + string.Join(",", channel.Entries.Select(pair =>
+                pair.Source.Id + " " + pair.Entry.StreamUrl + " " + pair.Entry.ResolverUrl + " " + pair.Entry.EmbedUrl + " " + pair.Entry.ExternalUrl + " " + pair.Entry.Logo)))) +
+                "#" + offset + "#" + matches.Length + "#" + empty;
             if (!force && signature == renderedSignature) return;
             renderedSignature = signature; listing.Children.Clear();
             var grid = new AdaptiveTilePanel { MinimumCellWidth = sports ? 250 : 170, MaximumColumns = 10, Margin = new Thickness(-5, 0, -5, 0) };
@@ -289,7 +290,13 @@ public partial class MainWindow
                     var path = "api/tv/catalog?ref=" + Uri.EscapeDataString(job.Group.Ref!);
                     TvCatalog? value = null;
                     await Dispatcher.InvokeAsync(() => { if (tvCatalogCache.TryGetValue(path, out var saved) && saved.Until > DateTime.UtcNow) value = saved.Value; });
-                    value ??= await service.Read<TvCatalog>(path, ct, timeoutSeconds: 12, retry: false);
+                    // Comme la PWA : un bouquet en échec est redemandé une fois.
+                    for (var attempt = 0; value == null; attempt++)
+                    {
+                        try { value = await service.Read<TvCatalog>(path, ct, timeoutSeconds: 12, retry: false); }
+                        catch (Exception error) when (attempt == 0 && !ct.IsCancellationRequested && error is HttpRequestException or JsonException or OperationCanceledException)
+                        { await Task.Delay(800, ct); }
+                    }
                     if (ct.IsCancellationRequested) return;
                     await Dispatcher.InvokeAsync(() =>
                     {
@@ -539,7 +546,14 @@ public partial class MainWindow
     {
         if (tvResolutionOwner != account) { tvResolutionCache.Clear(); tvResolutionOwner = account; }
         if (tvResolutionCache.TryGetValue(path, out var cached) && cached.Until > DateTime.UtcNow) return cached.Value;
-        var value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false);
+        TvResolved value;
+        try { value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false); }
+        catch (HttpRequestException error) when (error.StatusCode == null && !cancellation.IsCancellationRequested)
+        {
+            // Connexion perdue avant toute réponse : un nouvel essai (un serveur qui répond une erreur n'est pas réinterrogé).
+            await Task.Delay(500, cancellation);
+            value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false);
+        }
         if (!cancellation.IsCancellationRequested && client == account)
         {
             if (tvResolutionCache.Count > 200) tvResolutionCache.Clear();

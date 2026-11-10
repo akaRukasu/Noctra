@@ -133,6 +133,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - les cartes ne sont refaites que si la page affichée change ;
   - la recherche s'applique 250 ms après la dernière frappe ;
   - le cache des noms de chaînes garde jusqu'à 150 000 entrées : avec un gros catalogue, il se vidait sans cesse et tout était recalculé.
+- Un bouquet qui ne répond pas est redemandé une fois, comme dans la PWA. Un serveur TV dont la connexion est perdue avant toute réponse est réinterrogé une fois.
 
 ## Vérifications
 
