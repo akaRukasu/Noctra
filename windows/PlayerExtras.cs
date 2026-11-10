@@ -44,7 +44,7 @@ public partial class MainWindow
         var cover = item.ImageTags?.ContainsKey("Primary") == true || item.AlbumId == null ? item
             : new MediaItem { Id = item.AlbumId, Name = item.Album ?? item.Name, ImageTags = item.AlbumPrimaryImageTag is { } tag ? new() { ["Primary"] = tag } : null };
         _ = artwork?.Load(AudioCover, cover, false, 900, lifetime.Token);
-        _ = artwork?.Load(AudioBackdrop, cover, false, 400, lifetime.Token);
+        _ = artwork?.LoadBlurred(AudioBackdrop, cover, false, lifetime.Token);
         if (client is { } account && pendingLocalFile == null) _ = LoadLyrics(account, item);
     }
 

@@ -137,27 +137,25 @@ public partial class MainWindow
         var resumeTask = TryShelf(() => account.Resume(cancellation));
         var nextTask = TryShelf(() => account.NextUp(cancellation));
         var librariesTask = HomeLibraries(account, cancellation);
-        await Task.WhenAll(new Task[] { resumeTask, nextTask, librariesTask });
-        if (cancellation.IsCancellationRequested) return;
         var libraries = await librariesTask;
-        using var libraryGate = new SemaphoreSlim(4);
-        var updates = await Task.WhenAll(libraries.Select(async library =>
-        {
-            await libraryGate.WaitAsync(cancellation);
-            try
-            {
-                try { return (library.Id, Page: await account.Browse(LibraryTypes(library), library.Id, null, 0, true, cancellation)); }
-                catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException)
-                { return (library.Id, Page: (ItemPage?)null); }
-            }
-            finally { libraryGate.Release(); }
-        }));
         if (cancellation.IsCancellationRequested) return;
-        var previews = updates.ToDictionary(value => value.Id, value => value.Page);
+        // Aperçus des médiathèques lancés tout de suite, en parallèle (4 à la fois).
+        var libraryGate = new SemaphoreSlim(4);
+        var previews = libraries.ToDictionary(library => library.Id, library => BrowsePreview(account, library, libraryGate, cancellation));
+        await Task.WhenAll(resumeTask, nextTask);
+        if (cancellation.IsCancellationRequested) return;
         var resume = (await resumeTask)?.Where(item => item.CanPlay && PlayRequest.Identifier(item.Id)).ToArray();
         var next = (await nextTask)?.Where(item => item.CanPlay && PlayRequest.Identifier(item.Id) &&
             !(resume ?? []).Any(watching => watching.Id == item.Id)).ToArray();
-        var latest = updates.SelectMany(value => value.Page?.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+        MediaItem[]? latest = null;
+        // 0.8 : l'accueil s'affiche dès que la reprise et « À suivre » sont prêts ; les rangées des
+        // médiathèques se remplissent ensuite chacune à son arrivée (sauf s'il faut un titre à mettre en avant).
+        if (resume is not { Length: > 0 } && next is not { Length: > 0 })
+        {
+            await Task.WhenAll(previews.Values);
+            if (cancellation.IsCancellationRequested) return;
+            latest = previews.Values.SelectMany(task => task.Result?.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+        }
         PageContent.Children.Clear();
         var featured = resume?.FirstOrDefault() ?? next?.FirstOrDefault() ?? latest?.FirstOrDefault();
         if (featured != null)
@@ -171,8 +169,26 @@ public partial class MainWindow
         PageContent.Children.Add(HomeSyncStrip(account, cancellation));
         AddShelf("Continuer à regarder", resume, "Vos films et épisodes en cours apparaîtront ici.", true, cancellation);
         foreach (var library in libraries)
-            AddShelf("Ajouts récents · " + library.Name, previews[library.Id]?.Items,
-                "Aucun ajout récent dans cette médiathèque.", false, cancellation);
+        {
+            var title = "Ajouts récents · " + library.Name;
+            var slot = new StackPanel();
+            PageContent.Children.Add(slot);
+            var preview = previews[library.Id];
+            if (preview.IsCompleted) AddShelf(title, preview.Result?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot);
+            else
+            {
+                slot.Children.Add(ShelfPlaceholder(title));
+                _ = FillShelf();
+                async Task FillShelf()
+                {
+                    var loaded = await preview;
+                    if (cancellation.IsCancellationRequested) return;
+                    slot.Children.Clear();
+                    AddShelf(title, loaded?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot);
+                    if (slot.Children.Count > 1) Reveal(slot.Children[1], 0, 10);
+                }
+            }
+        }
         AddShelf("À suivre", next, "Les prochains épisodes de vos séries apparaîtront ici.", true, cancellation);
         var librariesHeading = Heading("Vos médiathèques", "Choisissez votre prochain univers.");
         librariesHeading.Margin = new Thickness(0, 34, 0, 18);
@@ -181,6 +197,32 @@ public partial class MainWindow
         else PageContent.Children.Add(LibraryTiles(account, libraries, cancellation, true, previews));
         ApplyContentMargins();
         for (var index = 1; index < PageContent.Children.Count; index++) Reveal(PageContent.Children[index], Math.Min(index, 8) * 35);
+    }
+
+    private static async Task<ItemPage?> BrowsePreview(Jellyfin account, MediaItem library, SemaphoreSlim gate, CancellationToken cancellation)
+    {
+        try
+        {
+            await gate.WaitAsync(cancellation);
+            try { return await account.Browse(LibraryTypes(library), library.Id, null, 0, true, cancellation); }
+            finally { gate.Release(); }
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException) { return null; }
+    }
+
+    // Rangée en attente : titre et silhouettes d'affiches (aucune animation coûteuse).
+    private FrameworkElement ShelfPlaceholder(string title)
+    {
+        var panel = new StackPanel();
+        var label = Text(title, 21, true);
+        label.Margin = new Thickness(0, 30, 0, 18);
+        panel.Children.Add(label);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, ClipToBounds = true };
+        for (var index = 0; index < 10; index++)
+            row.Children.Add(new Border { Width = 168, Height = 252, CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 18, 0),
+                Background = ColorOf(index % 2 == 0 ? "#12FFFFFF" : "#0EFFFFFF") });
+        panel.Children.Add(row);
+        return panel;
     }
 
     // Grand visuel d'accueil : titres mis en avant, défilement automatique (pause au survol),
@@ -291,17 +333,13 @@ public partial class MainWindow
         var image = new Image();
         var backdrop = new ImageBrush { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Right, AlignmentY = AlignmentY.Top };
         BindingOperations.SetBinding(backdrop, ImageBrush.ImageSourceProperty, new Binding(nameof(Image.Source)) { Source = image });
-        var ambient = new ImageBrush { Stretch = Stretch.UniformToFill };
-        BindingOperations.SetBinding(ambient, ImageBrush.ImageSourceProperty, new Binding(nameof(Image.Source)) { Source = image });
         var layers = new Grid { Background = Brushes.Transparent, ClipToBounds = true };
-        // Tout le visuel (image, flou, dégradés) s'efface vers le bas : aucune démarcation avec la page.
-        var visual = new Grid { Background = BrushFor("Canvas"), OpacityMask = new LinearGradientBrush
-        {
-            StartPoint = new Point(.5, 0), EndPoint = new Point(.5, 1),
-            GradientStops = { new GradientStop(Colors.White, 0), new GradientStop(Colors.White, .62), new GradientStop(Color.FromArgb(150, 255, 255, 255), .82), new GradientStop(Colors.Transparent, 1) }
-        } };
+        // 0.8 : visuel rendu une fois puis mis en cache (défilement fluide) ; fond flou précalculé
+        // (petite image déjà floutée) au lieu d'un effet de flou recalculé en permanence.
+        var visual = new Grid { Background = BrushFor("Canvas"), CacheMode = new BitmapCache { SnapsToDevicePixels = true } };
         layers.Children.Add(visual);
-        var glow = new Border { Background = ambient, Opacity = 0, Effect = new BlurEffect { Radius = 70, KernelType = KernelType.Gaussian } };
+        var glow = new Image { Stretch = Stretch.UniformToFill, Opacity = 0 };
+        RenderOptions.SetBitmapScalingMode(glow, BitmapScalingMode.Linear);
         visual.Children.Add(glow);
         var picture = new Border { Background = backdrop, HorizontalAlignment = HorizontalAlignment.Right, Opacity = 0 };
         visual.Children.Add(picture);
@@ -314,7 +352,7 @@ public partial class MainWindow
         visual.Children.Add(new Border { Background = new LinearGradientBrush
         {
             StartPoint = new Point(.5, 0), EndPoint = new Point(.5, 1),
-            GradientStops = { new GradientStop(Shade(150), 0), new GradientStop(Shade(0), .22), new GradientStop(Shade(0), .6), new GradientStop(Shade(130), 1) }
+            GradientStops = { new GradientStop(Shade(150), 0), new GradientStop(Shade(0), .22), new GradientStop(Shade(0), .55), new GradientStop(Shade(170), .8), new GradientStop(Shade(255), 1) }
         } });
         var copy = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, MaxWidth = 620 };
         var badge = Text(eyebrow, 12, true, "Accent");
@@ -395,25 +433,24 @@ public partial class MainWindow
         async Task LoadHeroArt()
         {
             if (artwork == null) return;
-            await artwork.Load(image, item, true, 1920, cancellation);
+            await artwork.Load(image, item, true, Math.Min(2560, Artwork.Pixels(Math.Max(1280, ActualWidth))), cancellation);
             if (cancellation.IsCancellationRequested || image.Source == null) return;
             Fit();
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
             picture.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(600)) { EasingFunction = ease });
-            glow.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.45, TimeSpan.FromMilliseconds(800)) { EasingFunction = ease });
-            // Léger zoom arrière (effet « Ken Burns » discret) à l'apparition.
-            if (SystemParameters.ClientAreaAnimation)
-            {
-                var zoom = new ScaleTransform(1.04, 1.04);
-                picture.RenderTransformOrigin = new Point(.7, .4);
-                picture.RenderTransform = zoom;
-                var settle = new DoubleAnimation(1.04, 1, TimeSpan.FromSeconds(7)) { EasingFunction = ease };
-                zoom.BeginAnimation(ScaleTransform.ScaleXProperty, settle);
-                zoom.BeginAnimation(ScaleTransform.ScaleYProperty, settle);
-            }
         }
         _ = LoadHeroArt();
-        _ = artwork?.Load(AmbientArt, item, true, 1000, cancellation);
+        if (artwork is { } blur)
+        {
+            _ = blur.LoadBlurred(AmbientArt, item, true, cancellation);
+            _ = ShowGlow();
+            async Task ShowGlow()
+            {
+                await blur.LoadBlurred(glow, item, true, cancellation);
+                if (!cancellation.IsCancellationRequested && glow.Source != null)
+                    glow.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.5, TimeSpan.FromMilliseconds(700)));
+            }
+        }
         Reveal(copy, 120, 18);
         return hero;
     }
@@ -426,8 +463,9 @@ public partial class MainWindow
         text.Visibility = Visibility.Collapsed;
     }
 
-    private void AddShelf(string title, MediaItem[]? items, string empty, bool landscape, CancellationToken cancellation)
+    private void AddShelf(string title, MediaItem[]? items, string empty, bool landscape, CancellationToken cancellation, Panel? into = null)
     {
+        into ??= PageContent;
         var head = new DockPanel { Margin = new Thickness(0, 30, 0, 4) };
         var label = Text(title, 21, true);
         label.VerticalAlignment = VerticalAlignment.Center;
@@ -435,8 +473,8 @@ public partial class MainWindow
         {
             head.Children.Add(label);
             head.Margin = new Thickness(0, 30, 0, 12);
-            PageContent.Children.Add(head);
-            PageContent.Children.Add(Message(items == null ? "Section indisponible. Cliquez sur Accueil pour réessayer." : empty));
+            into.Children.Add(head);
+            into.Children.Add(Message(items == null ? "Section indisponible. Cliquez sur Accueil pour réessayer." : empty));
             return;
         }
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 14, 12, 12) };
@@ -474,18 +512,21 @@ public partial class MainWindow
         }
         head.Children.Add(label);
         foreach (var item in items) row.Children.Add(Card(item, landscape, ButtonTab.Home, cancellation));
-        PageContent.Children.Add(head);
-        PageContent.Children.Add(scroll);
+        into.Children.Add(head);
+        into.Children.Add(scroll);
     }
 
-    private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation)
+    private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation, bool fluid = false)
     {
         var square = !landscape && item.Square;
         var width = landscape ? 264 : square ? 200 : 168;
         var image = new Image { Stretch = Stretch.UniformToFill };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         FadeInWhenLoaded(image);
-        var surface = new Grid { Height = landscape ? 148 : square ? 200 : 252, ClipToBounds = true, RenderTransformOrigin = new Point(.5, .5) };
+        // 0.8 : dans les grilles, l'affiche occupe toute la largeur de sa colonne (hauteur proportionnelle).
+        Grid surface = fluid ? new AspectGrid { Ratio = landscape ? 9 / 16.0 : square ? 1 : 1.5 } : new Grid { Height = landscape ? 148 : square ? 200 : 252 };
+        surface.ClipToBounds = true;
+        surface.RenderTransformOrigin = new Point(.5, .5);
         var zoom = new ScaleTransform(1, 1);
         surface.RenderTransform = zoom;
         surface.Background = new LinearGradientBrush(Color.FromRgb(30, 32, 46), Color.FromRgb(18, 19, 28), 60);
@@ -554,8 +595,12 @@ public partial class MainWindow
         }, "Card");
         button.Content = content;
         button.ToolTip = item.DisplayTitle + " · " + item.Caption;
-        button.Width = width;
-        button.Margin = new Thickness(0, 0, 18, 6);
+        if (fluid) button.Margin = new Thickness(9, 0, 9, 20);
+        else
+        {
+            button.Width = width;
+            button.Margin = new Thickness(0, 0, 18, 6);
+        }
         // Survol : visuel légèrement agrandi et liseré clair, animés.
         void Lift(bool up)
         {
@@ -570,8 +615,8 @@ public partial class MainWindow
         button.MouseLeave += (_, _) => Lift(false);
         button.GotKeyboardFocus += (_, _) => { Lift(true); button.BringIntoView(); };
         button.LostKeyboardFocus += (_, _) => Lift(false);
-        _ = artwork?.Load(image, item, landscape, landscape ? 560 : 360, cancellation);
-        button.ContextMenu = CardMenu(item, button, tab, cancellation);
+        _ = artwork?.Load(image, item, landscape, Artwork.Pixels(fluid ? (landscape ? 360 : 250) : width), cancellation);
+        LazyMenu(button, () => CardMenu(item, button, tab, cancellation));
         AttachHoverPreview(button, item, cancellation);
         // Flèches gauche / droite : carte voisine de la rangée (la rangée suit le focus).
         button.PreviewKeyDown += (_, args) =>
@@ -636,6 +681,26 @@ public partial class MainWindow
             }, "Retiré de « Continuer à regarder ».");
         return menu;
     }
+
+    // 0.8 : menu clic droit construit seulement à la première ouverture (des dizaines de cartes
+    // par page : plus rien à préparer pendant l'affichage).
+    private static void LazyMenu(FrameworkElement target, Func<ContextMenu> build)
+    {
+        target.ContextMenu = new ContextMenu();
+        var built = false;
+        target.ContextMenuOpening += (_, _) =>
+        {
+            if (built) return;
+            built = true;
+            var menu = build();
+            menu.PlacementTarget = target;
+            target.ContextMenu = menu;
+        };
+    }
+
+    // 0.8 : grille d'affiches qui remplit toute la largeur de la page (colonnes égales, aucun vide à droite).
+    private static AdaptiveTilePanel PosterGrid(double minimumWidth = 178) =>
+        new() { MinimumCellWidth = minimumWidth, MaximumColumns = 16, KeepColumns = true, Margin = new Thickness(-9, 0, -9, 0) };
 
     private static IEnumerable<Button> FindButtons(DependencyObject root)
     {
@@ -716,8 +781,8 @@ public partial class MainWindow
                 PageContent.Children.Add(reset);
             }
             if (items.Length == 0) PageContent.Children.Add(Message(genre != null || year != null || rating != null ? "Aucun titre ne correspond à ces filtres." : "Aucun titre sur cette page."));
-            var cards = new WrapPanel();
-            foreach (var item in items) cards.Children.Add(Card(item, false, tab, cancellation));
+            var cards = PosterGrid(items.Length > 0 && items.All(item => item.Square) ? 210 : 178);
+            foreach (var item in items) cards.Children.Add(Card(item, false, tab, cancellation, fluid: true));
             PageContent.Children.Add(cards);
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
             if (start > 0)

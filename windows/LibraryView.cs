@@ -16,14 +16,33 @@ public partial class MainWindow
     private readonly SemaphoreSlim libraryPreviewGate = new(3);
 
     private FrameworkElement LibraryTiles(Jellyfin account, MediaItem[] libraries, CancellationToken cancellation,
-        bool compact = false, Dictionary<string, ItemPage?>? previews = null)
+        bool compact = false, Dictionary<string, Task<ItemPage?>>? previews = null)
     {
         var grid = new AdaptiveTilePanel { MinimumCellWidth = compact ? 300 : 340, MaximumColumns = 2,
             BalanceFour = true, Margin = new Thickness(-9, 0, -9, 0) };
+        var tiles = new List<Grid>();
+        // 0.8 : page « Vos médiathèques » : les tuiles se partagent toute la hauteur de la fenêtre
+        // (plus de grand vide sous la grille) ; le visuel est chargé à la taille réelle de la tuile.
+        void FitTiles()
+        {
+            if (compact || tiles.Count == 0 || !grid.IsLoaded) return;
+            var columns = AdaptiveTilePanel.ColumnsFor(grid.ActualWidth, tiles.Count, 340, 2, true);
+            var rows = (int)Math.Ceiling(tiles.Count / (double)columns);
+            double top;
+            try { top = grid.TranslatePoint(new Point(), Scroller).Y + Scroller.VerticalOffset; }
+            catch (InvalidOperationException) { return; }
+            var height = Math.Clamp((Scroller.ViewportHeight - top - 28) / rows - 18, 240, 620);
+            foreach (var tile in tiles) if (Math.Abs(tile.Height - height) > 1) tile.Height = Math.Round(height);
+        }
+        void ViewportChanged(object? sender, SizeChangedEventArgs args) => FitTiles();
+        grid.Loaded += (_, _) => { Scroller.SizeChanged += ViewportChanged; Dispatcher.BeginInvoke(FitTiles, System.Windows.Threading.DispatcherPriority.Loaded); };
+        grid.Unloaded += (_, _) => Scroller.SizeChanged -= ViewportChanged;
+        grid.SizeChanged += (_, args) => { if (args.WidthChanged) FitTiles(); };
         foreach (var library in libraries)
         {
             // 0.6 : une grande image par médiathèque (visuel d'un titre récent), nom et compte en surimpression.
             var tile = new Grid { Height = compact ? 196 : 240, ClipToBounds = true, Background = ColorOf("#161927") };
+            tiles.Add(tile);
             var picture = new Image { Stretch = Stretch.UniformToFill, RenderTransformOrigin = new Point(.5, .5) };
             RenderOptions.SetBitmapScalingMode(picture, BitmapScalingMode.HighQuality);
             FadeInWhenLoaded(picture);
@@ -70,18 +89,18 @@ public partial class MainWindow
             button.GotKeyboardFocus += (_, _) => Hover(true);
             button.LostKeyboardFocus += (_, _) => Hover(false);
             grid.Children.Add(button);
-            _ = FillLibraryMosaic(account, library, [picture], count, cancellation, previews);
+            _ = FillLibraryMosaic(account, library, [picture], count, cancellation, previews, compact ? 900 : Artwork.Pixels(1000));
         }
         return grid;
     }
 
     private async Task FillLibraryMosaic(Jellyfin account, MediaItem library, Image[] images, TextBlock count,
-        CancellationToken cancellation, Dictionary<string, ItemPage?>? previews)
+        CancellationToken cancellation, Dictionary<string, Task<ItemPage?>>? previews, int width = 900)
     {
         try
         {
-            ItemPage? result;
-            if (previews != null) previews.TryGetValue(library.Id, out result);
+            ItemPage? result = null;
+            if (previews?.TryGetValue(library.Id, out var preview) == true) result = await preview;
             else
             {
                 await libraryPreviewGate.WaitAsync(cancellation);
@@ -98,8 +117,8 @@ public partial class MainWindow
             if (artwork is not { } art) return;
             // Visuel paysage d'un titre récent ; sinon l'image de la médiathèque.
             await Task.WhenAll(images.Select((image, index) => items.Length == 0
-                ? art.Load(image, library, false, 900, cancellation)
-                : art.Load(image, items[index % items.Length], true, 900, cancellation)));
+                ? art.Load(image, library, false, width, cancellation)
+                : art.Load(image, items[index % items.Length], true, width, cancellation)));
         }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
         { if (!cancellation.IsCancellationRequested) count.Text = "Explorer la médiathèque"; }

@@ -10,12 +10,14 @@ public sealed class AdaptiveTilePanel : Panel
     public double MinimumCellWidth { get; set; } = 260;
     public int MaximumColumns { get; set; } = 4;
     public bool BalanceFour { get; set; }
+    // 0.8 : grilles d'affiches : même nombre de colonnes même avec peu de titres (pas d'affiche géante).
+    public bool KeepColumns { get; set; }
     private int columns = 1;
     private double rowHeight;
 
-    internal static int ColumnsFor(double width, int count, double minimum, int maximum, bool balance)
+    internal static int ColumnsFor(double width, int count, double minimum, int maximum, bool balance, bool keep = false)
     {
-        var result = Math.Min(Math.Max(1, count), Math.Clamp((int)Math.Floor(Math.Max(0, width) / minimum), 1, maximum));
+        var result = Math.Min(keep ? int.MaxValue : Math.Max(1, count), Math.Clamp((int)Math.Floor(Math.Max(0, width) / minimum), 1, maximum));
         return balance && count == 4 && result == 3 ? 2 : result;
     }
 
@@ -23,7 +25,7 @@ public sealed class AdaptiveTilePanel : Panel
     {
         if (InternalChildren.Count == 0) return new Size();
         var width = double.IsFinite(available.Width) ? available.Width : MinimumCellWidth * Math.Min(MaximumColumns, InternalChildren.Count);
-        columns = ColumnsFor(width, InternalChildren.Count, MinimumCellWidth, MaximumColumns, BalanceFour);
+        columns = ColumnsFor(width, InternalChildren.Count, MinimumCellWidth, MaximumColumns, BalanceFour, KeepColumns);
         rowHeight = 0;
         foreach (UIElement child in InternalChildren)
         {
@@ -44,5 +46,20 @@ public sealed class AdaptiveTilePanel : Panel
             InternalChildren[index].Arrange(new Rect(left, index / columns * rowHeight, Math.Max(0, right - left), rowHeight));
         }
         return final;
+    }
+}
+
+// 0.8 : surface dont la hauteur suit la largeur (affiches, vignettes) : les images remplissent
+// la colonne disponible sans bandes vides, quelle que soit la largeur de la fenêtre.
+public sealed class AspectGrid : Grid
+{
+    public double Ratio { get; set; } = 1.5;
+
+    protected override Size MeasureOverride(Size available)
+    {
+        if (!double.IsFinite(available.Width) || Ratio <= 0) return base.MeasureOverride(available);
+        var size = new Size(available.Width, Math.Round(available.Width * Ratio));
+        base.MeasureOverride(size);
+        return size;
     }
 }

@@ -381,6 +381,11 @@ class Fixture(BaseHTTPRequestHandler):
         if path == "/api/discovery":
             return self.send({"results": [{"id": 2, "mediaType": "movie", "title": "Éclipse",
                                            "overview": "Sélection de la semaine", "mediaInfo": {"status": 5, "jellyfinMediaId": "film"}}, {"id":99,"mediaType":"movie","title":"Nouveau voyage"}]})
+        if path == "/api/jellyseerr/search":
+            events.append(("discover-search", user, {"q": q.get("q", [""])[0]}))
+            return self.send({"results": [{"id": 135, "mediaType": "movie", "title": "Scream", "releaseDate": "1996-12-20", "voteAverage": 7.4,
+                                           "overview": "Un tueur masqué terrorise une petite ville."},
+                                          {"id": 136, "mediaType": "tv", "name": "Scream : la série", "firstAirDate": "2015-06-30"}]})
         if path == "/api/jellyseerr/destinations":
             return self.send({"servers":[{"id":1,"name":"Cinéma","isDefault":True,"defaultProfileId":7,"defaultRootFolder":"/films","profiles":[{"id":7,"name":"Haute définition"},{"id":8,"name":"Très haute définition"}],"rootFolders":[{"path":"/films"}]}]})
         if path == "/api/jellyseerr/requests":
@@ -1027,6 +1032,27 @@ def check_new_features():
     until(lambda: by_name("Soirée glaciale", "Text").exists(timeout=.1), "Playlist page missing")
     screenshot("liste-de-lecture")
     print("OK · Listes de lecture : création et page de la liste.", flush=True)
+
+    # 0.8 : page « Vos médiathèques » (tuiles à la hauteur de la fenêtre) et grille pleine largeur.
+    control("LibraryTab").invoke()
+    until(lambda: by_name("Cinéma").exists(timeout=.1), "Libraries page missing")
+    sleep(1.2)
+    screenshot("mediatheques")
+    by_name("Cinéma").invoke()
+    until(lambda: by_name("Horizon polaire").exists(timeout=.1), "Library grid missing")
+    sleep(1)
+    screenshot("grille-affiches")
+
+    # 0.8 : recherche de titres à ajouter, directement dans Découvrir.
+    control("DiscoverTab").invoke()
+    until(lambda: control("DiscoverSearch").exists(timeout=.1), "Discovery search field missing")
+    control("DiscoverSearch").set_edit_text("scream")
+    control("DiscoverSearchButton").invoke()
+    until(lambda: seen("discover-search", lambda user, body: body["q"] == "scream"), "Discovery search not sent")
+    until(lambda: by_name("Scream").exists(timeout=.1), "Discovery search results missing")
+    sleep(1)
+    screenshot("decouvrir-recherche")
+    print("OK · Médiathèques plein écran, grille d'affiches, recherche dans Découvrir.", flush=True)
 
     # Quick Connect : autoriser un autre appareil depuis le profil.
     control("ProfileButton").invoke()

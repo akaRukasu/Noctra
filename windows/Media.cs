@@ -108,7 +108,7 @@ public partial class MainWindow
         copy.Children.Add(row);
         grid.Children.Add(copy);
         _ = artwork?.Load(image, item, false, 600, cancellation);
-        _ = artwork?.Load(AmbientArt, item, false, 500, cancellation);
+        _ = artwork?.LoadBlurred(AmbientArt, item, false, cancellation);
         Reveal(copy, 90, 14);
         return grid;
     }
@@ -145,8 +145,8 @@ public partial class MainWindow
         PageContent.Children.Add(tabs);
         if (items.Length == 0) { PageContent.Children.Add(Message("Rien à écouter dans cette section pour le moment.")); return; }
         if (type == "Audio") { PageContent.Children.Add(TrackList(items, cancellation, showAlbum: true)); return; }
-        var cards = new WrapPanel();
-        foreach (var item in items) cards.Children.Add(Card(item, false, ButtonTab.Library, cancellation));
+        var cards = PosterGrid(items.All(item => item.Square) ? 210 : 178);
+        foreach (var item in items) cards.Children.Add(Card(item, false, ButtonTab.Library, cancellation, fluid: true));
         PageContent.Children.Add(cards);
     });
 
@@ -255,7 +255,7 @@ public partial class MainWindow
             var surface = (Border)button.Content;
             button.MouseEnter += (_, _) => surface.Background = ColorOf("#12FFFFFF");
             button.MouseLeave += (_, _) => surface.Background = Brushes.Transparent;
-            button.ContextMenu = CardMenu(track, button, ButtonTab.Library, cancellation);
+            LazyMenu(button, () => CardMenu(track, button, ButtonTab.Library, cancellation));
             list.Children.Add(button);
         }
         return list;
@@ -290,8 +290,8 @@ public partial class MainWindow
         PageContent.Children.Add(create);
         var items = (result.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
         if (items.Length == 0) { PageContent.Children.Add(Message("Aucune liste de lecture pour ce profil.")); return; }
-        var cards = new WrapPanel();
-        foreach (var item in items) cards.Children.Add(Card(item, false, ButtonTab.None, cancellation));
+        var cards = PosterGrid();
+        foreach (var item in items) cards.Children.Add(Card(item, false, ButtonTab.None, cancellation, fluid: true));
         PageContent.Children.Add(cards);
     });
 
@@ -388,8 +388,8 @@ public partial class MainWindow
             string.Join(" · ", new[] { born, works.Length + " titre" + (works.Length > 1 ? "s" : "") + " dans vos médiathèques" }.Where(part => part.Length > 0)),
             person.Overview, true, cancellation));
         if (works.Length == 0) { PageContent.Children.Add(Message("Aucun titre de vos médiathèques avec cette personne.")); return; }
-        var cards = new WrapPanel();
-        foreach (var item in works) cards.Children.Add(Card(item, false, ButtonTab.None, cancellation));
+        var cards = PosterGrid();
+        foreach (var item in works) cards.Children.Add(Card(item, false, ButtonTab.None, cancellation, fluid: true));
         PageContent.Children.Add(cards);
     }
 

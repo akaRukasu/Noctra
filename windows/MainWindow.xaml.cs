@@ -64,6 +64,7 @@ public partial class MainWindow : Window
     {
         Loaded -= Load;
         SizeChanged += (_, _) => SizeHeader();
+        DpiChanged += (_, args) => Artwork.Scale = args.NewDpi.DpiScaleX;
         TvSidebar.IsVisibleChanged += (_, _) => ApplyContentMargins();
         Scroller.ScrollChanged += (_, _) => UpdateNavigationSurface();
         statusTimer.Tick += (_, _) => { statusTimer.Stop(); FadeStatus(); };
@@ -190,7 +191,8 @@ public partial class MainWindow : Window
         seriesStatuses.Clear();
         serverHealth.Clear();
         _ = LoadPreferences(signedIn);
-        artwork = new Artwork(signedIn);
+        Artwork.Scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        artwork = new Artwork(signedIn, Path.Combine(dataDirectory, "Cache", "Images"));
         history.Clear();
         ProfileName.Text = signedIn.User.Name;
         Initial.Text = signedIn.User.Name.Length > 0 ? signedIn.User.Name[..1].ToUpperInvariant() : "N";
@@ -275,6 +277,7 @@ public partial class MainWindow : Window
         LibraryTab.Tag = destination.Tab == ButtonTab.Library ? "active" : null;
         FavoritesTab.Tag = destination.Tab == ButtonTab.Favorites ? "active" : null;
         DiscoverTab.Tag = destination.Tab == ButtonTab.Discover ? "active" : null;
+        SearchPlaceholder.Text = destination.Tab == ButtonTab.Discover ? "Rechercher un titre à ajouter" : "Rechercher un titre";
         TvTab.Tag = destination.Tab == ButtonTab.Tv ? "active" : null;
         ShowStatus("");
         TvSidebar.Visibility = Visibility.Collapsed;
@@ -341,7 +344,9 @@ public partial class MainWindow : Window
     private void Search(object sender, RoutedEventArgs args)
     {
         var term = SearchBox.Text.Trim();
-        if (term.Length > 0) _ = Navigate(BrowsePage("Recherche", ButtonTab.None, search: term));
+        // 0.8 : depuis Découverte, la recherche porte sur les titres à ajouter (demandes).
+        if (term.Length > 0 && page?.Tab == ButtonTab.Discover && client?.NoctraRoot != null) _ = Navigate(DiscoverySearchPage(term));
+        else if (term.Length > 0) _ = Navigate(BrowsePage("Recherche", ButtonTab.None, search: term));
         else SearchBox.Focus();
     }
 

@@ -600,9 +600,9 @@
         </Grid>
         <Grid Grid.Row="1" x:Name="LibraryShell" Visibility="Collapsed" Background="{StaticResource Canvas}">
             <!-- Fond d'ambiance : visuel du titre mis en avant, très estompé, fondu vers le bas. -->
-            <Image x:Name="AmbientArt" Stretch="UniformToFill" Opacity=".16" IsHitTestVisible="False" VerticalAlignment="Top">
-                <Image.Effect><BlurEffect Radius="40" KernelType="Gaussian"/></Image.Effect>
-            </Image>
+            <!-- 0.8 : image déjà floutée (petite) étirée en douceur : aucun effet recalculé au défilement. -->
+            <Image x:Name="AmbientArt" Stretch="UniformToFill" Opacity=".2" IsHitTestVisible="False" VerticalAlignment="Top"
+                   RenderOptions.BitmapScalingMode="Linear" RenderOptions.CachingHint="Cache"/>
             <Border IsHitTestVisible="False">
                 <Border.Background>
                     <LinearGradientBrush StartPoint=".5,0" EndPoint=".5,1">
@@ -734,9 +734,7 @@
             <integration:WindowsFormsHost Grid.Row="1" x:Name="VideoHost" Visibility="Collapsed"/>
             <!-- 0.7 : écoute musicale : pochette en grand sur son propre reflet flouté. -->
             <Grid Grid.Row="1" x:Name="AudioStage" Visibility="Collapsed" ClipToBounds="True" Background="#07080D">
-                <Image x:Name="AudioBackdrop" Stretch="UniformToFill" Opacity=".55" RenderOptions.BitmapScalingMode="LowQuality">
-                    <Image.Effect><BlurEffect Radius="90" KernelType="Gaussian"/></Image.Effect>
-                </Image>
+                <Image x:Name="AudioBackdrop" Stretch="UniformToFill" Opacity=".55" RenderOptions.BitmapScalingMode="Linear"/>
                 <Border>
                     <Border.Background>
                         <RadialGradientBrush RadiusX=".9" RadiusY=".9"><GradientStop Color="#5507080D" Offset="0"/><GradientStop Color="#F207080D" Offset="1"/></RadialGradientBrush>

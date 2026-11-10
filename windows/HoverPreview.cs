@@ -177,8 +177,13 @@ public partial class MainWindow
         };
         AutomationProperties.SetAutomationId(panel, "HoverPreview");
         content.SizeChanged += (_, _) => content.Clip = new RectangleGeometry(new Rect(content.RenderSize), 15, 15);
-        var shadow = new Border { Padding = new Thickness(26), Child = panel };
-        panel.Effect = new DropShadowEffect { BlurRadius = 36, ShadowDepth = 10, Opacity = .7, Color = Colors.Black };
+        // 0.8 : ombre dessinée par des contours dégradés (une fenêtre transparente est rendue sans
+        // accélération graphique : un effet d'ombre y coûtait cher à chaque image).
+        UIElement halo = panel;
+        foreach (var (alpha, radius) in new[] { ((byte)70, 20.0), ((byte)36, 25.0), ((byte)16, 30.0) })
+            halo = new Border { Child = halo, Padding = new Thickness(5), CornerRadius = new CornerRadius(radius),
+                Background = new SolidColorBrush(Color.FromArgb(alpha, 0, 0, 0)) };
+        var shadow = new Border { Padding = new Thickness(12, 8, 12, 16), Child = halo };
         hoverPanel = panel;
         hoverCard = card;
         // Centré sur la carte, mais toujours entier dans la fenêtre (cartes au bord, bas de page).

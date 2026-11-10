@@ -17,6 +17,8 @@ public partial class MainWindow
         PageContent.Children.Add(Heading(query == null ? "Des histoires à découvrir" : "« " + query + " »", "Trouvez votre prochain film ou votre prochaine série."));
         if (account.NoctraRoot == null) { PageContent.Children.Add(Message("Connectez-vous avec l’adresse Noctra pour accéder à Découverte.")); return; }
         var service = new NoctraService(account, account.NoctraRoot);
+        // 0.8 : recherche directe de titres à ajouter (catalogue de demandes), en tête de Découverte.
+        PageContent.Children.Add(DiscoverySearchBar(query));
         var navigation = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
         var tools = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(tools, Dock.Right);
         tools.Children.Add(Action("Mes demandes", () => _ = Navigate(RequestsPage)));
@@ -48,13 +50,10 @@ public partial class MainWindow
             {
                 var group = selected.Where(item => item.MediaType == type).ToArray(); if (group.Length == 0) continue;
                 var title = Text(type == "movie" ? "Films à découvrir" : "Séries à découvrir", 24, true); title.Margin = new Thickness(0, 5, 0, 18); results.Children.Add(title);
-                var grid = new WrapPanel { Margin = new Thickness(-7, 0, -7, 20) };
+                // 0.8 : grille sur toute la largeur de la page (colonnes égales, affiches proportionnelles).
+                var grid = PosterGrid(178);
+                grid.Margin = new Thickness(-9, 0, -9, 20);
                 foreach (var item in group) grid.Children.Add(DiscoveryCard(service, item, cancellation));
-                grid.SizeChanged += (_, _) =>
-                {
-                    var columns = Math.Max(3, (int)(grid.ActualWidth / 195));
-                    foreach (Button card in grid.Children) card.Width = Math.Max(145, grid.ActualWidth / columns - 16);
-                };
                 results.Children.Add(grid);
             }
         }
@@ -69,11 +68,56 @@ public partial class MainWindow
         PageContent.Children.Add(pages);
     }
 
+    // Champ de recherche de Découverte : films et séries à demander (catalogue complet, pas seulement la bibliothèque).
+    private FrameworkElement DiscoverySearchBar(string? query)
+    {
+        var box = new TextBox { Text = query ?? "", FontSize = 16, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+            Padding = new Thickness(4, 0, 4, 0), MinHeight = 0, VerticalContentAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAutomationId(box, "DiscoverSearch");
+        AutomationProperties.SetName(box, "Rechercher un film ou une série à ajouter");
+        var hint = Text("Rechercher un film ou une série à ajouter…", 16, color: "Muted");
+        hint.IsHitTestVisible = false;
+        hint.VerticalAlignment = VerticalAlignment.Center;
+        hint.Margin = new Thickness(9, 0, 0, 0);
+        hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        box.TextChanged += (_, _) => hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        void Go()
+        {
+            var term = box.Text.Trim();
+            if (term.Length == 0) { box.Focus(); return; }
+            _ = Navigate(DiscoverySearchPage(term[..Math.Min(term.Length, 120)]));
+        }
+        box.KeyDown += (_, args) => { if (args.Key == System.Windows.Input.Key.Enter) { args.Handled = true; Go(); } };
+        var button = Action("Rechercher", Go, "Primary");
+        AutomationProperties.SetAutomationId(button, "DiscoverSearchButton");
+        button.MinHeight = 44;
+        DockPanel.SetDock(button, Dock.Right);
+        var icon = new TextBlock { Text = "\uE721", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 18, Foreground = BrushFor("Accent"),
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 10, 0) };
+        DockPanel.SetDock(icon, Dock.Left);
+        var field = new Grid();
+        field.Children.Add(hint);
+        field.Children.Add(box);
+        var row = new DockPanel();
+        row.Children.Add(button);
+        row.Children.Add(icon);
+        row.Children.Add(field);
+        var bar = new Border
+        {
+            Child = row, CornerRadius = new CornerRadius(18), Padding = new Thickness(14, 6, 6, 6), Margin = new Thickness(0, -6, 0, 22),
+            BorderThickness = new Thickness(1), BorderBrush = ColorOf("#2EFFFFFF"),
+            Background = new LinearGradientBrush(Color.FromArgb(40, 199, 179, 255), Color.FromArgb(22, 127, 216, 242), 0)
+        };
+        box.GotKeyboardFocus += (_, _) => bar.BorderBrush = BrushFor("Accent");
+        box.LostKeyboardFocus += (_, _) => bar.BorderBrush = ColorOf("#2EFFFFFF");
+        return bar;
+    }
+
     private void TmdbImage(NoctraService service, Image image, string? path, bool backdrop, CancellationToken cancellation)
     {
         if (path is { Length: > 1 and < 240 } && path.StartsWith('/') && !path.StartsWith("//") && !path.Contains('\\') &&
-            Uri.TryCreate("https://image.tmdb.org/t/p/" + (backdrop ? "w1280" : "w342") + path, UriKind.Absolute, out var url) && artwork is { } art)
-            _ = art.Fetch(image, url.AbsoluteUri, backdrop ? 1200 : 360, ct => service.Image(url, ct), cancellation);
+            Uri.TryCreate("https://image.tmdb.org/t/p/" + (backdrop ? "w1280" : Artwork.Scale > 1.3 ? "w500" : "w342") + path, UriKind.Absolute, out var url) && artwork is { } art)
+            _ = art.Fetch(image, url.AbsoluteUri, backdrop ? 1280 : Artwork.Pixels(250), ct => service.Image(url, ct), cancellation);
     }
 
     private FrameworkElement DiscoveryHero(NoctraService service, DiscoverItem item, CancellationToken cancellation, bool detail = false)
@@ -117,7 +161,7 @@ public partial class MainWindow
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         FadeInWhenLoaded(image);
         TmdbImage(service, image, item.PosterPath, false, cancellation);
-        var poster = new Grid { Height = 262, ClipToBounds = true, Background = ColorOf("#161927") }; poster.Children.Add(image);
+        var poster = new AspectGrid { Ratio = 1.5, ClipToBounds = true, Background = ColorOf("#161927") }; poster.Children.Add(image);
         poster.SizeChanged += (_, _) => poster.Clip = new RectangleGeometry(new Rect(poster.RenderSize), 12, 12);
         if (item.MediaInfo?.Status is >= 2)
             poster.Children.Add(new Border { Background = ColorOf("#D907080D"), CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 4, 8, 4),
@@ -129,7 +173,7 @@ public partial class MainWindow
         labels.Children.Add(Text((item.MediaType == "tv" ? "Série" : "Film") + (date?.Length >= 4 ? " · " + date[..4] : "") +
             (item.VoteAverage is > 0 ? $" · ★ {item.VoteAverage:0.0}" : ""), 12, color: "Muted"));
         var content = new StackPanel(); content.Children.Add(poster); content.Children.Add(labels);
-        var button = Action(item.Label, () => _ = Navigate(DiscoverDetail(item)), "Card"); button.Content = content; button.Width = 176; button.Margin = new Thickness(8, 0, 8, 22); button.ToolTip = item.Label;
+        var button = Action(item.Label, () => _ = Navigate(DiscoverDetail(item)), "Card"); button.Content = content; button.Margin = new Thickness(9, 0, 9, 22); button.ToolTip = item.Label;
         void Hover(bool on)
         {
             var zoom = (ScaleTransform)image.RenderTransform;
