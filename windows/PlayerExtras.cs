@@ -388,7 +388,6 @@ public partial class MainWindow
             statsText = new TextBlock { FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12, Foreground = ColorOf("#E6E8F0"),
                 LineHeight = 19, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
             AutomationProperties.SetAutomationId(statsText, "PlaybackStats");
-            AutomationProperties.SetName(statsText, "Statistiques de lecture");
             var title = new TextBlock { Text = "STATISTIQUES", FontSize = 10, FontWeight = FontWeights.Bold, Foreground = BrushFor("Accent"), Margin = new Thickness(0, 0, 0, 8) };
             var body = new StackPanel();
             body.Children.Add(title);
