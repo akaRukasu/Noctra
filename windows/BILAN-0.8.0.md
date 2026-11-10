@@ -52,6 +52,21 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - Serveur en cours (« Serveur 2 sur 4 ») et bouton « Serveur suivant » pour changer de flux sans quitter la lecture.
 - Choix de la qualité inchangé.
 
+## Multivue (comme la PWA)
+
+- **Jusqu'à 16 chaînes**, directs et **lecteurs web externes** mélangés. Bouton « Multivue + » sur les lecteurs web d'une chaîne et dans le lecteur TV (chaîne en cours).
+- **Grille adaptée** : 2, 3 ou 4 colonnes selon le nombre de chaînes.
+- **Mettre en avant** : grande case à gauche, les autres en colonne. Bouton étoile ou double-clic sur l'image ; la chaîne mise en avant prend le son.
+- **Par case** :
+  - plein écran de la chaîne (Échap pour revenir) ;
+  - son (une seule sortie audio) et volume ;
+  - réessayer, avec un nouvel essai automatique après une coupure ;
+  - retirer ;
+  - état (connexion, en direct, image reçue) et qualité réelle.
+- **Qualité commune** : « Auto stable » (720p jusqu'à 4 chaînes, 540p jusqu'à 9, 480p au-delà ; la chaîne en avant ou en plein écran garde la meilleure), sans limite, ou plafond 1080p / 720p / 480p / 360p.
+- **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
+- Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
+
 ## Accueil plus fluide
 
 - **Effets de flou retirés** : ils étaient recalculés à chaque image, d'où les ralentissements au défilement. Le fond d'ambiance et le halo du grand visuel sont désormais de petites images floutées une fois pour toutes.

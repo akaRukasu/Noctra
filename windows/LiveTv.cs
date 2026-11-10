@@ -423,6 +423,14 @@ public partial class MainWindow
                     finally { button.IsEnabled = true; }
                 }
             };
+            if (server.External != null && !server.ManualOnly)
+            {
+                // 0.8 : les lecteurs web entrent aussi dans la multivue (comme la PWA).
+                var external = server.External;
+                var webMulti = Action("Multivue +", () => SelectMultiview(channel.Name, external, service)); webMulti.Margin = new Thickness(8, 0, 0, 0);
+                AutomationProperties.SetName(webMulti, "Multivue + · lecteur web");
+                buttons.Children.Add(webMulti);
+            }
             if (server.Stream != null)
             {
                 qualityChecks.TryAdd(server.Stream.Url.AbsoluteUri, (server.Stream, status));

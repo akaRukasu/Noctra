@@ -930,6 +930,8 @@
                     </Grid>
                     <DockPanel Margin="0,10,0,0">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="LiveMultiButton" Content="Multivue +" Style="{StaticResource PlayerPill}" Click="AddLiveToMultiview" Visibility="Collapsed" Margin="0,0,8,0"
+                                    AutomationProperties.Name="Ajouter à la multivue" ToolTip="Ajouter cette chaîne à la multivue"/>
                             <Button x:Name="LiveServerButton" Style="{StaticResource PlayerPill}" Click="NextLiveServer" Visibility="Collapsed" Margin="0,0,8,0"
                                     AutomationProperties.Name="Serveur suivant" ToolTip="Passer au serveur suivant (image figée, coupures)"/>
                             <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource PlayerPill}" Click="ChooseLiveQuality" Visibility="Collapsed"

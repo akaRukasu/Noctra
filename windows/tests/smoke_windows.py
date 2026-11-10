@@ -1499,7 +1499,14 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         external.wait("visible",timeout=15)
         until(lambda:external.child_window(auto_id="ExternalPlaybackStatus").window_text().startswith("Image reçue"),"OHA mixed-content compatibility failed",timeout=30)
         external.close()
+        # 0.8 : un lecteur web entre dans la multivue avec un direct.
+        window.child_window(title="Multivue + · lecteur web",control_type="Button",found_index=0).invoke()
+        until(lambda:by_name("Lancer la multivue").exists(timeout=.1),"Multiview page missing after adding a web player")
+        control("BackButton").invoke()
+        until(lambda:window.child_window(title="Multivue +",control_type="Button",found_index=1).exists(timeout=.1),"Channel servers missing after returning from multiview")
         window.child_window(title="Multivue +",control_type="Button",found_index=1).invoke()
+        until(lambda:by_name("Lancer la multivue").exists(timeout=.1),"Multiview page missing")
+        assert by_name("Lecteur web externe","Text").exists(timeout=.1),"Web player not listed in the multiview selection"
         by_name("Lancer la multivue").invoke()
         multi=window.child_window(title="Noctra · Multivue",control_type="Window")
         try:
@@ -1509,6 +1516,15 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             print("Multiview windows:", [(item.window_text(), item.element_info.control_type) for item in Desktop(backend="uia").windows() if item.process_id()==process.pid], flush=True)
             raise
         until(lambda:any(name.startswith("live-") and name.endswith(".ts") for name,_,_ in events),"Multiview did not receive media")
+        until(lambda:multi.child_window(title_re="Image reçue.*",control_type="Text").exists(timeout=.1),"Web player tile did not show video",timeout=35)
+        multi.child_window(title="Mettre en avant",control_type="Button",found_index=0).invoke()
+        until(lambda:multi.child_window(title="Revenir à la grille",control_type="Button").exists(timeout=.1),"Featured tile not applied")
+        sleep(1)
+        if args.screens:
+            ImageGrab.grab(bbox=win32gui.GetWindowRect(multi.handle),all_screens=True).save(args.screens/"multivue.png")
+        multi.child_window(title="Revenir à la grille",control_type="Button").invoke()
+        until(lambda:multi.child_window(title="Mettre en avant",control_type="Button",found_index=1).exists(timeout=.1),"Grid not restored")
+        print("OK · Multivue : direct et lecteur web, mise en avant, retour à la grille.",flush=True)
         multi.close()
         control("TvTab").invoke()
         until(lambda: by_name("Noctra Première").exists(timeout=.1), "Channel missing after multiview")

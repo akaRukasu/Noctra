@@ -80,7 +80,7 @@ public partial class MainWindow
         Entry("Diffuser", "Chromecast et appareils Jellyfin.", () => _ = Navigate(CastPage()));
         Entry("Découverte et demandes", "Sélections, demandes et roulette.", () => OpenDiscover(this, new RoutedEventArgs()));
         Entry("TV et multivue", "Chaînes, événements et plusieurs directs.", () => OpenTv(this, new RoutedEventArgs()));
-        Entry("Ma multivue", "Choisir et ouvrir jusqu’à quatre directs.", () => _ = Navigate(MultiviewPage));
+        Entry("Ma multivue", "Jusqu’à 16 chaînes, directs et lecteurs web, avec mise en avant.", () => _ = Navigate(MultiviewPage));
         PageContent.Children.Add(choices);
         if (account.NoctraRoot == null) return;
         var service = new NoctraService(account, account.NoctraRoot);

@@ -366,7 +366,7 @@ public partial class MainWindow
             FrameHeader.Visibility = Visibility.Collapsed;
             ClosePlayerPanel();
             // Mini-lecteur : commandes essentielles seulement (lecture, sous-titres, retour à la fenêtre).
-            foreach (var element in new UIElement[] { VolumeControl, MuteButton, PositionLabel, EndsAtLabel, BackwardButton, ForwardButton, SettingsButton, LiveServerButton, PlayerHint })
+            foreach (var element in new UIElement[] { VolumeControl, MuteButton, PositionLabel, EndsAtLabel, BackwardButton, ForwardButton, SettingsButton, LiveServerButton, LiveMultiButton, PlayerHint })
                 element.Visibility = Visibility.Collapsed;
             PlayerControls.Padding = new Thickness(14, 34, 14, 10);
             SizeHeader();
@@ -391,7 +391,11 @@ public partial class MainWindow
                 element.Visibility = Visibility.Visible;
             PlayerControls.Padding = new Thickness(28, 56, 28, 18);
             if (pendingLive == null) BackwardButton.Visibility = ForwardButton.Visibility = Visibility.Visible;
-            else LiveServerButton.Visibility = pendingLive.Streams.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+            else
+            {
+                LiveServerButton.Visibility = pendingLive.Streams.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+                LiveMultiButton.Visibility = Visibility.Visible;
+            }
             UpdateOverlayMode();
             WakeFullscreenControls(force: true);
             MiniButton.Content = "";

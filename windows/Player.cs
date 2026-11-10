@@ -401,7 +401,7 @@ public partial class MainWindow
             timer.Stop();
             live.Engine?.Dispose();
             pendingLive = null;
-            LiveQualityButton.Visibility = LiveServerButton.Visibility = LiveDot.Visibility = Visibility.Collapsed;
+            LiveQualityButton.Visibility = LiveServerButton.Visibility = LiveDot.Visibility = LiveMultiButton.Visibility = Visibility.Collapsed;
             BackwardButton.Visibility = ForwardButton.Visibility = TimelineArea.Visibility = Visibility.Visible;
             ClosePlayerPanel();
             if (fullscreen) SetFullscreen(false);
@@ -572,7 +572,7 @@ public partial class MainWindow
         Timeline.Value = 0;
         ResetTimelineDecorations();
         PositionLabel.Text = "DIRECT";
-        LiveQualityButton.Visibility = Visibility.Visible;
+        LiveQualityButton.Visibility = LiveMultiButton.Visibility = Visibility.Visible;
         LiveQualityButton.Content = "Qualité";
         BackwardButton.Visibility = ForwardButton.Visibility = TimelineArea.Visibility = Visibility.Collapsed;
         QueuePrevious.Visibility = QueueNext.Visibility = Visibility.Collapsed;
