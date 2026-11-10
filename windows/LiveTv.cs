@@ -91,7 +91,7 @@ public partial class MainWindow
         var waiting = Text("Les catalogues se chargent progressivement…", 12, color: "Muted"); waiting.Margin = new Thickness(0, 14, 0, 14); content.Children.Add(waiting);
         var scope = selected == null ? sources : new[] { selected }; var catalogs = new TvCatalog?[scope.Length];
         var errors = new string?[scope.Length];
-        var childCatalogs = new List<(TvSource Source, TvCatalog Catalog)>();
+        var childCatalogs = new List<(TvSource Source, TvCatalog Catalog, string? Bouquet)>();
         var childErrors = 0;
         if (tvCatalogOwner != account) { tvCatalogCache.Clear(); tvCatalogOwner = account; }
         string PathFor(int index) => group == null ? "api/tv/catalog?source=" + Uri.EscapeDataString(scope[index].Id) : "api/tv/catalog?ref=" + Uri.EscapeDataString(group);
@@ -122,7 +122,7 @@ public partial class MainWindow
                 var card = TvCard(service, channel, cancellation, sports); card.Width = double.NaN; grid.Children.Add(card);
             }
             listing.Children.Add(grid);
-            if (matches.Length == 0 && !loadingCatalogs && !catalogs.Any(catalog => catalog?.Groups?.Length > 0))
+            if (matches.Length == 0 && !loadingCatalogs && (selected == null && group == null || !catalogs.Any(catalog => catalog?.Groups?.Length > 0)))
                 listing.Children.Add(Message(sports ? "Aucun événement publié pour cette sélection." : "Aucune chaîne disponible pour cette sélection."));
             var pages = new StackPanel { Orientation = Orientation.Horizontal };
             if (offset > 0) pages.Children.Add(Action("Précédent", () => { offset -= 60; RenderChannels(); title.BringIntoView(); }));
@@ -133,7 +133,7 @@ public partial class MainWindow
         {
             if (cancellation.IsCancellationRequested) return;
             var entries = catalogs.SelectMany((catalog, index) => (catalog?.Channels ?? []).Select(entry => (Source: scope[index], Entry: entry)))
-                .Concat(childCatalogs.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: entry))))
+                .Concat(childCatalogs.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: string.IsNullOrWhiteSpace(entry.Group) && string.IsNullOrWhiteSpace(entry.Country) ? entry with { Group = part.Bouquet } : entry))))
                 .Where(pair => !string.IsNullOrWhiteSpace(pair.Entry.Name) && SportsEntry(pair.Source, pair.Entry) == sports)
                 .DistinctBy(pair => (pair.Source.Id, pair.Entry.Name, pair.Entry.StreamUrl, pair.Entry.ResolverUrl, pair.Entry.EmbedUrl, pair.Entry.ExternalUrl)).ToArray();
             bouquets.Children.Clear();
@@ -155,6 +155,9 @@ public partial class MainWindow
             channels = TvIdentity.Group(entries.Where(pair => sports || activeCountry == "*" || TvCountry.Of(pair.Entry) == activeCountry), sports)
                 .OrderBy(channel => IsTvFavorite(channel.Name) ? 0 : 1)
                 .ThenBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+            // Comme la PWA : dans « Toutes les chaînes », les bouquets sont ouverts et leurs chaînes mêlées à la liste
+            // (filtrée par pays) ; la grille des bouquets reste réservée à la page d'une source.
+            if (selected == null && group == null) groups = [];
             groups = groups.Where(pair => sports || activeCountry == "*" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) is "zz" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) == activeCountry).ToArray();
             if (groups.Length > 0)
             {
@@ -234,7 +237,7 @@ public partial class MainWindow
                     await Dispatcher.InvokeAsync(() =>
                     {
                         if (ct.IsCancellationRequested) return;
-                        childCatalogs.Add((job.Source, value));
+                        childCatalogs.Add((job.Source, value, job.Group.Name ?? job.Group.Title)); // une chaîne sans pays prend celui de son bouquet
                         if (tvCatalogCache.Count > 160) tvCatalogCache.Clear();
                         tvCatalogCache[path] = (DateTime.UtcNow.AddSeconds(90), value);
                         UpdateCatalogs();

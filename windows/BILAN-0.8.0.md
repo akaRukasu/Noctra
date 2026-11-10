@@ -122,6 +122,13 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - champ « Rechercher un film ou une série à ajouter » en tête de page ;
   - depuis Découvrir, la recherche du bandeau cherche aussi dans les titres à demander.
 
+## TV : « Toutes les chaînes »
+
+- Par défaut, uniquement les chaînes françaises. Le menu « Pays » permet d'en choisir un autre (ou « Tous les pays »).
+- Plus de grille « Choisir un bouquet » avec les bouquets de tous les pays dans cette vue, comme dans la PWA. Les bouquets sont ouverts et leurs chaînes rejoignent la liste, filtrée par pays.
+- Une chaîne de bouquet sans pays indiqué prend celui de son bouquet (« France · … » → France).
+- La grille des bouquets reste dans la page d'une source (Movix, Northlive…).
+
 ## Vérifications
 
 L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un serveur Noctra/Jellyfin simulé. Aucun serveur réel n'est utilisé.
@@ -133,6 +140,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - flux adapté ;
   - TV en fenêtre et plein écran, commandes qui s'effacent ;
   - qualités HLS ;
+  - « Toutes les chaînes » sans grille de bouquets, chaînes des bouquets français incluses ;
   - multivue ;
   - administration.
 - **Test des nouveautés** :

@@ -862,6 +862,9 @@ def check_tv_countries_and_qualities():
     assert control("TvCountry").selected_text()=="France"
     assert not by_name("BBC One").exists(timeout=.1) and not by_name("La Une").exists(timeout=.1),"Foreign channels leak into France"
     assert not any(name=="german-bouquet" for name,_,_ in events),"Foreign bouquets loaded before they were requested"
+    # Vue réunie : pas de grille de bouquets (ceux de tous les pays), leurs chaînes sont dans la liste.
+    until(lambda:by_name("Noctra Bouquet").exists(timeout=.1),"French bouquet channels missing from all channels")
+    assert not by_name("Choisir un bouquet").exists(timeout=.1) and not by_name("Germany · test").exists(timeout=.1),"Bouquet grid shown in all channels"
     control("TvCountry").select("Royaume-Uni")
     until(lambda:by_name("BBC One").exists(timeout=.1),"UK selection has no BBC channel")
     assert not by_name("TF1").exists(timeout=.1)
