@@ -91,17 +91,27 @@ public partial class MainWindow
     // Ce PC apparaît dans Jellyfin comme un lecteur pilotable (téléphone, PWA, autre client).
     private async Task AnnounceCapabilities(Jellyfin account)
     {
-        try
+        for (var attempt = 0; attempt < 4 && client == account; attempt++)
         {
-            await account.Command("Sessions/Capabilities/Full", new
+            try
             {
-                PlayableMediaTypes = new[] { "Video", "Audio" },
-                SupportedCommands = new[] { "DisplayMessage", "SetVolume", "VolumeUp", "VolumeDown", "ToggleMute", "Mute", "Unmute", "ToggleFullscreen", "PlayState", "PlayMediaSource" },
-                SupportsMediaControl = true,
-                SupportsPersistentIdentifier = true
-            }, lifetime.Token);
+                await account.Command("Sessions/Capabilities/Full", new
+                {
+                    PlayableMediaTypes = new[] { "Video", "Audio" },
+                    SupportedCommands = new[] { "DisplayMessage", "SetVolume", "VolumeUp", "VolumeDown", "ToggleMute", "Mute", "Unmute", "ToggleFullscreen", "PlayState", "PlayMediaSource" },
+                    SupportsMediaControl = true,
+                    SupportsPersistentIdentifier = true
+                }, lifetime.Token);
+                Trace("capacités annoncées");
+                return;
+            }
+            catch (HttpRequestException error) when (error.StatusCode == null)
+            {
+                Trace("capacités : " + error.Message);
+                try { await Task.Delay(800 * (attempt + 1), lifetime.Token); } catch (OperationCanceledException) { return; }
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException) { return; }
         }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException) { }
     }
 
     private void RealtimeMessage(Jellyfin account, string type, JsonElement data)
@@ -460,7 +470,24 @@ public partial class MainWindow
     {
         Trace("requête " + action + (client == null ? " (sans compte)" : ""));
         if (client is not { } account) return;
-        try { await account.Command("SyncPlay/" + action, body ?? new { }, lifetime.Token); Trace("requête " + action + " acceptée"); }
+        try
+        {
+            // Erreur de transport (connexion coupée ou refusée) : nouvel essai, la commande reste valable.
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await account.Command("SyncPlay/" + action, body ?? new { }, lifetime.Token);
+                    break;
+                }
+                catch (HttpRequestException error) when (error.StatusCode == null && attempt < 2 && client == account)
+                {
+                    Trace("requête " + action + " : nouvel essai (" + error.Message + ")");
+                    await Task.Delay(300 * (attempt + 1), lifetime.Token);
+                }
+            }
+            Trace("requête " + action + " acceptée");
+        }
         catch (Exception error) when (TracePath != null && error is not (HttpRequestException or OperationCanceledException))
         {
             Trace("requête " + action + " : " + error.GetType().Name + " " + error.Message);

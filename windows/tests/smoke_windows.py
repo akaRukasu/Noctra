@@ -1089,6 +1089,8 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         hls["master.m3u8"]=b'#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=600000,RESOLUTION=640x360\nquality360.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720\nquality720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nquality1080.m3u8\n'
     if args.mpv:
         shutil.copyfile(args.mpv, profile / "libmpv-2.dll")
+    # Rafales de requêtes parallèles (accueil, images) : file d'attente de connexions élargie.
+    ThreadingHTTPServer.request_queue_size = 128
     server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
     origin = f"http://127.0.0.1:{server.server_port}"
     Thread(target=server.serve_forever, daemon=True).start()
