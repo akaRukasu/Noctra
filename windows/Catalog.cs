@@ -121,15 +121,16 @@ public partial class MainWindow
         target = Math.Clamp(target, 0, scroll.ScrollableWidth);
         var from = scroll.HorizontalOffset;
         if (!SystemParameters.ClientAreaAnimation || Math.Abs(target - from) < 1) { scroll.ScrollToHorizontalOffset(target); return; }
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
-        void Step(object? sender, EventArgs args)
-        {
-            var t = Math.Min(1, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds / 420);
-            var eased = 1 - Math.Pow(1 - t, 3);
-            scroll.ScrollToHorizontalOffset(from + (target - from) * eased);
-            if (t >= 1) CompositionTarget.Rendering -= Step;
-        }
-        CompositionTarget.Rendering += Step;
+        if (scroll.Content is not FrameworkElement content) { scroll.ScrollToHorizontalOffset(target); return; }
+        // 0.8 : la rangée se place d'un coup, puis l'image déjà calculée glisse (animation à la cadence de l'écran) :
+        // plus de mise en page à chaque image (jusqu'à 360 cartes par rangée infinie).
+        if (content.RenderTransform is not TranslateTransform shift) content.RenderTransform = shift = new TranslateTransform();
+        var visible = from - shift.X;
+        scroll.ScrollToHorizontalOffset(target);
+        scroll.UpdateLayout();
+        var start = scroll.HorizontalOffset - visible;
+        shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(start, 0, TimeSpan.FromMilliseconds(420))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
     }
 
     private async Task RenderHome(Jellyfin account, CancellationToken cancellation)

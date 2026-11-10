@@ -96,6 +96,8 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - l'accueil apparaît dès que « Continuer à regarder » est prêt ;
   - chaque rangée de médiathèque se remplit à son arrivée.
 - Les menus du clic droit sont préparés seulement quand on les ouvre.
+- **Écrans 120 / 144 / 240 Hz** : WPF anime l'interface à 60 images/s par défaut. La cadence suit maintenant l'écran le plus rapide (jusqu'à 480 Hz) : fondus, survols, défilement et rangées. Les réglages indiquent « animations N images/s ».
+- **Défilement et rangées** : la molette et les flèches des rangées font glisser l'image déjà calculée (animation WPF) au lieu de refaire la mise en page à chaque image (jusqu'à 360 cartes dans une rangée infinie).
 
 ## Rangées infinies et SyncPlay discret
 

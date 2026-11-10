@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace Noctra.Windows;
 
@@ -60,18 +61,25 @@ public sealed class SmoothScrollViewer : ScrollViewer
         wheelLayout = true;
         try { ScrollToVerticalOffset(target); UpdateLayout(); target = VerticalOffset; }
         finally { wheelLayout = false; }
-        translation!.Y = VerticalOffset - visibleOffset;
+        // 0.8 : glissement confié au moteur d'animation de WPF (cadence de l'écran, jusqu'à 240 Hz et plus, voir App.xaml.cs),
+        // sans code à chaque image : seule l'image déjà calculée se déplace.
+        var start = VerticalOffset - visibleOffset;
+        var glide = new DoubleAnimation(start, 0, TimeSpan.FromMilliseconds(320)) { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 } };
+        var token = ++glideToken;
+        glide.Completed += (_, _) => { if (token == glideToken) Stop(); };
+        translation!.BeginAnimation(TranslateTransform.YProperty, glide);
         if (animating) return;
         previous = Stopwatch.GetTimestamp();
         animating = true;
         CompositionTarget.Rendering += Render;
     }
+    private int glideToken;
 
+    // Mesure seulement : cadence réelle de l'affichage pendant un défilement (affichée dans les réglages).
     private void Render(object? sender, EventArgs args)
     {
         var now = Stopwatch.GetTimestamp();
         var elapsed = (now - previous) / (double)Stopwatch.Frequency;
-        var seconds = Math.Clamp(elapsed, .001, .05);
         if (elapsed is > .001 and < .2)
         {
             frameIntervals.Enqueue(elapsed);
@@ -79,13 +87,6 @@ public sealed class SmoothScrollViewer : ScrollViewer
             if ((now - lastSample) / (double)Stopwatch.Frequency > .3) { lastSample = now; CadenceChanged?.Invoke(); }
         }
         previous = now;
-        var distance = translation?.Y ?? 0;
-        if (Math.Abs(distance) < .2)
-        {
-            Stop();
-            return;
-        }
-        translation!.Y = distance * Math.Exp(-seconds / .065);
     }
 
     protected override void OnScrollChanged(ScrollChangedEventArgs args)
@@ -107,7 +108,7 @@ public sealed class SmoothScrollViewer : ScrollViewer
         if (!animating) return;
         CompositionTarget.Rendering -= Render;
         animating = false;
-        if (translation != null) translation.Y = 0;
+        if (translation != null) { translation.BeginAnimation(TranslateTransform.YProperty, null); translation.Y = 0; }
         if (ownsBitmapCache && translatedContent != null) { translatedContent.CacheMode = null; ownsBitmapCache = false; }
         AnimatedScrollCompleted?.Invoke(this, EventArgs.Empty);
     }
@@ -127,6 +128,19 @@ internal static class DisplayTiming
         var screen = System.Windows.Forms.Screen.FromHandle(window);
         var mode = new Mode { Size = 220 };
         return EnumDisplaySettings(screen.DeviceName, -1, ref mode) && mode.Frequency is >= 20 and <= 1000 ? (int)mode.Frequency : null;
+    }
+
+    // Fréquence de l'écran le plus rapide (240 Hz, 144 Hz…) : cadence des animations de l'interface.
+    internal static int? FastestRefreshRate()
+    {
+        int? best = null;
+        foreach (var screen in System.Windows.Forms.Screen.AllScreens)
+        {
+            var mode = new Mode { Size = 220 };
+            if (EnumDisplaySettings(screen.DeviceName, -1, ref mode) && mode.Frequency is >= 20 and <= 1000 && (best == null || mode.Frequency > best))
+                best = (int)mode.Frequency;
+        }
+        return best;
     }
 
     [DllImport("user32.dll", EntryPoint = "EnumDisplaySettingsW", CharSet = CharSet.Unicode)]

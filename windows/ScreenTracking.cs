@@ -63,7 +63,7 @@ public partial class MainWindow
     {
         if (displayReadout == null) return;
         displayReadout.Text = "Écran actuel · " + displayDevice.Replace(@"\\.\", "") + " · " +
-            (displayHz is { } hz ? hz + " Hz" : "fréquence non disponible") +
+            (displayHz is { } hz ? hz + " Hz" : "fréquence non disponible") + " · animations " + App.AnimationRate + " images/s" +
             (Scroller.MeasuredFramesPerSecond is { } fps ? $"\nDernier défilement · {fps:0} images/s" : "\nDéfilement synchronisé avec l’affichage Windows");
     }
 }

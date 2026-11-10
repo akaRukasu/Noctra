@@ -7,6 +7,7 @@ namespace Noctra.Windows;
 public partial class App : Application
 {
     private Mutex? instance;
+    internal static int AnimationRate { get; private set; } = 60;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -20,6 +21,16 @@ public partial class App : Application
                 return;
             }
         }
+        // 0.8 : WPF anime l'interface à 60 images/s par défaut, quelle que soit la fréquence de l'écran.
+        // Cadence portée à celle de l'écran le plus rapide (240 Hz, 144 Hz…) pour les fondus, survols et défilements.
+        var hz = Math.Clamp(DisplayTiming.FastestRefreshRate() ?? 60, 60, 480);
+        try
+        {
+            System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(typeof(System.Windows.Media.Animation.Timeline),
+                new FrameworkPropertyMetadata { DefaultValue = (int?)hz });
+            AnimationRate = hz;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException) { } // réglage déjà figé : cadence par défaut de WPF.
         base.OnStartup(e);
     }
 
