@@ -141,6 +141,10 @@ Check(Card("antenne").Name == "Antenne Réunion" && Card("english-af").Name == "
 Check(Card("english-af").Variants.Count == 2 && Card("sport-en-france").Name == "Sport en France", "BowdTV variants or « Sport en France » differ from the web");
 Check(TvUnified.UnifiedName("13 EME RUE HD") == TvUnified.UnifiedName("13ème Rue") && TvUnified.UnifiedName("SPORTenFRANCE") == TvUnified.UnifiedName("Sport en France"), "Name rules differ from the web");
 Check(cards.Where(TvUnified.IsFrench).GroupBy(card => TvUnified.UnifiedName(card.Name)).All(group => group.Count() == 1), "Duplicate French cards");
+foreach (var group in new[] { new[] { "beIN Sports Francais 1", "beIN SPORTS 1", "BEIN SPORTS FRENCH 1 HD", "beIN Sports 1 France", "beIN Sports en français 1" }, new[] { "beIN Sports Francais 2", "beIN Sports 2" } })
+    Check(group.Select(TvUnified.UnifiedName).Distinct().Count() == 1, "French beIN variants not merged: " + string.Join(" / ", group));
+foreach (var (first, second) in new[] { ("France 2", "France 3"), ("France 2", "France 5"), ("RMC Sport 1", "RMC Sport 2"), ("Sport en France", "Sport") })
+    Check(TvUnified.UnifiedName(first) != TvUnified.UnifiedName(second), $"Different channels merged: {first} / {second}");
 Console.WriteLine("OK · « Toutes les chaînes » regroupées comme le Web et la PWA 200.0.181, « en français » compris.");
 
 static void Check(bool valid, string message) { if (!valid) throw new InvalidOperationException(message); }
