@@ -45,6 +45,15 @@ public partial class MainWindow
     }
 
     private DateTime ServerNow => DateTime.UtcNow + serverClockOffset;
+
+    // Journal de diagnostic SyncPlay (NOCTRA_TRACE=chemin, utilisé par le test d'interface).
+    private static readonly string? TracePath = Environment.GetEnvironmentVariable("NOCTRA_TRACE");
+    private static void Trace(string text)
+    {
+        if (TracePath == null) return;
+        try { System.IO.File.AppendAllText(TracePath, DateTime.UtcNow.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture) + " " + text + Environment.NewLine); }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException) { }
+    }
     private bool InSyncGroup => syncGroup != null;
 
     private void StartRealtime(Jellyfin account)
@@ -97,6 +106,7 @@ public partial class MainWindow
 
     private void RealtimeMessage(Jellyfin account, string type, JsonElement data)
     {
+        Trace("ws " + type + " " + data.Str("Type") + data.Str("Command"));
         switch (type)
         {
             case "SyncPlayGroupUpdate": SyncUpdate(account, data); break;
@@ -260,7 +270,8 @@ public partial class MainWindow
             ShowStatus("Le titre choisi par le groupe est introuvable sur ce compte.");
             return;
         }
-        if (client != account || syncGroup != group || group.PlaylistItemId != playlistItemId || closing) return;
+        if (client != account || syncGroup != group || group.PlaylistItemId != playlistItemId || closing) { Trace("queue ignorée"); return; }
+        Trace("queue → lecture " + itemId + " (en cours : " + (pendingMedia?.Id ?? "-") + ")");
         if (pendingMedia != null || pendingLive != null) FinishPlayback(refresh: false);
         group.AwaitingReady = true;
         group.LastCommand = "";
@@ -346,6 +357,7 @@ public partial class MainWindow
     // Vidéo prête (premier affichage) : le serveur démarre le groupe quand tout le monde l'est.
     private void SyncStarted(ActivePlayback state)
     {
+        Trace("vidéo prête, groupe " + (syncGroup?.Id ?? "aucun") + ", position " + state.Position.ToString("0.0", CultureInfo.InvariantCulture));
         if (syncGroup is not { } group)
         {
             Command("set", "pause", "no");
@@ -446,10 +458,16 @@ public partial class MainWindow
 
     private async Task SyncRequest(string action, object? body = null)
     {
+        Trace("requête " + action + (client == null ? " (sans compte)" : ""));
         if (client is not { } account) return;
-        try { await account.Command("SyncPlay/" + action, body ?? new { }, lifetime.Token); }
+        try { await account.Command("SyncPlay/" + action, body ?? new { }, lifetime.Token); Trace("requête " + action + " acceptée"); }
+        catch (Exception error) when (TracePath != null && error is not (HttpRequestException or OperationCanceledException))
+        {
+            Trace("requête " + action + " : " + error.GetType().Name + " " + error.Message);
+        }
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
         {
+            Trace("requête " + action + " : " + error.GetType().Name + " " + error.Message);
             if (error is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Unauthorized })
                 ShowStatus("Jellyfin n’autorise pas SyncPlay pour ce compte (droit à activer par l’administrateur).");
             else if (!lifetime.IsCancellationRequested) ShowStatus("Le serveur n’a pas répondu à la demande SyncPlay. Réessayez.");

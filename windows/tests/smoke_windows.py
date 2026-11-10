@@ -1059,6 +1059,7 @@ def open_app(profile, address=None):
     # 0.6 : grand visuel de l'accueil sans défilement automatique pendant le test (titre mis en avant stable).
     # 0.7 : aperçus au survol désactivés pendant le parcours principal (vérifiés dans --features-only).
     process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0",
+                                             "NOCTRA_TRACE": str(profile / "trace.log"),
                                              **({} if args.features_only else {"NOCTRA_HOVER_PREVIEW": "0"})})
     try:
         app = Application(backend="uia").connect(process=process.pid, timeout=30)
@@ -1355,6 +1356,9 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         if window is not None:
             try:
                 screenshot("echec")
+                trace = profile / "trace.log"
+                print(json.dumps({"trace": trace.read_text(encoding="utf-8", errors="replace").splitlines()[-40:] if trace.exists() else [],
+                                  "events": [name for name, _, _ in events if name not in ("catalog-query", "stream")][-40:]}, ensure_ascii=True), flush=True)
                 print(json.dumps({"visible_messages":[element.window_text() for element in window.descendants(control_type="Text")][-16:],"last_queries":[body for name,_,body in events if name=="catalog-query"][-3:]},ensure_ascii=True),flush=True)
             except Exception:
                 pass

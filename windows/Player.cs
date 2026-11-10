@@ -224,6 +224,7 @@ public partial class MainWindow
         {
             if (kind == Mpv.Event.PlaybackRestart && !state.Started)
             {
+                Trace("lecture démarrée " + state.Session.ItemId + " synchro=" + state.Synchronized);
                 state.Started = true;
                 state.Cancellation.CancelAfter(Timeout.InfiniteTimeSpan);
                 state.Position = engine.Seconds("time-pos") ?? state.Session.StartSeconds;
