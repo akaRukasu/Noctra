@@ -110,86 +110,143 @@ public partial class MainWindow
         AutomationProperties.SetName(filter, sports ? "Filtrer les événements" : "Filtrer les chaînes"); content.Children.Add(filter);
         var count = Text("Chargement…", 12, color: "Muted"); count.Margin = new Thickness(0, 0, 0, 14); content.Children.Add(count);
         var listing = new StackPanel(); content.Children.Add(listing); var offset = 0;
-        TvChannel[] channels = [];
+        TvChannel[] channels = []; string[] channelKeys = [];
+        (TvGroup Category, TvSource Source)[] groups = [];
         var loadingCatalogs = true;
-        void RenderChannels()
+        var renderedSignature = "";
+        void RenderChannels(bool force = false)
         {
             if (cancellation.IsCancellationRequested) return;
-            var matches = channels.Where(channel => ChannelKey(channel.Name).Contains(ChannelKey(filter.Text.Trim()), StringComparison.OrdinalIgnoreCase)).ToArray(); listing.Children.Clear();
+            var needle = ChannelKey(filter.Text.Trim());
+            var matches = Enumerable.Range(0, channels.Length).Where(index => needle.Length == 0 || channelKeys[index].Contains(needle, StringComparison.OrdinalIgnoreCase))
+                .Select(index => channels[index]).ToArray();
+            offset = Math.Max(0, Math.Min(offset, (matches.Length - 1) / 60 * 60));
+            var page = matches.Skip(offset).Take(60).ToArray();
+            var empty = matches.Length == 0 && !loadingCatalogs && (selected == null && group == null || !catalogs.Any(catalog => catalog?.Groups?.Length > 0));
+            // 0.8 : les cartes ne sont refaites que si la page affichée change (avant : à chaque catalogue reçu).
+            var signature = string.Join("\n", page.Select(channel => channel.Name + "|" + channel.Entries.Length + "|" + IsTvFavorite(channel.Name) + "|" +
+                channel.Entries.Select(pair => pair.Entry.Logo).FirstOrDefault(url => !string.IsNullOrWhiteSpace(url)))) + "#" + offset + "#" + matches.Length + "#" + empty;
+            if (!force && signature == renderedSignature) return;
+            renderedSignature = signature; listing.Children.Clear();
             var grid = new AdaptiveTilePanel { MinimumCellWidth = sports ? 250 : 170, MaximumColumns = 10, Margin = new Thickness(-5, 0, -5, 0) };
-            foreach (var channel in matches.Skip(offset).Take(60))
+            foreach (var channel in page)
             {
                 var card = TvCard(service, channel, cancellation, sports); card.Width = double.NaN; grid.Children.Add(card);
             }
             listing.Children.Add(grid);
-            if (matches.Length == 0 && !loadingCatalogs && (selected == null && group == null || !catalogs.Any(catalog => catalog?.Groups?.Length > 0)))
-                listing.Children.Add(Message(sports ? "Aucun événement publié pour cette sélection." : "Aucune chaîne disponible pour cette sélection."));
+            if (empty) listing.Children.Add(Message(sports ? "Aucun événement publié pour cette sélection." : "Aucune chaîne disponible pour cette sélection."));
             var pages = new StackPanel { Orientation = Orientation.Horizontal };
             if (offset > 0) pages.Children.Add(Action("Précédent", () => { offset -= 60; RenderChannels(); title.BringIntoView(); }));
             if (offset + 60 < matches.Length) pages.Children.Add(Action("Suivant", () => { offset += 60; RenderChannels(); title.BringIntoView(); }));
             listing.Children.Add(pages);
         }
+        // 0.8 : la liste réunie (des milliers d'entrées, jusqu'à 120 bouquets) est calculée hors du fil de l'interface,
+        // au plus une fois toutes les 1,2 s pendant le chargement ; avant, chaque catalogue reçu la recalculait sur l'interface.
+        var updateRunning = false; var updatePending = false; var lastUpdate = DateTime.MinValue;
+        var updateTimer = new System.Windows.Threading.DispatcherTimer();
+        updateTimer.Tick += (_, _) => { updateTimer.Stop(); _ = UpdateCatalogsNow(); };
         void UpdateCatalogs()
         {
             if (cancellation.IsCancellationRequested) return;
-            var entries = catalogs.SelectMany((catalog, index) => (catalog?.Channels ?? []).Select(entry => (Source: scope[index], Entry: entry)))
-                .Concat(childCatalogs.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: string.IsNullOrWhiteSpace(entry.Group) && string.IsNullOrWhiteSpace(entry.Country) ? entry with { Group = part.Bouquet } : entry))))
-                .Where(pair => !string.IsNullOrWhiteSpace(pair.Entry.Name) && SportsEntry(pair.Source, pair.Entry) == sports)
-                .DistinctBy(pair => (pair.Source.Id, pair.Entry.Name, pair.Entry.StreamUrl, pair.Entry.ResolverUrl, pair.Entry.EmbedUrl, pair.Entry.ExternalUrl)).ToArray();
-            bouquets.Children.Clear();
-            var groups = catalogs.SelectMany((catalog, index) => (catalog?.Groups ?? []).Select(category => (Category: category, Source: scope[index])))
-                .Where(pair => !string.IsNullOrWhiteSpace(pair.Category.Ref)).DistinctBy(pair => pair.Category.Ref).ToArray();
-            if (!sports)
-            {
-                var codes = entries.Select(pair => TvCountry.Of(pair.Entry)).Concat(groups.Select(pair => TvCountry.Group(pair.Category.Name ?? pair.Category.Title)))
-                    .Append(activeCountry).Append("fr").Distinct().Where(code => code != "*").OrderBy(code => code == "fr" ? 0 : 1).ThenBy(TvCountry.Label);
-                var options = new[] { new TvCountryChoice("*", TvCountry.Label("*")) }.Concat(codes.Select(code => new TvCountryChoice(code, TvCountry.Label(code)))).ToArray();
-                var signature = string.Join("|", options.Select(option => option.Code));
-                if (signature != countrySignature && !countryBox.IsDropDownOpen)
-                {
-                    updatingCountries = true;
-                    countryBox.ItemsSource = options; countryBox.SelectedValue = activeCountry; countrySignature = signature;
-                    updatingCountries = false;
-                }
-            }
-            channels = TvIdentity.Group(entries.Where(pair => sports || activeCountry == "*" || TvCountry.Of(pair.Entry) == activeCountry), sports)
-                .OrderBy(channel => IsTvFavorite(channel.Name) ? 0 : 1)
-                .ThenBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
-            // Comme la PWA : dans « Toutes les chaînes », les bouquets sont ouverts et leurs chaînes mêlées à la liste
-            // (filtrée par pays) ; la grille des bouquets reste réservée à la page d'une source.
-            if (selected == null && group == null) groups = [];
-            groups = groups.Where(pair => sports || activeCountry == "*" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) is "zz" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) == activeCountry).ToArray();
-            if (groups.Length > 0)
-            {
-                var heading = Text("Choisir un bouquet", 20, true); heading.Margin = new Thickness(0, 10, 0, 12); bouquets.Children.Add(heading);
-                var groupGrid = new AdaptiveTilePanel { MinimumCellWidth = 210, MaximumColumns = 5 };
-                foreach (var pair in groups)
-                {
-                    var label = pair.Category.Name ?? pair.Category.Title ?? "Bouquet";
-                    var groupCountry = TvCountry.Group(label);
-                    var button = Action(label, () => _ = Navigate(TvPage(pair.Source.Id, sports, pair.Category.Ref, groupCountry == "zz" ? activeCountry : groupCountry)));
-                    button.HorizontalContentAlignment = HorizontalAlignment.Left; button.Margin = new Thickness(0, 0, 10, 10);
-                    button.ToolTip = pair.Source.Name + " · " + label; groupGrid.Children.Add(button);
-                }
-                bouquets.Children.Add(groupGrid);
-            }
-            var failed = errors.Count(error => error != null) + childErrors;
-            count.Text = (channels.Length > 0 || groups.Length == 0 ? $"{channels.Length} " + (sports ? "événements" : "chaînes") : $"{groups.Length} bouquets · choisissez une catégorie") +
-                (failed > 0 ? $" · {failed} source(s) indisponible(s)" : "");
-            waiting.Text = loadingCatalogs ? "Les autres sources arrivent… Vous pouvez déjà choisir une chaîne." :
-                string.Join(" · ", catalogs.Select(catalog => catalog?.Warning).Where(warning => !string.IsNullOrWhiteSpace(warning)).Distinct().Take(2));
-            waiting.Visibility = waiting.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-            RenderChannels();
-            if (!loadingCatalogs && channels.Length == 0)
-                foreach (var index in Enumerable.Range(0, scope.Length).Where(index => errors[index] != null).Take(3)) listing.Children.Add(Message(scope[index].Name + " · " + errors[index]));
+            if (updateRunning) { updatePending = true; return; }
+            var wait = TimeSpan.FromMilliseconds(1200) - (DateTime.UtcNow - lastUpdate);
+            if (!loadingCatalogs || wait <= TimeSpan.Zero) { updateTimer.Stop(); _ = UpdateCatalogsNow(); }
+            else if (!updateTimer.IsEnabled) { updateTimer.Interval = wait; updateTimer.Start(); }
         }
-        filter.TextChanged += (_, _) => { offset = 0; RenderChannels(); }; UpdateCatalogs();
+        async Task UpdateCatalogsNow()
+        {
+            if (cancellation.IsCancellationRequested) return;
+            updateRunning = true; lastUpdate = DateTime.UtcNow;
+            try
+            {
+                var parts = catalogs.Select((catalog, index) => (Source: scope[index], Catalog: catalog)).ToArray();
+                var children = childCatalogs.ToArray();
+                var favorites = (preferences.TvFavorites ?? []).ToHashSet();
+                var country = activeCountry;
+                var aggregated = selected == null && group == null;
+                var result = await Task.Run(() =>
+                {
+                    var entries = parts.SelectMany(part => (part.Catalog?.Channels ?? []).Select(entry => (part.Source, Entry: entry)))
+                        .Concat(children.SelectMany(part => (part.Catalog.Channels ?? []).Select(entry => (part.Source, Entry: string.IsNullOrWhiteSpace(entry.Group) && string.IsNullOrWhiteSpace(entry.Country) ? entry with { Group = part.Bouquet } : entry))))
+                        .Where(pair => !string.IsNullOrWhiteSpace(pair.Entry.Name) && SportsEntry(pair.Source, pair.Entry) == sports)
+                        .DistinctBy(pair => (pair.Source.Id, pair.Entry.Name, pair.Entry.StreamUrl, pair.Entry.ResolverUrl, pair.Entry.EmbedUrl, pair.Entry.ExternalUrl)).ToArray();
+                    var allGroups = parts.SelectMany(part => (part.Catalog?.Groups ?? []).Select(category => (Category: category, part.Source)))
+                        .Where(pair => !string.IsNullOrWhiteSpace(pair.Category.Ref)).DistinctBy(pair => pair.Category.Ref).ToArray();
+                    TvCountryChoice[] options = [];
+                    if (!sports)
+                    {
+                        var codes = entries.Select(pair => TvCountry.Of(pair.Entry)).Concat(allGroups.Select(pair => TvCountry.Group(pair.Category.Name ?? pair.Category.Title)))
+                            .Append(country).Append("fr").Distinct().Where(code => code != "*").OrderBy(code => code == "fr" ? 0 : 1).ThenBy(TvCountry.Label);
+                        options = new[] { new TvCountryChoice("*", TvCountry.Label("*")) }.Concat(codes.Select(code => new TvCountryChoice(code, TvCountry.Label(code)))).ToArray();
+                    }
+                    var grouped = TvIdentity.Group(entries.Where(pair => sports || country == "*" || TvCountry.Of(pair.Entry) == country), sports)
+                        .OrderBy(channel => favorites.Contains(ChannelKey(channel.Name)) ? 0 : 1)
+                        .ThenBy(channel => TvCountry.Of(channel.Entries[0].Entry) == "fr" ? 0 : 1).ThenBy(channel => channel.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+                    // Comme la PWA : dans « Toutes les chaînes », les bouquets sont ouverts et leurs chaînes mêlées à la liste
+                    // (filtrée par pays) ; la grille des bouquets reste réservée à la page d'une source.
+                    var shown = aggregated ? [] : allGroups.Where(pair => sports || country == "*" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) is "zz" || TvCountry.Group(pair.Category.Name ?? pair.Category.Title) == country).ToArray();
+                    return (Channels: grouped, Keys: grouped.Select(channel => ChannelKey(channel.Name)).ToArray(), Groups: shown, Options: options);
+                }, cancellation);
+                if (cancellation.IsCancellationRequested) return;
+                if (!sports)
+                {
+                    var signature = string.Join("|", result.Options.Select(option => option.Code));
+                    if (signature != countrySignature && !countryBox.IsDropDownOpen)
+                    {
+                        updatingCountries = true;
+                        countryBox.ItemsSource = result.Options; countryBox.SelectedValue = activeCountry; countrySignature = signature;
+                        updatingCountries = false;
+                    }
+                }
+                channels = result.Channels; channelKeys = result.Keys;
+                var groupSignature = string.Join("\n", result.Groups.Select(pair => pair.Category.Ref));
+                if (groupSignature != string.Join("\n", groups.Select(pair => pair.Category.Ref)) || bouquets.Children.Count == 0 && result.Groups.Length > 0)
+                {
+                    groups = result.Groups; bouquets.Children.Clear();
+                    if (groups.Length > 0)
+                    {
+                        var heading = Text("Choisir un bouquet", 20, true); heading.Margin = new Thickness(0, 10, 0, 12); bouquets.Children.Add(heading);
+                        var groupGrid = new AdaptiveTilePanel { MinimumCellWidth = 210, MaximumColumns = 5 };
+                        foreach (var pair in groups)
+                        {
+                            var label = pair.Category.Name ?? pair.Category.Title ?? "Bouquet";
+                            var groupCountry = TvCountry.Group(label);
+                            var button = Action(label, () => _ = Navigate(TvPage(pair.Source.Id, sports, pair.Category.Ref, groupCountry == "zz" ? activeCountry : groupCountry)));
+                            button.HorizontalContentAlignment = HorizontalAlignment.Left; button.Margin = new Thickness(0, 0, 10, 10);
+                            button.ToolTip = pair.Source.Name + " · " + label; groupGrid.Children.Add(button);
+                        }
+                        bouquets.Children.Add(groupGrid);
+                    }
+                }
+                var failed = errors.Count(error => error != null) + childErrors;
+                count.Text = (channels.Length > 0 || groups.Length == 0 ? $"{channels.Length} " + (sports ? "événements" : "chaînes") : $"{groups.Length} bouquets · choisissez une catégorie") +
+                    (failed > 0 ? $" · {failed} source(s) indisponible(s)" : "");
+                waiting.Text = loadingCatalogs ? "Les autres sources arrivent… Vous pouvez déjà choisir une chaîne." :
+                    string.Join(" · ", catalogs.Select(catalog => catalog?.Warning).Where(warning => !string.IsNullOrWhiteSpace(warning)).Distinct().Take(2));
+                waiting.Visibility = waiting.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+                var showErrors = !loadingCatalogs && channels.Length == 0;
+                RenderChannels(force: showErrors);
+                if (showErrors)
+                    foreach (var index in Enumerable.Range(0, scope.Length).Where(index => errors[index] != null).Take(3)) listing.Children.Add(Message(scope[index].Name + " · " + errors[index]));
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                updateRunning = false; lastUpdate = DateTime.UtcNow;
+                if (updatePending && !cancellation.IsCancellationRequested) { updatePending = false; UpdateCatalogs(); }
+            }
+        }
+        // Recherche : appliquée 250 ms après la dernière frappe.
+        var filterTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        filterTimer.Tick += (_, _) => { filterTimer.Stop(); offset = 0; RenderChannels(); };
+        filter.TextChanged += (_, _) => { filterTimer.Stop(); filterTimer.Start(); }; UpdateCatalogs();
         countryBox.SelectionChanged += (_, _) =>
         {
             if (!updatingCountries && countryBox.SelectedItem is TvCountryChoice choice && choice.Code != activeCountry)
                 _ = Navigate(TvPage(sourceId, sports, group, choice.Code), back: true);
         };
         countryBox.DropDownClosed += (_, _) => UpdateCatalogs();
+        cancellation.Register(() => Dispatcher.BeginInvoke(() => { updateTimer.Stop(); filterTimer.Stop(); }));
         var refresh = Action("Actualiser les catalogues", () => { tvCatalogCache.Clear(); savedTvUntil = DateTime.MinValue; _ = Navigate(TvPage(sourceId, sports, group, activeCountry), back: true); });
         refresh.Margin = new Thickness(0, 16, 0, 0); refresh.HorizontalAlignment = HorizontalAlignment.Left; content.Children.Add(refresh);
         await Parallel.ForEachAsync(Enumerable.Range(0, scope.Length), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellation }, async (index, ct) =>

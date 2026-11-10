@@ -76,7 +76,7 @@ internal static class TvIdentity
         var countryKey = region is "" or "fr" ? "" : region + ":";
         var sorted = string.Join(" ", words.Where(word => !word.All(char.IsDigit)).Order()) + "|" + string.Join(" ", words.Where(word => word.All(char.IsDigit)));
         var result = (raw.Length > 0 ? raw : name.Trim(), countryKey + key, countryKey + sorted, region);
-        if (Names.Count > 30000) Names.Clear(); Names[cacheKey] = result; return result;
+        if (Names.Count > 150000) Names.Clear(); Names[cacheKey] = result; return result;
     }
     internal static string Key(string name, string? country = null) => Identify(name, country).Key;
     internal static string CountryCode(string? country) => Country(country ?? "");

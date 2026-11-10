@@ -54,7 +54,7 @@ internal static class TvCountry
     internal static string Of(TvEntry entry)
     {
         if (Cache.TryGetValue(entry, out var found)) return found;
-        if (Cache.Count > 30000) Cache.Clear();
+        if (Cache.Count > 150000) Cache.Clear();
         return Cache[entry] = Compute(entry);
     }
     private static string Compute(TvEntry entry)

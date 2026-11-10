@@ -395,6 +395,8 @@ class Fixture(BaseHTTPRequestHandler):
             return self.send({"results": [{"id": "orbit", "title": "Dernière orbite"}]})
         if path == "/api/tv/sources":
             tv_provider = [{"id": "witv-public", "name": "WiTV", "section": "channels"}] if args.tv_quality_only else []
+            # Test des nouveautés : un grand catalogue (4 000 chaînes, 80 bouquets) pour mesurer la réactivité de « Toutes les chaînes ».
+            if args.features_only: tv_provider += [{"id": "stress-test", "name": "Grand catalogue", "section": "channels"}]
             return self.send({"sources": [{"id": "oha-live", "name": "OHA", "section":"channels"}, {"id":"movix-test","name":"Movix test","type":"additional","section":"channels"}, {"id":"progressive-test","name":"Catalogue progressif","section":"channels"}, {"id":"variants-test","name":"Variantes test","section":"channels"}, {"id":"countries-test","name":"Pays test","section":"channels"}, {"id":"quality-test","name":"Qualités test","section":"channels"}, {"id": "broken", "name": "Source indisponible", "section":"channels"}, {"id": "ppv", "name": "PPV", "section":"sports"}] + tv_provider})
         if path == "/api/tv/resolve/witv-fixture":
             events.append(("witv-server-options", user, {}))
@@ -408,6 +410,13 @@ class Fixture(BaseHTTPRequestHandler):
                 events.append(("witv-server-catalog", user, {}))
                 return self.send({"channels": [{"name": "Chaîne WiTV de test", "provider": "WiTV", "country": "fr",
                                                 "resolverUrl": "/api/tv/resolve/witv-fixture"}]})
+            if q.get("source") == ["stress-test"]:
+                prefixes, words, suffixes = ["FR: ", "UK: ", "DE: ", "IT: ", "ES: ", "[FR] ", "", "PT | "], ["Sport", "Cinéma", "Info", "Musique", "Jeunesse", "Découverte", "Séries", "Histoire"], [" HD", " FHD", " SD", " .b", " (backup)", ""]
+                return self.send({"groups": [{"name": f"{['France', 'Italia', 'Deutschland', 'UK', 'Espana'][n % 5]} · bouquet {n}", "ref": f"stress-{n}"} for n in range(80)],
+                                  "channels": [{"name": f"{prefixes[i % 8]}{words[i % 7]} {i}{suffixes[i % 6]}", "streamUrl": "/api/tv/relay/index.m3u8"} for i in range(4000)]})
+            if (q.get("ref") or [""])[0].startswith("stress-"):
+                n = int(q["ref"][0].split("-")[1]); events.append(("stress-bouquet", user, {"n": n}))
+                return self.send({"channels": [{"name": f"Bouquet {n} chaîne {k} HD", "streamUrl": "/api/tv/relay/index.m3u8"} for k in range(60)]})
             if q.get("ref") == ["bouquet-de"]:
                 events.append(("german-bouquet",user,{}))
                 return self.send({"channels":[{"name":"ZDF régional","country":"Germany","streamUrl":"/api/tv/relay/index.m3u8"}]})
@@ -853,6 +862,36 @@ def check_tv_provider_options():
     assert not by_name("▶   Lire le direct").is_enabled()
     assert not window.child_window(title="Noctra · Lecteur externe", control_type="Window").exists(timeout=.1)
     print("OK · Windows receives the WiTV catalog and three separate manual options from the Noctra API.", flush=True)
+
+
+def check_tv_responsiveness():
+    # « Toutes les chaînes » avec un grand catalogue : le fil de l'interface doit rester réactif pendant le chargement
+    # (aucun blocage de plus d'une seconde), d'abord en France (16 bouquets), puis pour tous les pays (80 bouquets).
+    def watch(bouquets, label):
+        start, worst, done = monotonic(), 0.0, None
+        while monotonic() - start < 90:
+            before = monotonic()
+            win32gui.SendMessageTimeout(window.handle, win32con.WM_NULL, 0, 0, win32con.SMTO_NORMAL, 30000)
+            worst = max(worst, monotonic() - before)
+            if done is None and len({body["n"] for name, _, body in events if name == "stress-bouquet"}) >= bouquets: done = monotonic() - start
+            if done is not None and monotonic() - start > done + 4: break
+            sleep(.05)
+        print(json.dumps({"tv_responsiveness": label, "worst_ui_block_s": round(worst, 3), "bouquets_loaded_after_s": done and round(done, 1)}), flush=True)
+        assert done is not None, f"{label}: bouquets not loaded"
+        assert worst < 1.0, f"{label}: the interface froze for {worst:.2f} s while loading all channels"
+    control("TvTab").invoke()
+    watch(16, "France")
+    until(lambda: control("TvCountry").selected_text() == "France", "France is not the default country")
+    control("TvSearch").set_edit_text("Bouquet 5 chaîne 7")
+    until(lambda: by_name("Bouquet 5 chaîne 7").exists(timeout=.1), "French bouquet channels missing from the large catalog")
+    control("TvSearch").set_edit_text("Bouquet 1 chaîne 7"); sleep(1.5)
+    assert not by_name("Bouquet 1 chaîne 7").exists(timeout=.1), "Italian bouquet channels leak into France"
+    control("TvCountry").select("Tous les pays")
+    watch(80, "Tous les pays")
+    control("TvSearch").set_edit_text("Bouquet 1 chaîne 7")
+    until(lambda: by_name("Bouquet 1 chaîne 7").exists(timeout=.1), "All countries do not include the Italian bouquet")
+    screenshot("tv-grand-catalogue")
+    print("OK · TV « Toutes les chaînes » réactive avec 4 000 chaînes et 80 bouquets.", flush=True)
 
 
 def check_tv_countries_and_qualities():
@@ -1323,6 +1362,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             raise SystemExit(0)
         if args.features_only:
             check_new_features()
+            check_tv_responsiveness()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)

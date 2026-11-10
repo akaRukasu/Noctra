@@ -128,6 +128,11 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - Plus de grille « Choisir un bouquet » avec les bouquets de tous les pays dans cette vue, comme dans la PWA. Les bouquets sont ouverts et leurs chaînes rejoignent la liste, filtrée par pays.
 - Une chaîne de bouquet sans pays indiqué prend celui de son bouquet (« France · … » → France).
 - La grille des bouquets reste dans la page d'une source (Movix, Northlive…).
+- **Ralentissements corrigés** :
+  - la liste réunie est calculée en arrière-plan, au plus une fois toutes les 1,2 s pendant le chargement (avant : sur l'interface, à chaque catalogue ou bouquet reçu) ;
+  - les cartes ne sont refaites que si la page affichée change ;
+  - la recherche s'applique 250 ms après la dernière frappe ;
+  - le cache des noms de chaînes garde jusqu'à 150 000 entrées : avec un gros catalogue, il se vidait sans cesse et tout était recalculé.
 
 ## Vérifications
 
@@ -155,7 +160,8 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - recherche dans Découvrir ;
   - rangée infinie de l'accueil (fenêtre étroite, boucle) ;
   - menu SyncPlay du bandeau ;
-  - suppression d'une séance oubliée, fermeture automatique d'une séance vide.
+  - suppression d'une séance oubliée, fermeture automatique d'une séance vide ;
+  - TV « Toutes les chaînes » avec un grand catalogue (4 000 chaînes, 80 bouquets) : aucun blocage de l'interface de plus d'une seconde pendant le chargement, en France puis pour tous les pays.
 
 Le résultat du dernier passage est indiqué dans le message de livraison.
 
