@@ -140,8 +140,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force windows/dist | Out-Null
           git archive --format=zip --prefix="Noctra-Windows-${{ steps.version.outputs.version }}/" -o "windows/dist/Noctra-Windows-${{ steps.version.outputs.version }}-sources.zip" HEAD:windows
-      # Quota de stockage : fichiers de build des runs précédents de cette branche supprimés,
-      # sauf ceux du dernier run réussi (son setup reste téléchargeable). Le code n'est pas touché.
+      # Quota de stockage : setup et captures Windows des runs précédents de cette branche supprimés,
+      # sauf ceux du dernier run réussi (son setup reste téléchargeable). Les fichiers des autres
+      # actions (Android, TV, iOS…) ne sont jamais touchés. Le code n'est pas touché.
       - name: Nettoyage des anciens fichiers de build
         if: always()
         continue-on-error: true
@@ -158,7 +159,8 @@ jobs:
           $old = gh api --paginate "repos/$repo/actions/artifacts?per_page=100" --jq '.artifacts[] | [.id, .workflow_run.id, .workflow_run.head_branch, .name, .size_in_bytes] | @tsv'
           foreach ($line in $old) {
             $id, $run, $from, $name, $size = $line -split "`t"
-            if ($from -ne $branch -or $keep -contains $run) { continue }
+            # Uniquement les fichiers de cette action (setup et captures Windows), jamais ceux des autres actions.
+            if ($from -ne $branch -or $keep -contains $run -or $name -notin @('noctra-windows-setup', 'noctra-windows-captures')) { continue }
             gh api -X DELETE "repos/$repo/actions/artifacts/$id" | Out-Null
             Write-Host "Supprimé : $name (run $run, $([math]::Round($size / 1MB)) Mo)"
           }
