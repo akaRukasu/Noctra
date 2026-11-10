@@ -732,6 +732,11 @@ class Lookup:
         found = self._find()
         if found is None and wake_player():
             found = self._find()
+        # Interface en train de se reconstruire (page qui change) : nouvelle recherche pendant 5 s au plus.
+        deadline = monotonic() + 5
+        while found is None and monotonic() < deadline:
+            sleep(.2)
+            found = self._find()
         if found is None:
             raise LookupError("Control not found: " + self.auto_id)
         return found
@@ -901,11 +906,18 @@ def check_episode_flow():
     control("ChaptersButton").invoke()
     wake_player()
     timeline = control("Timeline").rectangle()
-    win32api.SetCursorPos((timeline.left + int(timeline.width() * .92), (timeline.top + timeline.bottom) // 2)); sleep(.2)
+    win32api.SetCursorPos((timeline.left + int(timeline.width() * .85), (timeline.top + timeline.bottom) // 2)); sleep(.2)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0); sleep(.05); win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
-    until(lambda: control("UpNextTitle").exists(timeout=.1) and "Venomous" in control("UpNextTitle").window_text(), "« À suivre » missing at the end of the episode", timeout=20)
-    screenshot("a-suivre")
+    def traced(text):
+        log = profile / "trace.log"
+        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
+    # Journal du lecteur : la carte a bien été affichée (plus fiable qu'un sondage de l'interface pendant ses 10 s).
+    until(lambda: traced("à suivre affiché episode-next"), "« À suivre » missing at the end of the episode", timeout=30)
+    if control("UpNextTitle").exists(timeout=2):
+        assert "Venomous" in control("UpNextTitle").window_text(), "« À suivre » does not name the next episode"
+        screenshot("a-suivre")
     until(lambda: plays("episode-next") > 0, "The next episode did not start by itself", timeout=40)
+    assert traced("épisode suivant episode-next (compte à rebours)") or traced("épisode suivant episode-next (fin du fichier)"), "The next episode started for another reason"
     until(lambda: control("MediaTitle").window_text() == "Venomous", "The player did not switch to the next episode")
     control("ReturnButton").invoke()
     print("OK · Série : épisode précédent / suivant, chapitres, « À suivre » et épisode suivant lancé seul (comme la PWA).", flush=True)

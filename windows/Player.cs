@@ -144,7 +144,7 @@ public partial class MainWindow
     {
         if (playQueue.Length > 1 && playQueueIndex + step >= 0 && playQueueIndex + step < playQueue.Length) { PlayQueueStep(step); return; }
         if (active is not { } state || InSyncGroup) return;
-        if (step > 0) PlayNextEpisode(state);
+        if (step > 0) PlayNextEpisode(state, "bouton épisode suivant");
         else if (state.Previous is { } previous && !state.Advancing)
         {
             state.Advancing = true;
@@ -241,27 +241,29 @@ public partial class MainWindow
             UpNextTitle.Text = (next.ParentIndexNumber is { } season ? $"S{season} · " : "") + (next.IndexNumber is { } number ? $"É{number} — " : "") + next.Name;
             UpNextCard.Visibility = Visibility.Visible;
             UpdateSkipOverlay();
+            Trace($"à suivre affiché {next.Id} à {at:0.0} s sur {duration:0.0} s");
         }
         if (UpNextCard.Visibility != Visibility.Visible) return;
         if (!paused && DateTime.UtcNow >= state.UpNextTick)
         {
             state.UpNextLeft--; state.UpNextTick = DateTime.UtcNow.AddSeconds(1);
-            if (state.UpNextLeft <= 0) { PlayNextEpisode(state); return; }
+            if (state.UpNextLeft <= 0) { PlayNextEpisode(state, "compte à rebours"); return; }
         }
         UpNextStatus.Text = paused ? "En pause · lecture automatique à la reprise" : $"Lecture automatique dans {state.UpNextLeft} s";
     }
 
-    private void PlayNextEpisode(ActivePlayback state)
+    private void PlayNextEpisode(ActivePlayback state, string reason)
     {
         if (state.Next is not { } next || state.Advancing || active != state) return;
         state.Advancing = true;
+        Trace($"épisode suivant {next.Id} ({reason})");
         UpNextCard.Visibility = Visibility.Collapsed;
         if (playQueueIndex + 1 < playQueue.Length && playQueue[playQueueIndex + 1].Id == next.Id) { PlayQueueStep(1); return; }
         FinishPlayback(refresh: false);
         StartPlayback(next, 0);
     }
 
-    private void UpNextPlayClick(object sender, RoutedEventArgs args) { if (active is { } state) PlayNextEpisode(state); }
+    private void UpNextPlayClick(object sender, RoutedEventArgs args) { if (active is { } state) PlayNextEpisode(state, "Lire maintenant"); }
     private void UpNextLaterClick(object sender, RoutedEventArgs args)
     {
         // « Plus tard » : la lecture s'arrête à la fin de l'épisode.
@@ -420,7 +422,7 @@ public partial class MainWindow
                 {
                     state.Position = engine.Seconds("duration") ?? state.Duration;
                     if (state.Session.Local) SaveOfflinePosition(state, finished: true);
-                    if (!InSyncGroup && state.Next != null && !state.StopAtEnd) PlayNextEpisode(state);
+                    if (!InSyncGroup && state.Next != null && !state.StopAtEnd) PlayNextEpisode(state, "fin du fichier");
                     else if (!InSyncGroup && !state.StopAtEnd && playQueueIndex + 1 < playQueue.Length) PlayQueueStep(1);
                     else FinishPlayback(capture: false);
                 }
