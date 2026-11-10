@@ -395,7 +395,8 @@ public partial class MainWindow
             body.Children.Add(statsText);
             statsPopup = new Popup
             {
-                AllowsTransparency = true, Placement = PlacementMode.Relative, HorizontalOffset = 18, VerticalOffset = 18, IsHitTestVisible = false, Focusable = false,
+                // Fenêtre visible des outils d'accessibilité (une fenêtre « traversable » en est exclue).
+                AllowsTransparency = true, Placement = PlacementMode.Relative, HorizontalOffset = 18, VerticalOffset = 18, Focusable = false,
                 Child = new Border { Background = ColorOf("#E0090A10"), BorderBrush = ColorOf("#33FFFFFF"), BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(12), Padding = new Thickness(16, 12, 18, 12), Child = body }
             };
