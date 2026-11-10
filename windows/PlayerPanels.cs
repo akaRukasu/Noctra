@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
@@ -90,6 +91,11 @@ public partial class MainWindow
             CornerRadius = new CornerRadius(18), Padding = new Thickness(20, 16, 20, 18),
             MaxHeight = Math.Max(280, Player.ActualHeight - 210), MaxWidth = Math.Max(360, Player.ActualWidth - 60)
         };
+        // Le contenu d'une fenêtre superposée hérite de la police du bouton d'ancrage (police d'icônes) :
+        // police du texte imposée, sinon les libellés s'affichent en carrés.
+        TextElement.SetFontFamily(playerPanelBody, FontFamily);
+        TextElement.SetFontSize(playerPanelBody, 13.5);
+        TextElement.SetForeground(playerPanelBody, BrushFor("Ink"));
         AutomationProperties.SetAutomationId(playerPanelBody, automationId);
         playerPanelBody.PreviewKeyDown += (_, key) =>
         {
@@ -402,7 +408,7 @@ public partial class MainWindow
         }
         row.Children.Add(PanelChip("−0,5 s", false, () => Shift(-.5)));
         row.Children.Add(PanelChip("−0,1 s", false, () => Shift(-.1)));
-        var readout = Text(value.ToString("+0.0;−0.0;0,0", CultureInfo.GetCultureInfo("fr-FR")) + " s", 14, true);
+        var readout = Text(value.ToString("+0.0;−0.0;0.0", CultureInfo.GetCultureInfo("fr-FR")) + " s", 14, true);
         readout.MinWidth = 64;
         readout.TextAlignment = TextAlignment.Center;
         readout.VerticalAlignment = VerticalAlignment.Center;

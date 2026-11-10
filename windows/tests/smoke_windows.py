@@ -1280,6 +1280,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         control("SkipCredits").invoke()
         until(lambda: "0:00:24" in control("PositionLabel").window_text() or "0:00:25" in control("PositionLabel").window_text(),
               "Skip credits did not seek")
+        wake_player()
         screenshot("lecture")
         control("PauseButton").invoke()
         until(lambda: control("PauseButton").window_text() == "Reprendre", "Pause failed")
