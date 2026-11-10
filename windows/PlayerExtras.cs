@@ -84,23 +84,6 @@ public partial class MainWindow
             LyricCurrent.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(.25, 1, TimeSpan.FromMilliseconds(260)));
     }
 
-    // ---------- Chapitres ----------
-
-    private MenuItem? ChaptersMenu()
-    {
-        if (active is not { Chapters.Length: > 1 } state) return null;
-        var root = new MenuItem { Header = "Chapitres" };
-        foreach (var chapter in state.Chapters.Take(80))
-        {
-            var seconds = chapter.StartPositionTicks / (double)TimeSpan.TicksPerSecond;
-            var entry = new MenuItem { Header = FormatTime(seconds) + "   " + (string.IsNullOrWhiteSpace(chapter.Name) ? "Chapitre" : chapter.Name),
-                IsCheckable = true, IsChecked = seconds <= state.Position && state.Chapters.All(other => other.StartPositionTicks <= chapter.StartPositionTicks || other.StartPositionTicks / (double)TimeSpan.TicksPerSecond > state.Position) };
-            entry.Click += (_, _) => UserSeek(seconds);
-            root.Items.Add(entry);
-        }
-        return root;
-    }
-
     // ---------- Détails de lecture : vignettes de progression ----------
 
     private sealed class Trickplay(string itemId, string sourceId, int width, TrickplayInfo info)
@@ -161,7 +144,7 @@ public partial class MainWindow
             HideSeekPreview();
             return;
         }
-        var fraction = Math.Clamp((x - 8) / Math.Max(1, Timeline.ActualWidth - 16), 0, 1);
+        var fraction = Math.Clamp((x - 1) / Math.Max(1, Timeline.ActualWidth - 2), 0, 1);
         var seconds = fraction * state.Duration;
         seekTime.Text = FormatTime(seconds);
         var width = 76.0;
@@ -249,40 +232,13 @@ public partial class MainWindow
     private void PlayerNotice(string text)
     {
         PlayerHint.Text = text;
+        Osd(text);
         playerNoticeTimer.Stop();
         playerNoticeTimer.Tick -= ClearPlayerNotice;
         playerNoticeTimer.Tick += ClearPlayerNotice;
         playerNoticeTimer.Start();
     }
     private void ClearPlayerNotice(object? sender, EventArgs args) { playerNoticeTimer.Stop(); PlayerHint.Text = ""; }
-
-    private async Task SearchSubtitles(Jellyfin account, ActivePlayback state, string language, Button anchor)
-    {
-        PlayerNotice("Recherche de sous-titres…");
-        JsonElement[] results;
-        try { results = (await account.RemoteSubtitles(state.Session.ItemId, language, lifetime.Token)).List(); }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException)
-        {
-            PlayerNotice("Recherche indisponible : le serveur n’a pas d’extension de sous-titres en ligne configurée.");
-            return;
-        }
-        if (active != state) return;
-        PlayerNotice(results.Length == 0 ? "Aucun sous-titre trouvé dans cette langue." : results.Length + " sous-titre(s) trouvé(s).");
-        var menu = new ContextMenu { PlacementTarget = anchor, Placement = PlacementMode.Top };
-        if (results.Length == 0) menu.Items.Add(new MenuItem { Header = "Aucun sous-titre trouvé", IsEnabled = false });
-        foreach (var result in results.Take(18))
-        {
-            var id = result.Str("Id");
-            if (id.Length is 0 or > 400) continue;
-            var downloads = result.Num("DownloadCount");
-            var entry = new MenuItem { Header = string.Join(" · ", new[] { result.Str("Name"), result.Str("ProviderName"), result.Str("Format"),
-                downloads > 0 ? downloads.ToString("N0", CultureInfo.CurrentCulture) + " téléchargements" : "" }.Where(part => part.Length > 0)) };
-            entry.Click += (_, _) => _ = DownloadSubtitle(account, state, id);
-            menu.Items.Add(entry);
-        }
-        trackMenu = menu;
-        menu.IsOpen = true;
-    }
 
     private async Task DownloadSubtitle(Jellyfin account, ActivePlayback state, string subtitle)
     {
@@ -312,62 +268,6 @@ public partial class MainWindow
         {
             PlayerNotice("Le serveur n’a pas pu télécharger ce sous-titre.");
         }
-    }
-
-    // ---------- Réglages du lecteur ----------
-
-    private void PlayerSettings(object sender, RoutedEventArgs args)
-    {
-        var button = (Button)sender;
-        var engine = CurrentEngine;
-        if (engine == null) return;
-        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Top };
-        var live = pendingLive != null;
-        var speed = new MenuItem { Header = SyncControls ? "Vitesse de lecture (réglée par le groupe)" : "Vitesse de lecture", IsEnabled = !live && !SyncControls };
-        var current = engine.Seconds("speed") ?? 1;
-        foreach (var value in new[] { .5, .75, 1, 1.25, 1.5, 1.75, 2 })
-        {
-            var entry = new MenuItem { Header = value == 1 ? "Normale" : "×" + value.ToString("0.##", CultureInfo.CurrentCulture), IsCheckable = true, IsChecked = Math.Abs(current - value) < .01 };
-            entry.Click += (_, _) => SetSpeed(value);
-            speed.Items.Add(entry);
-        }
-        menu.Items.Add(speed);
-        if (ChaptersMenu() is { } chapters) menu.Items.Add(chapters);
-        menu.Items.Add(DelayMenu(engine, "Décalage des sous-titres", "sub-delay"));
-        menu.Items.Add(DelayMenu(engine, "Décalage audio", "audio-delay"));
-        var aspect = new MenuItem { Header = "Format de l’image", IsEnabled = active?.Session.Audio != true };
-        foreach (var (label, ratio, panscan) in new[] { ("Automatique", "-1", "0"), ("Remplir l’écran (rogner)", "-1", "1"), ("16:9", "16:9", "0"), ("4:3", "4:3", "0"), ("2.39:1 (cinémascope)", "2.39", "0") })
-        {
-            var entry = new MenuItem { Header = label };
-            entry.Click += (_, _) => { Command("set", "video-aspect-override", ratio); Command("set", "panscan", panscan); };
-            aspect.Items.Add(entry);
-        }
-        menu.Items.Add(aspect);
-        menu.Items.Add(new Separator());
-        var stats = new MenuItem { Header = "Statistiques de lecture · I", IsCheckable = true, IsChecked = statsPopup?.IsOpen == true };
-        stats.Click += (_, _) => ShowStats(statsPopup?.IsOpen != true);
-        menu.Items.Add(stats);
-        var mini = new MenuItem { Header = miniPlayer ? "Quitter le mini-lecteur · P" : "Mini-lecteur au premier plan · P" };
-        mini.Click += (_, _) => SetMiniPlayer(!miniPlayer);
-        menu.Items.Add(mini);
-        trackMenu = menu;
-        menu.IsOpen = true;
-    }
-
-    private MenuItem DelayMenu(Mpv engine, string title, string property)
-    {
-        var value = engine.Seconds(property) ?? 0;
-        var root = new MenuItem { Header = title + " (" + value.ToString("+0.0;−0.0;0", CultureInfo.CurrentCulture) + " s)" };
-        foreach (var (label, delta) in new[] { ("−0,5 s", -.5), ("−0,1 s", -.1), ("+0,1 s", .1), ("+0,5 s", .5) })
-        {
-            var entry = new MenuItem { Header = label };
-            entry.Click += (_, _) => Command("add", property, delta.ToString("0.0", CultureInfo.InvariantCulture));
-            root.Items.Add(entry);
-        }
-        var reset = new MenuItem { Header = "Réinitialiser" };
-        reset.Click += (_, _) => Command("set", property, "0");
-        root.Items.Add(reset);
-        return root;
     }
 
     // ---------- Statistiques ----------
@@ -464,11 +364,13 @@ public partial class MainWindow
             Top = screen.Bottom / scale - Height - 24;
             Topmost = true;
             FrameHeader.Visibility = Visibility.Collapsed;
-            PlayerHeader.Visibility = Visibility.Collapsed;
-            foreach (var element in new UIElement[] { VolumeControl, PositionLabel, BackwardButton, ForwardButton })
+            ClosePlayerPanel();
+            // Mini-lecteur : commandes essentielles seulement (lecture, sous-titres, retour à la fenêtre).
+            foreach (var element in new UIElement[] { VolumeControl, MuteButton, PositionLabel, EndsAtLabel, BackwardButton, ForwardButton, SettingsButton, LiveServerButton, PlayerHint })
                 element.Visibility = Visibility.Collapsed;
+            PlayerControls.Padding = new Thickness(14, 34, 14, 10);
             SizeHeader();
-            AttachFloatingControls();
+            UpdateOverlayMode();
             MiniButton.Content = "";
             AutomationProperties.SetName(MiniButton, "Quitter le mini-lecteur");
             WakeFullscreenControls(force: true);
@@ -485,14 +387,13 @@ public partial class MainWindow
             Height = miniRestoreBounds.Height;
             WindowState = miniRestoreState;
             FrameHeader.Visibility = Visibility.Visible;
-            PlayerHeader.Visibility = Visibility.Visible;
-            VolumeControl.Visibility = PositionLabel.Visibility = Visibility.Visible;
-            if (pendingLive == null)
-            {
-                BackwardButton.Visibility = ForwardButton.Visibility = Visibility.Visible;
-                RestoreDockedControls();
-            }
-            else WakeFullscreenControls(force: true);
+            foreach (var element in new UIElement[] { VolumeControl, MuteButton, PositionLabel, EndsAtLabel, SettingsButton, PlayerHint })
+                element.Visibility = Visibility.Visible;
+            PlayerControls.Padding = new Thickness(28, 56, 28, 18);
+            if (pendingLive == null) BackwardButton.Visibility = ForwardButton.Visibility = Visibility.Visible;
+            else LiveServerButton.Visibility = pendingLive.Streams.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+            UpdateOverlayMode();
+            WakeFullscreenControls(force: true);
             MiniButton.Content = "";
             AutomationProperties.SetName(MiniButton, "Mini-lecteur");
             SizeHeader();

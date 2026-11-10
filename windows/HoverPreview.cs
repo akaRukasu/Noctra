@@ -41,7 +41,9 @@ public partial class MainWindow
             hoverWatch.Tick += (_, _) =>
             {
                 if (hoverPopup?.IsOpen != true) { hoverWatch.Stop(); return; }
-                if (hoverPanel?.IsMouseOver != true && hoverCard?.IsMouseOver != true) CloseHoverPreview();
+                // Position réelle du pointeur (l'état « survolé » de WPF n'est pas mis à jour quand le
+                // pointeur part directement vers la barre de titre ou hors de la fenêtre).
+                if (!PointerInside(hoverPanel) && !PointerInside(hoverCard)) CloseHoverPreview();
             };
             Scroller.ScrollChanged += (_, args) => { if (args.VerticalChange != 0) CloseHoverPreview(); };
             Deactivated += (_, _) => CloseHoverPreview();
@@ -57,6 +59,20 @@ public partial class MainWindow
             hoverDelay.Start();
         };
         card.MouseLeave += (_, _) => { if (hoverPending?.Card == card && hoverPopup?.IsOpen != true) hoverDelay.Stop(); };
+    }
+
+    private static bool PointerInside(FrameworkElement? element)
+    {
+        if (element is not { IsVisible: true } || PresentationSource.FromVisual(element) == null) return false;
+        try
+        {
+            var first = element.PointToScreen(new Point());
+            var last = element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight));
+            var pointer = System.Windows.Forms.Cursor.Position;
+            return pointer.X >= Math.Min(first.X, last.X) && pointer.X < Math.Max(first.X, last.X) &&
+                pointer.Y >= Math.Min(first.Y, last.Y) && pointer.Y < Math.Max(first.Y, last.Y);
+        }
+        catch (InvalidOperationException) { return false; }
     }
 
     private void CloseHoverPreview()

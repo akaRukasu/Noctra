@@ -74,8 +74,14 @@ public partial class MainWindow
         pendingStartTicks = startTicks;
         pendingSynchronized = synchronized;
         pendingLocalFile = localFile;
-        MediaTitle.Text = item.Type == "Episode" ? item.DisplayTitle + " · " + item.Caption :
-            item.IsAudio ? item.Name + (item.Caption.Length > 0 ? " · " + item.Caption : "") : item.DisplayTitle;
+        // 0.8 : en-tête : nom de la série (ou type de média) au-dessus, titre en grand, détail dessous.
+        MediaEyebrow.Text = item.Type == "Episode" && !string.IsNullOrWhiteSpace(item.SeriesName) ? item.SeriesName.ToUpperInvariant() :
+            item.IsAudio ? "MUSIQUE" : localFile != null ? "HORS CONNEXION" : "LECTURE EN COURS";
+        MediaTitle.Text = item.Type == "Episode" ? item.Name : item.IsAudio ? item.Name : item.DisplayTitle;
+        MediaSubtitle.Text = item.Type == "Episode" || item.IsAudio ? item.Caption : item.ProductionYear is { } year ? year.ToString(CultureInfo.InvariantCulture) : "";
+        MediaSubtitle.Visibility = MediaSubtitle.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LiveDot.Visibility = LiveServerButton.Visibility = Visibility.Collapsed;
+        ResetTimelineDecorations();
         PrepareAudioStage(item);
         QueuePrevious.Visibility = QueueNext.Visibility = playQueue.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
         QueuePrevious.IsEnabled = playQueueIndex > 0;
@@ -86,6 +92,7 @@ public partial class MainWindow
         Timeline.IsEnabled = false;
         PositionLabel.Text = "";
         SkipCredits.Visibility = Visibility.Collapsed;
+        UpdateSkipOverlay();
         PlaybackMode.Text = "";
         ShowPauseState(false);
         if (File.Exists(Mpv.LibraryPath)) _ = OpenPlayback(item);
@@ -275,7 +282,8 @@ public partial class MainWindow
         var positionTicks = state.Position * TimeSpan.TicksPerSecond;
         state.CurrentCredits = state.Credits.FirstOrDefault(segment => segment.StartTicks <= positionTicks &&
             segment.EndTicks - TimeSpan.TicksPerMillisecond * 250 > positionTicks);
-        SkipCredits.Visibility = state.CurrentCredits != null ? Visibility.Visible : Visibility.Collapsed;
+        var credits = state.CurrentCredits != null ? Visibility.Visible : Visibility.Collapsed;
+        if (SkipCredits.Visibility != credits) { SkipCredits.Visibility = credits; UpdateSkipOverlay(); }
         var paused = engine.Paused;
         ShowPauseState(paused);
         if (!seeking && state.Duration > 0)
@@ -285,6 +293,7 @@ public partial class MainWindow
             Timeline.IsEnabled = true;
         }
         PositionLabel.Text = FormatTime(state.Position) + " / " + FormatTime(state.Duration);
+        UpdateTimelineDecorations(engine, state);
         if (state.Synchronized) SyncTick(state, engine);
         if (state.Session.Audio) UpdateLyrics(state);
         UpdateStats(engine, state);
@@ -376,23 +385,26 @@ public partial class MainWindow
             timer.Stop();
             live.Engine?.Dispose();
             pendingLive = null;
-            LiveQualityButton.Visibility = Visibility.Collapsed;
-            BackwardButton.Visibility = ForwardButton.Visibility = Timeline.Visibility = Visibility.Visible;
-            PositionLabel.MinWidth = 118;
+            LiveQualityButton.Visibility = LiveServerButton.Visibility = LiveDot.Visibility = Visibility.Collapsed;
+            BackwardButton.Visibility = ForwardButton.Visibility = TimelineArea.Visibility = Visibility.Visible;
+            ClosePlayerPanel();
             if (fullscreen) SetFullscreen(false);
-            RestoreDockedControls();
             Player.Visibility = Visibility.Collapsed;
+            UpdateOverlayMode();
             if (!closing) LibraryShell.Visibility = Visibility.Visible;
             return;
         }
         if (pendingMedia == null && active == null) return;
         installation?.Cancel();
+        ClosePlayerPanel();
         ReleasePlayback(capture);
         pendingMedia = null;
         seeking = false;
         if (fullscreen) SetFullscreen(false);
         Player.Visibility = Visibility.Collapsed;
         AudioStage.Visibility = Visibility.Collapsed;
+        SkipCredits.Visibility = Visibility.Collapsed;
+        UpdateOverlayMode();
         if (closing) return;
         if (client == null && offlineMode) { OfflineShell(); return; }
         LibraryShell.Visibility = Visibility.Visible;
@@ -436,59 +448,33 @@ public partial class MainWindow
         SeekTo(seconds);
     }
     private void SeekTo(double seconds) => Command("seek", Math.Max(0, seconds).ToString("0.000", CultureInfo.InvariantCulture), "absolute+exact");
-    private void AudioTrack(object sender, RoutedEventArgs args) => ShowTracks((Button)sender, "audio");
-    private void SubtitleTrack(object sender, RoutedEventArgs args) => ShowTracks((Button)sender, "sub");
     private Mpv? CurrentEngine => active?.Engine ?? pendingLive?.Engine;
-    private void ShowTracks(Button button, string type)
+    private void MutePlayer(object sender, RoutedEventArgs args)
     {
-        var engine = CurrentEngine;
-        if (engine == null) return;
-        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"),
-            PlacementTarget = button, Placement = PlacementMode.Top };
-        if (type == "sub" && active is { Started: true, Session.Local: false } current && client is { } account && !current.Session.Audio)
-        {
-            var search = new MenuItem { Header = "Rechercher des sous-titres en ligne" };
-            foreach (var (code, language) in new[] { ("fre", "Français"), ("eng", "Anglais"), ("spa", "Espagnol"), ("ger", "Allemand"), ("ita", "Italien"), ("por", "Portugais") })
-            {
-                var choice = new MenuItem { Header = language };
-                choice.Click += (_, _) => _ = SearchSubtitles(account, current, code, button);
-                search.Items.Add(choice);
-            }
-            menu.Items.Add(search);
-            menu.Items.Add(new Separator());
-        }
-        if (type == "sub")
-        {
-            var off = new MenuItem { Header = "Désactiver les sous-titres" };
-            off.Click += (_, _) => Command("set", "sid", "no");
-            menu.Items.Add(off);
-        }
-        var count = (int)Math.Clamp(engine.Seconds("track-list/count") ?? 0, 0, 100);
-        for (var index = 0; index < count; index++)
-        {
-            var prefix = "track-list/" + index.ToString(CultureInfo.InvariantCulture) + "/";
-            if (engine.Text(prefix + "type") != type) continue;
-            var id = (int)(engine.Seconds(prefix + "id") ?? 0);
-            var label = engine.Text(prefix + "title");
-            var lang = engine.Text(prefix + "lang");
-            var codec = engine.Text(prefix + "codec");
-            var entry = new MenuItem
-            {
-                Header = string.Join(" · ", new[] { label ?? $"Piste {id}", lang, codec }.Where(value => !string.IsNullOrWhiteSpace(value))),
-                IsCheckable = true, IsChecked = engine.Flag(prefix + "selected")
-            };
-            entry.Click += (_, _) => Command("set", type == "audio" ? "aid" : "sid", id.ToString(CultureInfo.InvariantCulture));
-            menu.Items.Add(entry);
-        }
-        if (menu.Items.Count == 0) menu.Items.Add(new MenuItem { Header = "Aucune autre piste disponible", IsEnabled = false });
-        trackMenu = menu;
-        menu.IsOpen = true;
+        Command("cycle", "mute");
+        var muted = CurrentEngine?.Flag("mute") == true;
+        ShowVolumeGlyph(muted);
+        Osd(muted ? "Son coupé" : "Son rétabli · " + VolumeControl.Value.ToString("0", CultureInfo.InvariantCulture) + " %");
     }
-    private void MutePlayer(object sender, RoutedEventArgs args) => Command("cycle", "mute");
     private void ChangeVolume(object sender, RoutedPropertyChangedEventArgs<double> args)
     {
         preferences = preferences with { Volume = args.NewValue };
         Command("set", "volume", args.NewValue.ToString("0", CultureInfo.InvariantCulture));
+        if (IsLoaded) ShowVolumeGlyph(CurrentEngine?.Flag("mute") == true);
+    }
+    // Molette, flèches haut / bas : volume par pas de 5, affiché sur l'image.
+    private void ChangeVolumeBy(double delta)
+    {
+        if (CurrentEngine == null) return;
+        VolumeControl.Value = Math.Clamp(Math.Round((VolumeControl.Value + delta) / 5) * 5, 0, 100);
+        if (CurrentEngine?.Flag("mute") == true && delta > 0) Command("set", "mute", "no");
+        ShowVolumeGlyph(CurrentEngine?.Flag("mute") == true);
+        Osd("Volume " + VolumeControl.Value.ToString("0", CultureInfo.InvariantCulture) + " %");
+    }
+    private void ShowVolumeGlyph(bool muted)
+    {
+        var glyph = muted || VolumeControl.Value <= 0 ? "\uE74F" : VolumeControl.Value < 34 ? "\uE993" : VolumeControl.Value < 67 ? "\uE994" : "\uE995";
+        if (!Equals(MuteButton.Content, glyph)) MuteButton.Content = glyph;
     }
     private void SkipCreditsClick(object sender, RoutedEventArgs args)
     {
@@ -547,22 +533,26 @@ public partial class MainWindow
         externalPlayer?.Close();
         externalPlayer = null;
         pendingLive = new LivePlayback(streams);
+        MediaEyebrow.Text = "EN DIRECT";
         MediaTitle.Text = name;
+        MediaSubtitle.Visibility = Visibility.Collapsed;
+        LiveDot.Visibility = Visibility.Visible;
         LibraryShell.Visibility = Visibility.Collapsed;
         Player.Visibility = Visibility.Visible;
         PlaybackMode.Text = "EN DIRECT";
         Timeline.IsEnabled = false;
         Timeline.Value = 0;
+        ResetTimelineDecorations();
         PositionLabel.Text = "DIRECT";
-        PositionLabel.MinWidth = 60;
         LiveQualityButton.Visibility = Visibility.Visible;
         LiveQualityButton.Content = "Qualité";
-        BackwardButton.Visibility = ForwardButton.Visibility = Timeline.Visibility = Visibility.Collapsed;
+        BackwardButton.Visibility = ForwardButton.Visibility = TimelineArea.Visibility = Visibility.Collapsed;
+        QueuePrevious.Visibility = QueueNext.Visibility = Visibility.Collapsed;
         SkipCredits.Visibility = Visibility.Collapsed;
         if (File.Exists(Mpv.LibraryPath)) OpenLive(pendingLive);
         else Notice("Installez mpv pour lire le direct dans Noctra.", install: true);
         Player.UpdateLayout();
-        AttachFloatingControls();
+        UpdateOverlayMode();
         WakeFullscreenControls(force: true);
     }
 
@@ -580,6 +570,11 @@ public partial class MainWindow
                 PlaybackNotice.Visibility = Visibility.Collapsed;
                 PlayerControls.Visibility = Visibility.Visible;
                 PlaybackMode.Text = $"Connexion au serveur {state.Next} / {state.Streams.Length}…";
+                // 0.8 : serveur en cours, et passage manuel au suivant depuis le lecteur.
+                LiveServerButton.Content = $"Serveur {state.Next} / {state.Streams.Length}";
+                LiveServerButton.Visibility = state.Streams.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+                MediaSubtitle.Text = state.Streams.Length > 1 ? $"Serveur {state.Next} sur {state.Streams.Length}" : "";
+                MediaSubtitle.Visibility = MediaSubtitle.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 state.Engine = new Mpv(surface.Handle, null, 0, stream.NoctraToken, live: true);
                 ApplyPlayerPreferences(state.Engine);
                 state.Engine.Load(stream.Url);
@@ -598,6 +593,15 @@ public partial class MainWindow
         if (fullscreen) SetFullscreen(false);
         PlaybackMode.Text = "";
         Notice("Aucun des flux sélectionnés n’a démarré. Revenez à la chaîne pour essayer un autre serveur.");
+    }
+
+    private void NextLiveServer(object sender, RoutedEventArgs args)
+    {
+        if (pendingLive is not { Streams.Length: > 1 } state) return;
+        if (state.Next >= state.Streams.Length) state.Next = 0;
+        Osd("Serveur " + (state.Next + 1) + " / " + state.Streams.Length + "…");
+        OpenLive(state);
+        WakeFullscreenControls(force: true);
     }
 
     private void TickLive(LivePlayback state)

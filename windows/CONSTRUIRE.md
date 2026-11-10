@@ -1,4 +1,4 @@
-# Construire Noctra Windows 0.7.0
+# Construire Noctra Windows 0.8.0
 
 ## Application
 

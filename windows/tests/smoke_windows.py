@@ -649,8 +649,71 @@ def until(condition, description, timeout=20):
     raise AssertionError(f"{description} (last UI error: {last})")
 
 
+class Lookup:
+    """0.8 : commandes du lecteur dans des fenêtres superposées (en-tête, commandes, « Passer le
+    générique ») qui s'effacent pendant la lecture. Recherche dans la fenêtre principale, puis dans
+    les fenêtres superposées du processus ; une action réveille les commandes (pointeur sur l'image)."""
+
+    def __init__(self, auto_id, kind=None):
+        self.auto_id, self.kind = auto_id, kind
+
+    def _find(self):
+        spec = window.child_window(auto_id=self.auto_id, **({"control_type": self.kind} if self.kind else {}))
+        if spec.exists(timeout=0):
+            return spec.wrapper_object()
+        for root in Desktop(backend="uia").windows():
+            if root.process_id() != process.pid or root.handle == window.handle:
+                continue
+            for item in root.descendants(**({"control_type": self.kind} if self.kind else {})):
+                if item.element_info.automation_id == self.auto_id:
+                    return item
+        return None
+
+    def exists(self, timeout=0):
+        deadline = monotonic() + (timeout or 0)
+        while True:
+            if self._find() is not None:
+                return True
+            if monotonic() >= deadline:
+                return False
+            sleep(.1)
+
+    def _resolve(self):
+        found = self._find()
+        if found is None and wake_player():
+            found = self._find()
+        if found is None:
+            raise LookupError("Control not found: " + self.auto_id)
+        return found
+
+    def wrapper_object(self):
+        return self._resolve()
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+
+def wake_player():
+    """Fait réapparaître les commandes du lecteur : le pointeur bouge au-dessus de l'image."""
+    try:
+        video = window.child_window(title="Surface vidéo", control_type="Pane")
+        if not video.exists(timeout=0):
+            return False
+        rect = video.rectangle()
+    except Exception:
+        return False
+    if rect.width() <= 0 or rect.height() <= 0:
+        return False
+    x, y = (rect.left + rect.right) // 2, rect.bottom - max(60, rect.height() // 5)
+    win32api.SetCursorPos((x, y - 4))
+    sleep(.05)
+    win32api.SetCursorPos((x, y))
+    sleep(.4)
+    return True
+
+
 def control(auto_id, kind=None):
-    return window.child_window(auto_id=auto_id, **({"control_type": kind} if kind else {}))
+    return Lookup(auto_id, kind)
 
 
 def by_name(name, kind="Button", **params):
@@ -832,6 +895,8 @@ def menu_item(prefix):
 
 def text_of(auto_id):
     found = process_controls("Text", auto_id=auto_id)
+    if not found and wake_player():
+        found = process_controls("Text", auto_id=auto_id)
     return found[0].window_text() if found else ""
 
 
@@ -954,24 +1019,27 @@ def check_new_features():
 
     # Statistiques de lecture.
     control("SettingsButton").invoke()
-    until(lambda: menu_item("Statistiques de lecture"), "Player settings menu missing")
-    menu_item("Statistiques de lecture").invoke()
+    until(lambda: process_controls("Button", auto_id="StatsToggle"), "Player settings panel missing")
+    sleep(.4)
+    if args.screens:
+        ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "lecteur-reglages.png")
+    process_controls("Button", auto_id="StatsToggle")[0].invoke()
     until(lambda: "Décodage" in text_of("PlaybackStats"), "Playback statistics missing")
     screenshot("statistiques")
     print("OK · Réglages du lecteur et statistiques.", flush=True)
 
     # Recherche de sous-titres en ligne, téléchargés par le serveur puis ajoutés à la lecture.
+    # 0.8 : panneau « Audio et sous-titres » (pistes et recherche en ligne au même endroit).
     control("SubtitleButton").invoke()
-    until(lambda: menu_item("Rechercher des sous-titres"), "Subtitle search entry missing")
+    until(lambda: process_controls("Button", auto_id="SubtitleSearch-fre"), "Subtitle search entry missing")
+    assert process_controls("Button", auto_id="SubtitleOff"), "Subtitle off choice missing"
+    process_controls("Button", auto_id="SubtitleSearch-fre")[0].invoke()
+    until(lambda: process_controls("Button", prefix="Teen.Wolf.S02E04.FR"), "Subtitle results missing", timeout=15)
     sleep(.4)
-    # Capture de l'écran sans changer le focus (un menu ouvert se fermerait).
+    # Capture de l'écran sans changer le focus.
     if args.screens:
         ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "menu-sous-titres.png")
-    menu_item("Rechercher des sous-titres").expand()
-    until(lambda: menu_item("Français"), "Subtitle languages missing")
-    menu_item("Français").invoke()
-    until(lambda: menu_item("Teen.Wolf.S02E04.FR"), "Subtitle results missing", timeout=15)
-    menu_item("Teen.Wolf.S02E04.FR").invoke()
+    process_controls("Button", prefix="Teen.Wolf.S02E04.FR")[0].invoke()
     until(lambda: seen("subtitle-download"), "Subtitle download not requested")
     until(lambda: seen("subtitle-stream"), "Downloaded subtitle not added to playback", timeout=30)
     print("OK · Sous-titres : recherche en ligne, téléchargement, ajout à la lecture.", flush=True)
@@ -983,7 +1051,7 @@ def check_new_features():
     assert win32gui.GetWindowLong(window.handle, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOPMOST, "Mini player is not topmost"
     sleep(.6)
     screenshot("mini-lecteur")
-    process_controls("Button", auto_id="MiniButton")[0].invoke()
+    control("MiniButton").invoke()
     until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "Window was not restored after the mini player")
     print("OK · Mini-lecteur au premier plan et restauration.", flush=True)
 
@@ -1343,6 +1411,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         assert any(name == "live-failed" for name, _, _ in events), "Unavailable mirror was not detected"
         until(lambda: control("PlaybackMode").window_text().startswith("EN DIRECT"), "TV did not start")
         idle_tv_controls()
+        screenshot("tv-lecteur")
         enter_native_fullscreen()
         target=window
         win32gui.ShowWindow(target.handle,win32con.SW_MAXIMIZE)

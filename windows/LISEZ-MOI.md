@@ -1,14 +1,23 @@
-# Noctra Windows 0.7.0
+# Noctra Windows 0.8.0
 
 Client Windows natif WPF pour Noctra et Jellyfin. Windows 11 x64.
 
 ## Installation
 
-Ouvrez **Noctra-Setup-0.7.0-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
+Ouvrez **Noctra-Setup-0.8.0-x64.exe**. L’installation se fait dans votre compte Windows, avec un raccourci dans le menu Démarrer et une entrée de désinstallation. Le lecteur mpv est téléchargé depuis son projet d’origine, vérifié par SHA-256 et installé avec l’application. Cette étape nécessite Internet.
 
 Connectez-vous ensuite avec votre compte Jellyfin. L’adresse Noctra est préremplie et peut être changée dans **Adresse du serveur**.
 
 ## Interface et lecture
+
+**Nouveau en 0.8.0** (détail dans `BILAN-0.8.0.md`) :
+- **Lecteur refait** (films, séries et TV) : image sur toute la fenêtre, commandes et titre en surimpression qui s'effacent seuls, clic sur l'image pour la pause, molette pour le volume, messages sur l'image.
+- **Panneaux du lecteur** : « Audio et sous-titres » (pistes et recherche en ligne au même endroit) et « Réglages » (vitesse, format, décalages, chapitres, outils).
+- **Barre de progression** : mémoire tampon, repères de chapitres, heure de fin ; « Passer le générique » reste visible même commandes masquées.
+- **TV** : pastille « EN DIRECT », serveur en cours et bouton « Serveur suivant » sans quitter la lecture.
+- **Accueil plus fluide** : plus d'effets de flou recalculés en continu, images en cache sur le disque, affichage progressif.
+- **Médiathèques** : tuiles à la hauteur de l'écran, grilles d'affiches sur toute la largeur.
+- **Découvrir** : champ de recherche pour trouver un film ou une série à demander.
 
 **Nouveau en 0.7.0** (détail dans `BILAN-0.7.0.md`) :
 - **Regarder ensemble (SyncPlay)** avec les autres clients Jellyfin ; télécommande de ce PC depuis un téléphone ou la PWA.

@@ -291,6 +291,126 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- 0.8 : lecteur : boutons ronds translucides, bouton lecture blanc, pastilles, barre de progression. -->
+        <Style TargetType="Button" x:Key="PlayerGlass">
+            <Setter Property="Width" Value="44"/><Setter Property="Height" Value="44"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="17"/>
+            <Setter Property="Foreground" Value="#F2FFFFFF"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="RenderTransformOrigin" Value=".5,.5"/>
+            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform/></Setter.Value></Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Body" CornerRadius="999" Background="{TemplateBinding Background}"/>
+                            <Border x:Name="Hover" CornerRadius="999" Background="#FFFFFF" Opacity="0"/>
+                            <Border x:Name="Ring" CornerRadius="999" BorderThickness="1.5" BorderBrush="Transparent"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Hover" Property="Opacity" Value=".16"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Hover" Property="Opacity" Value=".26"/>
+                                <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX=".94" ScaleY=".94"/></Setter.Value></Setter>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value=".35"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Button" x:Key="PlayerPlay" BasedOn="{StaticResource PlayerGlass}">
+            <Setter Property="Width" Value="60"/><Setter Property="Height" Value="60"/>
+            <Setter Property="FontSize" Value="22"/>
+            <Setter Property="Background" Value="#F5F4FA"/>
+            <Setter Property="Foreground" Value="#0A0A12"/>
+        </Style>
+        <Style TargetType="Button" x:Key="PlayerPill" BasedOn="{StaticResource PlayerGlass}">
+            <Setter Property="Width" Value="NaN"/><Setter Property="Height" Value="40"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable, Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Background" Value="#26FFFFFF"/>
+        </Style>
+        <Style TargetType="Button" x:Key="PanelRow">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Body" CornerRadius="10" Background="{TemplateBinding Background}"/>
+                            <Border x:Name="Hover" CornerRadius="10" Background="#FFFFFF" Opacity="0"/>
+                            <Border x:Name="Ring" CornerRadius="10" BorderThickness="1.5" BorderBrush="Transparent"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Hover" Property="Opacity" Value=".08"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Hover" Property="Opacity" Value=".14"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value=".4"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Slider" x:Key="PlayerTimeline">
+            <Setter Property="MinHeight" Value="24"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton x:Name="Played" Command="Slider.DecreaseLarge" Focusable="False" Height="5">
+                                        <RepeatButton.Template><ControlTemplate TargetType="RepeatButton">
+                                            <Border CornerRadius="2.5" Background="{StaticResource AccentGradient}"/>
+                                        </ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <!-- Curseur fin (2 px) : la partie lue s'arrête exactement à la position ; la pastille
+                                         est dessinée autour, au survol. -->
+                                    <Thumb x:Name="Knob" Width="2" Height="16" Opacity="0">
+                                        <Thumb.Template><ControlTemplate TargetType="Thumb">
+                                            <Grid Background="Transparent">
+                                                <Ellipse Fill="#40C7B3FF" Margin="-11,-4"/>
+                                                <Ellipse Fill="#FFFFFF" Margin="-7,0"/>
+                                            </Grid>
+                                        </ControlTemplate></Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False" Height="5">
+                                        <RepeatButton.Template><ControlTemplate TargetType="RepeatButton">
+                                            <Border Background="Transparent"/>
+                                        </ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Knob" Property="Opacity" Value="1"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Knob" Property="Opacity" Value="1"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Played" Property="Opacity" Value=".5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style TargetType="ScrollBar">
             <Setter Property="Width" Value="10"/>
             <Setter Property="Template">
@@ -703,44 +823,19 @@
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
             </Border>
         </Grid>
-        <Grid Grid.Row="1" x:Name="Player" Visibility="Collapsed" Background="#000000">
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <Border x:Name="PlayerHeader" Background="#07080D" Padding="18,10">
-                <DockPanel>
-                    <Button x:Name="ReturnButton" DockPanel.Dock="Left" Content="&#xE72B;" Style="{StaticResource Round}" Click="StopPlayback"
-                            Background="Transparent" ToolTip="Retour à Noctra" AutomationProperties.Name="Retour à Noctra"/>
-                    <Button DockPanel.Dock="Right" Style="{StaticResource Action}" Click="OpenCast" Margin="10,0,0,0" AutomationProperties.Name="Diffuser">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xEC15;" FontFamily="{StaticResource IconFont}" FontSize="15" VerticalAlignment="Center" Margin="0,0,9,0"/>
-                            <TextBlock Text="Diffuser" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Border DockPanel.Dock="Right" CornerRadius="8" Background="#14FFFFFF" Padding="11,6" VerticalAlignment="Center">
-                        <TextBlock x:Name="PlaybackMode" Foreground="#C3C8D8" FontSize="12" FontWeight="SemiBold"/>
-                    </Border>
-                    <!-- 0.7 : regarder ensemble (SyncPlay). -->
-                    <Button x:Name="SyncButton" DockPanel.Dock="Right" Content="&#xE716;" Style="{StaticResource Round}" Background="Transparent" Click="SyncMenu"
-                            Margin="0,0,8,0" ToolTip="Regarder ensemble (SyncPlay)" AutomationProperties.Name="Regarder ensemble"/>
-                    <Border x:Name="SyncBadge" DockPanel.Dock="Right" CornerRadius="8" Padding="11,6" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed"
-                            Background="{StaticResource AccentGradient}">
-                        <TextBlock x:Name="SyncBadgeText" Foreground="#0A0A12" FontSize="12" FontWeight="Bold" AutomationProperties.AutomationId="SyncBadgeText"/>
-                    </Border>
-                    <StackPanel Margin="12,0" VerticalAlignment="Center">
-                        <TextBlock Text="LECTURE EN COURS" Foreground="{StaticResource Accent}" FontSize="10" FontWeight="Bold"/>
-                        <TextBlock x:Name="MediaTitle" FontFamily="{StaticResource DisplayFont}" FontSize="17" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
-                    </StackPanel>
-                </DockPanel>
-            </Border>
-            <integration:WindowsFormsHost Grid.Row="1" x:Name="VideoHost" Visibility="Collapsed"/>
-            <!-- 0.7 : écoute musicale : pochette en grand sur son propre reflet flouté. -->
-            <Grid Grid.Row="1" x:Name="AudioStage" Visibility="Collapsed" ClipToBounds="True" Background="#07080D">
+        <!-- 0.8 : lecteur plein cadre. La vidéo occupe tout l'espace ; l'en-tête et les commandes
+             flottent par-dessus (fenêtres superposées) et s'effacent seuls pendant la lecture. -->
+        <Grid Grid.Row="1" x:Name="Player" Visibility="Collapsed" Background="#000000" ClipToBounds="True">
+            <integration:WindowsFormsHost x:Name="VideoHost" Visibility="Collapsed"/>
+            <!-- Écoute musicale : pochette en grand sur son propre reflet flouté. -->
+            <Grid x:Name="AudioStage" Visibility="Collapsed" ClipToBounds="True" Background="#07080D">
                 <Image x:Name="AudioBackdrop" Stretch="UniformToFill" Opacity=".55" RenderOptions.BitmapScalingMode="Linear"/>
                 <Border>
                     <Border.Background>
                         <RadialGradientBrush RadiusX=".9" RadiusY=".9"><GradientStop Color="#5507080D" Offset="0"/><GradientStop Color="#F207080D" Offset="1"/></RadialGradientBrush>
                     </Border.Background>
                 </Border>
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="40">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="40,96,40,170">
                     <Border Width="300" Height="300" CornerRadius="22" Background="#1C1F2C" HorizontalAlignment="Center" ClipToBounds="True">
                         <Border.Effect><DropShadowEffect BlurRadius="60" ShadowDepth="16" Opacity=".7" Color="#000000"/></Border.Effect>
                         <Grid>
@@ -763,7 +858,7 @@
                     </StackPanel>
                 </StackPanel>
             </Grid>
-            <StackPanel Grid.Row="1" x:Name="PlaybackNotice" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="600" Margin="28">
+            <StackPanel x:Name="PlaybackNotice" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="600" Margin="28">
                 <Border Width="56" Height="56" CornerRadius="16" Background="{StaticResource AccentGradient}" HorizontalAlignment="Center" Margin="0,0,0,22">
                     <TextBlock Text="N" FontSize="30" Foreground="#0A0A12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
@@ -774,61 +869,117 @@
                 <Button x:Name="RetryPlaybackButton" Content="Réessayer la lecture" Style="{StaticResource Primary}"
                         Margin="0,14,0,0" HorizontalAlignment="Center" Visibility="Collapsed" Click="RetryPlayback"/>
             </StackPanel>
-            <!-- Commandes : sous la vidéo en fenêtre, flottantes (dégradé) en plein écran et en direct. -->
-            <Border Grid.Row="2" x:Name="PlayerControls" Padding="28,8,28,18">
+            <!-- En-tête : retour, titre, regarder ensemble, mode de lecture, diffusion. -->
+            <Border x:Name="PlayerHeader" VerticalAlignment="Top" Padding="22,16,22,44">
                 <Border.Background>
                     <LinearGradientBrush StartPoint=".5,0" EndPoint=".5,1">
-                        <GradientStop Color="#C0050608"/><GradientStop Color="#F2050608" Offset=".45"/><GradientStop Color="#050608" Offset="1"/>
+                        <GradientStop Color="#E6000000"/><GradientStop Color="#80000000" Offset=".55"/><GradientStop Color="#00000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <DockPanel>
+                    <Button x:Name="ReturnButton" DockPanel.Dock="Left" Content="&#xE72B;" Style="{StaticResource PlayerGlass}" Click="StopPlayback"
+                            Background="#1FFFFFFF" ToolTip="Retour à Noctra · Échap" AutomationProperties.Name="Retour à Noctra"/>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border x:Name="SyncBadge" CornerRadius="15" Padding="12,6" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed"
+                                Background="{StaticResource AccentGradient}">
+                            <TextBlock x:Name="SyncBadgeText" Foreground="#0A0A12" FontSize="12" FontWeight="Bold" AutomationProperties.AutomationId="SyncBadgeText"/>
+                        </Border>
+                        <Button x:Name="SyncButton" Content="&#xE716;" Style="{StaticResource PlayerGlass}" Click="SyncMenu"
+                                Margin="0,0,8,0" ToolTip="Regarder ensemble (SyncPlay)" AutomationProperties.Name="Regarder ensemble"/>
+                        <Border CornerRadius="15" Background="#26FFFFFF" Padding="12,6" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="LiveDot" Width="8" Height="8" Fill="#FF5468" Margin="0,0,8,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="PlaybackMode" Foreground="#E6E8F0" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <Button Content="&#xEC15;" Style="{StaticResource PlayerGlass}" Click="OpenCast" Margin="8,0,0,0"
+                                ToolTip="Diffuser sur un autre écran" AutomationProperties.Name="Diffuser"/>
+                    </StackPanel>
+                    <StackPanel Margin="16,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="MediaEyebrow" Text="LECTURE EN COURS" Foreground="{StaticResource Accent}" FontSize="11" FontWeight="Bold"/>
+                        <TextBlock x:Name="MediaTitle" FontFamily="{StaticResource DisplayFont}" FontSize="22" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                        <TextBlock x:Name="MediaSubtitle" FontSize="13" Foreground="#C3C8D8" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Visibility="Collapsed"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <!-- Commandes : barre de progression (mémoire tampon, chapitres) et boutons. -->
+            <Border x:Name="PlayerControls" VerticalAlignment="Bottom" Padding="28,56,28,18">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint=".5,0" EndPoint=".5,1">
+                        <GradientStop Color="#00000000"/><GradientStop Color="#99000000" Offset=".4"/><GradientStop Color="#F0000000" Offset="1"/>
                     </LinearGradientBrush>
                 </Border.Background>
                 <StackPanel>
-                    <TextBlock x:Name="PlayerHint" Height="18" FontSize="12" Foreground="{StaticResource Muted}"/>
-                    <Slider x:Name="Timeline" IsEnabled="False" IsMoveToPointEnabled="True" AutomationProperties.Name="Position de lecture"
-                            PreviewMouseLeftButtonDown="BeginSeek" PreviewMouseLeftButtonUp="EndSeek" KeyUp="SeekKey"/>
-                    <DockPanel Margin="0,8,0,0">
+                    <TextBlock x:Name="PlayerHint" Height="18" FontSize="12" Foreground="#C3C8D8" Margin="2,0,0,4"/>
+                    <Grid x:Name="TimelineArea">
+                        <Border x:Name="TimelineRail" Height="5" CornerRadius="2.5" Background="#33FFFFFF" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        <Border x:Name="BufferBar" Height="5" CornerRadius="2.5" Background="#59FFFFFF" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                Width="0" IsHitTestVisible="False"/>
+                        <Slider x:Name="Timeline" Style="{StaticResource PlayerTimeline}" IsEnabled="False" IsMoveToPointEnabled="True" AutomationProperties.Name="Position de lecture"
+                                PreviewMouseLeftButtonDown="BeginSeek" PreviewMouseLeftButtonUp="EndSeek" KeyUp="SeekKey"/>
+                        <Canvas x:Name="ChapterMarks" IsHitTestVisible="False"/>
+                    </Grid>
+                    <DockPanel Margin="0,10,0,0">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource Action}" Click="ChooseLiveQuality" Visibility="Collapsed"
-                                    AutomationProperties.Name="Qualités TV" ToolTip="Afficher toutes les qualités du flux" Margin="0,0,8,0" MinWidth="82"/>
-                            <Button Content="&#xE8D6;" Style="{StaticResource Round}" Background="Transparent" Click="AudioTrack" ToolTip="Choisir une piste audio"
-                                    AutomationProperties.Name="Pistes audio" Margin="0,0,4,0"/>
-                            <Button x:Name="SubtitleButton" Content="&#xE7F0;" Style="{StaticResource Round}" Background="Transparent" Click="SubtitleTrack" ToolTip="Choisir ou rechercher des sous-titres"
-                                    AutomationProperties.Name="Sous-titres" Margin="0,0,4,0"/>
-                            <Button x:Name="SettingsButton" Content="&#xE713;" Style="{StaticResource Round}" Background="Transparent" Click="PlayerSettings"
-                                    ToolTip="Vitesse, décalages, format d’image, statistiques" AutomationProperties.Name="Réglages de lecture" Margin="0,0,4,0"/>
-                            <Button x:Name="MiniButton" Content="&#xE8A7;" Style="{StaticResource Round}" Background="Transparent" Click="ToggleMiniPlayer"
+                            <Button x:Name="LiveServerButton" Style="{StaticResource PlayerPill}" Click="NextLiveServer" Visibility="Collapsed" Margin="0,0,8,0"
+                                    AutomationProperties.Name="Serveur suivant" ToolTip="Passer au serveur suivant (image figée, coupures)"/>
+                            <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource PlayerPill}" Click="ChooseLiveQuality" Visibility="Collapsed"
+                                    AutomationProperties.Name="Qualités TV" ToolTip="Afficher toutes les qualités du flux" Margin="0,0,8,0" MinWidth="76"/>
+                            <Button x:Name="SubtitleButton" Content="&#xED1E;" Style="{StaticResource PlayerGlass}" Click="SubtitleTrack" ToolTip="Audio et sous-titres · C"
+                                    AutomationProperties.Name="Audio et sous-titres" Margin="0,0,4,0"/>
+                            <Button x:Name="SettingsButton" Content="&#xE713;" Style="{StaticResource PlayerGlass}" Click="PlayerSettings"
+                                    ToolTip="Vitesse, format d’image, décalages, chapitres, statistiques" AutomationProperties.Name="Réglages de lecture" Margin="0,0,4,0"/>
+                            <Button x:Name="MiniButton" Content="&#xE8A7;" Style="{StaticResource PlayerGlass}" Click="ToggleMiniPlayer"
                                     ToolTip="Mini-lecteur au premier plan · P" AutomationProperties.Name="Mini-lecteur" Margin="0,0,4,0"/>
-                            <Button x:Name="FullscreenReturn" Content="Retour" Style="{StaticResource Action}" Click="StopPlayback" Visibility="Collapsed" Margin="0,0,10,0"/>
-                            <Button x:Name="FullscreenButton" Content="&#xE740;" Style="{StaticResource Round}" Background="Transparent" Click="Fullscreen" ToolTip="Plein écran · F11"
+                            <Button x:Name="FullscreenReturn" Content="Retour" Style="{StaticResource PlayerPill}" Click="StopPlayback" Visibility="Collapsed" Margin="0,0,8,0"/>
+                            <Button x:Name="FullscreenButton" Content="&#xE740;" Style="{StaticResource PlayerGlass}" Click="Fullscreen" ToolTip="Plein écran · F ou F11"
                                     AutomationProperties.Name="Plein écran"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
-                            <Button x:Name="BackwardButton" Style="{StaticResource Round}" Background="Transparent" Click="BackFifteen" Width="52"
-                                    ToolTip="Reculer de 15 secondes · ←" AutomationProperties.Name="Reculer de 15 secondes" Margin="0,0,4,0">
-                                <TextBlock Text="−15" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="SemiBold" FontSize="14"/>
-                            </Button>
-                            <Button x:Name="QueuePrevious" Content="&#xE892;" Style="{StaticResource Round}" Background="Transparent" Click="QueuePreviousClick"
+                            <Button x:Name="QueuePrevious" Content="&#xE892;" Style="{StaticResource PlayerGlass}" Click="QueuePreviousClick"
                                     Visibility="Collapsed" ToolTip="Titre précédent" AutomationProperties.Name="Titre précédent" Margin="0,0,4,0"/>
-                            <Button x:Name="PauseButton" Content="&#xE769;" Style="{StaticResource Primary}" Click="TogglePause" Width="52" Height="52"
-                                    Padding="0" FontFamily="{StaticResource IconFont}" FontSize="20" FontWeight="Normal" HorizontalContentAlignment="Center"
-                                    AutomationProperties.Name="Pause" ToolTip="Pause · Espace" Margin="0,0,4,0"/>
-                            <Button x:Name="ForwardButton" Style="{StaticResource Round}" Background="Transparent" Click="ForwardFifteen" Width="52"
-                                    ToolTip="Avancer de 15 secondes · →" AutomationProperties.Name="Avancer de 15 secondes" Margin="0,0,4,0">
-                                <TextBlock Text="+15" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="SemiBold" FontSize="14"/>
+                            <Button x:Name="BackwardButton" Style="{StaticResource PlayerGlass}" Click="BackFifteen" Width="48" Height="48"
+                                    ToolTip="Reculer de 15 secondes · ←" AutomationProperties.Name="Reculer de 15 secondes" Margin="0,0,6,0">
+                                <Grid>
+                                    <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin=".5,.5">
+                                        <TextBlock.RenderTransform><ScaleTransform ScaleX="-1"/></TextBlock.RenderTransform>
+                                    </TextBlock>
+                                    <TextBlock Text="15" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="9" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,1,0,0"/>
+                                </Grid>
                             </Button>
-                            <Button x:Name="QueueNext" Content="&#xE893;" Style="{StaticResource Round}" Background="Transparent" Click="QueueNextClick"
+                            <Button x:Name="PauseButton" Content="&#xE769;" Style="{StaticResource PlayerPlay}" Click="TogglePause"
+                                    AutomationProperties.Name="Pause" ToolTip="Pause · Espace" Margin="0,0,6,0"/>
+                            <Button x:Name="ForwardButton" Style="{StaticResource PlayerGlass}" Click="ForwardFifteen" Width="48" Height="48"
+                                    ToolTip="Avancer de 15 secondes · →" AutomationProperties.Name="Avancer de 15 secondes" Margin="0,0,4,0">
+                                <Grid>
+                                    <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock Text="15" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="9" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,1,0,0"/>
+                                </Grid>
+                            </Button>
+                            <Button x:Name="QueueNext" Content="&#xE893;" Style="{StaticResource PlayerGlass}" Click="QueueNextClick"
                                     Visibility="Collapsed" ToolTip="Titre suivant · N" AutomationProperties.Name="Titre suivant" Margin="0,0,4,0"/>
                             <Border Width="14"/>
-                            <TextBlock x:Name="PositionLabel" Foreground="#C3C8D8" VerticalAlignment="Center" FontSize="13" MinWidth="118"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            <Button Content="&#xE767;" Style="{StaticResource Round}" Background="Transparent" Click="MutePlayer" ToolTip="Couper ou rétablir le son · M"
-                                    AutomationProperties.Name="Couper ou rétablir le son" Margin="8,0,2,0"/>
-                            <Slider x:Name="VolumeControl" Value="85" Minimum="0" Maximum="100" Width="96" VerticalAlignment="Center"
+                            <Button x:Name="MuteButton" Content="&#xE767;" Style="{StaticResource PlayerGlass}" Click="MutePlayer" ToolTip="Couper ou rétablir le son · M"
+                                    AutomationProperties.Name="Couper ou rétablir le son" Margin="0,0,2,0"/>
+                            <Slider x:Name="VolumeControl" Value="85" Minimum="0" Maximum="100" Width="92" VerticalAlignment="Center"
                                     AutomationProperties.Name="Volume" ValueChanged="ChangeVolume"/>
-                            <Button x:Name="SkipCredits" Content="Passer le générique" Style="{StaticResource Primary}" Click="SkipCreditsClick"
-                                    Visibility="Collapsed" Margin="18,0,0,0"/>
+                            <TextBlock x:Name="PositionLabel" Foreground="#E6E8F0" VerticalAlignment="Center" FontSize="13.5" Margin="18,0,0,0"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular"/>
+                            <TextBlock x:Name="EndsAtLabel" Foreground="#A3A9BC" VerticalAlignment="Center" FontSize="13" Margin="12,0,0,0"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI" Typography.NumeralAlignment="Tabular"/>
                         </StackPanel>
                     </DockPanel>
                 </StackPanel>
+            </Border>
+            <!-- Passer le générique : visible pendant le générique, même quand les commandes sont masquées. -->
+            <Border x:Name="SkipCreditsHost" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,32,150" Padding="0">
+                <Button x:Name="SkipCredits" Style="{StaticResource Primary}" Click="SkipCreditsClick" Visibility="Collapsed" MinHeight="48"
+                        AutomationProperties.Name="Passer le générique" ToolTip="Passer le générique · S">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE893;" FontFamily="{StaticResource IconFont}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#0A0A12"/>
+                        <TextBlock Text="Passer le générique" VerticalAlignment="Center" Foreground="#0A0A12"/>
+                    </StackPanel>
+                </Button>
             </Border>
         </Grid>
     </Grid>

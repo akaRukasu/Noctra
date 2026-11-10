@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Noctra</AssemblyName>
     <RootNamespace>Noctra.Windows</RootNamespace>
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <ApplicationIcon>Noctra.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- WPF owns process DPI awareness. WinForms is used only for the mpv surface. -->

@@ -61,6 +61,12 @@ internal sealed class Mpv : IDisposable
             if (audioOnly) Option("vid", "no");
             // Sans périphérique audio utilisable (casque débranché, pilote absent) : lecture muette plutôt qu'un arrêt.
             _ = mpv_set_option_string(handle, "audio-fallback-to-null", "yes");
+            // 0.8 : messages sur l'image (volume, piste, serveur…) : sobres, centrés, sur fond sombre.
+            foreach (var (key, value) in new[] { ("osd-level", "1"), ("osd-duration", "1300"), ("osd-font", "Segoe UI Variable Display"),
+                ("osd-font-size", "38"), ("osd-bold", "yes"), ("osd-color", "#FFF5F4FA"), ("osd-border-size", "3"), ("osd-border-color", "#C80A0B12"), ("osd-shadow-offset", "0"),
+                ("osd-border-style", "background-box"), ("osd-back-color", "#C80A0B12"), ("osd-align-x", "center"), ("osd-align-y", "center"),
+                ("osd-spacing", "0.4"), ("osd-bar", "no") })
+                _ = mpv_set_option_string(handle, key, value);
             Check(mpv_initialize(handle));
         }
         catch

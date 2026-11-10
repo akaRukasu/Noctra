@@ -1,4 +1,4 @@
-#define AppVersion "0.7.0"
+#define AppVersion "0.8.0"
 #ifndef PublishDir
   #define PublishDir "..\..\noctra-windows-native-publish-059"
 #endif

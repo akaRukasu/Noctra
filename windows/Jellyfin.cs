@@ -378,7 +378,7 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
 
     internal static string Authorization(string device, string? token) =>
         "MediaBrowser Client=\"Noctra Windows\", Device=\"Windows\", DeviceId=\"" + Uri.EscapeDataString(device) +
-        "\", Version=\"0.7.0\"" + (token == null ? "" : ", Token=\"" + Uri.EscapeDataString(token) + "\"");
+        "\", Version=\"0.8.0\"" + (token == null ? "" : ", Token=\"" + Uri.EscapeDataString(token) + "\"");
 
     private async Task<T> Get<T>(string path, Dictionary<string, string>? query, CancellationToken cancellation)
     {
