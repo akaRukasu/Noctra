@@ -493,11 +493,19 @@ public partial class MainWindow
             var title = Text(server.Label, 15, true); title.TextTrimming = TextTrimming.CharacterEllipsis;
             var labels = new StackPanel { Margin = new Thickness(0, 0, 20, 0) }; labels.Children.Add(title); status.Margin = new Thickness(0, 6, 0, 0); labels.Children.Add(status);
             var bar = new DockPanel(); var buttons = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(buttons, Dock.Right); bar.Children.Add(buttons); bar.Children.Add(labels);
-            var button = Action(server.Label, () => { }); button.Content = server.External != null ? "Ouvrir le lecteur" : server.BowdAd ? "Lire" : server.Resolver != null ? "Rechercher" : "Lire"; buttons.Children.Add(button);
+            // BowdTV refuse d'être affiché dans un lecteur intégré : son lecteur officiel s'ouvre dans le navigateur (comme la PWA).
+            var browserOnly = server.External is { } site && (site.Host.Equals("bowdtv.com", StringComparison.OrdinalIgnoreCase) || site.Host.EndsWith(".bowdtv.com", StringComparison.OrdinalIgnoreCase));
+            if (browserOnly) status.Text = "S'ouvre dans votre navigateur (BowdTV refuse le lecteur intégré)";
+            var button = Action(server.Label, () => { }); button.Content = browserOnly ? "Ouvrir dans le navigateur" : server.External != null ? "Ouvrir le lecteur" : server.BowdAd ? "Lire" : server.Resolver != null ? "Rechercher" : "Lire"; buttons.Children.Add(button);
             AutomationProperties.SetAutomationId(button, (server.External != null ? "ExternalServer" : "NativeServer") + serverNumber++);
             button.Click += async (_, _) =>
             {
                 if (server.Stream != null) StartLive(channel.Name, [server.Stream]);
+                else if (browserOnly)
+                {
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(server.External!.AbsoluteUri) { UseShellExecute = true }); }
+                    catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { status.Text = "Navigateur introuvable : " + server.External!.AbsoluteUri; }
+                }
                 else if (server.BowdAd && server.Resolver != null) await PlayBowd(service, channel.Name, server.Resolver, cancellation, status);
                 else if (server.External != null) OpenExternalPlayer(channel.Name, server.External, service);
                 else if (server.Resolver != null)
@@ -519,7 +527,7 @@ public partial class MainWindow
                     finally { button.IsEnabled = true; }
                 }
             };
-            if (server.External != null && !server.ManualOnly)
+            if (server.External != null && !server.ManualOnly && !browserOnly)
             {
                 // 0.8 : les lecteurs web entrent aussi dans la multivue (comme la PWA).
                 var external = server.External;
@@ -536,8 +544,10 @@ public partial class MainWindow
                 if (probes++ < 4) _ = PaintServerHealth(server.Stream, status, cancellation);
             }
             var card = new Border { Child = bar, Background = ColorOf("#0DFFFFFF"), BorderBrush = ColorOf("#17FFFFFF"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), Padding = new Thickness(20, 16, 18, 16), Margin = new Thickness(0, 0, 0, 10) };
-            var area = server.Stream != null ? directArea : server.External != null ? webArea : otherArea;
-            sections[area].Visibility = Visibility.Visible; area.Children.Add(card);
+            // Direct BowdTV après publicité : flux HLS lu par Noctra, en tête de « Lecture native » comme les serveurs des autres sources.
+            var area = server.Stream != null || server.BowdAd ? directArea : server.External != null ? webArea : otherArea;
+            sections[area].Visibility = Visibility.Visible;
+            if (server.BowdAd) area.Children.Insert(0, card); else area.Children.Add(card);
         }
         foreach (var pair in channel.Entries)
         {
@@ -560,7 +570,11 @@ public partial class MainWindow
             {
                 var result = await ResolveTv(service, account, pair.Entry.ResolverUrl!, cancellation, ResolverTimeout(pair.Entry.Provider ?? pair.Source.Name));
                 if (!cancellation.IsCancellationRequested)
+                {
                     foreach (var server in DecodeServers(service, TvProviderLabel(channel, pair.Source, pair.Entry), result, pair.Entry.ResolverUrl)) AddServer(server);
+                    // Message du fournisseur (ex. « Publicité BowdTV indisponible dans Noctra… ») : affiché, comme dans la PWA.
+                    if (!string.IsNullOrWhiteSpace(result.Message)) PageContent.Children.Add(Message((pair.Entry.Provider ?? pair.Source.Name) + " · " + result.Message));
+                }
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException) { failures++; }
             finally { gate.Release(); completed++; if (!cancellation.IsCancellationRequested) MessageLabel(loading).Text = $"{completed}/{pending.Length} sources explorées · les lecteurs trouvés sont utilisables immédiatement"; }

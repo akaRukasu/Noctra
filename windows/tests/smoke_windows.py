@@ -406,8 +406,8 @@ class Fixture(BaseHTTPRequestHandler):
             bowd_ad["started"] = None
             # Réponse lente comme le vrai BowdTV (compte, flux puis publicité) : au-delà de l'ancien délai de 10 s du client.
             sleep(12)
-            return self.send({"options": [{"label": "Lecteur officiel BowdTV", "url": "https://bowdtv.example/player/test", "playbackType": "external", "manualOnly": True}],
-                              "externalUrl": "https://bowdtv.example/player/test",
+            return self.send({"options": [{"label": "Lecteur officiel BowdTV", "url": "https://bowdtv.com/player/test", "playbackType": "external", "manualOnly": True}],
+                              "externalUrl": "https://bowdtv.com/player/test",
                               "bowdAd": {"videoUrl": "/api/tv/relay/index.m3u8", "actionUrl": "/api/tv/bowd/ad/test", "skipAfter": 3}})
         if path == "/api/tv/resolve/witv-fixture":
             events.append(("witv-server-options", user, {}))
@@ -972,6 +972,8 @@ def check_bowd_preroll():
     by_name("Noctra BowdTV").invoke()
     until(lambda: window.child_window(title_re=".*direct HLS après publicité$", control_type="Text").exists(timeout=.1), "BowdTV live after the advert is not offered", timeout=45)
     until(lambda: by_name("▶   Lire le direct").is_enabled(), "BowdTV cannot be played in Noctra")
+    # Lecteur officiel BowdTV : refuse le lecteur intégré, ouvert dans le navigateur (comme la PWA) ; non cliqué pendant le test.
+    assert window.child_window(title="Ouvrir dans le navigateur", control_type="Text").exists(timeout=2), "The official BowdTV player is not opened in the browser"
     by_name("▶   Lire le direct").invoke()
     until(lambda: "Publicité BowdTV" in control("PlaybackMode").window_text(), "The BowdTV advert is not played in the player", timeout=45)
     until(lambda: seen("bowd-start"), "The advert start was not reported to Noctra", timeout=30)
@@ -1161,6 +1163,27 @@ def check_new_features():
     win32api.SetCursorPos((caption[0] + 300, caption[1] + 18))
     until(lambda: clip_traced("extrait fermé"), "The video excerpt did not stop with the preview", timeout=8)
     print("OK · Extrait vidéo dans l'aperçu d'un titre en cours (son coupé, depuis la reprise).", flush=True)
+    # « À suivre » : épisode jamais vu, extrait à 20 % de sa durée (24 s sur 120 s).
+    opened = False
+    for candidate in [button for button in window.descendants(control_type="Button") if button.window_text() == "Teen Wolf"]:
+        try:
+            candidate.set_focus(); sleep(.5)
+            rect = candidate.rectangle()
+            for step in range(8):
+                win32api.SetCursorPos(((rect.left + rect.right) // 2 - 16 + step * 4, (rect.top + rect.bottom) // 2))
+                sleep(.07)
+            until(lambda: clip_traced("extrait demandé episode-next"), "No excerpt for this card", timeout=6)
+            opened = True
+            break
+        except AssertionError:
+            caption = win32gui.GetWindowRect(window.handle)
+            win32api.SetCursorPos((caption[0] + 300, caption[1] + 18)); sleep(.6)
+    assert opened, "No video excerpt for the episode in « À suivre »"
+    until(lambda: clip_traced("extrait affiché episode-next"), "The « À suivre » excerpt did not show", timeout=25)
+    assert clip_traced("extrait demandé episode-next à 24.0 s"), "The « À suivre » excerpt does not start at 20 % of the episode"
+    caption = win32gui.GetWindowRect(window.handle)
+    win32api.SetCursorPos((caption[0] + 300, caption[1] + 18)); sleep(1)
+    print("OK · Extrait vidéo dans l'aperçu d'un épisode « À suivre » (20 % de l'épisode).", flush=True)
 
     # Filtres de médiathèque (genre).
     control("LibraryTab").invoke()

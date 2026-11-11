@@ -263,15 +263,18 @@ public partial class MainWindow
     private async System.Threading.Tasks.Task StartHoverClip(FrameworkElement visual, MediaItem item, CancellationToken cancellation)
     {
         StopHoverClip();
-        if (!item.CanPlay || item.IsAudio || item.Resume <= 0 || client is not { } account || active != null || pendingMedia != null || pendingLive != null ||
+        // Titres en cours (« Continuer à regarder ») et épisodes (« À suivre ») ; un film jamais commencé garde l'aperçu fixe.
+        if (!item.CanPlay || item.IsAudio || item.Resume <= 0 && item.Type != "Episode" || client is not { } account || active != null || pendingMedia != null || pendingLive != null ||
             !System.IO.File.Exists(Mpv.LibraryPath)) return;
+        // Reprise si le titre est commencé ; sinon 20 % de l'épisode (après le récap et le générique du début).
+        var start = item.Resume > 0 ? item.Resume : item.RunTimeTicks is > 0 and var runtime ? runtime / 5 : 120 * TimeSpan.TicksPerSecond;
         var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         clipCancel = stop;
         var popup = hoverPopup;
         try
         {
             await System.Threading.Tasks.Task.Delay(450, stop.Token); // après l'animation d'ouverture de la carte
-            var request = new PlayRequest(item.Id, account.User.Id, account.Token, account.DeviceId, Math.Clamp(item.Resume, 0, TimeSpan.TicksPerDay));
+            var request = new PlayRequest(item.Id, account.User.Id, account.Token, account.DeviceId, Math.Clamp(start, 0, TimeSpan.TicksPerDay));
             if (!request.IsValid()) return;
             var session = new JellyfinPlayback(Jellyfin.Http, account.Root, request, false, null);
             var media = await session.Prepare(stop.Token, allowDirect: true);

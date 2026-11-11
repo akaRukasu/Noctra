@@ -98,7 +98,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - l'accueil apparaît dès que « Continuer à regarder » est prêt ;
   - chaque rangée de médiathèque se remplit à son arrivée.
 - Les menus du clic droit sont préparés seulement quand on les ouvre.
-- **Extrait au survol** : l'aperçu d'un titre en cours (« Continuer à regarder ») joue un extrait, son coupé, depuis la position de reprise ; un clic sur l'extrait reprend la lecture.
+- **Extrait au survol** : l'aperçu d'un titre en cours (« Continuer à regarder ») ou d'un épisode (« À suivre ») joue un extrait, son coupé : depuis la position de reprise, sinon à 20 % de l'épisode (après le récap et le générique). Un clic sur l'extrait lance la lecture.
 - **Écrans 120 / 144 / 240 Hz** : WPF anime l'interface à 60 images/s par défaut. La cadence suit maintenant l'écran le plus rapide (jusqu'à 480 Hz, avec une carte graphique) : fondus, survols, défilement et rangées. Les réglages indiquent « animations N images/s ».
 - **Défilement et rangées** : la molette et les flèches des rangées font glisser l'image déjà calculée (animation WPF) au lieu de refaire la mise en page à chaque image (jusqu'à 360 cartes dans une rangée infinie).
 
@@ -150,6 +150,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
   - comme sur le Web, la vue réunie charge les bouquets français ou sans pays, sauf si un autre pays est choisi.
 - **« en français »** : « Eurosport 1 en français », « … in French », « … version française » et « beIN Sports Francais 1 » / « … French 2 » rejoignent la chaîne française (ajout Windows, à reporter côté serveur).
 - **BowdTV : délais de la PWA** : la recherche d'un serveur attend 30 s (55 s pour OHA, WiTV, StreamSports99 et BowdTV) au lieu de 10 s, et la suite après la publicité 60 s. À 10 s, BowdTV (compte partagé, flux puis publicité côté serveur) n'avait pas le temps de répondre : seul le lecteur externe restait.
+- **BowdTV dans la fiche d'une chaîne** : le direct HLS (après publicité) est en tête de « Lecture native », comme les serveurs des autres sources (avant : en bas, dans « Autres accès »). Le lecteur officiel BowdTV, qui refuse le lecteur intégré, s'ouvre dans le navigateur, comme dans la PWA. Un message du fournisseur (publicité indisponible…) est affiché.
 - **BowdTV comme sur la PWA** : quand BowdTV demande une publicité avant le direct, Noctra la lit dans son lecteur (son coupé, « Publicité BowdTV · direct dans N s »), la signale au serveur au démarrage, attend le délai imposé, puis lance le direct HLS renvoyé par le serveur. Avant, seul le lecteur officiel (externe) était proposé. Le lecteur officiel reste disponible en secours.
 - **Vérification** : sur six catalogues de 5 000 entrées aux noms variés, le résultat est identique carte par carte à `noctra-tv-unified.js` 200.0.181 exécuté par Node (même règle « en français » ajoutée des deux côtés). Sur l'un d'eux, l'ancien regroupement Windows donnait 521 cartes françaises dont 91 noms en double ; le nouveau en donne 379, sans doublon.
 - Par défaut, uniquement les chaînes françaises. Le menu « Pays » permet d'en choisir un autre (ou « Tous les pays »).
