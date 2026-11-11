@@ -132,10 +132,21 @@ public partial class MainWindow
         var target = playQueueIndex + step;
         if (playQueue.Length < 2 || target < 0 || target >= playQueue.Length) return;
         var queue = playQueue;
+        var wasFullscreen = fullscreen;
         FinishPlayback(refresh: false);
         playQueue = queue;
         playQueueIndex = target;
         StartPlayback(queue[target], 0, keepQueue: true);
+        if (wasFullscreen && pendingMedia != null) SetFullscreen(true);
+    }
+
+    // Titre suivant ou précédent : le plein écran est conservé.
+    private void SwitchTo(MediaItem item)
+    {
+        var wasFullscreen = fullscreen;
+        FinishPlayback(refresh: false);
+        StartPlayback(item, 0);
+        if (wasFullscreen && pendingMedia != null) SetFullscreen(true);
     }
     private void QueuePreviousClick(object sender, RoutedEventArgs args) => StepEpisode(-1);
     private void QueueNextClick(object sender, RoutedEventArgs args) => StepEpisode(1);
@@ -143,14 +154,24 @@ public partial class MainWindow
     // 0.8 : titre précédent / suivant : file de lecture, sinon épisode précédent / suivant de la série.
     private void StepEpisode(int step)
     {
-        if (playQueue.Length > 1 && playQueueIndex + step >= 0 && playQueueIndex + step < playQueue.Length) { PlayQueueStep(step); return; }
-        if (active is not { } state || InSyncGroup) return;
+        if (playQueue.Length > 1 && playQueueIndex + step >= 0 && playQueueIndex + step < playQueue.Length && !InSyncGroup) { PlayQueueStep(step); return; }
+        if (active is not { } state) return;
+        if (InSyncGroup)
+        {
+            // Séance SyncPlay : l'épisode est lancé pour tout le groupe (comme depuis une fiche).
+            if ((step > 0 ? state.Next : state.Previous) is { } target)
+            {
+                Trace($"épisode {(step > 0 ? "suivant" : "précédent")} {target.Id} (groupe)");
+                SyncPlayItem(target, 0);
+            }
+            return;
+        }
         if (step > 0) PlayNextEpisode(state, "bouton épisode suivant");
         else if (state.Previous is { } previous && !state.Advancing)
         {
             state.Advancing = true;
-            FinishPlayback(refresh: false);
-            StartPlayback(previous, 0);
+            Trace($"épisode précédent {previous.Id}");
+            SwitchTo(previous);
         }
     }
 
@@ -161,7 +182,7 @@ public partial class MainWindow
         var next = queue ? playQueueIndex + 1 < playQueue.Length : active?.Next != null;
         var episode = active?.Item?.Type == "Episode";
         QueuePrevious.Visibility = QueueNext.Visibility = queue || episode && (previous || next) ? Visibility.Visible : Visibility.Collapsed;
-        QueuePrevious.IsEnabled = previous && !InSyncGroup; QueueNext.IsEnabled = next && !InSyncGroup;
+        QueuePrevious.IsEnabled = previous; QueueNext.IsEnabled = next;
         var noun = queue ? "Titre" : "Épisode";
         QueuePrevious.ToolTip = noun + " précédent"; QueueNext.ToolTip = noun + " suivant · N";
         System.Windows.Automation.AutomationProperties.SetName(QueuePrevious, noun + " précédent");
@@ -209,9 +230,13 @@ public partial class MainWindow
             var (previous, next) = await account.AdjacentEpisodes(item, timeout.Token);
             if (active != state) return;
             state.Previous = previous; state.Next = next;
+            Trace($"épisodes voisins {item.Id} : {previous?.Id ?? "-"} / {next?.Id ?? "-"}");
             UpdateEpisodeButtons();
         }
-        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            Trace($"épisodes voisins {item.Id} : échec {error.GetType().Name}");
+        }
     }
 
     // « À suivre » (comme la PWA) : après le générique de fin, sinon 30 s avant la fin (15 s pour un épisode court) ;
@@ -261,8 +286,7 @@ public partial class MainWindow
         Trace($"épisode suivant {next.Id} ({reason})");
         UpNextCard.Visibility = Visibility.Collapsed;
         if (playQueueIndex + 1 < playQueue.Length && playQueue[playQueueIndex + 1].Id == next.Id) { PlayQueueStep(1); return; }
-        FinishPlayback(refresh: false);
-        StartPlayback(next, 0);
+        SwitchTo(next);
     }
 
     private void UpNextPlayClick(object sender, RoutedEventArgs args) { if (active is { } state) PlayNextEpisode(state, "Lire maintenant"); }
@@ -614,7 +638,13 @@ public partial class MainWindow
         catch (InvalidOperationException) { PlaybackMode.Text = "Commande indisponible pour cette vidéo."; }
     }
 
-    private void StopPlayback(object sender, RoutedEventArgs args) => FinishPlayback();
+    private void StopPlayback(object sender, RoutedEventArgs args)
+    {
+        var grouped = active is { Synchronized: true } && syncGroup != null;
+        FinishPlayback();
+        // La séance continue sans ce PC : le retour se fait depuis l'icône SyncPlay du bandeau.
+        if (grouped && syncGroup != null) ShowStatus("Vous avez quitté la lecture, la séance continue : « Rejoindre la lecture » dans le menu SyncPlay du bandeau.");
+    }
     // Séance SyncPlay : pause, lecture et déplacements passent par le serveur (appliqués chez tous).
     private bool SyncControls => syncGroup != null && pendingLive == null && active is { Synchronized: true };
     private void TogglePause(object sender, RoutedEventArgs args)

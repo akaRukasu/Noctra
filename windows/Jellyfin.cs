@@ -285,7 +285,7 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     internal Task<ItemPage> Episodes(string id, string seasonId, CancellationToken cancellation) =>
         Get<ItemPage>("Shows/" + id + "/Episodes", new()
         {
-            ["UserId"] = user.Id, ["SeasonId"] = seasonId, ["EnableUserData"] = "true", ["Fields"] = Details
+            ["UserId"] = user.Id, ["SeasonId"] = seasonId, ["IsMissing"] = "false", ["EnableUserData"] = "true", ["Fields"] = Details
         }, cancellation);
 
     internal async Task<MediaItem?> PlayableSeries(string id, CancellationToken cancellation)
@@ -339,13 +339,24 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     internal async Task<(MediaItem? Previous, MediaItem? Next)> AdjacentEpisodes(MediaItem item, CancellationToken cancellation)
     {
         if (item.Type != "Episode" || string.IsNullOrWhiteSpace(item.SeriesId)) return (null, null);
+        // Épisodes manquants (fiches sans fichier, affichées si « épisodes manquants » est activé) exclus : illisibles.
         var page = await Get<ItemPage>("Shows/" + item.SeriesId + "/Episodes", new()
         {
-            ["UserId"] = user.Id, ["AdjacentTo"] = item.Id, ["EnableUserData"] = "true", ["Fields"] = Details
+            ["UserId"] = user.Id, ["AdjacentTo"] = item.Id, ["IsMissing"] = "false", ["EnableUserData"] = "true", ["Fields"] = Details
         }, cancellation);
         var items = page.Items ?? [];
         var index = Array.FindIndex(items, episode => episode.Id == item.Id);
-        if (index < 0) return (null, null);
+        if (index < 0)
+        {
+            // Voisins introuvables (identifiant d'un autre format, serveur qui ignore AdjacentTo) : toute la série.
+            page = await Get<ItemPage>("Shows/" + item.SeriesId + "/Episodes", new()
+            {
+                ["UserId"] = user.Id, ["IsMissing"] = "false", ["EnableUserData"] = "true", ["Fields"] = Details
+            }, cancellation);
+            items = page.Items ?? [];
+            index = Array.FindIndex(items, episode => string.Equals(episode.Id.Replace("-", ""), item.Id.Replace("-", ""), StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return (null, null);
+        }
         return (index > 0 && items[index - 1].CanPlay ? items[index - 1] : null, index + 1 < items.Length && items[index + 1].CanPlay ? items[index + 1] : null);
     }
 

@@ -308,6 +308,7 @@ public partial class MainWindow
                     syncPendingItem = null;
                     _ = SyncRequest("SetNewQueue", new { PlayingQueue = new[] { pending.Id }, PlayingItemPosition = 0, StartPositionTicks = pending.Resume });
                 }
+                else if (syncGroup.State is "Playing" or "Paused" or "Waiting") _ = EnsureGroupPlayback(syncGroup);
                 break;
             case "UserJoined":
                 if (syncGroup != null && payload.Str() is { Length: > 0 } joined)
@@ -362,8 +363,40 @@ public partial class MainWindow
         RefreshSyncIndicators();
     }
 
+    // Séance déjà en lecture rejointe : le serveur doit envoyer le titre en cours. Sans lui après quelques secondes,
+    // la demande est refaite une fois ; ensuite « Rejoindre la lecture » reste proposé (icône SyncPlay du bandeau).
+    private string? rejoinedGroupId;
+    private async Task EnsureGroupPlayback(SyncGroup group)
+    {
+        try { await Task.Delay(6000, lifetime.Token); }
+        catch (OperationCanceledException) { return; }
+        if (syncGroup != group || group.ItemId != null || group.State == "Idle" || closingGroupId != null) return;
+        if (rejoinedGroupId != group.Id)
+        {
+            rejoinedGroupId = group.Id;
+            Trace("lecture du groupe non reçue : nouvelle demande");
+            SyncRejoin();
+        }
+        else ShowStatus("La lecture du groupe n’a pas démarré sur ce PC : « Rejoindre la lecture » dans le menu SyncPlay du bandeau.");
+    }
+
+    // Rejoindre la lecture du groupe (arrivée en cours de lecture, lecteur fermé, démarrage manqué) :
+    // Jellyfin restaure la place dans la séance et renvoie le titre et la position du groupe.
+    private bool CanRejoinGroup => syncGroup is { } group && group.State is "Playing" or "Paused" or "Waiting" &&
+        !(active is { Synchronized: true } current && group.ItemId != null && SameId(current.Session.ItemId, group.ItemId));
+    private void SyncRejoin()
+    {
+        if (syncGroup is not { } group) return;
+        Trace("rejoindre la lecture " + group.Id);
+        ShowStatus("Reprise de la lecture du groupe « " + group.Name + " »…");
+        _ = SyncRequest("Join", new { GroupId = group.Id });
+    }
+    private static bool SameId(string? left, string? right) =>
+        left != null && right != null && string.Equals(left.Replace("-", ""), right.Replace("-", ""), StringComparison.OrdinalIgnoreCase);
+
     private void LeaveSyncLocally(string message)
     {
+        rejoinedGroupId = null;
         syncGroup?.Scheduled?.Cancel();
         syncGroup = null;
         syncClock.Stop();
@@ -387,6 +420,23 @@ public partial class MainWindow
         if (group.PlaylistItemId == playlistItemId && active?.Session.ItemId == itemId && reason is not ("NewPlaylist" or "SetCurrentItem")) return;
         group.PlaylistItemId = playlistItemId;
         group.ItemId = itemId;
+        var startTicks = (long)Math.Max(0, queue.Num("StartPositionTicks"));
+        // Titre déjà à l'écran sur ce PC (séance créée pendant la lecture, retour dans la séance) : la lecture est gardée,
+        // mise en pause à la position du groupe puis signalée prête ; plus de fermeture et réouverture de la vidéo.
+        if (active is { Started: true, Engine: not null } current && SameId(current.Session.ItemId, itemId) && pendingLive == null && current.Session.Local == false)
+        {
+            Trace("queue → lecture en cours conservée " + itemId);
+            current.Synchronized = true;
+            group.AwaitingReady = true;
+            group.LastCommand = "";
+            Command("set", "pause", "yes");
+            SetSpeed(1);
+            SeekTo(startTicks / (double)TimeSpan.TicksPerSecond);
+            UpdateEpisodeButtons();
+            RefreshSyncIndicators();
+            _ = SyncRequest("SetIgnoreWait", new { IgnoreWait = false });
+            return;
+        }
         MediaItem item;
         try { item = await account.Detail(itemId, lifetime.Token); }
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
@@ -399,7 +449,7 @@ public partial class MainWindow
         if (pendingMedia != null || pendingLive != null) FinishPlayback(refresh: false);
         group.AwaitingReady = true;
         group.LastCommand = "";
-        StartPlayback(item, (long)Math.Max(0, queue.Num("StartPositionTicks")), synchronized: true);
+        StartPlayback(item, startTicks, synchronized: true);
         _ = SyncRequest("SetIgnoreWait", new { IgnoreWait = false });
     }
 
@@ -713,6 +763,12 @@ public partial class MainWindow
         {
             menu.Items.Add(Entry("« " + group.Name + " » · " + string.Join(", ", group.Members), null, enabled: false));
             menu.Items.Add(new Separator());
+            if (CanRejoinGroup)
+            {
+                var rejoin = Entry("▶  Rejoindre la lecture", SyncRejoin, "HomeSyncRejoin");
+                rejoin.FontWeight = FontWeights.SemiBold;
+                menu.Items.Add(rejoin);
+            }
             menu.Items.Add(Entry("Ouvrir le groupe", () => _ = Navigate(SyncPlayPage), "HomeSyncOpen"));
             menu.Items.Add(Entry("Quitter la séance", SyncLeave, "HomeSyncLeave"));
             if (group.Members.Count <= 1) menu.Items.Add(Entry("Supprimer la séance", () => SyncDelete(group.Id, group.Name), "HomeSyncDelete"));
@@ -762,8 +818,8 @@ public partial class MainWindow
         SyncHeaderDot.Visibility = inGroup ? Visibility.Visible : Visibility.Collapsed;
         if (inGroup) SyncHeaderGlyph.Foreground = BrushFor("Accent");
         else SyncHeaderGlyph.ClearValue(TextBlock.ForegroundProperty);
-        SyncHeaderButton.ToolTip = syncGroup is { } group ? "En séance : « " + group.Name + " » · " + Math.Max(1, group.Members.Count) + " participant(s)"
-            : "Regarder ensemble (SyncPlay)";
+        SyncHeaderButton.ToolTip = syncGroup is { } group ? "En séance : « " + group.Name + " » · " + Math.Max(1, group.Members.Count) + " participant(s)" +
+            (CanRejoinGroup ? " · cliquez pour rejoindre la lecture" : "") : "Regarder ensemble (SyncPlay)";
     }
 
     private void SyncMenu(object sender, RoutedEventArgs args)
@@ -858,10 +914,16 @@ public partial class MainWindow
                 alone.Margin = new Thickness(0, 10, 0, 0);
                 card.Children.Add(alone);
             }
-            var leave = Action("Quitter le groupe", SyncLeave);
-            leave.HorizontalAlignment = HorizontalAlignment.Left;
-            leave.Margin = new Thickness(0, 18, 0, 0);
-            card.Children.Add(leave);
+            var buttons = new WrapPanel { Margin = new Thickness(0, 18, 0, 0) };
+            if (CanRejoinGroup)
+            {
+                var rejoin = Action("▶   Rejoindre la lecture", SyncRejoin, "Primary");
+                rejoin.Margin = new Thickness(0, 0, 10, 0);
+                AutomationProperties.SetAutomationId(rejoin, "SyncRejoin");
+                buttons.Children.Add(rejoin);
+            }
+            buttons.Children.Add(Action("Quitter le groupe", SyncLeave));
+            card.Children.Add(buttons);
             PageContent.Children.Add(Sheet(card));
             return;
         }

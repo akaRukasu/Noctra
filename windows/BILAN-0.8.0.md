@@ -86,6 +86,14 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Épisodes, vignettes et SyncPlay
+
+- **Épisode précédent / suivant** : épisodes « manquants » (fiches sans fichier) écartés, recherche de secours sur toute la série si les voisins ne sont pas trouvés ; plein écran conservé au changement d'épisode.
+- **En séance SyncPlay**, les boutons ne sont plus grisés : l'épisode choisi est lancé pour tout le groupe (comme la liste des épisodes du lecteur).
+- **Vignettes cliquables** : la vignette d'un épisode dans une saison et le grand visuel d'une fiche (film, épisode, série) lancent la lecture, avec une icône de lecture au survol.
+- **« Rejoindre la lecture »** : dans le menu SyncPlay du bandeau et sur la page du groupe, quand la séance lit un titre que ce PC ne lit pas (arrivée en cours de lecture, lecteur quitté, démarrage manqué). Jellyfin renvoie le titre et la position du groupe. Arrivée dans une séance en lecture : si rien n'est reçu après 6 s, la demande est refaite une fois automatiquement.
+- **Titre déjà à l'écran** (séance créée pendant la lecture d'un contenu commencé, retour dans la séance) : la vidéo n'est plus fermée puis rouverte ; elle se met en pause à la position du groupe et repart avec lui.
+
 ## « Passer le générique » : origine des marqueurs
 
 - Comme la PWA, le bouton n'apparaît que si un marqueur existe ; aucun générique n'est deviné.
@@ -198,6 +206,8 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - multivue ;
   - administration.
 - **Test des nouveautés** :
+  - épisode lancé depuis une carte de l'accueil puis épisode suivant / précédent ; lecture au clic sur le visuel d'une série et sur la vignette d'un épisode ;
+  - SyncPlay : « Rejoindre la lecture » après avoir quitté le lecteur, à la position du groupe ;
   - « Passer le générique » à partir des marqueurs de l'extension Intro Skipper (épisode sans segments côté serveur) ;
   - sous-titres désactivés au lancement d'un épisode en VF dont la piste française est marquée « par défaut » ;
   - plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau) ;

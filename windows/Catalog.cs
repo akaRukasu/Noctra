@@ -328,7 +328,7 @@ public partial class MainWindow
 
     private FrameworkElement Hero(MediaItem item, string eyebrow, string title, string caption, string? synopsis,
         string primaryLabel, Action primary, Button? secondary, CancellationToken cancellation, Button? extra = null,
-        Action<Button>? configurePrimary = null, FrameworkElement? facts = null)
+        Action<Button>? configurePrimary = null, FrameworkElement? facts = null, Action? visualClick = null)
     {
         // 0.6 : visuel pleine largeur (sous le bandeau), image gardée dans ses proportions
         // et calée à droite, fond flouté du même visuel, fondus vers la page.
@@ -409,6 +409,34 @@ public partial class MainWindow
             actions.Children.Add(other);
         }
         copy.Children.Add(actions);
+        // Fiche d'un film, d'un épisode ou d'une série : un clic sur le visuel lance la lecture (bouton rond au survol).
+        Border? playMark = null;
+        if (visualClick != null)
+        {
+            var surface = new FrameworkElementFactory(typeof(Border));
+            surface.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            surface.AppendChild(new FrameworkElementFactory(typeof(ContentPresenter)));
+            playMark = new Border
+            {
+                Width = 84, Height = 84, CornerRadius = new CornerRadius(42), Background = ColorOf("#B30A0A12"), BorderBrush = ColorOf("#59FFFFFF"),
+                BorderThickness = new Thickness(1.5), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Opacity = 0,
+                Child = new TextBlock { Text = "\uE768", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 30, Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) }
+            };
+            var visualPlay = new Button
+            {
+                Template = new ControlTemplate(typeof(Button)) { VisualTree = surface }, Cursor = System.Windows.Input.Cursors.Hand, Focusable = false,
+                Content = new Grid { Children = { playMark } }, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
+                ToolTip = primaryLabel.Replace("▶", "").Trim()
+            };
+            AutomationProperties.SetName(visualPlay, "Lire depuis le visuel");
+            AutomationProperties.SetAutomationId(visualPlay, "HeroVisualPlay");
+            visualPlay.Click += (_, _) => visualClick();
+            var mark = playMark;
+            visualPlay.MouseEnter += (_, _) => mark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.95, TimeSpan.FromMilliseconds(160)));
+            visualPlay.MouseLeave += (_, _) => mark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
+            layers.Children.Add(visualPlay);
+        }
         layers.Children.Add(copy);
         var hero = new Border { Child = layers, Tag = Bleed, Height = 560 };
         void Fit()
@@ -422,6 +450,8 @@ public partial class MainWindow
             var aspect = source is { Height: > 0 } ? source.Width / source.Height : 16 / 9.0;
             var width = Math.Min(layers.ActualWidth, hero.Height * aspect);
             picture.Width = width;
+            // Bouton rond au centre du visuel (partie droite, hors du texte).
+            if (playMark != null) playMark.Margin = new Thickness(0, 0, Math.Max(40, Math.Min(width, layers.ActualWidth * .55) / 2 - 42), 0);
             var edge = layers.ActualWidth > 0 ? Math.Clamp(1 - width / layers.ActualWidth, 0, .9) : 0;
             picture.OpacityMask = edge < .02 ? null : new LinearGradientBrush
             {
@@ -920,7 +950,7 @@ public partial class MainWindow
         {
             var mark = MarkButton(account, item, cancellation);
             PageContent.Children.Add(Hero(item, type, item.DisplayTitle, metadata, synopsis, item.Resume > 0 ? "▶   Reprendre" : "▶   Lire",
-                () => StartPlayback(item), mark, cancellation, favorite, facts: DetailFacts(item)));
+                () => StartPlayback(item), mark, cancellation, favorite, facts: DetailFacts(item), visualClick: () => StartPlayback(item)));
             // 0.7 : actions secondaires regroupées sur une ligne.
             var extras = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
             void Extra(Button button) { button.Margin = new Thickness(0, 0, 9, 9); extras.Children.Add(button); }
@@ -950,11 +980,14 @@ public partial class MainWindow
         var episodes = new StackPanel { Margin = new Thickness(0, 20, 0, 0) };
         MediaItem? playable = null;
         Button? seriesPlay = null;
-        var seriesHero = Hero(item, type, item.DisplayTitle, metadata, synopsis, "▶   Lire la série", () =>
+        void PlaySeries()
         {
             if (playable != null) StartPlayback(playable);
             else episodes.BringIntoView();
-        }, favorite, cancellation, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item));
+        }
+        var seriesHero = Hero(item, type, item.DisplayTitle, metadata, synopsis, "▶   Lire la série", PlaySeries,
+            favorite, cancellation, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item),
+            visualClick: item.Type == "Series" ? PlaySeries : null);
         PageContent.Children.Add(seriesHero);
         if (item.Type == "Series")
         {
@@ -1156,8 +1189,26 @@ public partial class MainWindow
             frame.Children.Add(track);
         }
         frame.SizeChanged += (_, _) => frame.Clip = new RectangleGeometry(new Rect(frame.RenderSize), 10, 10);
-        DockPanel.SetDock(frame, Dock.Left);
-        row.Children.Add(frame);
+        // Vignette cliquable : lance l'épisode (icône de lecture au survol).
+        var playMark = new Border
+        {
+            Width = 46, Height = 46, CornerRadius = new CornerRadius(23), Background = ColorOf("#B30A0A12"), Opacity = 0,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = "\uE768", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 17, Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) }
+        };
+        frame.Children.Add(playMark);
+        var thumb = Action((item.Resume > 0 ? "Reprendre " : "Lire ") + item.Caption, () => StartPlayback(item), "Card");
+        thumb.Content = frame;
+        thumb.Cursor = System.Windows.Input.Cursors.Hand;
+        thumb.Margin = new Thickness(0, 0, 18, 0);
+        frame.Margin = new Thickness(0);
+        thumb.ToolTip = item.Resume > 0 ? "Reprendre" : "Lire";
+        if (item.IndexNumber is { } number) AutomationProperties.SetAutomationId(thumb, "EpisodeThumb" + number);
+        thumb.MouseEnter += (_, _) => playMark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.95, TimeSpan.FromMilliseconds(140)));
+        thumb.MouseLeave += (_, _) => playMark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(180)));
+        DockPanel.SetDock(thumb, Dock.Left);
+        row.Children.Add(thumb);
         _ = artwork?.Load(thumbnail, item, false, 400, cancellation);
         var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
         var label = Text(item.Caption, 16, true);

@@ -452,8 +452,12 @@ public partial class MainWindow
         if (active?.Item?.Id == episode.Id) return;
         // Les positions de reprise changent pendant la lecture : la liste sera relue.
         episodeLists.Clear();
+        // Séance SyncPlay : épisode lancé pour tout le groupe, la lecture en cours reste jusqu'au changement.
+        if (InSyncGroup) { SyncPlayItem(episode, episode.Resume); return; }
+        var wasFullscreen = fullscreen;
         FinishPlayback(refresh: false);
         StartPlayback(episode);
+        if (wasFullscreen && pendingMedia != null) SetFullscreen(true);
     }
 
     private void PlayerSettings(object sender, RoutedEventArgs args)

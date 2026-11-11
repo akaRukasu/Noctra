@@ -595,6 +595,14 @@ class Fixture(BaseHTTPRequestHandler):
                 # Séance existante (0.8 : suppression d'une séance oubliée).
                 sync["group"]["Participants"] = list(dict.fromkeys(sync["group"]["Participants"] + ["Camille"]))
                 sync_update(user, "GroupJoined", dict(sync["group"]))
+                if sync["group"].get("PlaylistItemId") and sync["group"].get("State") != "Idle":
+                    # Comme Jellyfin (retour dans sa séance) : titre et position actuelle du groupe renvoyés à ce participant.
+                    position = sync["position"] + (int(max(0.0, monotonic() - sync["playing_since"]) * 10_000_000) if sync["playing_since"] else 0)
+                    item = sync["group"]["PlaylistItemId"][3:]
+                    sync["group"]["State"] = "Waiting"
+                    sync["position"], sync["playing_since"], sync["rejoined_at"] = position, None, position
+                    sync_update(user, "PlayQueue", {"Reason": "NewPlaylist", "Playlist": [{"ItemId": item, "PlaylistItemId": "pl-" + item}], "PlayingItemIndex": 0,
+                                                     "StartPositionTicks": position, "IsPlaying": True, "LastUpdate": now_iso()})
             elif action in ("New", "Join"):
                 sync["group"] = {"GroupId": "group-1", "GroupName": payload.get("GroupName", "Soirée test"), "State": "Idle", "Participants": ["Camille"]}
                 sync_update(user, "GroupJoined", dict(sync["group"]))
@@ -604,20 +612,28 @@ class Fixture(BaseHTTPRequestHandler):
             elif action == "SetNewQueue" and sync["group"]:
                 item = payload["PlayingQueue"][0]
                 sync["group"]["PlaylistItemId"] = "pl-" + item
+                sync["group"]["State"] = "Waiting"
+                sync_update(user, "StateUpdate", {"State": "Waiting", "Reason": "NewPlaylist"})
                 sync["position"] = payload.get("StartPositionTicks", 0)
                 sync_update(user, "PlayQueue", {"Reason": "NewPlaylist", "Playlist": [{"ItemId": item, "PlaylistItemId": "pl-" + item}], "PlayingItemIndex": 0,
                                                  "StartPositionTicks": sync["position"], "IsPlaying": True, "LastUpdate": now_iso()})
             elif action == "Ready" and not payload.get("IsPlaying"):
                 sync["position"] = payload.get("PositionTicks", 0)
                 sync["playing_since"] = monotonic() + .8
+                if sync["group"]: sync["group"]["State"] = "Playing"
+                sync_update(user, "StateUpdate", {"State": "Playing", "Reason": "Unpause"})
                 sync_command(user, "Unpause", sync["position"], .8)
             elif action == "Pause":
                 elapsed = max(0.0, monotonic() - (sync["playing_since"] or monotonic()))
                 sync["position"] += int(elapsed * 10_000_000)
                 sync["playing_since"] = None
+                if sync["group"]: sync["group"]["State"] = "Paused"
+                sync_update(user, "StateUpdate", {"State": "Paused", "Reason": "Pause"})
                 sync_command(user, "Pause", sync["position"])
             elif action == "Unpause":
                 sync["playing_since"] = monotonic() + .5
+                if sync["group"]: sync["group"]["State"] = "Playing"
+                sync_update(user, "StateUpdate", {"State": "Playing", "Reason": "Unpause"})
                 sync_command(user, "Unpause", sync["position"], .5)
             elif action == "Seek":
                 sync["position"] = payload["PositionTicks"]
@@ -995,6 +1011,55 @@ def check_app_fullscreen():
     print("OK · Plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau).", flush=True)
 
 
+def check_card_playback():
+    # Lancement depuis une carte « Continuer à regarder » / « À suivre », puis épisode suivant ou précédent ;
+    # clic sur le visuel d'une série et sur la vignette d'un épisode d'une saison.
+    def plays(item):
+        return sum(1 for path, user, p in events if path == "/jellyfin/Sessions/Playing" and p.get("ItemId") == item)
+    def traced(text):
+        log = profile / "trace.log"
+        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
+    progress["profile-a"] = 100_000_000
+    control("HomeTab").invoke()
+    until(lambda: by_name("CONTINUER À REGARDER", "Text").exists(timeout=.1), "Continue watching missing")
+    cards = [button for button in window.descendants(control_type="Button") if button.window_text() == "Teen Wolf"]
+    assert cards, "No series card on the home page"
+    before = {item: plays(item) for item in ("episode", "episode-next")}
+    cards[0].invoke()
+    until(lambda: any(plays(item) > count for item, count in before.items()), "A card of the home page did not start the episode", timeout=60)
+    started = "episode" if plays("episode") > before["episode"] else "episode-next"
+    until(lambda: traced(f"épisodes voisins {started} :"), "Neighbour episodes were not looked up", timeout=20)
+    if started == "episode":
+        target, button = "episode-next", "QueueNext"
+    else:
+        target, button = "episode", "QueuePrevious"
+    until(lambda: wake_player() is not False and control(button).is_visible() and control(button).is_enabled(), f"{button} unavailable after starting from a card", timeout=20)
+    count = plays(target)
+    control(button).invoke()
+    until(lambda: plays(target) > count, f"{button} did not start {target} after starting from a card", timeout=60)
+    control("ReturnButton").invoke()
+    print("OK · Épisode lancé depuis une carte de l'accueil puis épisode " + ("suivant" if target == "episode-next" else "précédent") + ".", flush=True)
+    # Fiche de la série : clic sur le visuel, puis sur la vignette d'un épisode de la saison.
+    until(lambda: control("LibraryTab").is_visible(), "Library not restored after card playback")
+    control("LibraryTab").invoke()
+    by_name("Séries", found_index=0).invoke()
+    until(lambda: by_name("Teen Wolf", found_index=0).exists(timeout=.1), "Series library contents missing")
+    by_name("Teen Wolf", found_index=0).invoke()
+    until(lambda: control("HeroVisualPlay").exists(timeout=.1), "The series picture cannot start playback")
+    until(lambda: control("PrimaryPlayback", "Button").is_enabled(), "The episode to play was not found for the series", timeout=20)
+    before = {item: plays(item) for item in ("episode", "episode-next")}
+    control("HeroVisualPlay").invoke()
+    until(lambda: any(plays(item) > count for item, count in before.items()), "Clicking the series picture did not start an episode", timeout=60)
+    control("ReturnButton").invoke()
+    until(lambda: control("EpisodeThumb5").exists(timeout=.1), "Episode thumbnails missing on the series page", timeout=30)
+    count = plays("episode-next")
+    control("EpisodeThumb5").invoke()
+    until(lambda: plays("episode-next") > count, "Clicking an episode thumbnail did not start it", timeout=60)
+    until(lambda: wake_player() is not False and control("QueuePrevious").is_visible() and control("QueuePrevious").is_enabled(), "No previous episode after a thumbnail", timeout=20)
+    control("ReturnButton").invoke()
+    print("OK · Lecture au clic sur le visuel d'une série et sur la vignette d'un épisode.", flush=True)
+
+
 def check_bowd_preroll():
     # BowdTV : publicité lue dans le lecteur Noctra (son coupé), « start », délai respecté, « continue », puis direct HLS (comme la PWA).
     control("TvTab").invoke()
@@ -1369,6 +1434,21 @@ def check_new_features():
 
     control("ReturnButton").invoke()
     until(lambda: control("MoreTab").is_visible(), "Library not restored after group playback")
+    # Lecture quittée, séance toujours en cours : « Rejoindre la lecture » relance le titre du groupe à sa position.
+    joins = sum(name == "syncplay-Join" for name, _, _ in events)
+    readies = sum(name == "syncplay-Ready" for name, _, _ in events)
+    control("SyncHeaderButton").invoke()
+    until(lambda: control("HomeSyncRejoin").exists(timeout=.1), "No « Rejoindre la lecture » while the group is still playing")
+    control("HomeSyncRejoin").invoke()
+    until(lambda: sum(name == "syncplay-Join" for name, _, _ in events) > joins, "Rejoining did not ask the server")
+    until(lambda: sum(name == "syncplay-Ready" for name, _, _ in events) > readies, "The group playback did not restart on this PC", timeout=60)
+    rejoined = [payload for name, _, payload in events if name == "syncplay-Ready"][-1]
+    expected = sync.get("rejoined_at") or 0
+    assert expected > 100_000_000 and abs(rejoined.get("PositionTicks", 0) - expected) < 30_000_000, f"Rejoined away from the group position {expected}: {rejoined}"
+    until(lambda: control("PauseButton").window_text() == "Pause", "Rejoined playback is not playing", timeout=20)
+    print("OK · SyncPlay : « Rejoindre la lecture » après avoir quitté le lecteur, à la position du groupe.", flush=True)
+    control("ReturnButton").invoke()
+    until(lambda: control("MoreTab").is_visible(), "Library not restored after the rejoined playback")
     control("SyncHeaderButton").invoke()
     until(lambda: control("HomeSyncOpen").exists(timeout=.1), "SyncPlay menu does not show the current group")
     sleep(.6)
@@ -1586,6 +1666,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             check_tv_responsiveness()
             check_bowd_preroll()
             check_episode_flow()
+            check_card_playback()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)
@@ -1663,7 +1744,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         assert report("/Stopped", "episode")["PositionTicks"] >= 235_000_000
         until(lambda: control("LibraryTab").is_visible(), "Returned to library")
         control("LibraryTab").invoke()
-        by_name("Séries").invoke()
+        by_name("Séries", found_index=0).invoke()
         until(lambda: by_name("Teen Wolf").exists(timeout=.1), "Series card missing")
         by_name("Teen Wolf").invoke()
         until(lambda: by_name("S02 E04 · Abomination", "Text").exists(timeout=.1), "Season episodes missing")
