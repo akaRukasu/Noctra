@@ -46,7 +46,8 @@ public partial class MainWindow
                 if (!PointerInside(hoverPanel) && !PointerInside(hoverCard)) CloseHoverPreview();
             };
             Scroller.ScrollChanged += (_, args) => { if (args.VerticalChange != 0) CloseHoverPreview(); };
-            Deactivated += (_, _) => CloseHoverPreview();
+            // Fenêtre d'une autre application au premier plan : l'aperçu se ferme (pas pour l'extrait de Noctra lui-même).
+            Deactivated += (_, _) => { if (!ForegroundIsNoctra()) CloseHoverPreview(); };
         }
         // Un vrai survol (plusieurs mouvements du pointeur), pas un simple passage.
         var moves = 0;
@@ -63,6 +64,14 @@ public partial class MainWindow
         };
         card.MouseLeave += (_, _) => { if (hoverPending?.Card == card && hoverPopup?.IsOpen != true) hoverDelay.Stop(); };
     }
+
+    private static bool ForegroundIsNoctra()
+    {
+        var foreground = GetForegroundWindow();
+        return foreground != IntPtr.Zero && GetWindowThreadProcessId(foreground, out var process) != 0 && process == (uint)Environment.ProcessId;
+    }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
 
     private static bool PointerInside(FrameworkElement? element)
     {
