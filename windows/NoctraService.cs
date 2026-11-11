@@ -88,7 +88,15 @@ internal sealed class NoctraService(Jellyfin client, Uri root)
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         for (var attempt = 0; ; attempt++)
         {
-            using var response = await Request(uri, HttpMethod.Get, null, timeout.Token);
+            HttpResponseMessage sent;
+            // Une connexion réutilisée fermée par le serveur (réinitialisée) est redemandée une fois, comme une erreur 5xx.
+            try { sent = await Request(uri, HttpMethod.Get, null, timeout.Token); }
+            catch (HttpRequestException) when (retry && attempt == 0 && !timeout.IsCancellationRequested)
+            {
+                await Task.Delay(300, timeout.Token);
+                continue;
+            }
+            using var response = sent;
             if (retry && attempt == 0 && ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout))
             {
                 await Task.Delay(300, timeout.Token);

@@ -290,7 +290,10 @@ public partial class MainWindow
                 }
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
-            { errors[index] = error is NoctraApiException ? error.Message : "Catalogue momentanément indisponible."; }
+            {
+                errors[index] = error is NoctraApiException ? error.Message : "Catalogue momentanément indisponible.";
+                Trace($"catalogue {scope[index].Id} indisponible : {error.GetType().Name} {error.Message}");
+            }
         });
         if (cancellation.IsCancellationRequested) return;
         if (selected == null && group == null)
