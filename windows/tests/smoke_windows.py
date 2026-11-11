@@ -913,10 +913,9 @@ def check_episode_flow():
     control("Chapter2").invoke()
     until(lambda: position_seconds() >= 23, "Choosing a chapter did not seek", timeout=10)
     control("ChaptersButton").invoke()
-    wake_player()
-    timeline = control("Timeline").rectangle()
-    win32api.SetCursorPos((timeline.left + int(timeline.width() * .85), (timeline.top + timeline.bottom) // 2)); sleep(.2)
-    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0); sleep(.05); win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+    # Touche 8 : 80 % de l'épisode (96 s sur 120 s) ; la carte doit venir 15 s avant la fin.
+    window.set_focus(); sleep(.3)
+    send_keys("8")
     def traced(text):
         log = profile / "trace.log"
         return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")

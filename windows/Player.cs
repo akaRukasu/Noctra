@@ -614,6 +614,7 @@ public partial class MainWindow
     }
     private void UserSeek(double seconds)
     {
+        Trace($"saut à {seconds:0.0} s");
         if (SyncControls) { _ = SyncRequest("Seek", new { PositionTicks = (long)(Math.Max(0, seconds) * TimeSpan.TicksPerSecond) }); return; }
         SeekTo(seconds);
     }
@@ -685,7 +686,8 @@ public partial class MainWindow
             if (args.Key == Key.Escape) { trackMenu.IsOpen = false; args.Handled = true; }
             return;
         }
-        if (args.OriginalSource is Slider && args.Key is not (Key.F11 or Key.Escape)) return;
+        // Curseur (barre, volume) : il garde ses touches de déplacement ; les autres raccourcis (0-9, F, M…) restent actifs.
+        if (args.OriginalSource is Slider && args.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown) return;
         if (args.OriginalSource is TextBox && args.Key is not (Key.F11 or Key.Escape)) return;
         args.Handled = PlayerShortcut(args.Key);
     }
