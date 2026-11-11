@@ -932,10 +932,18 @@ def check_episode_flow():
     until(lambda: position_seconds() >= 23, "Choosing a chapter did not seek", timeout=10)
     control("ChaptersButton").invoke()
     # Touche 8 : 80 % de l'épisode (96 s sur 120 s) ; la carte doit venir 15 s avant la fin.
-    # Focus sur un bouton du lecteur (pas le champ de recherche du bandeau, qui garderait le chiffre).
-    wake_player(); control("PauseButton").set_focus(); sleep(.3)
-    send_keys("8")
-    until(lambda: traced("saut à 96.0 s"), "Key 8 did not move to 80 % of the episode", timeout=10)
+    # Clic à 80 % de la barre de lecture ; la position atteinte est lue dans le journal du lecteur.
+    def jumps():
+        log = profile / "trace.log"
+        text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+        return [float(value) for value in re.findall(r"saut à ([0-9.]+) s", text)]
+    before = len(jumps())
+    wake_player()
+    timeline = control("Timeline").rectangle()
+    win32api.SetCursorPos((timeline.left + int(timeline.width() * .8), (timeline.top + timeline.bottom) // 2)); sleep(.2)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0); sleep(.05); win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+    until(lambda: len(jumps()) > before, "Clicking the timeline did not seek", timeout=10)
+    assert 85 <= jumps()[-1] <= 108, f"Timeline click landed at {jumps()[-1]:.1f} s instead of about 96 s"
     # Journal du lecteur : la carte a bien été affichée (plus fiable qu'un sondage de l'interface pendant ses 10 s).
     until(lambda: traced("à suivre affiché episode-next"), "« À suivre » missing at the end of the episode", timeout=30)
     if control("UpNextTitle").exists(timeout=2):
