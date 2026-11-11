@@ -346,6 +346,7 @@ public partial class MainWindow
         if (enabled)
         {
             if (fullscreen) SetFullscreen(false);
+            if (appFullscreen) SetAppFullscreen(false);
             miniRestoreState = WindowState;
             miniRestoreBounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
             miniRestoreMinWidth = MinWidth;

@@ -963,6 +963,27 @@ def check_episode_flow():
     print("OK · Série : liste des épisodes au survol, épisode précédent / suivant, chapitres, « À suivre », épisode suivant lancé seul, saison suivante.", flush=True)
 
 
+def check_app_fullscreen():
+    # Plein écran de toute l'application depuis l'accueil : bouton de la barre de titre, Échap, F11 et bouton de sortie du bandeau.
+    original = tuple(win32gui.GetWindowRect(window.handle))
+    control("HomeTab").invoke()
+    control("CaptionFullscreen").invoke()
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == monitor_rect(window), "App fullscreen did not cover the monitor")
+    until(lambda: control("AppFullscreenExit").exists(timeout=.1), "No way out of the app fullscreen in the header")
+    assert control("HomeTab").exists(timeout=1), "The navigation is hidden in the app fullscreen"
+    assert control("HomeTab").rectangle().top - monitor_rect(window)[1] < 40, "The caption bar still takes space in the app fullscreen"
+    screenshot("accueil-plein-ecran")
+    window.set_focus(); send_keys("{ESC}")
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "Escape did not leave the app fullscreen")
+    until(lambda: not control("AppFullscreenExit").exists(timeout=.1), "The exit button stayed after leaving the app fullscreen")
+    window.set_focus(); send_keys("{F11}")
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == monitor_rect(window), "F11 did not enter the app fullscreen")
+    control("AppFullscreenExit").invoke()
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "The header button did not leave the app fullscreen")
+    assert control("CaptionClose").exists(timeout=2), "The caption bar was not restored"
+    print("OK · Plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau).", flush=True)
+
+
 def check_bowd_preroll():
     # BowdTV : publicité lue dans le lecteur Noctra (son coupé), « start », délai respecté, « continue », puis direct HLS (comme la PWA).
     control("TvTab").invoke()
@@ -1532,6 +1553,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             print("OK · Responsive header, control alignment and maximized caption visibility.",flush=True)
             raise SystemExit(0)
         if args.features_only:
+            check_app_fullscreen()
             check_new_features()
             check_tv_responsiveness()
             check_bowd_preroll()

@@ -10,12 +10,44 @@ namespace Noctra.Windows;
 public partial class MainWindow
 {
     private const double CaptionHeight = 44;
+    private bool appFullscreen;
+
+    // Plein écran de toute l'application (accueil, médiathèques, TV…) : F11, bouton de la barre de titre ;
+    // sortie par Échap, F11 ou le bouton du bandeau. Le lecteur réutilise le même mode écran.
+    private void AppFullscreenClick(object sender, RoutedEventArgs args) => SetAppFullscreen(!appFullscreen);
+
+    private void SetAppFullscreen(bool enabled)
+    {
+        if (enabled == appFullscreen || enabled && miniPlayer) return;
+        screenMode ??= new ScreenFullscreen(this);
+        if (enabled)
+        {
+            screenMode.Enter();
+            if (!screenMode.Active) return;
+            appFullscreen = true;
+        }
+        else
+        {
+            appFullscreen = false;
+            if (!fullscreen) screenMode.Exit();
+        }
+        AppFullscreenExit.Visibility = appFullscreen ? Visibility.Visible : Visibility.Collapsed;
+        SizeHeader();
+    }
+
+    // Touches hors lecture : F11 bascule, Échap quitte le plein écran de l'application.
+    private bool AppFullscreenKey(System.Windows.Input.Key key)
+    {
+        if (key == System.Windows.Input.Key.F11) { SetAppFullscreen(!appFullscreen); return true; }
+        if (key == System.Windows.Input.Key.Escape && appFullscreen) { SetAppFullscreen(false); return true; }
+        return false;
+    }
 
     private void SizeHeader()
     {
         var inset = MaximizedFrameInset();
         WindowFrame.Margin = inset;
-        CaptionRow.Height = new GridLength(fullscreen || miniPlayer ? 0 : CaptionHeight);
+        CaptionRow.Height = new GridLength(fullscreen || appFullscreen || miniPlayer ? 0 : CaptionHeight);
         if (WindowChrome.GetWindowChrome(this) is { } chrome) chrome.CaptionHeight = CaptionHeight + inset.Top;
 
         // WPF widths are logical units: Windows applies the current monitor's DPI once.
@@ -82,7 +114,7 @@ public partial class MainWindow
 
     private Thickness MaximizedFrameInset()
     {
-        if (fullscreen || WindowState != WindowState.Maximized) return new Thickness();
+        if (fullscreen || appFullscreen || WindowState != WindowState.Maximized) return new Thickness();
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero || !HeaderWindowRect(handle, out var bounds)) return new Thickness();
         var area = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;

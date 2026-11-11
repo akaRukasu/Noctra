@@ -86,6 +86,13 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Plein écran de l'application
+
+- **Partout** : accueil, médiathèques, Découvrir, TV… La fenêtre couvre tout l'écran, sans barre de titre ni barre des tâches ; le bandeau Noctra reste affiché.
+- **Entrer** : bouton « Plein écran » de la barre de titre (à côté de « Réduire ») ou F11.
+- **Sortir** : Échap, F11 ou le bouton « Quitter le plein écran » du bandeau.
+- **Lecture** : une vidéo lancée dans ce mode garde son propre plein écran (F11 / F) ; en le quittant, l'application reste en plein écran.
+
 ## Accueil plus fluide
 
 - **Effets de flou retirés** : ils étaient recalculés à chaque image, d'où les ralentissements au défilement. Le fond d'ambiance et le halo du grand visuel sont désormais de petites images floutées une fois pour toutes.
@@ -179,6 +186,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - multivue ;
   - administration.
 - **Test des nouveautés** :
+  - plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau) ;
   - commandes et panneaux du nouveau lecteur ;
   - SyncPlay ;
   - télécommande ;

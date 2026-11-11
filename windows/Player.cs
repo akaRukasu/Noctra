@@ -694,7 +694,14 @@ public partial class MainWindow
 
     private void WindowKey(object sender, KeyEventArgs args)
     {
-        if (pendingMedia == null && pendingLive == null) return;
+        if (pendingMedia == null && pendingLive == null)
+        {
+            // Échap d'un menu ou d'une liste déroulante (fenêtre surgissante) : il ferme d'abord ce menu.
+            var fromPopup = args.OriginalSource is System.Windows.Media.Visual visual && PresentationSource.FromVisual(visual)?.RootVisual != this ||
+                args.OriginalSource is ComboBox { IsDropDownOpen: true };
+            if (!args.Handled && (args.Key == Key.F11 || args.Key == Key.Escape && !fromPopup)) args.Handled = AppFullscreenKey(args.Key);
+            return;
+        }
         if (trackMenu?.IsOpen == true)
         {
             if (args.Key == Key.Escape) { trackMenu.IsOpen = false; args.Handled = true; }

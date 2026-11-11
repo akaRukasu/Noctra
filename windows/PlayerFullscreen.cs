@@ -14,7 +14,7 @@ namespace Noctra.Windows;
 // sans mouvement. Sans image (musique, messages), ils restent posés dans le lecteur.
 public partial class MainWindow
 {
-    private ScreenFullscreen? playerScreen;
+    private ScreenFullscreen? screenMode;
     private Popup? fullscreenControls, headerOverlay, skipOverlay;
     private readonly DispatcherTimer controlsIdle = new(DispatcherPriority.Input) { Interval = TimeSpan.FromSeconds(2.8) };
     private VideoInputFilter? videoInput;
@@ -91,11 +91,12 @@ public partial class MainWindow
     {
         if (enabled == fullscreen || enabled && pendingMedia == null && pendingLive == null) return;
         if (enabled && miniPlayer) SetMiniPlayer(false);
-        playerScreen ??= new ScreenFullscreen(this);
+        screenMode ??= new ScreenFullscreen(this);
         if (enabled)
         {
-            playerScreen.Enter();
-            if (!playerScreen.Active) return;
+            // Plein écran de l'application déjà actif : la fenêtre couvre l'écran, seul l'en-tête disparaît.
+            screenMode.Enter();
+            if (!screenMode.Active) return;
             fullscreen = true;
             FrameHeader.Visibility = Visibility.Collapsed;
             SizeHeader();
@@ -108,7 +109,7 @@ public partial class MainWindow
             FullscreenButton.Content = ""; FullscreenButton.ToolTip = "Plein écran · F ou F11";
             System.Windows.Automation.AutomationProperties.SetName(FullscreenButton, "Plein écran");
             FrameHeader.Visibility = Visibility.Visible;
-            playerScreen.Exit();
+            if (!appFullscreen) screenMode.Exit();
             SizeHeader();
         }
         UpdateOverlayMode();

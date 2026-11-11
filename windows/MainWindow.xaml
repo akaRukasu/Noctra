@@ -640,6 +640,7 @@
                     <TextBlock Text="Noctra" FontFamily="{StaticResource DisplayFont}" FontSize="13" Foreground="#C9CCDA" Margin="9,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button x:Name="CaptionFullscreen" Content="&#xE740;" Click="AppFullscreenClick" Style="{StaticResource WindowCaption}" ToolTip="Plein écran · F11" AutomationProperties.Name="Plein écran"/>
                     <Button x:Name="CaptionMinimize" Content="&#xE921;" Click="MinimizeWindow" Style="{StaticResource WindowCaption}" ToolTip="Réduire" AutomationProperties.Name="Réduire"/>
                     <Button x:Name="CaptionMaximize" Content="&#xE922;" Click="MaximizeWindow" Style="{StaticResource WindowCaption}" ToolTip="Agrandir ou restaurer" AutomationProperties.Name="Agrandir ou restaurer"/>
                     <Button x:Name="CaptionClose" Content="&#xE8BB;" Click="QuitWindow" Style="{StaticResource WindowCaption}" Tag="close" ToolTip="Fermer" AutomationProperties.Name="Fermer"/>
@@ -795,6 +796,9 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                             </Grid>
+                            <!-- Plein écran de l'application : sortie visible dans le bandeau (la barre de titre est masquée). -->
+                            <Button x:Name="AppFullscreenExit" Style="{StaticResource DockIcon}" Content="&#xE73F;" Click="AppFullscreenClick" Visibility="Collapsed"
+                                    ToolTip="Quitter le plein écran · Échap ou F11" AutomationProperties.Name="Quitter le plein écran" Margin="4,0"/>
                             <Button x:Name="SearchButton" Style="{StaticResource DockIcon}" Content="&#xE721;" Click="Search"
                                     ToolTip="Rechercher" AutomationProperties.Name="Rechercher" Margin="4,0"/>
                             <!-- 0.8 : SyncPlay discret, comme Jellyfin et la PWA : icône du bandeau, menu au clic, point d'accent en séance. -->
