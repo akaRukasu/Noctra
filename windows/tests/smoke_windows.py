@@ -1324,6 +1324,13 @@ def check_new_features():
 
     # Recherche de sous-titres en ligne, téléchargés par le serveur puis ajoutés à la lecture.
     # 0.8 : panneau « Audio et sous-titres » (pistes et recherche en ligne au même endroit).
+    # VF avec sous-titres français « par défaut » : aucune piste affichée au lancement.
+    log = profile / "trace.log"
+    launches = re.findall(r"sous-titres au lancement episode : piste (\S+) sur (\d+)", log.read_text(encoding="utf-8", errors="replace") if log.exists() else "")
+    assert launches, "Subtitle choice at launch not traced"
+    assert all(int(count) >= 1 for _, count in launches), f"The French subtitle track is missing from the test episode: {launches}"
+    assert all(sid == "no" for sid, _ in launches), f"French subtitles were enabled by default on French audio: {launches}"
+    print("OK · Sous-titres désactivés au lancement d'un épisode en VF (piste française « par défaut » ignorée).", flush=True)
     control("SubtitleButton").invoke()
     until(lambda: process_controls("Button", auto_id="SubtitleSearch-fre"), "Subtitle search entry missing")
     assert process_controls("Button", auto_id="SubtitleOff"), "Subtitle off choice missing"
@@ -1520,6 +1527,16 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
     external_path=profile/"external-audio.webm"
     subprocess.run([str(args.ffmpeg.resolve()),"-v","error","-i",str(args.video.resolve()),"-f","lavfi","-i","sine=frequency=440:sample_rate=48000","-t","120","-c:v","copy","-af","volume=0.02","-c:a","libopus","-ac","2",str(external_path)],check=True)
     external_video=external_path.read_bytes()
+    if args.features_only:
+        # Épisode en VF avec une piste de sous-titres français marquée « par défaut » (cas d'un fichier réel) :
+        # elle ne doit pas s'afficher au lancement (mode « intelligent », comme Jellyfin).
+        srt_path=profile/"vf.srt"
+        srt_path.write_text("".join(f"{n+1}\n00:00:{n*2:02d},000 --> 00:00:{n*2+1:02d},500\nSous-titre affiché {n+1}\n\n" for n in range(29)),encoding="utf-8")
+        subtitled_path=profile/"episode-vf.mkv"
+        subprocess.run([str(args.ffmpeg.resolve()),"-v","error","-i",str(args.video.resolve()),"-i",str(srt_path),"-map","0:v","-map","0:a","-map","1:0",
+                        "-c:v","copy","-c:a","copy","-c:s","srt","-metadata:s:a:0","language=fre","-metadata:s:s:0","language=fre",
+                        "-disposition:s:0","default",str(subtitled_path)],check=True)
+        video=subtitled_path.read_bytes()
     subprocess.run([str(args.ffmpeg.resolve()), "-v", "error", "-i", str(args.video.resolve()), "-t", "30",
                     "-vf", "scale=480:-2", "-c:v", "libx264", "-preset", "ultrafast", "-g", "48",
                     "-c:a", "aac", "-output_ts_offset", "17", "-hls_time", "4", "-hls_list_size", "0", str(hls_dir / "index.m3u8")], check=True)

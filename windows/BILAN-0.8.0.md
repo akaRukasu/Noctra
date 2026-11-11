@@ -86,6 +86,12 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Sous-titres au lancement
+
+- **Avant** : le lecteur demandait à mpv « sous-titres en français » sans autre règle ; mpv activait donc une piste française dès qu'elle existait, même sur un contenu déjà en VF.
+- **Maintenant (par défaut)** : comme le mode « intelligent » de Jellyfin, aucun sous-titre quand l'audio est dans une langue préférée (sauf les passages forcés, ex. dialogues étrangers d'un film en VF) ; sous-titres de la langue préférée quand l'audio est étranger (VO sans VF).
+- **Réglage** : Profil → Préférences de lecture → « Sous-titres au lancement » : seulement si l'audio est dans une autre langue, seulement les passages forcés, toujours, ou jamais. Les sous-titres restent activables à tout moment depuis le lecteur.
+
 ## Plein écran de l'application
 
 - **Partout** : accueil, médiathèques, Découvrir, TV… La fenêtre couvre tout l'écran, sans barre de titre ni barre des tâches ; le bandeau Noctra reste affiché.
@@ -186,6 +192,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - multivue ;
   - administration.
 - **Test des nouveautés** :
+  - sous-titres désactivés au lancement d'un épisode en VF dont la piste française est marquée « par défaut » ;
   - plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau) ;
   - commandes et panneaux du nouveau lecteur ;
   - SyncPlay ;

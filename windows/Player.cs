@@ -364,7 +364,7 @@ public partial class MainWindow
             if (active != state) return;
             state.Engine = new Mpv(surface.Handle, state.Session.Local ? null : state.Session.MediaAuthorization, state.Session.StartSeconds,
                 software: state.Software, paused: state.Synchronized, audioOnly: state.Session.Audio);
-            ApplyPlayerPreferences(state.Engine);
+            ApplyPlayerPreferences(state.Engine, loading: true);
             state.Engine.Load(media);
             timer.Start();
         }
@@ -400,6 +400,7 @@ public partial class MainWindow
                 state.Position = engine.Seconds("time-pos") ?? state.Session.StartSeconds;
                 state.NextReport = DateTime.UtcNow.AddSeconds(8);
                 ApplyPlayerPreferences(engine);
+                Trace($"sous-titres au lancement {state.Session.ItemId} : piste {engine.Text("sid") ?? "?"} sur {Tracks(engine, "sub").Count}");
                 CorrectVideoDisplay();
                 var height = engine.Seconds("height");
                 PlaybackMode.Text = MethodLabel(state) + (height is > 0 && !state.Session.Audio ? $" · {height:0}p" : "");
@@ -877,7 +878,7 @@ public partial class MainWindow
                 MediaSubtitle.Text = state.Streams.Length > 1 ? $"Serveur {state.Next} sur {state.Streams.Length}" : "";
                 MediaSubtitle.Visibility = MediaSubtitle.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 state.Engine = new Mpv(surface.Handle, null, 0, stream.NoctraToken, live: true);
-                ApplyPlayerPreferences(state.Engine);
+                ApplyPlayerPreferences(state.Engine, loading: true);
                 state.Engine.Load(stream.Url);
                 state.Deadline = DateTime.UtcNow.AddSeconds(16);
                 state.Started = false;

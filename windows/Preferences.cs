@@ -11,7 +11,7 @@ namespace Noctra.Windows;
 
 internal sealed record PlaybackPreferences(double Volume = 85, double SubtitleScale = 1.1, string AudioLanguage = "fra,fre,fr",
     string SubtitleLanguage = "fra,fre,fr", bool HardwareDecoding = true, string[]? TvFavorites = null,
-    string SubtitleColor = "white", string SubtitleBackground = "shadow", double SubtitlePosition = 100);
+    string SubtitleColor = "white", string SubtitleBackground = "shadow", double SubtitlePosition = 100, string? SubtitleMode = "smart");
 
 public partial class MainWindow
 {
@@ -64,14 +64,33 @@ public partial class MainWindow
         }
     }
 
-    private void ApplyPlayerPreferences(Mpv engine)
+    // Sous-titres au lancement, comme le mode « intelligent » de Jellyfin : rien quand l'audio est déjà dans une langue
+    // préférée (seulement les passages forcés), sous-titres de la langue préférée quand l'audio est étranger.
+    // Auparavant mpv recevait seulement la langue préférée (français) et activait une piste française même en VF.
+    private static readonly (string Value, string Label)[] SubtitleModes =
+    [
+        ("smart", "Seulement si l'audio est dans une autre langue"), ("forced", "Seulement les passages forcés"),
+        ("always", "Toujours, dans la langue préférée"), ("off", "Jamais (activables dans le lecteur)")
+    ];
+
+    private void ApplyPlayerPreferences(Mpv engine, bool loading = false)
     {
         engine.Command("set", "volume", preferences.Volume.ToString(System.Globalization.CultureInfo.InvariantCulture));
         engine.Command("set", "sub-scale", preferences.SubtitleScale.ToString(System.Globalization.CultureInfo.InvariantCulture));
         engine.Command("set", "alang", preferences.AudioLanguage);
-        engine.Command("set", "slang", preferences.SubtitleLanguage);
+        void Optional(string name, params string[] values)
+        {
+            // Première valeur acceptée par ce moteur (les anciennes versions de mpv ignorent certaines valeurs).
+            foreach (var value in values)
+                try { engine.Command("set", name, value); return; } catch (InvalidOperationException) { }
+        }
+        var mode = SubtitleModes.Any(option => option.Value == preferences.SubtitleMode) ? preferences.SubtitleMode : "smart";
+        engine.Command("set", "slang", mode is "forced" or "off" ? "" : preferences.SubtitleLanguage);
+        Optional("subs-with-matching-audio", mode == "always" ? "yes" : "forced", "no");
+        Optional("subs-fallback", mode == "always" ? "default" : "no");
+        Optional("subs-fallback-forced", mode == "off" ? "no" : "yes");
+        if (loading && mode == "off") Optional("sid", "no");
         // 0.7 : apparence des sous-titres texte (couleur, contour ou bandeau, hauteur).
-        void Optional(string name, string value) { try { engine.Command("set", name, value); } catch (InvalidOperationException) { } }
         Optional("sub-color", preferences.SubtitleColor == "yellow" ? "#FFF1C40F" : "#FFFFFFFF");
         Optional("sub-border-color", "#FF000000");
         Optional("sub-border-size", preferences.SubtitleBackground == "none" ? "1.5" : "3");
@@ -107,6 +126,7 @@ public partial class MainWindow
         (string, string)[] colors = [("white", "Blanc"), ("yellow", "Jaune")];
         (string, string)[] backgrounds = [("shadow", "Contour et ombre"), ("none", "Contour fin"), ("box", "Bandeau sombre")];
         (string, string)[] positions = [("100", "En bas"), ("92", "Un peu plus haut"), ("84", "Au-dessus des bandeaux")];
+        var subtitleMode = Choice("Sous-titres au lancement", SubtitleModes, preferences.SubtitleMode ?? "smart");
         var color = Choice("Couleur des sous-titres", colors, preferences.SubtitleColor);
         var background = Choice("Style des sous-titres", backgrounds, preferences.SubtitleBackground);
         var position = Choice("Position des sous-titres", positions, preferences.SubtitlePosition.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
@@ -119,6 +139,7 @@ public partial class MainWindow
             {
                 AudioLanguage = language.Text.Trim(), SubtitleLanguage = subtitles.Text.Trim(),
                 SubtitleScale = scale.Value, Volume = VolumeControl.Value, HardwareDecoding = hardware.IsChecked == true,
+                SubtitleMode = SubtitleModes[Math.Max(0, subtitleMode.SelectedIndex)].Value,
                 SubtitleColor = colors[Math.Max(0, color.SelectedIndex)].Item1, SubtitleBackground = backgrounds[Math.Max(0, background.SelectedIndex)].Item1,
                 SubtitlePosition = double.Parse(positions[Math.Max(0, position.SelectedIndex)].Item1, System.Globalization.CultureInfo.InvariantCulture)
             };
