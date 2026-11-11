@@ -896,6 +896,9 @@ def check_tv_provider_options():
 
 def check_episode_flow():
     # 0.8 : comme la PWA : boutons épisode précédent / suivant, chapitres, « À suivre » en fin d'épisode, épisode suivant lancé seul.
+    def traced(text):
+        log = profile / "trace.log"
+        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
     def plays(item):
         return sum(1 for path, user, p in events if path == "/jellyfin/Sessions/Playing" and p.get("ItemId") == item)
     started = plays("episode")
@@ -929,11 +932,10 @@ def check_episode_flow():
     until(lambda: position_seconds() >= 23, "Choosing a chapter did not seek", timeout=10)
     control("ChaptersButton").invoke()
     # Touche 8 : 80 % de l'épisode (96 s sur 120 s) ; la carte doit venir 15 s avant la fin.
-    window.set_focus(); sleep(.3)
+    # Focus sur un bouton du lecteur (pas le champ de recherche du bandeau, qui garderait le chiffre).
+    wake_player(); control("PauseButton").set_focus(); sleep(.3)
     send_keys("8")
-    def traced(text):
-        log = profile / "trace.log"
-        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
+    until(lambda: traced("saut à 96.0 s"), "Key 8 did not move to 80 % of the episode", timeout=10)
     # Journal du lecteur : la carte a bien été affichée (plus fiable qu'un sondage de l'interface pendant ses 10 s).
     until(lambda: traced("à suivre affiché episode-next"), "« À suivre » missing at the end of the episode", timeout=30)
     if control("UpNextTitle").exists(timeout=2):
