@@ -15,6 +15,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - Musique et messages d'ouverture : les commandes restent posées dans le lecteur.
 
 **Barre de progression**
+- Clic ou appui-glissement : la position suit exactement le pointeur. Avant, un léger mouvement juste après le clic pouvait envoyer la lecture à la fin du titre.
 - Partie déjà chargée (mémoire tampon).
 - Repères de chapitres.
 - Vignettes au survol.

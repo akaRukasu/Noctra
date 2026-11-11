@@ -735,12 +735,13 @@ class Lookup:
                 return False
             sleep(.1)
 
-    def _resolve(self):
+    def _resolve(self, patience=0):
         found = self._find()
         if found is None and wake_player():
             found = self._find()
-        # Interface en train de se reconstruire (page qui change) : nouvelle recherche pendant 5 s au plus.
-        deadline = monotonic() + 5
+        # Action sur une page en train de se reconstruire : nouvelle recherche pendant 5 s au plus.
+        # Les lectures (texte, état) échouent tout de suite : les boucles d'attente du test les répètent.
+        deadline = monotonic() + patience
         while found is None and monotonic() < deadline:
             sleep(.2)
             found = self._find()
@@ -752,7 +753,7 @@ class Lookup:
         return self._resolve()
 
     def __getattr__(self, name):
-        target = self._resolve()
+        target = self._resolve(5 if name in ("invoke", "click", "click_input", "select", "set_edit_text", "set_focus", "toggle", "type_keys") else 0)
         value = getattr(target, name)
         if not callable(value):
             return value

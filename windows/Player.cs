@@ -60,8 +60,7 @@ public partial class MainWindow
         Timeline.PreviewMouseMove += (_, args) =>
         {
             if (!seeking || !Timeline.IsMouseCaptured || args.LeftButton != MouseButtonState.Pressed) return;
-            if (Timeline.Template?.FindName("PART_Track", Timeline) is Track track && track.ActualWidth > 0)
-                Timeline.Value = Math.Clamp(track.ValueFromPoint(args.GetPosition(track)), Timeline.Minimum, Timeline.Maximum);
+            if (TimelineValueAt(args) is { } value) Timeline.Value = value;
         };
         Timeline.LostMouseCapture += (_, _) => { if (seeking && Mouse.LeftButton == MouseButtonState.Released) { seeking = false; Seek(); } };
     }
@@ -660,10 +659,21 @@ public partial class MainWindow
         UserSeek(segment.EndTicks / (double)TimeSpan.TicksPerSecond);
     }
     private void Fullscreen(object sender, RoutedEventArgs args) => SetFullscreen(!fullscreen);
+    // 0.8 : position sous le pointeur, d'après la seule largeur de la barre. Track.ValueFromPoint partait de la valeur
+    // et de la place du curseur au dernier affichage : juste après le clic (valeur déjà déplacée, curseur pas encore
+    // redessiné), le moindre mouvement comptait l'écart deux fois et envoyait la lecture à la fin.
+    private double? TimelineValueAt(MouseEventArgs args)
+    {
+        if (Timeline.Template?.FindName("PART_Track", Timeline) is not Track track || track.ActualWidth <= 2) return null;
+        var fraction = Math.Clamp((args.GetPosition(track).X - 1) / (track.ActualWidth - 2), 0, 1);
+        return Timeline.Minimum + fraction * (Timeline.Maximum - Timeline.Minimum);
+    }
+
     private void BeginSeek(object sender, MouseButtonEventArgs args)
     {
         if (!Timeline.IsEnabled) return;
         seeking = true;
+        if (TimelineValueAt(args) is { } value) Timeline.Value = value;
         // Le glissement continue même si le pointeur sort de la barre (fenêtres superposées).
         if (!Timeline.IsMouseCaptureWithin) Timeline.CaptureMouse();
     }
