@@ -103,6 +103,8 @@ public partial class MainWindow
         QueuePrevious.IsEnabled = playQueueIndex > 0;
         QueueNext.IsEnabled = playQueueIndex + 1 < playQueue.Length;
         ChaptersButton.Visibility = Visibility.Collapsed;
+        EpisodesButton.Visibility = item.Type == "Episode" && !string.IsNullOrWhiteSpace(item.SeriesId) && localFile == null ? Visibility.Visible : Visibility.Collapsed;
+        episodeSeason = null;
         LibraryShell.Visibility = Visibility.Collapsed;
         Player.Visibility = Visibility.Visible;
         Timeline.Value = 0;

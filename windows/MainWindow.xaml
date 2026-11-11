@@ -936,6 +936,8 @@
                                     AutomationProperties.Name="Serveur suivant" ToolTip="Passer au serveur suivant (image figée, coupures)"/>
                             <Button x:Name="LiveQualityButton" Content="Qualité" Style="{StaticResource PlayerPill}" Click="ChooseLiveQuality" Visibility="Collapsed"
                                     AutomationProperties.Name="Qualités TV" ToolTip="Afficher toutes les qualités du flux" Margin="0,0,8,0" MinWidth="76"/>
+                            <Button x:Name="EpisodesButton" Content="&#xE7F4;" Style="{StaticResource PlayerGlass}" Click="EpisodesClick" MouseEnter="EpisodesHover" Visibility="Collapsed"
+                                    ToolTip="Épisodes de la saison" AutomationProperties.Name="Épisodes" Margin="0,0,4,0"/>
                             <Button x:Name="ChaptersButton" Content="&#xE8FD;" Style="{StaticResource PlayerGlass}" Click="ShowChapters" Visibility="Collapsed"
                                     ToolTip="Chapitres · Page préc. / Page suiv." AutomationProperties.Name="Chapitres" Margin="0,0,4,0"/>
                             <Button x:Name="SubtitleButton" Content="&#xED1E;" Style="{StaticResource PlayerGlass}" Click="SubtitleTrack" ToolTip="Audio et sous-titres · C"

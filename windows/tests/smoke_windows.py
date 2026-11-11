@@ -55,6 +55,8 @@ episode = {"Id": "episode", "Name": "Abomination", "SeriesId": "teen", "SeriesNa
            "ParentIndexNumber": 2, "IndexNumber": 4, "RunTimeTicks": 1_200_000_000,
            "ParentBackdropItemId": "teen", "ParentBackdropImageTags": ["teen"], "Overview": series["Overview"]}
 next_episode = dict(episode, Id="episode-next", Name="Venomous", IndexNumber=5)
+# Saison suivante : « Venomous » est le dernier épisode de la saison 2 (passage à la saison 3 vérifié).
+season3_episode = dict(episode, Id="episode-s3", Name="Le Retour", ParentIndexNumber=3, IndexNumber=1)
 movies = [{"Id": key, "Name": title, "Type": "Movie", "ProductionYear": year, "ImageTags": {"Primary": key},
            "BackdropImageTags": [key], "RunTimeTicks": 1_200_000_000}
           for key, title, year in [("film", "Horizon polaire", 2024), ("orbit", "Dernière orbite", 2025),
@@ -504,10 +506,15 @@ class Fixture(BaseHTTPRequestHandler):
                               and ("IsFavorite" not in q.get("Filters", [""])[0] or (user, item["Id"]) in favorites)])
         if path.startswith(f"/jellyfin/Users/{user}/Items/"):
             key = path.rsplit("/", 1)[1]
-            return self.send(with_state(next(item for item in [series, episode, next_episode, *movies, album, *tracks, *playlists, person] if item["Id"] == key), user))
+            return self.send(with_state(next(item for item in [series, episode, next_episode, season3_episode, *movies, album, *tracks, *playlists, person] if item["Id"] == key), user))
         if path == "/jellyfin/Shows/teen/Seasons":
             return self.page([{"Id": "season2", "Name": "Saison 2", "IndexNumber": 2}])
         if path == "/jellyfin/Shows/teen/Episodes":
+            if "AdjacentTo" in q:
+                # Comme Jellyfin : épisodes voisins dans toute la série (d'une saison à l'autre).
+                order = [episode, next_episode, season3_episode]
+                index = [item["Id"] for item in order].index(q["AdjacentTo"][0])
+                return self.page([with_state(item, user) for item in order[max(0, index - 1):index + 2]])
             if "SeasonId" in q:
                 assert q["SeasonId"] == ["season2"]
             return self.page([with_state(episode, user), with_state(next_episode, user)])
@@ -517,7 +524,7 @@ class Fixture(BaseHTTPRequestHandler):
             _, _, _, key, _, kind = path.split("/")
             data = artwork.get((key, kind))
             return self.send(data or b"", status=200 if data else 404, content_type="image/jpeg")
-        if path in ["/jellyfin/Videos/episode/stream.webm", "/jellyfin/Videos/episode-next/stream.webm", "/fixture-video.webm", "/api/tv/oha/http/mixed-test"]:
+        if path in ["/jellyfin/Videos/episode/stream.webm", "/jellyfin/Videos/episode-next/stream.webm", "/jellyfin/Videos/episode-s3/stream.webm", "/fixture-video.webm", "/api/tv/oha/http/mixed-test"]:
             if path=="/fixture-video.webm":
                 assert not self.headers.get("x-noctra-token"),"Session token leaked outside the TV API"
                 return self.send(external_video,content_type="video/webm")
@@ -906,6 +913,14 @@ def check_episode_flow():
         until(lambda: plays("episode") > started, "The previous episode did not start", timeout=60)
     next_started = plays("episode-next")
     until(lambda: wake_player() is not False and control("QueueNext").is_visible() and control("QueueNext").is_enabled(), "No next-episode button in the player", timeout=20)
+    # Bouton « Épisodes » : la liste de la saison s'ouvre au survol.
+    until(lambda: wake_player() is not False and control("EpisodesButton").is_visible(), "No episodes button in the player", timeout=10)
+    button = control("EpisodesButton").rectangle()
+    win32api.SetCursorPos(((button.left + button.right) // 2, (button.top + button.bottom) // 2))
+    until(lambda: control("Episode5").exists(timeout=.1), "Hovering the episodes button does not list the season", timeout=15)
+    screenshot("episodes-saison")
+    win32api.SetCursorPos((button.left - 400, button.top - 300))
+    until(lambda: not control("Episode5").exists(timeout=.1), "The episode list stays open after the pointer left", timeout=10)
     assert not control("QueuePrevious").is_enabled(), "First episode offers a previous episode"
     until(lambda: wake_player() is not False and control("ChaptersButton").is_visible(), "No chapters for an episode with detected segments", timeout=20)
     control("ChaptersButton").invoke()
@@ -927,8 +942,12 @@ def check_episode_flow():
     until(lambda: plays("episode-next") > next_started, "The next episode did not start by itself", timeout=40)
     assert traced("épisode suivant episode-next (compte à rebours)") or traced("épisode suivant episode-next (fin du fichier)"), "The next episode started for another reason"
     until(lambda: control("MediaTitle").window_text() == "Venomous", "The player did not switch to the next episode")
+    # Dernier épisode de la saison 2 : l'épisode suivant est le premier de la saison 3.
+    until(lambda: wake_player() is not False and control("QueueNext").is_enabled(), "No next episode after the last episode of a season", timeout=20)
+    control("QueueNext").invoke()
+    until(lambda: plays("episode-s3") > 0 and control("MediaTitle").window_text() == "Le Retour", "The next season did not follow the last episode of a season", timeout=60)
     control("ReturnButton").invoke()
-    print("OK · Série : épisode précédent / suivant, chapitres, « À suivre » et épisode suivant lancé seul (comme la PWA).", flush=True)
+    print("OK · Série : liste des épisodes au survol, épisode précédent / suivant, chapitres, « À suivre », épisode suivant lancé seul, saison suivante.", flush=True)
 
 
 def check_bowd_preroll():

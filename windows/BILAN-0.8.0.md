@@ -50,7 +50,8 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 **Séries**
 - **À suivre** (comme la PWA) : après le générique de fin, sinon 30 s avant la fin, une carte présente l'épisode suivant ; il démarre seul au bout de 10 s de lecture. « Lire maintenant » ou « Plus tard » (la lecture s'arrête alors à la fin).
 - En fin d'épisode, l'épisode suivant démarre même sans file de lecture (avant : seulement dans une file).
-- Boutons **Épisode précédent / suivant** dans le lecteur (touche N : suivant).
+- Boutons **Épisode précédent / suivant** dans le lecteur (touche N : suivant). L'épisode suivant est demandé à Jellyfin sur toute la série : après le dernier épisode d'une saison vient le premier de la suivante.
+- Bouton **Épisodes** : au survol, la liste des épisodes de la saison (durée, vu / commencé, épisode en cours surligné), les autres saisons en un clic ; un clic sur un épisode le lance. La liste se referme quand le pointeur s'en va.
 
 **Chapitres**
 - Bouton « Chapitres » dans le lecteur : liste avec l'heure de début, chapitre en cours surligné ; Page préc. / Page suiv. pour passer d'un chapitre à l'autre.

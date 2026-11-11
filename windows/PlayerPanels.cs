@@ -353,6 +353,109 @@ public partial class MainWindow
         }, "ChaptersPanel");
     }
 
+    // ---------- Épisodes de la saison (bouton du lecteur, ouvert au survol) ----------
+    private readonly Dictionary<string, MediaItem[]> episodeLists = [];
+    private MediaItem[]? episodeSeasons;
+    private string? episodeSeasonsOf, episodeSeason;
+    private bool episodesByHover;
+    private System.Windows.Threading.DispatcherTimer? episodesLeave;
+
+    private void EpisodesHover(object sender, System.Windows.Input.MouseEventArgs args)
+    {
+        if (playerPanel?.IsOpen == true && playerPanelAnchor == EpisodesButton) return;
+        ShowEpisodes(hover: true);
+    }
+    private void EpisodesClick(object sender, RoutedEventArgs args)
+    {
+        if (playerPanel?.IsOpen == true && playerPanelAnchor == EpisodesButton && episodesByHover) { episodesByHover = false; return; } // ouvert au survol : le clic le garde ouvert
+        ShowEpisodes(hover: false);
+    }
+
+    private void ShowEpisodes(bool hover)
+    {
+        if (active?.Item is not { Type: "Episode", SeriesId: { Length: > 0 } seriesId } item || client is not { } account) return;
+        episodesByHover = hover;
+        ShowPlayerPanel(EpisodesButton, (item.SeriesName ?? "Série") + " · épisodes", () => EpisodesContent(account, item, seriesId), "EpisodesPanel");
+        // Ouvert au survol : se referme quand le pointeur quitte le bouton et la liste.
+        episodesLeave ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        var away = 0;
+        episodesLeave.Tick -= EpisodesLeaveTick;
+        episodesLeave.Tick += EpisodesLeaveTick;
+        episodesLeave.Start();
+        void EpisodesLeaveTick(object? _, EventArgs __)
+        {
+            if (playerPanel?.IsOpen != true || playerPanelAnchor != EpisodesButton) { episodesLeave!.Stop(); episodesLeave.Tick -= EpisodesLeaveTick; return; }
+            if (!episodesByHover) return;
+            away = EpisodesButton.IsMouseOver || playerPanelBody?.IsMouseOver == true ? 0 : away + 1;
+            if (away >= 2) ClosePlayerPanel();
+        }
+    }
+
+    private FrameworkElement EpisodesContent(Jellyfin account, MediaItem current, string seriesId)
+    {
+        var panel = new StackPanel { Width = 460 };
+        if (episodeSeasonsOf != seriesId) { episodeSeasons = null; episodeSeasonsOf = seriesId; _ = LoadSeasons(account, seriesId); }
+        var seasons = episodeSeasons;
+        if (seasons == null) { panel.Children.Add(Text("Chargement des saisons…", 12.5, color: "Muted")); return panel; }
+        episodeSeason ??= (seasons.FirstOrDefault(season => season.Id == current.SeasonId) ??
+            seasons.FirstOrDefault(season => season.IndexNumber == current.ParentIndexNumber) ?? seasons.FirstOrDefault())?.Id;
+        if (seasons.Length > 1)
+        {
+            var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            foreach (var season in seasons)
+                chips.Children.Add(PanelChip(string.IsNullOrWhiteSpace(season.Name) ? "Saison " + season.IndexNumber : season.Name, season.Id == episodeSeason,
+                    () => { episodeSeason = season.Id; episodesByHover = false; RebuildLater(); }, "Season" + (season.IndexNumber ?? 0)));
+            panel.Children.Add(chips);
+        }
+        if (episodeSeason == null) return panel;
+        var key = seriesId + "/" + episodeSeason;
+        if (!episodeLists.TryGetValue(key, out var episodes)) { panel.Children.Add(Text("Chargement des épisodes…", 12.5, color: "Muted")); _ = LoadEpisodes(account, seriesId, episodeSeason); return panel; }
+        var list = new StackPanel();
+        foreach (var episode in episodes)
+        {
+            var playing = episode.Id == current.Id;
+            var minutes = episode.RunTimeTicks is > 0 and var ticks ? $"{Math.Round(ticks / (double)TimeSpan.TicksPerMinute)} min" : "";
+            var state = playing ? "En cours de lecture" : episode.UserData?.Played == true ? "Vu" : episode.Resume > 0 ? "Commencé" : "";
+            var label = (episode.IndexNumber is { } number ? $"É{number} · " : "") + episode.Name;
+            list.Children.Add(PanelRow(label, playing, () => PlayEpisodeFromList(episode), string.Join(" · ", new[] { minutes, state }.Where(part => part.Length > 0)),
+                "Episode" + (episode.IndexNumber ?? 0)));
+        }
+        if (episodes.Length == 0) list.Children.Add(Text("Aucun épisode dans cette saison.", 12.5, color: "Muted"));
+        panel.Children.Add(new ScrollViewer { Content = list, MaxHeight = 420, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
+        return panel;
+    }
+
+    private async Task LoadSeasons(Jellyfin account, string seriesId)
+    {
+        try
+        {
+            var page = await account.Seasons(seriesId, lifetime.Token);
+            if (episodeSeasonsOf != seriesId) return;
+            episodeSeasons = (page.Items ?? []).OrderBy(season => season.IndexNumber ?? int.MaxValue).ToArray();
+        }
+        catch (Exception error) when (error is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or OperationCanceledException) { episodeSeasons = []; }
+        if (playerPanelAnchor == EpisodesButton) RebuildLater();
+    }
+
+    private async Task LoadEpisodes(Jellyfin account, string seriesId, string seasonId)
+    {
+        MediaItem[] episodes;
+        try { episodes = ((await account.Episodes(seriesId, seasonId, lifetime.Token)).Items ?? []).Where(episode => episode.CanPlay).ToArray(); }
+        catch (Exception error) when (error is System.Net.Http.HttpRequestException or System.Text.Json.JsonException or OperationCanceledException) { episodes = []; }
+        episodeLists[seriesId + "/" + seasonId] = episodes;
+        if (playerPanelAnchor == EpisodesButton) RebuildLater();
+    }
+
+    private void PlayEpisodeFromList(MediaItem episode)
+    {
+        ClosePlayerPanel();
+        if (active?.Item?.Id == episode.Id) return;
+        // Les positions de reprise changent pendant la lecture : la liste sera relue.
+        episodeLists.Clear();
+        FinishPlayback(refresh: false);
+        StartPlayback(episode);
+    }
+
     private void PlayerSettings(object sender, RoutedEventArgs args)
     {
         if (CurrentEngine == null) return;

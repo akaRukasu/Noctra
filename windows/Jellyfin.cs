@@ -43,6 +43,7 @@ internal sealed record MediaItem
     public MediaPerson[]? People { get; init; }
     // 0.7 : musique, listes de lecture, fiche technique, bandes-annonces, vignettes de progression.
     public string? ParentId { get; init; }
+    public string? SeasonId { get; init; }
     public string? Album { get; init; }
     public string? AlbumId { get; init; }
     public string? AlbumArtist { get; init; }
