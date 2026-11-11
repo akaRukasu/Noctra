@@ -798,7 +798,7 @@ public partial class MainWindow
     {
         try
         {
-            var data = await ad.Service.Send(ad.ActionUrl, "POST", new { action = "continue" }, CancellationToken.None);
+            var data = await ad.Service.Send(ad.ActionUrl, "POST", new { action = "continue" }, CancellationToken.None, timeoutSeconds: 60);
             if (pendingLive != state) return;
             var resolved = data.ValueKind == JsonValueKind.Object ? data.Deserialize<TvResolved>(Jellyfin.Json) : null;
             var servers = resolved == null ? [] : DecodeServers(ad.Service, "BowdTV", resolved).ToArray();

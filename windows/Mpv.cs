@@ -16,7 +16,7 @@ internal sealed class Mpv : IDisposable
 
     internal string? LastError { get; private set; }
     internal Mpv(IntPtr window, string? authorization, double startSeconds, string? noctraToken = null, bool software = false, bool probe = false, bool live = false,
-        bool paused = false, bool audioOnly = false)
+        bool paused = false, bool audioOnly = false, bool muted = false)
     {
         handle = mpv_create();
         if (handle == IntPtr.Zero) throw new InvalidOperationException("Le moteur mpv ne s’initialise pas.");
@@ -61,6 +61,7 @@ internal sealed class Mpv : IDisposable
             if (startSeconds > 0) Option("start", startSeconds.ToString("0.000", CultureInfo.InvariantCulture));
             // 0.7 : départ en pause (SyncPlay : le groupe démarre ensemble) ; musique sans image.
             if (paused) Option("pause", "yes");
+            if (muted) Option("mute", "yes");
             if (audioOnly) Option("vid", "no");
             // Sans périphérique audio utilisable (casque débranché, pilote absent) : lecture muette plutôt qu'un arrêt.
             _ = mpv_set_option_string(handle, "audio-fallback-to-null", "yes");

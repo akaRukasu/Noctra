@@ -77,6 +77,7 @@ public partial class MainWindow
 
     private void CloseHoverPreview()
     {
+        StopHoverClip();
         hoverDelay?.Stop();
         hoverWatch?.Stop();
         hoverPending = null;
@@ -219,6 +220,7 @@ public partial class MainWindow
         };
         _ = artwork?.Load(image, item, true, 760, cancellation);
         hoverPopup.IsOpen = true;
+        _ = StartHoverClip(visual, item, cancellation);
         if (SystemParameters.ClientAreaAnimation)
         {
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -228,6 +230,108 @@ public partial class MainWindow
             panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
         }
         hoverWatch?.Start();
+    }
+
+    // ---------- 0.8 : extrait vidéo dans l'aperçu d'un titre en cours (« Continuer à regarder ») ----------
+    // La carte d'aperçu est une fenêtre transparente, où le lecteur ne peut pas dessiner : l'extrait est joué (son coupé,
+    // là où la lecture s'était arrêtée) dans une petite fenêtre sans bordure posée exactement sur son visuel.
+    private sealed class ClipWindow : System.Windows.Forms.Form
+    {
+        protected override bool ShowWithoutActivation => true;
+        protected override System.Windows.Forms.CreateParams CreateParams
+        {
+            get { var parameters = base.CreateParams; parameters.ExStyle |= 0x08000000 | 0x00000080; return parameters; } // pas d'activation, pas d'entrée dans Alt+Tab
+        }
+    }
+    private ClipWindow? clipWindow;
+    private Mpv? clipEngine;
+    private DispatcherTimer? clipTimer;
+    private CancellationTokenSource? clipCancel;
+
+    private async System.Threading.Tasks.Task StartHoverClip(FrameworkElement visual, MediaItem item, CancellationToken cancellation)
+    {
+        StopHoverClip();
+        if (!item.CanPlay || item.IsAudio || item.Resume <= 0 || client is not { } account || active != null || pendingMedia != null || pendingLive != null ||
+            !System.IO.File.Exists(Mpv.LibraryPath)) return;
+        var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        clipCancel = stop;
+        var popup = hoverPopup;
+        try
+        {
+            await System.Threading.Tasks.Task.Delay(450, stop.Token); // après l'animation d'ouverture de la carte
+            var request = new PlayRequest(item.Id, account.User.Id, account.Token, account.DeviceId, Math.Clamp(item.Resume, 0, TimeSpan.TicksPerDay));
+            if (!request.IsValid()) return;
+            var session = new JellyfinPlayback(Jellyfin.Http, account.Root, request, false, null);
+            var media = await session.Prepare(stop.Token, allowDirect: true);
+            if (stop.IsCancellationRequested || hoverPopup != popup || popup?.IsOpen != true || ClipBounds(visual) is not { } bounds) return;
+            var window = new ClipWindow
+            {
+                FormBorderStyle = System.Windows.Forms.FormBorderStyle.None, ShowInTaskbar = false, TopMost = true,
+                StartPosition = System.Windows.Forms.FormStartPosition.Manual, BackColor = System.Drawing.Color.Black, Bounds = bounds,
+                Cursor = System.Windows.Forms.Cursors.Hand
+            };
+            RoundTopCorners(window, bounds);
+            window.Click += (_, _) => { CloseHoverPreview(); StartPlayback(item); };
+            var engine = new Mpv(window.Handle, session.MediaAuthorization, session.StartSeconds, software: !preferences.HardwareDecoding, muted: true);
+            engine.Load(media);
+            clipWindow = window; clipEngine = engine;
+            Trace($"extrait demandé {item.Id} à {session.StartSeconds:0.0} s");
+            var shown = false;
+            clipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            clipTimer.Tick += (_, _) =>
+            {
+                if (clipEngine != engine || hoverPopup != popup || popup?.IsOpen != true) { StopHoverClip(); return; }
+                foreach (var (kind, _) in engine.Poll())
+                {
+                    if (kind == Mpv.Event.PlaybackRestart && !shown)
+                    {
+                        // Affichée à la première image : jamais de rectangle noir sur la carte.
+                        shown = true;
+                        window.Show();
+                        Trace($"extrait affiché {item.Id}");
+                    }
+                    else if (kind is Mpv.Event.EndFile or Mpv.Event.Shutdown) { StopHoverClip(); return; }
+                }
+                // La carte peut se replacer (titre remplacé par le logo) : l'extrait la suit.
+                if (ClipBounds(visual) is { } now && now != window.Bounds) { window.Bounds = now; RoundTopCorners(window, now); }
+            };
+            clipTimer.Start();
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or InvalidOperationException or System.Text.Json.JsonException or DllNotFoundException) { }
+    }
+
+    private static System.Drawing.Rectangle? ClipBounds(FrameworkElement visual)
+    {
+        if (!visual.IsVisible || PresentationSource.FromVisual(visual) == null || visual.ActualWidth < 40) return null;
+        try
+        {
+            var first = visual.PointToScreen(new Point());
+            var last = visual.PointToScreen(new Point(visual.ActualWidth, visual.ActualHeight));
+            return new System.Drawing.Rectangle((int)Math.Round(first.X), (int)Math.Round(first.Y), (int)Math.Round(last.X - first.X), (int)Math.Round(last.Y - first.Y));
+        }
+        catch (InvalidOperationException) { return null; }
+    }
+
+    // Coins du haut arrondis comme la carte (les coins du bas, sous le dégradé, restent droits).
+    private void RoundTopCorners(System.Windows.Forms.Form window, System.Drawing.Rectangle bounds)
+    {
+        var radius = (int)Math.Round(30 * VisualTreeHelper.GetDpi(this).DpiScaleX);
+        var region = CreateRoundRectRgn(0, 0, bounds.Width + 1, bounds.Height + radius, radius, radius);
+        if (region == IntPtr.Zero) return;
+        window.Region = System.Drawing.Region.FromHrgn(region);
+        DeleteObject(region);
+    }
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
+
+    private void StopHoverClip()
+    {
+        clipCancel?.Cancel();
+        clipCancel = null;
+        clipTimer?.Stop();
+        clipTimer = null;
+        if (clipEngine is { } engine) { clipEngine = null; engine.Dispose(); Trace("extrait fermé"); }
+        if (clipWindow is { } window) { clipWindow = null; window.Close(); window.Dispose(); }
     }
 
     // « Regarder ensemble » depuis une fiche : groupe créé avec ce titre, ou titre lancé pour le groupe.

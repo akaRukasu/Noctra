@@ -505,7 +505,7 @@ public partial class MainWindow
                     button.IsEnabled = false; status.Text = "Recherche du serveur…";
                     try
                     {
-                        var result = await ResolveTv(service, account, server.Resolver, cancellation); if (cancellation.IsCancellationRequested) return;
+                        var result = await ResolveTv(service, account, server.Resolver, cancellation, ResolverTimeout(server.Label)); if (cancellation.IsCancellationRequested) return;
                         var resolved = DecodeServers(service, server.Label, result, server.Resolver).ToArray();
                         foreach (var found in resolved) AddServer(found);
                         var streams = resolved.Where(item => item.Stream != null && !item.ManualOnly).Select(item => item.Stream!).ToArray();
@@ -558,7 +558,7 @@ public partial class MainWindow
             await gate.WaitAsync(cancellation);
             try
             {
-                var result = await ResolveTv(service, account, pair.Entry.ResolverUrl!, cancellation);
+                var result = await ResolveTv(service, account, pair.Entry.ResolverUrl!, cancellation, ResolverTimeout(pair.Entry.Provider ?? pair.Source.Name));
                 if (!cancellation.IsCancellationRequested)
                     foreach (var server in DecodeServers(service, TvProviderLabel(channel, pair.Source, pair.Entry), result, pair.Entry.ResolverUrl)) AddServer(server);
             }
@@ -573,17 +573,22 @@ public partial class MainWindow
 
     private readonly Dictionary<string, (DateTime Until, TvResolved Value)> tvResolutionCache = [];
     private Jellyfin? tvResolutionOwner;
-    private async Task<TvResolved> ResolveTv(NoctraService service, Jellyfin account, string path, CancellationToken cancellation)
+    // 0.8 : délais de la PWA (resolverTimeout) : 30 s, 55 s pour les fournisseurs lents (OHA, WiTV, StreamSports99, BowdTV).
+    // À 10 s, BowdTV (compte, flux puis publicité côté serveur) n'avait pas le temps de répondre : seul le lecteur externe restait.
+    private static int ResolverTimeout(string? provider) =>
+        System.Text.RegularExpressions.Regex.IsMatch(provider ?? "", @"(?i)\b(OHA|WiTV|StreamSports99|BowdTV)\b") ? 55 : 30;
+
+    private async Task<TvResolved> ResolveTv(NoctraService service, Jellyfin account, string path, CancellationToken cancellation, int timeoutSeconds = 30)
     {
         if (tvResolutionOwner != account) { tvResolutionCache.Clear(); tvResolutionOwner = account; }
         if (tvResolutionCache.TryGetValue(path, out var cached) && cached.Until > DateTime.UtcNow) return cached.Value;
         TvResolved value;
-        try { value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false); }
+        try { value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: timeoutSeconds, retry: false); }
         catch (HttpRequestException error) when (error.StatusCode == null && !cancellation.IsCancellationRequested)
         {
             // Connexion perdue avant toute réponse : un nouvel essai (un serveur qui répond une erreur n'est pas réinterrogé).
             await Task.Delay(500, cancellation);
-            value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: 10, retry: false);
+            value = await service.Read<TvResolved>(path, cancellation, timeoutSeconds: timeoutSeconds, retry: false);
         }
         // Une publicité BowdTV n'est valable que deux minutes : jamais gardée en cache.
         if (!cancellation.IsCancellationRequested && client == account && value.BowdAd == null)
@@ -600,7 +605,7 @@ public partial class MainWindow
         if (status != null) status.Text = "Demande du direct BowdTV…";
         try
         {
-            var result = await service.Read<TvResolved>(resolver, cancellation, timeoutSeconds: 30, retry: false);
+            var result = await service.Read<TvResolved>(resolver, cancellation, timeoutSeconds: 55, retry: false);
             if (cancellation.IsCancellationRequested) return;
             if (result.BowdAd is { VideoUrl: { } video, ActionUrl: { } action } ad && service.Stream(video) is { } adStream && service.IsApi(action))
             {

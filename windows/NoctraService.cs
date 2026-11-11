@@ -111,12 +111,12 @@ internal sealed class NoctraService(Jellyfin client, Uri root)
 
     internal Task<JsonElement> Json(string path, CancellationToken cancellation) => Read<JsonElement>(path, cancellation);
 
-    internal async Task<JsonElement> Send(string path, string method, object? body, CancellationToken cancellation)
+    internal async Task<JsonElement> Send(string path, string method, object? body, CancellationToken cancellation, int timeoutSeconds = 44)
     {
         var uri = Link(path);
         if (uri == null || !Trusted(uri)) throw new InvalidOperationException("Adresse Noctra invalide.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        timeout.CancelAfter(TimeSpan.FromSeconds(44));
+        timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         using var response = await Request(uri, new HttpMethod(method), body, timeout.Token);
         await EnsureResponse(response, timeout.Token);
         var data = await response.Content.ReadAsStringAsync(timeout.Token);

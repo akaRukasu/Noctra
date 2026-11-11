@@ -404,6 +404,8 @@ class Fixture(BaseHTTPRequestHandler):
         if path == "/api/tv/resolve/bowd-test":
             # Comme le serveur Noctra 200.0.181 : sans publicité, seul le lecteur officiel ; le direct vient après « continue ».
             bowd_ad["started"] = None
+            # Réponse lente comme le vrai BowdTV (compte, flux puis publicité) : au-delà de l'ancien délai de 10 s du client.
+            sleep(12)
             return self.send({"options": [{"label": "Lecteur officiel BowdTV", "url": "https://bowdtv.example/player/test", "playbackType": "external", "manualOnly": True}],
                               "externalUrl": "https://bowdtv.example/player/test",
                               "bowdAd": {"videoUrl": "/api/tv/relay/index.m3u8", "actionUrl": "/api/tv/bowd/ad/test", "skipAfter": 3}})
@@ -968,10 +970,10 @@ def check_bowd_preroll():
     control("TvSearch").set_edit_text("Noctra BowdTV")
     until(lambda: by_name("Noctra BowdTV").exists(timeout=.1), "BowdTV channel missing from all channels", timeout=40)
     by_name("Noctra BowdTV").invoke()
-    until(lambda: window.child_window(title_re=".*direct HLS après publicité$", control_type="Text").exists(timeout=.1), "BowdTV live after the advert is not offered", timeout=30)
+    until(lambda: window.child_window(title_re=".*direct HLS après publicité$", control_type="Text").exists(timeout=.1), "BowdTV live after the advert is not offered", timeout=45)
     until(lambda: by_name("▶   Lire le direct").is_enabled(), "BowdTV cannot be played in Noctra")
     by_name("▶   Lire le direct").invoke()
-    until(lambda: "Publicité BowdTV" in control("PlaybackMode").window_text(), "The BowdTV advert is not played in the player", timeout=30)
+    until(lambda: "Publicité BowdTV" in control("PlaybackMode").window_text(), "The BowdTV advert is not played in the player", timeout=45)
     until(lambda: seen("bowd-start"), "The advert start was not reported to Noctra", timeout=30)
     screenshot("bowdtv-publicite")
     until(lambda: seen("bowd-continue") and control("PlaybackMode").window_text().startswith("EN DIRECT"), "The BowdTV live did not start after the advert", timeout=45)
@@ -1130,6 +1132,35 @@ def check_new_features():
     win32api.SetCursorPos((caption[0] + 300, caption[1] + 18))
     until(lambda: not process_controls("Button", name="Aperçu · Lire"), "Hover preview did not close", timeout=5)
     print("OK · Aperçu au survol (visuel, synopsis, lecture, fiche, favori).", flush=True)
+
+    # 0.8 : extrait vidéo (son coupé, à la position de reprise) dans l'aperçu d'un titre en cours.
+    def clip_traced(text):
+        log = profile / "trace.log"
+        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
+    opened = False
+    for candidate in [button for button in window.descendants(control_type="Button") if button.window_text() == "Teen Wolf"]:
+        try:
+            candidate.set_focus(); sleep(.5)
+            rect = candidate.rectangle()
+            for step in range(8):
+                win32api.SetCursorPos(((rect.left + rect.right) // 2 - 16 + step * 4, (rect.top + rect.bottom) // 2))
+                sleep(.07)
+            until(lambda: process_controls("Button", name="Aperçu · Reprendre"), "No resume preview", timeout=4)
+            opened = True
+            break
+        except AssertionError:
+            caption = win32gui.GetWindowRect(window.handle)
+            win32api.SetCursorPos((caption[0] + 300, caption[1] + 18)); sleep(.6)
+    assert opened, "No hover preview for the title in « Continuer à regarder »"
+    until(lambda: clip_traced("extrait affiché episode"), "The hover preview of a title in progress has no video excerpt", timeout=25)
+    sleep(1)
+    if args.screens:
+        ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "apercu-extrait.png")
+    assert clip_traced("extrait demandé episode à 10.0 s"), "The excerpt does not start at the resume position"
+    caption = win32gui.GetWindowRect(window.handle)
+    win32api.SetCursorPos((caption[0] + 300, caption[1] + 18))
+    until(lambda: clip_traced("extrait fermé"), "The video excerpt did not stop with the preview", timeout=8)
+    print("OK · Extrait vidéo dans l'aperçu d'un titre en cours (son coupé, depuis la reprise).", flush=True)
 
     # Filtres de médiathèque (genre).
     control("LibraryTab").invoke()
