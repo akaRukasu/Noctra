@@ -896,8 +896,15 @@ def check_episode_flow():
     progress["profile-a"] = 0
     control("HomeTab").invoke()
     until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Home missing before the episode flow")
+    next_started = plays("episode-next")
     control("PrimaryPlayback", "Button").invoke()
-    until(lambda: plays("episode") > started, "The episode did not start", timeout=60)
+    until(lambda: plays("episode") > started or plays("episode-next") > next_started, "No episode started from the home page", timeout=60)
+    if plays("episode-next") > next_started:
+        # L'accueil propose l'épisode suivant à regarder : retour au précédent par le bouton du lecteur.
+        until(lambda: wake_player() is not False and control("QueuePrevious").is_visible() and control("QueuePrevious").is_enabled(), "No previous-episode button in the player", timeout=20)
+        control("QueuePrevious").invoke()
+        until(lambda: plays("episode") > started, "The previous episode did not start", timeout=60)
+    next_started = plays("episode-next")
     until(lambda: wake_player() is not False and control("QueueNext").is_visible() and control("QueueNext").is_enabled(), "No next-episode button in the player", timeout=20)
     assert not control("QueuePrevious").is_enabled(), "First episode offers a previous episode"
     until(lambda: wake_player() is not False and control("ChaptersButton").is_visible(), "No chapters for an episode with detected segments", timeout=20)
@@ -918,7 +925,7 @@ def check_episode_flow():
     if control("UpNextTitle").exists(timeout=2):
         assert "Venomous" in control("UpNextTitle").window_text(), "« À suivre » does not name the next episode"
         screenshot("a-suivre")
-    until(lambda: plays("episode-next") > 0, "The next episode did not start by itself", timeout=40)
+    until(lambda: plays("episode-next") > next_started, "The next episode did not start by itself", timeout=40)
     assert traced("épisode suivant episode-next (compte à rebours)") or traced("épisode suivant episode-next (fin du fichier)"), "The next episode started for another reason"
     until(lambda: control("MediaTitle").window_text() == "Venomous", "The player did not switch to the next episode")
     control("ReturnButton").invoke()
