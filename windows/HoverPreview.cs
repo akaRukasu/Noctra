@@ -34,7 +34,7 @@ public partial class MainWindow
             hoverDelay.Tick += (_, _) =>
             {
                 hoverDelay.Stop();
-                if (hoverPending is { } pending && pending.Card.IsMouseOver && !pending.Token.IsCancellationRequested && IsActive &&
+                if (hoverPending is { } pending && !(hoverPopup?.IsOpen == true && hoverCard == pending.Card) && pending.Card.IsMouseOver && !pending.Token.IsCancellationRequested && IsActive &&
                     LibraryShell.IsVisible && client != null) ShowHoverPreview(pending.Card, pending.Item, pending.Token);
             };
             hoverWatch = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(160) };
@@ -53,6 +53,9 @@ public partial class MainWindow
         card.MouseEnter += (_, _) => moves = 0;
         card.MouseMove += (_, _) =>
         {
+            // Aperçu de cette carte déjà ouvert : les mouvements (y compris ceux que Windows envoie quand l'extrait
+            // s'ouvre au-dessus) ne le relancent pas ; avant, l'aperçu se rouvrait et coupait l'extrait sans cesse.
+            if (hoverPopup?.IsOpen == true && hoverCard == card) { moves = 0; return; }
             if (++moves != 3) return;
             hoverPending = (card, item, cancellation);
             hoverDelay.Stop();
