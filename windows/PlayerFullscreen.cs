@@ -18,6 +18,9 @@ public partial class MainWindow
     private Popup? fullscreenControls, headerOverlay, skipOverlay;
     private readonly DispatcherTimer controlsIdle = new(DispatcherPriority.Input) { Interval = TimeSpan.FromSeconds(2.8) };
     private VideoInputFilter? videoInput;
+    private readonly DispatcherTimer pointerWatch = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(100) };
+    private System.Drawing.Point lastPolledPointer;
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(System.Drawing.Point point);
     private bool pointerHidden;
     private System.Drawing.Point lastVideoPointer;
     private Key lastModeKey;
@@ -34,6 +37,21 @@ public partial class MainWindow
             () => { if (miniPlayer) SetMiniPlayer(false); else SetFullscreen(!fullscreen); }, () => miniPlayer ? DragMiniPlayer() : false,
             VideoClicked, delta => ChangeVolumeBy(delta > 0 ? 5 : -5));
         Forms.Application.AddMessageFilter(videoInput);
+        // L'image appartient à la fenêtre du moteur vidéo (autre fil d'exécution) : ses mouvements de souris n'arrivent pas
+        // toujours jusqu'ici. La position du pointeur est donc aussi relevée : tout mouvement au-dessus du lecteur
+        // (dans une fenêtre de Noctra) fait réapparaître la barre et les boutons.
+        pointerWatch.Tick += (_, _) =>
+        {
+            if (!FloatingControls || WindowState == WindowState.Minimized || !surface.IsHandleCreated || !surface.Visible) return;
+            var position = Forms.Cursor.Position;
+            if (position == lastPolledPointer) return;
+            lastPolledPointer = position;
+            if (!surface.RectangleToScreen(surface.ClientRectangle).Contains(position)) return;
+            var under = WindowFromPoint(position);
+            if (under == IntPtr.Zero || GetWindowThreadProcessId(under, out var owner) == 0 || owner != (uint)Environment.ProcessId) return;
+            WakeFullscreenControls();
+        };
+        pointerWatch.Start();
         controlsIdle.Tick += (_, _) =>
         {
             if (!FloatingControls || trackMenu?.IsOpen == true || playerPanel?.IsOpen == true || PointerOverFullscreenControls() || seeking) return;
@@ -61,6 +79,7 @@ public partial class MainWindow
         Timeline.SizeChanged += (_, _) => DrawChapterMarks();
         Closed += (_, _) =>
         {
+            pointerWatch.Stop();
             controlsIdle.Stop();
             HideOverlays();
             if (skipOverlay != null) skipOverlay.IsOpen = false;

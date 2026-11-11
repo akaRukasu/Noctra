@@ -86,6 +86,11 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Barre de lecture au passage de la souris
+
+- L'image est dessinée par la fenêtre du moteur vidéo (autre fil d'exécution) : ses mouvements de souris n'arrivaient pas toujours au lecteur, la barre et les boutons restaient alors cachés.
+- La position du pointeur est maintenant aussi relevée (toutes les 100 ms) : tout mouvement au-dessus du lecteur, dans une fenêtre de Noctra, les fait réapparaître.
+
 ## Épisodes, vignettes et SyncPlay
 
 - **Épisode précédent / suivant** : épisodes « manquants » (fiches sans fichier) écartés, recherche de secours sur toute la série si les voisins ne sont pas trouvés ; plein écran conservé au changement d'épisode.
