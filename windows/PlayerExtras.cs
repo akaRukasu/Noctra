@@ -324,6 +324,7 @@ public partial class MainWindow
         lines.Add("Audio         " + (engine.Text("audio-codec-name") ?? "—") + " · " + Number(engine.Seconds("audio-params/channel-count"), "0") +
             " canaux · " + Number(engine.Seconds("audio-params/samplerate"), "0") + " Hz · " + Rate(engine.Seconds("audio-bitrate")));
         lines.Add("Mémoire       " + Number(engine.Seconds("demuxer-cache-duration"), "0.0") + " s d’avance");
+        if (state != null && !state.Session.Audio) lines.Add("Génériques    " + state.CreditsInfo);
         if (state?.Session.Audio != true)
             lines.Add("Images        " + Number(engine.Seconds("frame-drop-count"), "0") + " perdues · " + Number(engine.Seconds("decoder-frame-drop-count"), "0") + " au décodage");
         lines.Add("Affichage     " + Number(engine.Seconds("display-fps"), "0.##") + " Hz · vitesse × " + Number(engine.Seconds("speed"), "0.00"));

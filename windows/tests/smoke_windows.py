@@ -522,6 +522,10 @@ class Fixture(BaseHTTPRequestHandler):
             return self.page([with_state(episode, user), with_state(next_episode, user)])
         if path == "/jellyfin/MediaSegments/episode":
             return self.page([{"Type": "Intro", "StartTicks": 60_000_000, "EndTicks": 240_000_000}])
+        if path == "/jellyfin/Episode/episode-next/IntroSkipperSegments":
+            # Extension Intro Skipper sans segments copiés côté serveur : générique de début seulement (fin invalide).
+            return self.send({"Introduction": {"EpisodeId": "episode-next", "Valid": True, "IntroStart": 2.0, "IntroEnd": 20.0, "ShowSkipPromptAt": 0.0, "HideSkipPromptAt": 10.0},
+                              "Credits": {"EpisodeId": "episode-next", "Valid": False, "IntroStart": 0.0, "IntroEnd": 0.0}})
         if "/Images/" in path:
             _, _, _, key, _, kind = path.split("/")
             data = artwork.get((key, kind))
@@ -955,6 +959,13 @@ def check_episode_flow():
     until(lambda: plays("episode-next") > next_started, "The next episode did not start by itself", timeout=40)
     assert traced("épisode suivant episode-next (compte à rebours)") or traced("épisode suivant episode-next (fin du fichier)"), "The next episode started for another reason"
     until(lambda: control("MediaTitle").window_text() == "Venomous", "The player did not switch to the next episode")
+    # Marqueurs de l'extension Intro Skipper (aucun segment côté serveur pour cet épisode) : bouton « Passer le générique ».
+    until(lambda: traced("génériques episode-next : début"), "Intro Skipper markers were not read", timeout=15)
+    log_text = (profile / "trace.log").read_text(encoding="utf-8", errors="replace")
+    line = re.search(r"génériques episode-next : (.*)", log_text)[1]
+    assert re.match(r"début 0:00:02.0:00:20 \(extension Intro Skipper\)", line), "Intro Skipper intro not used: " + line
+    assert line.count("Intro Skipper") == 1, "An invalid Intro Skipper end credits marker was used: " + line
+    assert re.search(r"génériques episode : début 0:00:06.0:00:24 \(serveur\)", log_text), "Server segments not reported first"
     # Dernier épisode de la saison 2 : l'épisode suivant est le premier de la saison 3.
     until(lambda: wake_player() is not False and control("QueueNext").is_enabled(), "No next episode after the last episode of a season", timeout=20)
     control("QueueNext").invoke()

@@ -279,11 +279,15 @@ public partial class MainWindow
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         MediaSegment[] credits = [];
-        try
-        {
-            credits = await account.Credits(item.Id, timeout.Token);
-        }
+        // Sources, par ordre de préférence : segments du serveur, extension Intro Skipper, chapitres nommés du fichier.
+        var fromServer = account.Credits(item.Id, timeout.Token);
+        var fromPlugin = item.Type == "Episode" ? account.PluginSegments(item.Id, timeout.Token) : Task.FromResult(Array.Empty<MediaSegment>());
+        try { credits = await fromServer; }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
+        var serverCount = credits.Length;
+        try { credits = credits.Concat((await fromPlugin).Where(segment => !credits.Any(known => known.Type == segment.Type))).ToArray(); }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException) { }
+        var pluginCount = credits.Length - serverCount;
         if (active != state) return;
         var chapters = item.Chapters ?? [];
         // 0.8 : chapitres toujours chargés (avant : seulement sans segments de générique côté serveur).
@@ -311,6 +315,15 @@ public partial class MainWindow
         }
         if (active != state) return;
         state.Credits = credits.Concat(fallback).ToArray();
+        // Statistiques du lecteur et journal : marqueurs trouvés et leur origine (sans marqueur, pas de bouton, comme la PWA).
+        string Describe(MediaSegment segment, string source) =>
+            (segment.Type switch { "Outro" => "fin", "Recap" => "récap", "Preview" => "aperçu", _ => "début" }) + " " +
+            FormatTime(segment.StartTicks / (double)TimeSpan.TicksPerSecond) + "–" + FormatTime(segment.EndTicks / (double)TimeSpan.TicksPerSecond) + " (" + source + ")";
+        var described = credits.Take(serverCount).Select(segment => Describe(segment, "serveur"))
+            .Concat(credits.Skip(serverCount).Select(segment => Describe(segment, "extension Intro Skipper")))
+            .Concat(fallback.Select(segment => Describe(segment, "chapitres"))).ToArray();
+        state.CreditsInfo = described.Length > 0 ? string.Join(" · ", described) : "aucun marqueur (ni segments du serveur, ni Intro Skipper, ni chapitres nommés)";
+        Trace($"génériques {item.Id} : {state.CreditsInfo}");
         // 0.8 : fichier sans chapitres : chapitrage tiré des segments détectés (récap, générique, épisode, générique de fin…).
         if (named.Length <= 1 && state.Credits.Length > 0 && (item.RunTimeTicks ?? 0) > 0)
             state.Chapters = SegmentChapters(state.Credits, item.RunTimeTicks!.Value, item.Type == "Episode" ? "Épisode" : item.Type == "Movie" ? "Film" : "Programme");
@@ -727,6 +740,7 @@ public partial class MainWindow
         internal DateTime NextReport;
         internal MediaSegment[] Credits = [];
         internal MediaSegment? CurrentCredits;
+        internal string CreditsInfo = "recherche…";
         // 0.8 : « À suivre » et segments passés (comme la PWA).
         internal MediaItem? Next, Previous;
         internal bool UpNextShown, StopAtEnd, Advancing;

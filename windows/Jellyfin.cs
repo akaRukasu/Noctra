@@ -356,6 +356,43 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
             segment.StartTicks >= 0 && segment.EndTicks > segment.StartTicks && segment.EndTicks <= TimeSpan.TicksPerDay).ToArray();
     }
 
+    // Extension « Intro Skipper » : ses marqueurs restent dans son propre point d'accès tant qu'ils ne sont pas copiés
+    // dans les segments du serveur (la PWA affiche alors son bouton, injecté par l'extension).
+    internal async Task<MediaSegment[]> PluginSegments(string id, CancellationToken cancellation)
+    {
+        JsonElement data;
+        try { data = await Get<JsonElement>("Episode/" + id + "/IntroSkipperSegments", null, cancellation); }
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Anciennes versions : seulement le générique de début.
+            var single = await Get<JsonElement>("Episode/" + id + "/IntroTimestamps/v1", null, cancellation);
+            return PluginSegment("Intro", single) is { } intro ? [intro] : [];
+        }
+        if (data.ValueKind != JsonValueKind.Object) return [];
+        var found = new List<MediaSegment>();
+        foreach (var property in data.EnumerateObject())
+        {
+            var type = property.Name switch { "Introduction" or "Intro" => "Intro", "Credits" or "Outro" => "Outro", "Recap" => "Recap", "Preview" => "Preview", _ => null };
+            if (type != null && PluginSegment(type, property.Value) is { } segment) found.Add(segment);
+        }
+        return found.ToArray();
+    }
+
+    private static MediaSegment? PluginSegment(string type, JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return null;
+        double? Seconds(params string[] names)
+        {
+            foreach (var name in names)
+                if (value.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetDouble(out var seconds) && double.IsFinite(seconds)) return seconds;
+            return null;
+        }
+        if (value.TryGetProperty("Valid", out var valid) && valid.ValueKind == JsonValueKind.False) return null;
+        var start = Seconds("IntroStart", "Start"); var end = Seconds("IntroEnd", "End");
+        if (start is not >= 0 || end is not { } last || last <= start || last > 86_400) return null;
+        return new MediaSegment(type, (long)(start.Value * TimeSpan.TicksPerSecond), (long)(last * TimeSpan.TicksPerSecond));
+    }
+
     internal Task<HttpResponseMessage> Image(string path, CancellationToken cancellation) =>
         Send(HttpMethod.Get, path, null, cancellation);
 

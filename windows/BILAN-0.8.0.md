@@ -86,6 +86,12 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## « Passer le générique » : origine des marqueurs
+
+- Comme la PWA, le bouton n'apparaît que si un marqueur existe ; aucun générique n'est deviné.
+- Sources, par ordre : segments du serveur Jellyfin (`MediaSegments`), **nouveau** : extension Intro Skipper (son propre point d'accès, utilisé par la PWA quand ses marqueurs ne sont pas copiés dans les segments du serveur), puis chapitres nommés du fichier (« Opening », « Générique »…).
+- Statistiques du lecteur : ligne « Génériques » avec les marqueurs trouvés et leur origine, ou « aucun marqueur ».
+
 ## Sous-titres au lancement
 
 - **Avant** : le lecteur demandait à mpv « sous-titres en français » sans autre règle ; mpv activait donc une piste française dès qu'elle existait, même sur un contenu déjà en VF.
@@ -192,6 +198,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - multivue ;
   - administration.
 - **Test des nouveautés** :
+  - « Passer le générique » à partir des marqueurs de l'extension Intro Skipper (épisode sans segments côté serveur) ;
   - sous-titres désactivés au lancement d'un épisode en VF dont la piste française est marquée « par défaut » ;
   - plein écran de l'application depuis l'accueil (bouton, F11, Échap, sortie dans le bandeau) ;
   - commandes et panneaux du nouveau lecteur ;
