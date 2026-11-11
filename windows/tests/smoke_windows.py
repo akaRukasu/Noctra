@@ -973,7 +973,7 @@ def check_bowd_preroll():
     until(lambda: window.child_window(title_re=".*direct HLS après publicité$", control_type="Text").exists(timeout=.1), "BowdTV live after the advert is not offered", timeout=45)
     until(lambda: by_name("▶   Lire le direct").is_enabled(), "BowdTV cannot be played in Noctra")
     # Lecteur officiel BowdTV : refuse le lecteur intégré, ouvert dans le navigateur (comme la PWA) ; non cliqué pendant le test.
-    assert window.child_window(title="Ouvrir dans le navigateur", control_type="Text").exists(timeout=2), "The official BowdTV player is not opened in the browser"
+    assert window.child_window(title="Ouvrir dans le navigateur", control_type="Text", found_index=0).exists(timeout=2), "The official BowdTV player is not opened in the browser"
     by_name("▶   Lire le direct").invoke()
     until(lambda: "Publicité BowdTV" in control("PlaybackMode").window_text(), "The BowdTV advert is not played in the player", timeout=45)
     until(lambda: seen("bowd-start"), "The advert start was not reported to Noctra", timeout=30)
