@@ -216,12 +216,12 @@ public partial class MainWindow
 
     // « À suivre » (comme la PWA) : après le générique de fin, sinon 30 s avant la fin (15 s pour un épisode court) ;
     // l'épisode suivant démarre seul au bout de 10 s de lecture.
-    private void UpdateUpNext(ActivePlayback state, bool paused)
+    private bool UpdateUpNext(ActivePlayback state, bool paused)
     {
         if (state.Item?.Type != "Episode" || state.Next is not { } next || InSyncGroup || state.Advancing || state.Duration <= 0)
         {
             if (UpNextCard.Visibility == Visibility.Visible) { UpNextCard.Visibility = Visibility.Collapsed; UpdateSkipOverlay(); }
-            return;
+            return false;
         }
         var at = state.Position; var duration = state.Duration;
         var outro = state.Credits.FirstOrDefault(segment => segment.Type == "Outro" && segment.StartTicks / (double)TimeSpan.TicksPerSecond > duration - 240);
@@ -231,11 +231,11 @@ public partial class MainWindow
             // Retour en arrière : la carte disparaît et reviendra au même moment.
             state.UpNextShown = false; state.StopAtEnd = false;
             UpNextCard.Visibility = Visibility.Collapsed; UpdateSkipOverlay();
-            return;
+            return false;
         }
         if (!state.UpNextShown)
         {
-            if (state.StopAtEnd || state.CurrentCredits != null || at < trigger || duration - at <= 1.5) return;
+            if (state.StopAtEnd || state.CurrentCredits != null || at < trigger || duration - at <= 1.5) return false;
             state.UpNextShown = true; state.UpNextLeft = 10; state.UpNextTick = DateTime.UtcNow.AddSeconds(1);
             UpNextSeries.Text = next.SeriesName ?? "";
             UpNextSeries.Visibility = UpNextSeries.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -244,13 +244,14 @@ public partial class MainWindow
             UpdateSkipOverlay();
             Trace($"à suivre affiché {next.Id} à {at:0.0} s sur {duration:0.0} s");
         }
-        if (UpNextCard.Visibility != Visibility.Visible) return;
+        if (UpNextCard.Visibility != Visibility.Visible) return false;
         if (!paused && DateTime.UtcNow >= state.UpNextTick)
         {
             state.UpNextLeft--; state.UpNextTick = DateTime.UtcNow.AddSeconds(1);
-            if (state.UpNextLeft <= 0) { PlayNextEpisode(state, "compte à rebours"); return; }
+            if (state.UpNextLeft <= 0) { PlayNextEpisode(state, "compte à rebours"); return true; }
         }
         UpNextStatus.Text = paused ? "En pause · lecture automatique à la reprise" : $"Lecture automatique dans {state.UpNextLeft} s";
+        return false;
     }
 
     private void PlayNextEpisode(ActivePlayback state, string reason)
@@ -453,7 +454,8 @@ public partial class MainWindow
         }
         var credits = state.CurrentCredits != null ? Visibility.Visible : Visibility.Collapsed;
         if (SkipCredits.Visibility != credits) { SkipCredits.Visibility = credits; UpdateSkipOverlay(); }
-        UpdateUpNext(state, engine.Paused);
+        // L'épisode suivant vient d'être lancé (fin du compte à rebours) : l'ancien moteur est fermé, on s'arrête là.
+        if (UpdateUpNext(state, engine.Paused) || active != state || engine.Closed) return;
         var paused = engine.Paused;
         ShowPauseState(paused);
         if (!seeking && state.Duration > 0)

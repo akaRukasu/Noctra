@@ -1545,10 +1545,11 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         assert report("", "episode")["PositionTicks"] >= 95_000_000
         until(lambda: control("SkipCredits").is_visible(), "Skip credits button not visible")
         # 0.8 : la lecture normale mettrait plus de 10 s à atteindre 0:23 ; le saut doit y arriver en quelques secondes.
-        skipped_at = monotonic()
+        # Saut vérifié dans le journal du lecteur (la relecture de l'étiquette par l'automatisation peut prendre plusieurs secondes).
         control("SkipCredits").invoke()
-        until(lambda: position_seconds() >= 23, "Skip credits did not seek", timeout=8)
-        assert monotonic() - skipped_at < 8, "Skip credits reached the end of the credits too late"
+        until(lambda: (profile / "trace.log").exists() and "saut à 24.0 s" in (profile / "trace.log").read_text(encoding="utf-8", errors="replace"),
+              "Skip credits did not jump to the end of the credits", timeout=8)
+        until(lambda: position_seconds() >= 23, "Skip credits did not seek", timeout=20)
         wake_player()
         screenshot("lecture")
         control("PauseButton").invoke()

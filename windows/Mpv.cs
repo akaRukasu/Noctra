@@ -83,8 +83,13 @@ internal sealed class Mpv : IDisposable
 
     internal void Load(Uri url) => Command("loadfile", url.AbsoluteUri);
 
+    // 0.8 : moteur déjà fermé (épisode suivant lancé pendant une mise à jour) : plus aucun appel natif.
+    // Un appel sur un moteur détruit faisait planter Noctra (violation d'accès).
+    internal bool Closed => handle == IntPtr.Zero;
+
     internal void Command(params string[] values)
     {
+        if (Closed) return;
         var pointers = new IntPtr[values.Length + 1];
         try
         {
@@ -100,6 +105,7 @@ internal sealed class Mpv : IDisposable
     // Commande exécutée par mpv en arrière-plan (ajout de sous-titres distants sans bloquer l'interface).
     internal void CommandAsync(params string[] values)
     {
+        if (Closed) return;
         var pointers = new IntPtr[values.Length + 1];
         try
         {
@@ -112,20 +118,21 @@ internal sealed class Mpv : IDisposable
         }
     }
 
-    internal double? Seconds(string property) => mpv_get_property_double(handle, property, 5, out var value) >= 0 ? value : null;
-    internal bool Paused => mpv_get_property_flag(handle, "pause", 3, out var value) >= 0 && value != 0;
+    internal double? Seconds(string property) => !Closed && mpv_get_property_double(handle, property, 5, out var value) >= 0 ? value : null;
+    internal bool Paused => !Closed && mpv_get_property_flag(handle, "pause", 3, out var value) >= 0 && value != 0;
     internal string? Text(string property)
     {
+        if (Closed) return null;
         var pointer = mpv_get_property_string(handle, property);
         if (pointer == IntPtr.Zero) return null;
         try { return Marshal.PtrToStringUTF8(pointer); }
         finally { mpv_free(pointer); }
     }
-    internal bool Flag(string property) => mpv_get_property_flag(handle, property, 3, out var value) >= 0 && value != 0;
+    internal bool Flag(string property) => !Closed && mpv_get_property_flag(handle, property, 3, out var value) >= 0 && value != 0;
 
     internal IEnumerable<(Event Kind, bool Eof)> Poll()
     {
-        for (int i = 0; i < 48; i++)
+        for (int i = 0; i < 48 && !Closed; i++)
         {
             var result = Marshal.PtrToStructure<NativeEvent>(mpv_wait_event(handle, 0));
             if (result.Id == Event.None) yield break;
