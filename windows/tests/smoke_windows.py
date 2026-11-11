@@ -1729,6 +1729,8 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
         until(lambda: report("", "episode", "DirectPlay"), "Direct playback did not start", timeout=110)
         assert report("", "episode")["PositionTicks"] >= 95_000_000
         until(lambda: control("SkipCredits").is_visible(), "Skip credits button not visible")
+        if args.screens:
+            ImageGrab.grab(bbox=win32gui.GetWindowRect(window.handle), all_screens=True).save(args.screens / "passer-generique.png")
         # 0.8 : la lecture normale mettrait plus de 10 s à atteindre 0:23 ; le saut doit y arriver en quelques secondes.
         # Saut vérifié dans le journal du lecteur (la relecture de l'étiquette par l'automatisation peut prendre plusieurs secondes).
         control("SkipCredits").invoke()

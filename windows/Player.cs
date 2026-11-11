@@ -301,7 +301,8 @@ public partial class MainWindow
     private async Task FindCredits(Jellyfin account, MediaItem item, ActivePlayback state)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        // Serveur distant chargé (seedbox) : un délai de 5 s pouvait faire perdre les marqueurs (aucun bouton).
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
         MediaSegment[] credits = [];
         // Sources, par ordre de préférence : segments du serveur, extension Intro Skipper, chapitres nommés du fichier.
         var fromServer = account.Credits(item.Id, timeout.Token);
