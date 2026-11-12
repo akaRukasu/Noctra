@@ -286,6 +286,11 @@ class Fixture(BaseHTTPRequestHandler):
             return self.send({"Authenticated": quick["polls"] >= 2, "Secret": "qc-secret", "Code": "123456"})
         if path == "/jellyfin/GetUtcTime":
             return self.send({"RequestReceptionTime": now_iso(), "ResponseTransmissionTime": now_iso()})
+        if path.startswith("/remote/poster-"):
+            # Image d'un fournisseur extérieur (TheMovieDb…) : jamais de jeton Jellyfin ni Noctra envoyé.
+            assert "Authorization" not in self.headers and "x-noctra-token" not in self.headers, "Session token sent to an image provider"
+            events.append(("remote-thumb", "public", {"path": path}))
+            return self.send(art("film", False), content_type="image/jpeg")
         user = "public-fixture" if path == "/fixture-video.webm" else self.user
         if path == "/jellyfin/socket" and self.headers.get("Upgrade", "").lower() == "websocket":
             accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
@@ -557,9 +562,6 @@ class Fixture(BaseHTTPRequestHandler):
             return self.send({"Images": [{"ProviderName": "TheMovieDb", "Url": f"http://{host}/remote/poster-{n}.jpg", "ThumbnailUrl": f"http://{host}/remote/poster-{n}.jpg",
                                           "Width": 1000, "Height": 1500, "Language": "fr", "CommunityRating": 7.5, "Type": q.get("type", ["Primary"])[0]} for n in range(3)],
                               "TotalRecordCount": 3, "Providers": ["TheMovieDb"]})
-        if path.startswith("/remote/poster-"):
-            events.append(("remote-thumb", user, {"path": path}))
-            return self.send(art("film", False), content_type="image/jpeg")
         if "/Images/" in path:
             parts = path.split("/")
             key, kind = parts[3], parts[5]
