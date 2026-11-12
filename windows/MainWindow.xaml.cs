@@ -281,6 +281,8 @@ public partial class MainWindow : Window
         TvTab.Tag = destination.Tab == ButtonTab.Tv ? "active" : null;
         ShowStatus("");
         TvSidebar.Visibility = Visibility.Collapsed;
+        AlphabetRail.Visibility = Visibility.Collapsed;
+        AlphabetRail.Children.Clear();
         TvMenu.Children.Clear();
         TvMenuScroller.ScrollToTop();
         PageContent.Children.Clear();

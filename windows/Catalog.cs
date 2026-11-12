@@ -596,7 +596,7 @@ public partial class MainWindow
         into.Children.Add(scroll);
     }
 
-    private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation, bool fluid = false)
+    private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation, bool fluid = false, Action<Action>? defer = null)
     {
         var square = !landscape && item.Square;
         var width = landscape ? 264 : square ? 200 : 168;
@@ -664,7 +664,8 @@ public partial class MainWindow
         var labels = new StackPanel { Margin = new Thickness(2, 11, 4, 2) };
         labels.Children.Add(title);
         labels.Children.Add(subtitle);
-        if (item.Type == "Series") labels.Children.Add(SeriesBadge(item.Id, cancellation));
+        // Médiathèque entière : badge de série créé seulement à l'approche de l'écran.
+        if (item.Type == "Series" && defer == null) labels.Children.Add(SeriesBadge(item.Id, cancellation));
         var content = new StackPanel();
         content.Children.Add(surface);
         content.Children.Add(labels);
@@ -695,7 +696,14 @@ public partial class MainWindow
         button.MouseLeave += (_, _) => Lift(false);
         button.GotKeyboardFocus += (_, _) => { Lift(true); button.BringIntoView(); };
         button.LostKeyboardFocus += (_, _) => Lift(false);
-        _ = artwork?.Load(image, item, landscape, Artwork.Pixels(fluid ? (landscape ? 360 : 250) : width), cancellation);
+        void LoadArt() => _ = artwork?.Load(image, item, landscape, Artwork.Pixels(fluid ? (landscape ? 360 : 250) : width), cancellation);
+        // Médiathèque entière sur une page : affiche chargée quand la carte approche de l'écran (pas des milliers d'un coup).
+        if (defer == null) LoadArt();
+        else defer(() =>
+        {
+            LoadArt();
+            if (item.Type == "Series") labels.Children.Add(SeriesBadge(item.Id, cancellation));
+        });
         LazyMenu(button, () => CardMenu(item, button, tab, cancellation));
         AttachHoverPreview(button, item, cancellation);
         // Flèches gauche / droite : carte voisine de la rangée (la rangée suit le focus).
@@ -805,12 +813,15 @@ public partial class MainWindow
     }
 
     private Page BrowsePage(string title, ButtonTab tab, string? type = null, string? parent = null, string? search = null,
-        int start = 0, bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null) =>
+        int start = 0, bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null,
+        bool? descending = null) =>
         new(title, tab, async (account, cancellation) =>
         {
+            // Un changement de tri revient au sens habituel de ce tri ; les autres filtres gardent le sens choisi.
             Page Again(int offset, string? newWatched, string? newSort, string? newGenre, int? newYear, double? newRating) =>
-                BrowsePage(title, tab, type, parent, search, offset, favorite, newWatched, newSort, newGenre, newYear, newRating);
-            var result = await account.Browse(type, parent, search, start, false, cancellation, favorite, watched, sort, genre, year, rating);
+                BrowsePage(title, tab, type, parent, search, offset, favorite, newWatched, newSort, newGenre, newYear, newRating, newSort == sort ? descending : null);
+            var reversed = descending ?? DefaultDescending(sort);
+            var result = await account.Browse(type, parent, search, start, false, cancellation, favorite, watched, sort, genre, year, rating, BrowseBatch, descending);
             if (cancellation.IsCancellationRequested) return;
             var items = (result.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
             PageContent.Children.Clear();
@@ -837,6 +848,17 @@ public partial class MainWindow
             }
             var status = Combo("Statut de lecture", statuses.Select(x => x.Label), Array.FindIndex(statuses, option => option.Value == watched), 154);
             var order = Combo("Trier", orders.Select(x => x.Label), Array.FindIndex(orders, option => option.Value == sort), 200);
+            // Sens du tri : un clic croissant, un autre décroissant (année, note, nom…).
+            if (sort != "Random")
+            {
+                var label = sort == null ? (reversed ? "Z → A" : "A → Z") : reversed ? "↓  Décroissant" : "↑  Croissant";
+                var direction = Action(label, () => _ = Navigate(BrowsePage(title, tab, type, parent, search, 0, favorite, watched, sort, genre, year, rating, !reversed), back: true));
+                direction.MinHeight = 36;
+                direction.Margin = new Thickness(0, 0, 8, 8);
+                direction.ToolTip = "Inverser l’ordre du tri";
+                AutomationProperties.SetAutomationId(direction, "SortDirection");
+                filters.Children.Add(direction);
+            }
             var stars = Combo("Note minimale", ratings.Select(x => x.Label), Array.FindIndex(ratings, option => option.Value == rating), 160);
             // Genres et années de la médiathèque (chargés à part : la page s'affiche sans attendre).
             var genres = Combo("Genre", [genre ?? "Tous les genres"], 0, 170);
@@ -860,21 +882,194 @@ public partial class MainWindow
                 reset.Margin = new Thickness(0, -6, 0, 16);
                 PageContent.Children.Add(reset);
             }
-            if (items.Length == 0) PageContent.Children.Add(Message(genre != null || year != null || rating != null ? "Aucun titre ne correspond à ces filtres." : "Aucun titre sur cette page."));
-            var cards = PosterGrid(items.Length > 0 && items.All(item => item.Square) ? 210 : 178);
-            foreach (var item in items) cards.Children.Add(Card(item, false, tab, cancellation, fluid: true));
+            if (items.Length == 0) { PageContent.Children.Add(Message(genre != null || year != null || rating != null ? "Aucun titre ne correspond à ces filtres." : "Aucun titre.")); return; }
+            // 0.8 : toute la médiathèque sur une seule page (comme Jellyfin) : les titres suivants arrivent en faisant défiler,
+            // les affiches se chargent à l'approche de l'écran, et un alphabet sur le côté mène directement à une lettre.
+            var cards = PosterGrid(items.All(item => item.Square) ? 210 : 178);
             PageContent.Children.Add(cards);
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
-            if (start > 0)
-                actions.Children.Add(Action("Page précédente", () => _ = Navigate(Again(start - 48, watched, sort, genre, year, rating), back: true)));
-            if (result.TotalRecordCount > start + 48 || result.TotalRecordCount == null && items.Length == 48)
+            var footer = new Border { Child = Message("Chargement des titres suivants…"), Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0) };
+            PageContent.Children.Add(footer);
+            var loaded = new List<(MediaItem Item, Button Card)>();
+            var artLoaders = new List<Action?>();
+            var known = new HashSet<string>();
+            var next = start + items.Length;
+            var total = result.TotalRecordCount;
+            // Ordre aléatoire : chaque requête est tirée à nouveau, une seule série de titres.
+            var finished = sort == "Random" || (total is int all ? next >= all : items.Length < BrowseBatch);
+            var loading = false;
+            var artTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
+            var letterButtons = new Dictionary<char, Button>();
+            char? current = null;
+            double Top(int index) => loaded[index].Card.TransformToAncestor(Scroller).Transform(new Point()).Y;
+            // Cartes proches de l'écran : recherche dichotomique (les cartes sont rangées de haut en bas).
+            (int First, int Last) NearScreen(double margin)
             {
-                var more = Action("Page suivante", () => _ = Navigate(Again(start + 48, watched, sort, genre, year, rating), back: true));
-                more.Margin = new Thickness(start > 0 ? 8 : 0, 0, 0, 0);
-                actions.Children.Add(more);
+                if (loaded.Count == 0 || !cards.IsLoaded) return (0, -1);
+                try
+                {
+                    int Search(double y) { int low = 0, high = loaded.Count; while (low < high) { var mid = (low + high) / 2; if (Top(mid) < y) low = mid + 1; else high = mid; } return low; }
+                    var first = Math.Max(0, Search(-margin - 420) - 16);
+                    var last = Math.Min(loaded.Count - 1, Search(Scroller.ViewportHeight + margin) + 16);
+                    return (first, last);
+                }
+                catch (InvalidOperationException) { return (0, -1); }
             }
-            if (actions.Children.Count > 0) PageContent.Children.Add(actions);
+            void LoadVisibleArt()
+            {
+                if (cancellation.IsCancellationRequested) return;
+                var (first, last) = NearScreen(900);
+                for (var index = first; index <= last; index++)
+                    if (artLoaders[index] is { } load) { artLoaders[index] = null; load(); }
+                HighlightLetter();
+            }
+            artTimer.Tick += (_, _) => { artTimer.Stop(); LoadVisibleArt(); };
+            async Task Append(IEnumerable<MediaItem> batch)
+            {
+                var added = 0;
+                foreach (var item in batch)
+                {
+                    if (cancellation.IsCancellationRequested) return;
+                    if (!known.Add(item.Id)) continue;
+                    var index = loaded.Count;
+                    artLoaders.Add(null);
+                    var card = Card(item, false, tab, cancellation, fluid: true, defer: load => artLoaders[index] = load);
+                    AutomationProperties.SetAutomationId(card, "LibraryCard" + index);
+                    loaded.Add((item, card));
+                    cards.Children.Add(card);
+                    // Ajout par petits paquets : l'interface reste fluide pendant l'arrivée de centaines de titres.
+                    if (++added % 40 == 0) await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                }
+                await Dispatcher.InvokeAsync(LoadVisibleArt, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            async Task<bool> LoadMore()
+            {
+                if (finished || loading || cancellation.IsCancellationRequested) return false;
+                loading = true;
+                if (footer.Tag is "error") { footer.Child = Message("Chargement des titres suivants…"); footer.Tag = null; }
+                footer.Visibility = Visibility.Visible;
+                try
+                {
+                    var page = await account.Browse(type, parent, search, next, false, cancellation, favorite, watched, sort, genre, year, rating, BrowseBatch, descending);
+                    if (cancellation.IsCancellationRequested) return false;
+                    var batch = (page.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+                    var before = loaded.Count;
+                    next += batch.Length;
+                    await Append(batch);
+                    if (batch.Length == 0 || loaded.Count == before || page.TotalRecordCount is int count && next >= count) finished = true;
+                    return loaded.Count > before;
+                }
+                catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+                {
+                    if (!cancellation.IsCancellationRequested) { footer.Child = Message("La suite n’a pas pu être chargée. Faites défiler pour réessayer."); footer.Tag = "error"; }
+                    return false;
+                }
+                finally
+                {
+                    loading = false;
+                    if (finished || footer.Tag is not "error") footer.Visibility = finished ? Visibility.Collapsed : footer.Tag is "error" ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+            bool NearEnd() => Scroller.VerticalOffset + Scroller.ViewportHeight > Scroller.ExtentHeight - Math.Max(1400, Scroller.ViewportHeight * 1.5);
+            async Task FillToEnd()
+            {
+                while (!finished && !cancellation.IsCancellationRequested && NearEnd())
+                {
+                    if (!await LoadMore()) break;
+                    Scroller.UpdateLayout();
+                }
+            }
+            void Scrolled(object? sender, ScrollChangedEventArgs args)
+            {
+                if (cancellation.IsCancellationRequested) return;
+                artTimer.Stop(); artTimer.Start();
+                if (!loading && NearEnd()) _ = FillToEnd();
+            }
+            Scroller.ScrollChanged += Scrolled;
+            cancellation.Register(() => Dispatcher.BeginInvoke(() => { Scroller.ScrollChanged -= Scrolled; artTimer.Stop(); AlphabetRail.Visibility = Visibility.Collapsed; }));
+
+            // Alphabet (tri alphabétique) : # puis A à Z ; la lettre en cours est mise en avant.
+            var rail = sort == null && !reversed && search == null ? "#ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "";
+            void HighlightLetter()
+            {
+                if (letterButtons.Count == 0 || loaded.Count == 0) return;
+                var (first, _) = NearScreen(0);
+                var index = Math.Clamp(first + 16, 0, loaded.Count - 1);
+                try { while (index > 0 && Top(index - 1) >= -60) index--; while (index < loaded.Count - 1 && Top(index) < -60) index++; }
+                catch (InvalidOperationException) { return; }
+                var letter = LetterOf(loaded[index].Item);
+                if (letter == current) return;
+                current = letter;
+                foreach (var (key, button) in letterButtons) button.Foreground = BrushFor(key == letter ? "Accent" : "Muted");
+            }
+            async Task Jump(char letter)
+            {
+                int Target() => letter == '#' ? 0 : loaded.FindIndex(entry => LetterOf(entry.Item) is var key && key != '#' && key >= letter);
+                var target = Target();
+                // Lettre pas encore chargée : titres suivants chargés jusqu'à elle.
+                while (target < 0 && !finished && !cancellation.IsCancellationRequested)
+                {
+                    footer.Visibility = Visibility.Visible;
+                    if (!await LoadMore()) break;
+                    target = Target();
+                }
+                if (cancellation.IsCancellationRequested) return;
+                Scroller.UpdateLayout();
+                if (target < 0) { Scroller.ScrollToEnd(); return; }
+                try
+                {
+                    var y = Scroller.VerticalOffset + Top(target) - 110;
+                    Scroller.ScrollToVerticalOffset(Math.Max(0, y));
+                    Trace($"alphabet {letter} → titre {target + 1} « {loaded[target].Item.Name} »");
+                }
+                catch (InvalidOperationException) { }
+                _ = Dispatcher.BeginInvoke(LoadVisibleArt, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            AlphabetRail.Children.Clear();
+            if (rail.Length > 0)
+            {
+                foreach (var letter in rail)
+                {
+                    var surface = new FrameworkElementFactory(typeof(Border));
+                    surface.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+                    surface.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+                    var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+                    presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                    presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+                    surface.AppendChild(presenter);
+                    var button = new Button
+                    {
+                        Content = letter.ToString(), Template = new ControlTemplate(typeof(Button)) { VisualTree = surface }, Width = 26, Height = 19,
+                        FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = BrushFor("Muted"), Cursor = System.Windows.Input.Cursors.Hand,
+                        Focusable = false, ToolTip = letter == '#' ? "Début de la médiathèque" : "Titres en " + letter
+                    };
+                    AutomationProperties.SetName(button, letter == '#' ? "Début" : "Lettre " + letter);
+                    AutomationProperties.SetAutomationId(button, "Letter-" + (letter == '#' ? "0" : letter.ToString()));
+                    button.Click += (_, _) => _ = Jump(letter);
+                    button.MouseEnter += (_, _) => button.FontSize = 14;
+                    button.MouseLeave += (_, _) => button.FontSize = 11.5;
+                    letterButtons[letter] = button;
+                    AlphabetRail.Children.Add(button);
+                }
+                AlphabetRail.Visibility = Visibility.Visible;
+            }
+            await Append(items);
+            _ = Dispatcher.BeginInvoke(async () => { LoadVisibleArt(); await FillToEnd(); }, System.Windows.Threading.DispatcherPriority.Loaded);
         });
+
+    private const int BrowseBatch = 120;
+    // Sens habituel de chaque tri (récents, années et notes : du plus grand au plus petit).
+    private static bool DefaultDescending(string? sort) => sort is "DateCreated" or "ProductionYear" or "CommunityRating" or "PremiereDate";
+
+    // Lettre de classement d'un titre (nom de tri Jellyfin, sans accents) ; chiffres et symboles : « # ».
+    private static char LetterOf(MediaItem item)
+    {
+        var name = (string.IsNullOrWhiteSpace(item.SortName) ? item.Name : item.SortName).Trim();
+        if (name.Length == 0) return '#';
+        var plain = name.Normalize(System.Text.NormalizationForm.FormD);
+        var first = plain.FirstOrDefault(character => char.IsLetterOrDigit(character));
+        var letter = char.ToUpperInvariant(first);
+        return letter is >= 'A' and <= 'Z' ? letter : '#';
+    }
 
     private async Task LoadFilterChoices(Jellyfin account, string? parent, string types, ComboBox genres, ComboBox years, string? genre, int? year, CancellationToken cancellation)
     {

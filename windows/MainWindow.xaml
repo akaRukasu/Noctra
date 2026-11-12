@@ -744,6 +744,9 @@
                     <StackPanel x:Name="PageContent" Margin="40,96,40,32"/>
                 </local:SmoothScrollViewer>
             </DockPanel>
+            <!-- 0.8 : alphabet de la médiathèque (tri alphabétique), fixe sur le côté droit. -->
+            <StackPanel x:Name="AlphabetRail" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,104,12,20" Visibility="Collapsed"
+                        Background="#99111320" AutomationProperties.Name="Alphabet de la médiathèque"/>
             <!-- Bandeau flottant : transparent sur les visuels, opaque dès que la page défile. -->
             <Border x:Name="NavigationBar" VerticalAlignment="Top" IsHitTestVisible="True">
                 <Border.Background>

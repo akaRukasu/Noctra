@@ -22,6 +22,7 @@ internal sealed record MediaItem
     public string Type { get; init; } = "";
     public string? SeriesId { get; init; }
     public string? SeriesName { get; init; }
+    public string? SortName { get; init; }
     public string? Overview { get; init; }
     public string? OfficialRating { get; init; }
     public int? ProductionYear { get; init; }
@@ -192,14 +193,16 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     }
 
     internal Task<ItemPage> Browse(string? type, string? parent, string? search, int start, bool latest, CancellationToken cancellation,
-        bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null)
+        bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null, int limit = 48,
+        bool? descending = null)
     {
         var query = new Dictionary<string, string>
         {
             ["UserId"] = user.Id, ["Recursive"] = "true", ["IncludeItemTypes"] = type ?? "Movie,Series",
-            ["StartIndex"] = start.ToString(CultureInfo.InvariantCulture), ["Limit"] = latest ? "16" : "48",
+            ["StartIndex"] = start.ToString(CultureInfo.InvariantCulture), ["Limit"] = latest ? "16" : Math.Clamp(limit, 1, 500).ToString(CultureInfo.InvariantCulture),
             ["SortBy"] = latest ? "DateCreated" : sort ?? "SortName", ["SortOrder"] = latest || sort is "ProductionYear" or "DateCreated" ? "Descending" : "Ascending",
-            ["Fields"] = Details, ["EnableUserData"] = "true"
+            // SortName : lettre de classement (alphabet de la médiathèque).
+            ["Fields"] = latest ? Details : Details + ",SortName", ["EnableUserData"] = "true"
         };
         if (parent != null) query["ParentId"] = parent;
         if (!string.IsNullOrWhiteSpace(search)) query["SearchTerm"] = search;
@@ -211,6 +214,8 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         if (year is > 1800 and < 2300) query["Years"] = year.Value.ToString(CultureInfo.InvariantCulture);
         if (rating is > 0 and <= 10) query["MinCommunityRating"] = rating.Value.ToString(CultureInfo.InvariantCulture);
         if (sort is "Random" or "CommunityRating" or "Runtime" or "PremiereDate") query["SortOrder"] = sort == "Runtime" ? "Ascending" : "Descending";
+        // Sens choisi dans la page (bouton croissant / décroissant).
+        if (!latest && descending is bool reverse && sort != "Random") query["SortOrder"] = reverse ? "Descending" : "Ascending";
         return Get<ItemPage>("Items", query, cancellation);
     }
 

@@ -86,6 +86,12 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Médiathèque sur une seule page, alphabet et sens du tri
+
+- **Plus de pages à parcourir** : toute la médiathèque est sur une page, comme Jellyfin. Les titres suivants arrivent par lots de 120 en faisant défiler ; les affiches ne sont téléchargées qu'à l'approche de l'écran (une grande médiathèque reste fluide).
+- **Alphabet sur le côté** (tri alphabétique) : # puis A à Z, fixe à droite ; un clic charge si besoin les titres jusqu'à la lettre et y mène directement. La lettre en cours est mise en avant pendant le défilement. Classement selon le nom de tri Jellyfin, sans accents.
+- **Sens du tri** : bouton à côté de « Trier » : un clic croissant, un autre décroissant (A → Z / Z → A pour les noms ; année, note, ajouts, durée…). Changer de tri revient au sens habituel de ce tri.
+
 ## Logo dans l'en-tête du lecteur
 
 - Comme le grand visuel de l'accueil : le logo de l'œuvre remplace le titre écrit en haut du lecteur (film), ou le nom de la série (épisode, le titre de l'épisode reste dessous).
@@ -218,6 +224,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - administration.
 - **Test des nouveautés** :
   - plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris ;
+  - médiathèque de 404 titres sur une page : chargement au défilement, affiches à la demande, alphabet (T puis #), tri Z → A puis A → Z ;
   - logo de la série dans l'en-tête du lecteur, titre de l'épisode conservé ;
   - épisode lancé depuis une carte de l'accueil puis épisode suivant / précédent ; lecture au clic sur le visuel d'une série et sur la vignette d'un épisode ;
   - SyncPlay : « Rejoindre la lecture » après avoir quitté le lecteur, à la position du groupe ;

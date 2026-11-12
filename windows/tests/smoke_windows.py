@@ -116,6 +116,14 @@ def art(key, landscape):
 
 artwork = {(item["Id"], kind): art(item["Id"], kind == "Backdrop")
            for item in [series, *movies, album] for kind in ("Backdrop", "Primary")}
+# 0.8 : grande médiathèque (404 titres, # puis A à Z) : page unique, chargement au défilement, alphabet.
+big_words = ["Aurore", "Brume", "Comete", "Dune", "Etoile", "Falaise", "Glacier", "Horizon", "Ile", "Jade", "Kraken", "Lagune", "Mirage", "Nebuleuse",
+             "Orage", "Phare", "Quasar", "Recif", "Sable", "Tempete", "Ultime", "Volcan", "Vague", "Xenon", "Yeti", "Zenith"]
+big_items = sorted([{"Id": f"big-{n}", "Name": f"{1900 + n} Odyssee", "Type": "Movie", "ProductionYear": 2020, "ImageTags": {"Primary": "big"}} for n in range(4)] +
+                   [{"Id": f"big-{word.lower()}-{n}", "Name": f"{word} {n:02d}", "Type": "Movie", "ProductionYear": 2020, "ImageTags": {"Primary": "big"}}
+                    for word in sorted(set(big_words) - {"Vague"}) for n in range(16)], key=lambda item: item["Name"].lower())
+for item in big_items:
+    item["SortName"] = item["Name"].lower()
 if features:
     # Logo de la série (PNG transparent) : affiché dans l'en-tête du lecteur à la place du nom.
     logo = Image.new("RGBA", (600, 180), (0, 0, 0, 0))
@@ -494,7 +502,15 @@ class Fixture(BaseHTTPRequestHandler):
             return self.page([next_episode] if user == "profile-a" else [])
         if path == f"/jellyfin/Users/{user}/Views":
             return self.page([{"Id": "cinema", "Name": "Cinéma", "Type": "CollectionFolder"}, {"Id":"series-lib","Name":"Séries","Type":"CollectionFolder"}]
-                             + ([{"Id": "music-lib", "Name": "Musique", "Type": "CollectionFolder", "CollectionType": "music"}] if features else []))
+                             + ([{"Id": "music-lib", "Name": "Musique", "Type": "CollectionFolder", "CollectionType": "music"},
+                                 {"Id": "big-lib", "Name": "Grande médiathèque", "Type": "CollectionFolder", "CollectionType": "movies"}] if features else []))
+        if path == "/jellyfin/Items" and q.get("ParentId") == ["big-lib"]:
+            # Comme Jellyfin : pages (StartIndex / Limit), nombre total.
+            start, limit = int(q.get("StartIndex", ["0"])[0]), int(q.get("Limit", ["100"])[0])
+            order = q.get("SortOrder", ["Ascending"])[0]
+            events.append(("big-page", user, {"start": start, "limit": limit, "SortBy": q.get("SortBy", [""])[0], "SortOrder": order}))
+            ordered = big_items[::-1] if order == "Descending" else big_items
+            return self.send({"Items": [with_state(item, user) for item in ordered[start:start + limit]], "TotalRecordCount": len(big_items)})
         if path == "/jellyfin/Items":
             events.append(("catalog-query",user,q))
             term = q.get("SearchTerm", [""])[0].lower()
@@ -533,6 +549,8 @@ class Fixture(BaseHTTPRequestHandler):
                               "Credits": {"EpisodeId": "episode-next", "Valid": False, "IntroStart": 0.0, "IntroEnd": 0.0}})
         if "/Images/" in path:
             _, _, _, key, _, kind = path.split("/")
+            if key.startswith("big-"):
+                events.append(("big-image", user, {"key": key}))
             data = artwork.get((key, kind))
             return self.send(data or b"", status=200 if data else 404, content_type="image/jpeg")
         if path in ["/jellyfin/Videos/episode/stream.webm", "/jellyfin/Videos/episode-next/stream.webm", "/jellyfin/Videos/episode-s3/stream.webm", "/fixture-video.webm", "/api/tv/oha/http/mixed-test"]:
@@ -1103,6 +1121,51 @@ def check_fullscreen_at_start():
     until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "Escape did not leave the fullscreen started while opening", timeout=15)
     control("ReturnButton").invoke()
     print("OK · Plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris.", flush=True)
+
+
+def check_library_alphabet():
+    # Médiathèque entière sur une page : titres suivants au défilement, affiches à l'approche de l'écran, alphabet.
+    def traced(text):
+        log = profile / "trace.log"
+        return log.exists() and text in log.read_text(encoding="utf-8", errors="replace")
+    control("LibraryTab").invoke()
+    until(lambda: by_name("Grande médiathèque", found_index=0).exists(timeout=.1), "Big library tile missing")
+    by_name("Grande médiathèque", found_index=0).invoke()
+    until(lambda: control("Letter-T").exists(timeout=.1), "Alphabet missing on the library page", timeout=20)
+    until(lambda: by_name("404 titres", "Text").exists(timeout=.1), "Library title count missing")
+    assert not by_name("Page suivante").exists(timeout=.5), "The library is still split into pages"
+    sleep(2)
+    images = len({body["key"] for name, _, body in events if name == "big-image"})
+    assert 0 < images < 200, f"Posters were not loaded on demand ({images} requested for 404 titles)"
+    pages = sum(1 for name, _, _ in events if name == "big-page")
+    screenshot("mediatheque-alphabet")
+    # Lettre pas encore chargée : titres suivants chargés jusqu'à elle, puis défilement jusqu'au premier titre en T.
+    control("Letter-T").invoke()
+    until(lambda: traced("alphabet T → "), "Jumping to a letter did nothing", timeout=30)
+    log = (profile / "trace.log").read_text(encoding="utf-8", errors="replace")
+    jumped = re.findall(r"alphabet T → titre (\d+) « ([^»]+) »", log)[-1]
+    assert jumped[1].strip().startswith("Tempete 00"), f"Letter T did not reach the first title in T: {jumped}"
+    assert sum(1 for name, _, _ in events if name == "big-page") > pages, "The next titles were not loaded for the letter"
+    card = by_name(jumped[1].strip(), found_index=0)
+    until(lambda: card.exists(timeout=.1) and card.rectangle().top >= win32gui.GetWindowRect(window.handle)[1] - 5
+          and card.rectangle().bottom <= win32gui.GetWindowRect(window.handle)[3] + 5, "The first title in T is not on screen", timeout=10)
+    sleep(1)
+    assert any(body["key"] == "big-tempete-0" for name, _, body in events if name == "big-image"), "Posters near the letter were not loaded"
+    screenshot("mediatheque-lettre-t")
+    control("Letter-0").invoke()
+    until(lambda: traced("alphabet # → titre 1 "), "« # » did not go back to the start of the library", timeout=10)
+    print("OK · Médiathèque sur une seule page (404 titres) : chargement au défilement, affiches à la demande, alphabet (T puis #).", flush=True)
+    # Sens du tri : un clic décroissant (Z → A), un autre croissant ; l'alphabet ne sert qu'à l'ordre A → Z.
+    until(lambda: control("SortDirection").exists(timeout=.1) and control("SortDirection").window_text() == "A → Z", "Sort direction button missing")
+    control("SortDirection").invoke()
+    until(lambda: any(name == "big-page" and body["SortOrder"] == "Descending" and body["SortBy"] == "SortName" for name, _, body in events), "Descending order not requested")
+    until(lambda: control("SortDirection").exists(timeout=.1) and control("SortDirection").window_text() == "Z → A", "Sort direction did not switch to descending")
+    until(lambda: control("LibraryCard0").exists(timeout=.1) and control("LibraryCard0").window_text() == "Zenith 15", "Descending order does not start with the last title")
+    assert not control("Letter-T").exists(timeout=.5), "Alphabet shown for a descending order"
+    control("SortDirection").invoke()
+    until(lambda: control("SortDirection").exists(timeout=.1) and control("SortDirection").window_text() == "A → Z", "Sort direction did not switch back to ascending")
+    until(lambda: control("LibraryCard0").exists(timeout=.1) and control("LibraryCard0").window_text() == "1900 Odyssee", "Ascending order does not start with the first title")
+    print("OK · Tri dans un sens puis dans l'autre (Z → A, puis A → Z).", flush=True)
 
 
 def check_bowd_preroll():
@@ -1713,6 +1776,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             check_episode_flow()
             check_card_playback()
             check_fullscreen_at_start()
+            check_library_alphabet()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)
