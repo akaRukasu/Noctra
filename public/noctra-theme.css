@@ -15,9 +15,9 @@
   font-family: 'Material Icons';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.50') format('woff2'),
-       url('client/MaterialIcons-Regular.08cefa1bc6566a650da7.woff?v=200.50') format('woff'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.50') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.08cefa1bc6566a650da7.woff?v=200.121') format('woff'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
@@ -25,8 +25,8 @@
   font-family: 'Material Symbols Rounded';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2') format('woff2'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
@@ -34,8 +34,8 @@
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 400;
-  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2') format('woff2'),
-       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf') format('truetype');
+  src: url('client/MaterialIcons-Regular.2d8017489da689caedc1.woff2?v=200.121') format('woff2'),
+       url('client/MaterialIcons-Regular.698bd8550d863c20a3e1.ttf?v=200.121') format('truetype');
   font-display: block;
 }
 
@@ -14752,8 +14752,10 @@ body[data-noctra-version-mismatch="true"]::before {
 .noctra-request-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 
 @media (max-width: 760px) {
-  .noctra-tv-quality > span { display: none; }
-  .noctra-tv-quality { padding-inline: 7px; }
+  /* 200.0.176 : « Qualité » reste écrit sur téléphone (avant : seul « Auto » restait visible). */
+  /* Ligne entière sur téléphone : « Qualité · Auto · 1080p » lisible, zapping et Caster dessous. */
+  .noctra-tv-quality { flex: 1 1 100%; order: -1; min-width: 0; padding-inline: 11px 7px; }
+  .noctra-tv-quality select { flex: 1 1 auto; width: 100%; min-width: 0; text-overflow: ellipsis; }
   .noctra-request-manager, .noctra-request-quota { align-items: stretch; flex-direction: column; }
   .noctra-request-row-actions { width: 100%; justify-content: flex-start; }
 }
@@ -23634,12 +23636,6 @@ html body.noctra-ready #noctra-panel[data-noctra-panel-kind="requests"] > .noctr
 }
 
 
-/* 200.0.107 — une carte de reprise rejetée ne doit jamais réapparaître via une règle Jellyfin !important. */
-.homePage .verticalSection[data-noctra-resume-synced="true"] .card[data-noctra-resume-state="filtered"],
-.homePage .verticalSection[data-noctra-resume-hidden="true"] {
-  display: none !important;
-}
-
 /* 200.0.107 — même géométrie du dock pour membres et administrateurs sur desktop. */
 @media (min-width: 761px) {
   html body.noctra-ready[data-noctra-role="user"]:not(.noctra-playing):not(.noctra-player-active) #noctra-dock[data-role="user"] {
@@ -23682,3 +23678,32 @@ html body.noctra-ready #noctra-panel[data-noctra-panel-kind="requests"] > .noctr
     pointer-events: auto !important;
   }
 }
+
+/* Noctra 200.0.164 : −15 s / +15 s du direct (fenêtre de retour réelle seulement). */
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek {
+  width: auto !important;
+  min-width: 58px !important;
+  background: rgba(14, 16, 26, .78) !important;
+  color: #fff !important;
+  font-weight: 800 !important;
+}
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek:hover,
+.noctra-tv-screen-tools .noctra-tv-live-edge.noctra-tv-seek:focus-visible {
+  background: #f5f7fa !important;
+  color: #0b0d12 !important;
+}
+.noctra-tv-seek-note {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: rgba(9, 10, 15, .82);
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.25rem;
+  pointer-events: none;
+}
+.noctra-tv-seek-note[hidden] { display: none; }

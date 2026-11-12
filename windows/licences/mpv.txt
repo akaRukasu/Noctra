@@ -1,0 +1,11 @@
+mpv est téléchargé pendant l’installation depuis le projet mpv-winbuild-cmake.
+Le programme d’installation vérifie l’empreinte SHA-256 de l’archive.
+
+Version de l’archive
+20261104 / git-46787be250
+
+Projet et informations de licence
+https://github.com/shinchiro/mpv-winbuild-cmake
+https://github.com/mpv-player/mpv/blob/master/LICENSE.GPL
+
+L’archive mpv ne fait pas partie du fichier d’installation Noctra.

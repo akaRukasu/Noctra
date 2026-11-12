@@ -1,0 +1,32 @@
+# Noctra pour iPhone et iPad, appli native SwiftUI pour iOS 26 (Liquid Glass).
+# Projet Xcode généré par XcodeGen : `brew install xcodegen && xcodegen generate`.
+# Construite sans signature par GitHub Actions (.github/workflows/noctra-ios-native.yml).
+name: Noctra
+options:
+  bundleIdPrefix: com.noctra
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "2.18.10"
+    CURRENT_PROJECT_VERSION: "53"
+    SWIFT_VERSION: "5.0"
+targets:
+  Noctra:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Noctra
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.noctra.app
+        PRODUCT_NAME: Noctra
+        INFOPLIST_FILE: Noctra/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: NO
+    scheme: {}

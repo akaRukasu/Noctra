@@ -50,6 +50,9 @@ ExecStart=$NODE_BIN $PROJECT_DIR/server.mjs
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
+# Limite de mémoire virtuelle du service Ultra.cc : sans ce réglage, les
+# requêtes de Noctra (fetch) échouent (« fetch failed »).
+Environment=NODE_OPTIONS=--disable-wasm-trap-handler
 StandardOutput=append:$LOG_DIR/noctra.log
 StandardError=append:$LOG_DIR/noctra-error.log
 

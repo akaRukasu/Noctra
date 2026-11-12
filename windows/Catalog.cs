@@ -1,0 +1,1458 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+
+namespace Noctra.Windows;
+
+public partial class MainWindow
+{
+    private Brush BrushFor(string key) => (Brush)Resources[key];
+    private static SolidColorBrush ColorOf(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
+
+    private TextBlock Text(string value, double size = 14, bool bold = false, string color = "Ink") => new()
+    {
+        Text = value, FontSize = size, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+        FontFamily = size >= 20 ? (FontFamily)Resources["DisplayFont"] : FontFamily,
+        Foreground = BrushFor(color)
+    };
+
+    private Button Action(string title, Action click, string style = "Action")
+    {
+        var button = new Button { Style = (Style)Resources[style] };
+        SetLabel(button, title);
+        button.Click += (_, _) => click();
+        return button;
+    }
+
+    // 0.6 : les libellés « ▶ … », « ♡ … », « ♥ … » s'affichent avec une vraie icône ;
+    // le nom accessible reste le libellé d'origine (navigation clavier, lecteurs d'écran, tests).
+    private void SetLabel(Button button, string title)
+    {
+        AutomationProperties.SetName(button, title);
+        var glyph = title.StartsWith('▶') ? "\uE768" : title.StartsWith('♡') ? "\uE734" : title.StartsWith('♥') ? "\uE735" : null;
+        if (glyph == null) { button.Content = title; return; }
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(new TextBlock { Text = glyph, FontFamily = (FontFamily)Resources["IconFont"], FontSize = 15,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
+        row.Children.Add(new TextBlock { Text = title[1..].Trim(), VerticalAlignment = VerticalAlignment.Center });
+        foreach (TextBlock part in row.Children)
+            part.SetBinding(TextBlock.ForegroundProperty, new Binding(nameof(Button.Foreground)) { Source = button });
+        button.Content = row;
+    }
+
+    private FrameworkElement Message(string message)
+    {
+        var loading = message.EndsWith('…');
+        var label = Text(message, 15, color: "Muted");
+        label.TextWrapping = TextWrapping.Wrap;
+        label.VerticalAlignment = VerticalAlignment.Center;
+        if (loading)
+        {
+            // Chargement : texte discret et barre animée, sans cadre.
+            var wait = new StackPanel { Margin = new Thickness(2, 18, 0, 22), HorizontalAlignment = HorizontalAlignment.Left, Tag = label };
+            wait.Children.Add(label);
+            wait.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3, Width = 180, Margin = new Thickness(0, 12, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0),
+                Foreground = BrushFor("AccentGradient"), Background = ColorOf("#1AFFFFFF") });
+            return wait;
+        }
+        var row = new DockPanel();
+        var icon = new TextBlock { Text = "\uE946", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 16,
+            Foreground = BrushFor("Accent"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 14, 0) };
+        DockPanel.SetDock(icon, Dock.Left);
+        row.Children.Add(icon);
+        row.Children.Add(label);
+        return new Border
+        {
+            Background = ColorOf("#0DFFFFFF"), BorderBrush = ColorOf("#1AFFFFFF"), BorderThickness = new Thickness(1),
+            Padding = new Thickness(18, 15, 18, 15), CornerRadius = new CornerRadius(14),
+            Margin = new Thickness(0, 0, 0, 14), Child = row, Tag = label
+        };
+    }
+
+    // Texte d'un message (mis à jour pendant un chargement progressif).
+    private static TextBlock MessageLabel(FrameworkElement message) => (TextBlock)message.Tag;
+
+    // Entrée en douceur d'un élément (fondu et léger glissement vers le haut).
+    private static void Reveal(UIElement element, double delay = 0, double distance = 14)
+    {
+        if (!SystemParameters.ClientAreaAnimation) return;
+        var move = new TranslateTransform(0, distance);
+        element.RenderTransform = move;
+        element.Opacity = 0;
+        var begin = TimeSpan.FromMilliseconds(delay);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(380)) { BeginTime = begin, EasingFunction = ease });
+        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(distance, 0, TimeSpan.FromMilliseconds(460)) { BeginTime = begin, EasingFunction = ease });
+    }
+
+    // Visuel affiché en fondu dès qu'il arrive (les images se chargent en arrière-plan).
+    private static void FadeInWhenLoaded(Image image)
+    {
+        if (!SystemParameters.ClientAreaAnimation) return;
+        image.Opacity = 0;
+        var descriptor = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(Image.SourceProperty, typeof(Image));
+        void Shown(object? sender, EventArgs args)
+        {
+            if (image.Source == null) return;
+            descriptor.RemoveValueChanged(image, Shown);
+            image.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(320)));
+        }
+        descriptor.AddValueChanged(image, Shown);
+        // Sortie de l'arbre visuel : plus de suivi ; si l'image revient, elle reste visible.
+        image.Unloaded += (_, _) => { descriptor.RemoveValueChanged(image, Shown); image.BeginAnimation(UIElement.OpacityProperty, null); image.Opacity = 1; };
+    }
+
+    // Défilement horizontal animé des rangées (flèches).
+    private static void GlideTo(ScrollViewer scroll, double target)
+    {
+        target = Math.Clamp(target, 0, scroll.ScrollableWidth);
+        var from = scroll.HorizontalOffset;
+        if (!SystemParameters.ClientAreaAnimation || Math.Abs(target - from) < 1) { scroll.ScrollToHorizontalOffset(target); return; }
+        if (scroll.Content is not FrameworkElement content) { scroll.ScrollToHorizontalOffset(target); return; }
+        // 0.8 : la rangée se place d'un coup, puis l'image déjà calculée glisse (animation à la cadence de l'écran) :
+        // plus de mise en page à chaque image (jusqu'à 360 cartes par rangée infinie).
+        if (content.RenderTransform is not TranslateTransform shift) content.RenderTransform = shift = new TranslateTransform();
+        var visible = from - shift.X;
+        scroll.ScrollToHorizontalOffset(target);
+        scroll.UpdateLayout();
+        var start = scroll.HorizontalOffset - visible;
+        shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(start, 0, TimeSpan.FromMilliseconds(420))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    private async Task RenderHome(Jellyfin account, CancellationToken cancellation)
+    {
+        var resumeTask = TryShelf(() => account.Resume(cancellation));
+        var nextTask = TryShelf(() => account.NextUp(cancellation));
+        var librariesTask = HomeLibraries(account, cancellation);
+        var libraries = await librariesTask;
+        if (cancellation.IsCancellationRequested) return;
+        // Aperçus des médiathèques lancés tout de suite, en parallèle (4 à la fois).
+        var libraryGate = new SemaphoreSlim(4);
+        var previews = libraries.ToDictionary(library => library.Id, library => BrowsePreview(account, library, libraryGate, cancellation));
+        await Task.WhenAll(resumeTask, nextTask);
+        if (cancellation.IsCancellationRequested) return;
+        var resume = (await resumeTask)?.Where(item => item.CanPlay && PlayRequest.Identifier(item.Id)).ToArray();
+        var next = (await nextTask)?.Where(item => item.CanPlay && PlayRequest.Identifier(item.Id) &&
+            !(resume ?? []).Any(watching => watching.Id == item.Id)).ToArray();
+        MediaItem[]? latest = null;
+        // 0.8 : l'accueil s'affiche dès que la reprise et « À suivre » sont prêts ; les rangées des
+        // médiathèques se remplissent ensuite chacune à son arrivée (sauf s'il faut un titre à mettre en avant).
+        if (resume is not { Length: > 0 } && next is not { Length: > 0 })
+        {
+            await Task.WhenAll(previews.Values);
+            if (cancellation.IsCancellationRequested) return;
+            latest = previews.Values.SelectMany(task => task.Result?.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+        }
+        PageContent.Children.Clear();
+        var featured = resume?.FirstOrDefault() ?? next?.FirstOrDefault() ?? latest?.FirstOrDefault();
+        if (featured != null)
+        {
+            var candidates = (resume is { Length: > 0 } ? resume : next is { Length: > 0 } ? next : latest!).Take(8).ToArray();
+            var label = featured == resume?.FirstOrDefault() ? "CONTINUER À REGARDER" : featured == next?.FirstOrDefault() ? "À SUIVRE" : "DANS VOTRE BIBLIOTHÈQUE";
+            PageContent.Children.Add(FeaturedCarousel(candidates, label, cancellation));
+        }
+        else PageContent.Children.Add(Heading("Votre espace", "Retrouvez ici vos films et séries."));
+        AddShelf("Continuer à regarder", resume, "Vos films et épisodes en cours apparaîtront ici.", true, cancellation);
+        foreach (var library in libraries)
+        {
+            var title = "Ajouts récents · " + library.Name;
+            var slot = new StackPanel();
+            PageContent.Children.Add(slot);
+            var preview = previews[library.Id];
+            async Task<MediaItem[]?> More(int start)
+            {
+                try { return (await account.Browse(LibraryTypes(library), library.Id, null, start, true, cancellation)).Items; }
+                catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException) { return null; }
+            }
+            if (preview.IsCompleted) AddShelf(title, preview.Result?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot, More);
+            else
+            {
+                slot.Children.Add(ShelfPlaceholder(title));
+                _ = FillShelf();
+                async Task FillShelf()
+                {
+                    var loaded = await preview;
+                    if (cancellation.IsCancellationRequested) return;
+                    slot.Children.Clear();
+                    AddShelf(title, loaded?.Items, "Aucun ajout récent dans cette médiathèque.", false, cancellation, slot, More);
+                    if (slot.Children.Count > 1) Reveal(slot.Children[1], 0, 10);
+                }
+            }
+        }
+        AddShelf("À suivre", next, "Les prochains épisodes de vos séries apparaîtront ici.", true, cancellation);
+        var librariesHeading = Heading("Vos médiathèques", "Choisissez votre prochain univers.");
+        librariesHeading.Margin = new Thickness(0, 34, 0, 18);
+        PageContent.Children.Add(librariesHeading);
+        if (libraries.Length == 0) PageContent.Children.Add(Message("Médiathèques indisponibles pour ce profil. Cliquez sur Accueil pour réessayer."));
+        else PageContent.Children.Add(LibraryTiles(account, libraries, cancellation, true, previews));
+        ApplyContentMargins();
+        for (var index = 1; index < PageContent.Children.Count; index++) Reveal(PageContent.Children[index], Math.Min(index, 8) * 35);
+    }
+
+    private static async Task<ItemPage?> BrowsePreview(Jellyfin account, MediaItem library, SemaphoreSlim gate, CancellationToken cancellation)
+    {
+        try
+        {
+            await gate.WaitAsync(cancellation);
+            try { return await account.Browse(LibraryTypes(library), library.Id, null, 0, true, cancellation); }
+            finally { gate.Release(); }
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException) { return null; }
+    }
+
+    // Rangée en attente : titre et silhouettes d'affiches (aucune animation coûteuse).
+    private FrameworkElement ShelfPlaceholder(string title)
+    {
+        var panel = new StackPanel();
+        var label = Text(title, 21, true);
+        label.Margin = new Thickness(0, 30, 0, 18);
+        panel.Children.Add(label);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, ClipToBounds = true };
+        for (var index = 0; index < 10; index++)
+            row.Children.Add(new Border { Width = 168, Height = 252, CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 18, 0),
+                Background = ColorOf(index % 2 == 0 ? "#12FFFFFF" : "#0EFFFFFF") });
+        panel.Children.Add(row);
+        return panel;
+    }
+
+    // Grand visuel d'accueil : titres mis en avant, défilement automatique (pause au survol),
+    // fondu enchaîné et points de pagination.
+    private FrameworkElement FeaturedCarousel(MediaItem[] candidates, string label, CancellationToken cancellation)
+    {
+        var banner = new Grid { Tag = Bleed };
+        var index = 0;
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom };
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(9) };
+        cancellation.Register(() => Dispatcher.BeginInvoke(timer.Stop));
+        void Show(int target, bool animate)
+        {
+            if (cancellation.IsCancellationRequested) return;
+            index = (target + candidates.Length) % candidates.Length;
+            var item = candidates[index];
+            var hero = Hero(item, label, item.DisplayTitle, item.Caption, item.Overview,
+                item.CanPlay ? item.Resume > 0 ? "▶   Reprendre" : "▶   Lire" : "Voir la fiche",
+                item.CanPlay ? () => StartPlayback(item) : () => OpenDetail(item, ButtonTab.Home),
+                item.CanPlay ? Action("Voir la fiche", () => OpenDetail(item, ButtonTab.Home)) : null, cancellation);
+            var previous = banner.Children.OfType<FrameworkElement>().Where(child => child.Tag as string == "slide").ToArray();
+            // Un seul bouton de lecture principal identifiable à la fois (pendant le fondu aussi).
+            foreach (var old in previous) old.IsHitTestVisible = false;
+            foreach (var old in previous)
+                foreach (var playButton in FindButtons(old).Where(button => AutomationProperties.GetAutomationId(button) == "PrimaryPlayback"))
+                    AutomationProperties.SetAutomationId(playButton, "");
+            hero.Tag = "slide";
+            banner.Children.Insert(banner.Children.Count - (candidates.Length > 1 ? 1 : 0), hero);
+            if (animate && SystemParameters.ClientAreaAnimation)
+            {
+                var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(520)) { EasingFunction = new CubicEase() };
+                fade.Completed += (_, _) => { foreach (var old in previous) banner.Children.Remove(old); };
+                hero.BeginAnimation(UIElement.OpacityProperty, fade);
+            }
+            else foreach (var old in previous) banner.Children.Remove(old);
+            for (var dot = 0; dot < dots.Children.Count; dot++)
+                if (dots.Children[dot] is Button { Content: Border pill })
+                {
+                    pill.Width = dot == index ? 22 : 7;
+                    pill.Background = dot == index ? BrushFor("Ink") : ColorOf("#55FFFFFF");
+                }
+        }
+        if (candidates.Length > 1)
+        {
+            var pager = new Grid { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 44, 70) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            void Restart() { if (timer.IsEnabled) { timer.Stop(); timer.Start(); } }
+            var previousButton = Action("‹", () => { Show(index - 1, true); Restart(); }, "DockIcon");
+            previousButton.Content = "\uE76B"; previousButton.Foreground = BrushFor("Ink");
+            AutomationProperties.SetName(previousButton, "Titre précédent");
+            var nextButton = Action("›", () => { Show(index + 1, true); Restart(); }, "DockIcon");
+            nextButton.Content = "\uE76C"; nextButton.Foreground = BrushFor("Ink");
+            AutomationProperties.SetName(nextButton, "Titre suivant");
+            for (var dot = 0; dot < candidates.Length; dot++)
+            {
+                var target = dot;
+                var pill = new Border { Height = 7, Width = 7, CornerRadius = new CornerRadius(3.5), Background = ColorOf("#55FFFFFF") };
+                var hit = new Button { Style = (Style)Resources["Card"], Content = pill, Padding = new Thickness(4), Margin = new Thickness(2, 0, 2, 0),
+                    VerticalAlignment = VerticalAlignment.Center, Background = Brushes.Transparent };
+                AutomationProperties.SetName(hit, $"Titre {dot + 1} sur {candidates.Length}");
+                hit.Click += (_, _) => { Show(target, true); Restart(); };
+                dots.Children.Add(hit);
+            }
+            row.Children.Add(previousButton);
+            dots.Margin = new Thickness(6, 0, 6, 0);
+            row.Children.Add(dots);
+            row.Children.Add(nextButton);
+            pager.Children.Add(row);
+            banner.Children.Add(pager);
+            // Défilement automatique : en pause au survol, quand la fenêtre n'est pas active, et
+            // désactivable (NOCTRA_HERO_AUTOPLAY=0 : tests d'interface, préférence d'accessibilité).
+            timer.Tick += (_, _) => { if (!banner.IsMouseOver && banner.IsVisible && IsActive && !banner.IsKeyboardFocusWithin) Show(index + 1, true); };
+            if (Environment.GetEnvironmentVariable("NOCTRA_HERO_AUTOPLAY") != "0" && SystemParameters.ClientAreaAnimation)
+                banner.Loaded += (_, _) => timer.Start();
+            banner.Unloaded += (_, _) => timer.Stop();
+        }
+        Show(0, false);
+        return banner;
+    }
+
+    private static async Task<MediaItem[]> HomeLibraries(Jellyfin account, CancellationToken cancellation)
+    {
+        try { return ((await account.Libraries(cancellation)).Items ?? []).Where(LibraryVisible).DistinctBy(item => item.Id).ToArray(); }
+        catch (Exception error) when (error is HttpRequestException or JsonException or InvalidOperationException) { return []; }
+    }
+
+    private static bool LibraryVisible(MediaItem item) => PlayRequest.Identifier(item.Id) &&
+        item.Type != "BoxSet" && item.CollectionType != "boxsets";
+
+    private static async Task<MediaItem[]?> TryShelf(Func<Task<MediaItem[]>> load)
+    {
+        try { return await load(); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private FrameworkElement Hero(MediaItem item, string eyebrow, string title, string caption, string? synopsis,
+        string primaryLabel, Action primary, Button? secondary, CancellationToken cancellation, Button? extra = null,
+        Action<Button>? configurePrimary = null, FrameworkElement? facts = null, Action? visualClick = null)
+    {
+        // 0.6 : visuel pleine largeur (sous le bandeau), image gardée dans ses proportions
+        // et calée à droite, fond flouté du même visuel, fondus vers la page.
+        var canvas = ((SolidColorBrush)BrushFor("Canvas")).Color;
+        Color Shade(byte alpha) => Color.FromArgb(alpha, canvas.R, canvas.G, canvas.B);
+        var image = new Image();
+        var backdrop = new ImageBrush { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Right, AlignmentY = AlignmentY.Top };
+        BindingOperations.SetBinding(backdrop, ImageBrush.ImageSourceProperty, new Binding(nameof(Image.Source)) { Source = image });
+        var layers = new Grid { Background = Brushes.Transparent, ClipToBounds = true };
+        // 0.8 : visuel rendu une fois puis mis en cache (défilement fluide) ; fond flou précalculé
+        // (petite image déjà floutée) au lieu d'un effet de flou recalculé en permanence.
+        var visual = new Grid { Background = BrushFor("Canvas"), CacheMode = new BitmapCache { SnapsToDevicePixels = true } };
+        layers.Children.Add(visual);
+        var glow = new Image { Stretch = Stretch.UniformToFill, Opacity = 0 };
+        RenderOptions.SetBitmapScalingMode(glow, BitmapScalingMode.Linear);
+        visual.Children.Add(glow);
+        var picture = new Border { Background = backdrop, HorizontalAlignment = HorizontalAlignment.Right, Opacity = 0 };
+        visual.Children.Add(picture);
+        // Lisibilité du texte à gauche et du bandeau en haut.
+        visual.Children.Add(new Border { Background = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0), EndPoint = new Point(1, 0),
+            GradientStops = { new GradientStop(Shade(245), 0), new GradientStop(Shade(200), .28), new GradientStop(Shade(70), .55), new GradientStop(Shade(0), .78) }
+        } });
+        visual.Children.Add(new Border { Background = new LinearGradientBrush
+        {
+            StartPoint = new Point(.5, 0), EndPoint = new Point(.5, 1),
+            GradientStops = { new GradientStop(Shade(150), 0), new GradientStop(Shade(0), .22), new GradientStop(Shade(0), .55), new GradientStop(Shade(170), .8), new GradientStop(Shade(255), 1) }
+        } });
+        var copy = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, MaxWidth = 620 };
+        var badge = Text(eyebrow, 12, true, "Accent");
+        badge.FontWeight = FontWeights.Bold;
+        copy.Children.Add(badge);
+        var heading = Text(title, 60, true);
+        heading.Margin = new Thickness(0, 8, 0, 0);
+        heading.TextWrapping = TextWrapping.Wrap;
+        heading.MaxHeight = 150;
+        heading.TextTrimming = TextTrimming.CharacterEllipsis;
+        heading.LineHeight = 66;
+        heading.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        var titleLogo = new Image { MaxHeight = 150, MaxWidth = 480, Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 14, 0, 6), Visibility = Visibility.Collapsed };
+        RenderOptions.SetBitmapScalingMode(titleLogo, BitmapScalingMode.HighQuality);
+        copy.Children.Add(titleLogo);
+        copy.Children.Add(heading);
+        if (artwork is { } art) _ = ShowLogo(art, titleLogo, heading, item, cancellation);
+        var metadata = Text(caption, 15, color: "Muted");
+        metadata.TextTrimming = TextTrimming.CharacterEllipsis;
+        metadata.Margin = new Thickness(0, 8, 0, 0);
+        copy.Children.Add(metadata);
+        if (facts != null) copy.Children.Add(facts);
+        if (!string.IsNullOrWhiteSpace(synopsis))
+        {
+            var summary = Text(synopsis, 15, color: "Ink");
+            summary.Opacity = .86;
+            summary.TextWrapping = TextWrapping.Wrap;
+            summary.TextTrimming = TextTrimming.WordEllipsis;
+            summary.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            summary.LineHeight = 23;
+            summary.MaxHeight = 69;
+            summary.MaxWidth = 560;
+            summary.HorizontalAlignment = HorizontalAlignment.Left;
+            summary.Margin = new Thickness(0, 14, 0, 0);
+            copy.Children.Add(summary);
+        }
+        var actions = new WrapPanel { Margin = new Thickness(0, 22, 0, 0) };
+        var primaryButton = Action(primaryLabel, primary, "Primary");
+        primaryButton.MinHeight = 48;
+        AutomationProperties.SetAutomationId(primaryButton, "PrimaryPlayback");
+        configurePrimary?.Invoke(primaryButton);
+        actions.Children.Add(primaryButton);
+        foreach (var other in new[] { secondary, extra })
+        {
+            if (other == null) continue;
+            other.Margin = new Thickness(10, 0, 0, 0);
+            other.MinHeight = 48;
+            actions.Children.Add(other);
+        }
+        copy.Children.Add(actions);
+        // Fiche d'un film, d'un épisode ou d'une série : un clic sur le visuel lance la lecture (bouton rond au survol).
+        Border? playMark = null;
+        if (visualClick != null)
+        {
+            var surface = new FrameworkElementFactory(typeof(Border));
+            surface.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            surface.AppendChild(new FrameworkElementFactory(typeof(ContentPresenter)));
+            playMark = new Border
+            {
+                Width = 84, Height = 84, CornerRadius = new CornerRadius(42), Background = ColorOf("#B30A0A12"), BorderBrush = ColorOf("#59FFFFFF"),
+                BorderThickness = new Thickness(1.5), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Opacity = 0,
+                Child = new TextBlock { Text = "\uE768", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 30, Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) }
+            };
+            var visualPlay = new Button
+            {
+                Template = new ControlTemplate(typeof(Button)) { VisualTree = surface }, Cursor = System.Windows.Input.Cursors.Hand, Focusable = false,
+                Content = new Grid { Children = { playMark } }, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
+                ToolTip = primaryLabel.Replace("▶", "").Trim()
+            };
+            AutomationProperties.SetName(visualPlay, "Lire depuis le visuel");
+            AutomationProperties.SetAutomationId(visualPlay, "HeroVisualPlay");
+            visualPlay.Click += (_, _) => visualClick();
+            var mark = playMark;
+            visualPlay.MouseEnter += (_, _) => mark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.95, TimeSpan.FromMilliseconds(160)));
+            visualPlay.MouseLeave += (_, _) => mark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
+            layers.Children.Add(visualPlay);
+        }
+        layers.Children.Add(copy);
+        var hero = new Border { Child = layers, Tag = Bleed, Height = 560 };
+        void Fit()
+        {
+            var height = Math.Clamp(Math.Min(Scroller.ViewportHeight * .74, layers.ActualWidth * .58), 440, 860);
+            if (Math.Abs(hero.Height - height) > 1) hero.Height = height;
+            var top = PageContent.Margin.Top;
+            copy.Margin = new Thickness(PageContent.Margin.Left + 6, top, 40, 58);
+            // Image dans ses proportions, calée à droite ; à gauche, le même visuel flouté.
+            var source = image.Source;
+            var aspect = source is { Height: > 0 } ? source.Width / source.Height : 16 / 9.0;
+            var width = Math.Min(layers.ActualWidth, hero.Height * aspect);
+            picture.Width = width;
+            // Bouton rond au centre du visuel (partie droite, hors du texte).
+            if (playMark != null) playMark.Margin = new Thickness(0, 0, Math.Max(40, Math.Min(width, layers.ActualWidth * .55) / 2 - 42), 0);
+            var edge = layers.ActualWidth > 0 ? Math.Clamp(1 - width / layers.ActualWidth, 0, .9) : 0;
+            picture.OpacityMask = edge < .02 ? null : new LinearGradientBrush
+            {
+                StartPoint = new Point(0, .5), EndPoint = new Point(1, .5),
+                GradientStops = { new GradientStop(Colors.Transparent, 0), new GradientStop(Colors.White, Math.Min(.45, .12 + edge)), new GradientStop(Colors.White, 1) }
+            };
+        }
+        layers.SizeChanged += (_, _) => Fit();
+        // Abonnement à la fenêtre retiré quand le visuel quitte la page (pas de fuite entre pages).
+        void ViewportChanged(object? sender, SizeChangedEventArgs args) => Fit();
+        hero.Loaded += (_, _) => { Scroller.SizeChanged += ViewportChanged; ApplyContentMargins(); Fit(); };
+        hero.Unloaded += (_, _) => Scroller.SizeChanged -= ViewportChanged;
+        async Task LoadHeroArt()
+        {
+            if (artwork == null) return;
+            await artwork.Load(image, item, true, Math.Min(2560, Artwork.Pixels(Math.Max(1280, ActualWidth))), cancellation);
+            if (cancellation.IsCancellationRequested || image.Source == null) return;
+            Fit();
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            picture.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(600)) { EasingFunction = ease });
+        }
+        _ = LoadHeroArt();
+        if (artwork is { } blur)
+        {
+            _ = blur.LoadBlurred(AmbientArt, item, true, cancellation);
+            _ = ShowGlow();
+            async Task ShowGlow()
+            {
+                await blur.LoadBlurred(glow, item, true, cancellation);
+                if (!cancellation.IsCancellationRequested && glow.Source != null)
+                    glow.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.5, TimeSpan.FromMilliseconds(700)));
+            }
+        }
+        Reveal(copy, 120, 18);
+        return hero;
+    }
+
+    private static async Task ShowLogo(Artwork artwork, Image logo, TextBlock text, MediaItem item, CancellationToken cancellation)
+    {
+        await artwork.LoadLogo(logo, item, cancellation);
+        if (cancellation.IsCancellationRequested || logo.Source == null) return;
+        logo.Visibility = Visibility.Visible;
+        text.Visibility = Visibility.Collapsed;
+    }
+
+    private void AddShelf(string title, MediaItem[]? items, string empty, bool landscape, CancellationToken cancellation, Panel? into = null,
+        Func<int, Task<MediaItem[]?>>? more = null)
+    {
+        into ??= PageContent;
+        var head = new DockPanel { Margin = new Thickness(0, 30, 0, 4) };
+        var label = Text(title, 21, true);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        if (items is not { Length: > 0 })
+        {
+            head.Children.Add(label);
+            head.Margin = new Thickness(0, 30, 0, 12);
+            into.Children.Add(head);
+            into.Children.Add(Message(items == null ? "Section indisponible. Cliquez sur Accueil pour réessayer." : empty));
+            return;
+        }
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 14, 12, 12) };
+        var scroll = new ScrollViewer
+        {
+            Content = row, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, CanContentScroll = false,
+            Margin = new Thickness(-12, 0, -12, 0), Focusable = false
+        };
+        // 0.8 : rangées infinies. Près de la fin, la page suivante de la médiathèque est chargée ;
+        // une fois tout chargé, la rangée reprend au début (boucle sans fin, dans les deux sens).
+        var loaded = items.ToList();
+        var exhausted = more == null;
+        var extending = false;
+        const int CardLimit = 360;
+        bool Overflowing() => scroll.ScrollableWidth > 1;
+        bool NearEnd() => Overflowing() && scroll.HorizontalOffset >= scroll.ScrollableWidth - scroll.ViewportWidth * 1.2;
+        async Task Extend()
+        {
+            if (extending || cancellation.IsCancellationRequested || row.Children.Count >= CardLimit) return;
+            extending = true;
+            try
+            {
+                MediaItem[] batch = [];
+                if (!exhausted)
+                {
+                    var page = await more!(loaded.Count);
+                    var known = loaded.Select(item => item.Id).ToHashSet();
+                    batch = (page ?? []).Where(item => PlayRequest.Identifier(item.Id) && known.Add(item.Id)).ToArray();
+                    if (page == null || page.Length < 16 || batch.Length == 0) exhausted = true;
+                    loaded.AddRange(batch);
+                }
+                if (batch.Length == 0) batch = loaded.ToArray();
+                if (cancellation.IsCancellationRequested) return;
+                foreach (var item in batch)
+                {
+                    if (row.Children.Count >= CardLimit) break;
+                    row.Children.Add(Card(item, landscape, ButtonTab.Home, cancellation));
+                }
+            }
+            finally { extending = false; }
+        }
+        scroll.ScrollChanged += (_, args) => { if (args.HorizontalChange > 0 && NearEnd()) _ = Extend(); };
+        if (items.Length > 1)
+        {
+            var arrows = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(arrows, Dock.Right);
+            var previous = Action("‹", () =>
+            {
+                // Au début : la rangée boucle vers la fin.
+                if (scroll.HorizontalOffset <= 1) GlideTo(scroll, scroll.ScrollableWidth);
+                else GlideTo(scroll, scroll.HorizontalOffset - scroll.ViewportWidth * .8);
+            }, "DockIcon");
+            var next = Action("›", async () =>
+            {
+                if (scroll.HorizontalOffset >= scroll.ScrollableWidth - 1)
+                {
+                    if (row.Children.Count >= CardLimit) { GlideTo(scroll, 0); return; }
+                    await Extend();
+                    scroll.UpdateLayout();
+                }
+                else if (NearEnd()) _ = Extend();
+                GlideTo(scroll, scroll.HorizontalOffset + scroll.ViewportWidth * .8);
+            }, "DockIcon");
+            previous.Content = "\uE76B";
+            next.Content = "\uE76C";
+            AutomationProperties.SetName(previous, title + " précédent");
+            AutomationProperties.SetName(next, title + " suivant");
+            foreach (var arrow in new[] { previous, next })
+            {
+                arrow.Width = arrow.Height = arrow.MinHeight = 34;
+                arrow.FontSize = 12;
+                arrow.Margin = new Thickness(6, 0, 0, 0);
+                arrow.Background = ColorOf("#14FFFFFF");
+                arrows.Children.Add(arrow);
+            }
+            previous.IsEnabled = next.IsEnabled = false;
+            scroll.ScrollChanged += (_, _) => previous.IsEnabled = next.IsEnabled = Overflowing();
+            head.Children.Add(arrows);
+        }
+        head.Children.Add(label);
+        foreach (var item in items) row.Children.Add(Card(item, landscape, ButtonTab.Home, cancellation));
+        into.Children.Add(head);
+        into.Children.Add(scroll);
+    }
+
+    private Button Card(MediaItem item, bool landscape, ButtonTab tab, CancellationToken cancellation, bool fluid = false, Action<Action>? defer = null)
+    {
+        var square = !landscape && item.Square;
+        var width = landscape ? 264 : square ? 200 : 168;
+        var image = new Image { Stretch = Stretch.UniformToFill };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+        FadeInWhenLoaded(image);
+        // 0.8 : dans les grilles, l'affiche occupe toute la largeur de sa colonne (hauteur proportionnelle).
+        Grid surface = fluid ? new AspectGrid { Ratio = landscape ? 9 / 16.0 : square ? 1 : 1.5 } : new Grid { Height = landscape ? 148 : square ? 200 : 252 };
+        surface.ClipToBounds = true;
+        surface.RenderTransformOrigin = new Point(.5, .5);
+        var zoom = new ScaleTransform(1, 1);
+        surface.RenderTransform = zoom;
+        surface.Background = new LinearGradientBrush(Color.FromRgb(30, 32, 46), Color.FromRgb(18, 19, 28), 60);
+        surface.Children.Add(new TextBlock
+        {
+            Text = item.Name.Length > 0 ? item.Name[..1] : "N", Foreground = ColorOf("#4D5268"),
+            FontFamily = (FontFamily)Resources["DisplayFont"], FontSize = 38, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+        });
+        surface.Children.Add(image);
+        // Fin de visuel assombrie : la barre de progression reste lisible sur les images claires.
+        if (item.Progress > 0)
+        {
+            surface.Children.Add(new Border { Height = 46, VerticalAlignment = VerticalAlignment.Bottom,
+                Background = new LinearGradientBrush(Color.FromArgb(0, 0, 0, 0), Color.FromArgb(170, 0, 0, 0), 90) });
+            var track = new Grid { Height = 4, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(12, 0, 12, 11) };
+            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Clamp(item.Progress, .02, 1), GridUnitType.Star) });
+            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Clamp(1 - item.Progress, 0, .98), GridUnitType.Star) });
+            var rail = new Border { CornerRadius = new CornerRadius(2), Background = ColorOf("#4DFFFFFF") };
+            Grid.SetColumnSpan(rail, 2);
+            track.Children.Add(rail);
+            track.Children.Add(new Border { CornerRadius = new CornerRadius(2), Background = BrushFor("AccentGradient") });
+            surface.Children.Add(track);
+        }
+        else if (item.Type == "Series" && item.UserData?.UnplayedItemCount is > 0 and var unplayed)
+        {
+            // 0.7 : épisodes non vus de la série.
+            surface.Children.Add(new Border
+            {
+                MinWidth = 26, Height = 24, CornerRadius = new CornerRadius(12), Background = BrushFor("AccentGradient"), Padding = new Thickness(7, 0, 7, 0),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8),
+                Child = new TextBlock { Text = unplayed > 99 ? "99+" : unplayed.ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 11.5, FontWeight = FontWeights.Bold,
+                    Foreground = ColorOf("#0A0A12"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            });
+            AutomationProperties.SetHelpText(surface, unplayed + " épisodes non vus");
+        }
+        else if (item.UserData?.Played == true)
+        {
+            surface.Children.Add(new Border
+            {
+                Width = 24, Height = 24, CornerRadius = new CornerRadius(12), Background = ColorOf("#EBF5F4FA"),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8),
+                Child = new TextBlock { Text = "\uE73E", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 12, Foreground = ColorOf("#0A0A12"),
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            });
+            AutomationProperties.SetHelpText(surface, "Vu");
+        }
+        var shine = new Border { BorderBrush = ColorOf("#59FFFFFF"), BorderThickness = new Thickness(1.5), CornerRadius = new CornerRadius(12), Opacity = 0 };
+        surface.Children.Add(shine);
+        surface.SizeChanged += (_, _) => surface.Clip = new RectangleGeometry(new Rect(surface.RenderSize), 12, 12);
+        var title = Text(item.DisplayTitle, 14, true);
+        title.TextTrimming = TextTrimming.CharacterEllipsis;
+        var subtitle = Text(item.Caption, 12.5, color: "Muted");
+        subtitle.TextTrimming = TextTrimming.CharacterEllipsis;
+        subtitle.Margin = new Thickness(0, 2, 0, 0);
+        var labels = new StackPanel { Margin = new Thickness(2, 11, 4, 2) };
+        labels.Children.Add(title);
+        labels.Children.Add(subtitle);
+        // Médiathèque entière : badge de série créé seulement à l'approche de l'écran.
+        if (item.Type == "Series" && defer == null) labels.Children.Add(SeriesBadge(item.Id, cancellation));
+        var content = new StackPanel();
+        content.Children.Add(surface);
+        content.Children.Add(labels);
+        var button = Action(item.DisplayTitle, () =>
+        {
+            if (landscape && item.CanPlay || item.IsAudio) StartPlayback(item);
+            else OpenDetail(item, tab);
+        }, "Card");
+        button.Content = content;
+        button.ToolTip = item.DisplayTitle + " · " + item.Caption;
+        if (fluid) button.Margin = new Thickness(9, 0, 9, 20);
+        else
+        {
+            button.Width = width;
+            button.Margin = new Thickness(0, 0, 18, 6);
+        }
+        // Survol : visuel légèrement agrandi et liseré clair, animés.
+        void Lift(bool up)
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var scale = new DoubleAnimation(up ? 1.05 : 1, TimeSpan.FromMilliseconds(up ? 200 : 240)) { EasingFunction = ease };
+            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, scale);
+            zoom.BeginAnimation(ScaleTransform.ScaleYProperty, scale);
+            shine.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(up ? 1 : 0, TimeSpan.FromMilliseconds(200)));
+            Panel.SetZIndex(button, up ? 1 : 0);
+        }
+        button.MouseEnter += (_, _) => Lift(true);
+        button.MouseLeave += (_, _) => Lift(false);
+        button.GotKeyboardFocus += (_, _) => { Lift(true); button.BringIntoView(); };
+        button.LostKeyboardFocus += (_, _) => Lift(false);
+        void LoadArt() => _ = artwork?.Load(image, item, landscape, Artwork.Pixels(fluid ? (landscape ? 360 : 250) : width), cancellation);
+        // Médiathèque entière sur une page : affiche chargée quand la carte approche de l'écran (pas des milliers d'un coup).
+        if (defer == null) LoadArt();
+        else defer(() =>
+        {
+            LoadArt();
+            if (item.Type == "Series") labels.Children.Add(SeriesBadge(item.Id, cancellation));
+        });
+        LazyMenu(button, () => CardMenu(item, button, tab, cancellation));
+        AttachHoverPreview(button, item, cancellation);
+        // Flèches gauche / droite : carte voisine de la rangée (la rangée suit le focus).
+        button.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key is not (System.Windows.Input.Key.Left or System.Windows.Input.Key.Right) || button.Parent is not Panel panel) return;
+            var index = panel.Children.IndexOf(button) + (args.Key == System.Windows.Input.Key.Right ? 1 : -1);
+            if (index < 0 || index >= panel.Children.Count) return;
+            if (panel.Children[index] is UIElement target && target.Focus()) args.Handled = true;
+        };
+        return button;
+    }
+
+    // Clic droit (ou touche Menu) sur une carte : fiche, vu / non vu, favori, retrait de la reprise.
+    private ContextMenu CardMenu(MediaItem item, Button card, ButtonTab tab, CancellationToken cancellation)
+    {
+        var menu = new ContextMenu { Background = ColorOf("#1A1D29"), Foreground = BrushFor("Ink"), BorderBrush = ColorOf("#30354A") };
+        void Add(string label, Func<Jellyfin, Task> run, string done)
+        {
+            var entry = new MenuItem { Header = label, Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            entry.Click += async (_, _) =>
+            {
+                if (client is not { } account) return;
+                try { await run(account); if (!cancellation.IsCancellationRequested) ShowStatus(done); }
+                catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+                { if (!cancellation.IsCancellationRequested) ShowStatus("Le serveur n’a pas enregistré la modification. Réessayez."); }
+            };
+            menu.Items.Add(entry);
+        }
+        var details = new MenuItem { Header = "Voir la fiche", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+        details.Click += (_, _) => OpenDetail(item, tab);
+        menu.Items.Add(details);
+        var played = item.UserData?.Played == true;
+        Add(played ? "Marquer comme non vu" : "Marquer comme vu", account => account.Mark(item.Id, !played, cancellation),
+            played ? "Marqué comme non vu." : "Marqué comme vu.");
+        var favorite = item.UserData?.IsFavorite == true;
+        Add(favorite ? "Retirer des favoris" : "Ajouter aux favoris", account => account.Favorite(item.Id, !favorite, cancellation),
+            favorite ? "Retiré des favoris." : "Ajouté aux favoris.");
+        if (item.CanPlay || item.Type is "Series" or "MusicAlbum" or "Season" or "BoxSet")
+            menu.Items.Add(PlaylistMenu(item, cancellation));
+        if (item.Type is "Movie" or "Episode" && client is { } owner && !IsOffline(item.Id))
+        {
+            var download = new MenuItem { Header = "Télécharger sur ce PC", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            download.Click += (_, _) => _ = DownloadOffline(owner, item);
+            menu.Items.Add(download);
+        }
+        if (item.CanPlay && !item.IsAudio && syncGroup != null)
+        {
+            var together = new MenuItem { Header = "Lancer pour le groupe « " + syncGroup.Name + " »", Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+            together.Click += (_, _) => SyncPlayItem(item, item.Resume);
+            menu.Items.Add(together);
+        }
+        if (CanEditMetadata(client) && item.Type is "Movie" or "Series" or "Episode" or "Season" or "BoxSet" or "MusicAlbum" or "Video" or "MusicVideo")
+        {
+            menu.Items.Add(new Separator());
+            foreach (var (label, open) in new (string, Func<Page>)[] { ("Modifier les images…", () => ImagesPage(item)), ("Modifier les métadonnées…", () => MetadataPage(item)) })
+            {
+                var entry = new MenuItem { Header = label, Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+                entry.Click += (_, _) => _ = Navigate(open());
+                menu.Items.Add(entry);
+            }
+        }
+        if (item.Progress > 0)
+            Add("Retirer de « Continuer à regarder »", async account =>
+            {
+                await account.ClearResume(item.Id, cancellation);
+                if (card.Parent is Panel row)
+                {
+                    var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(220));
+                    fade.Completed += (_, _) => row.Children.Remove(card);
+                    card.BeginAnimation(UIElement.OpacityProperty, fade);
+                }
+            }, "Retiré de « Continuer à regarder ».");
+        return menu;
+    }
+
+    // 0.8 : menu clic droit construit seulement à la première ouverture (des dizaines de cartes
+    // par page : plus rien à préparer pendant l'affichage).
+    private static void LazyMenu(FrameworkElement target, Func<ContextMenu> build)
+    {
+        target.ContextMenu = new ContextMenu();
+        var built = false;
+        target.ContextMenuOpening += (_, _) =>
+        {
+            if (built) return;
+            built = true;
+            var menu = build();
+            menu.PlacementTarget = target;
+            target.ContextMenu = menu;
+        };
+    }
+
+    // 0.8 : grille d'affiches qui remplit toute la largeur de la page (colonnes égales, aucun vide à droite).
+    private static AdaptiveTilePanel PosterGrid(double minimumWidth = 178) =>
+        new() { MinimumCellWidth = minimumWidth, MaximumColumns = 16, KeepColumns = true, Margin = new Thickness(-9, 0, -9, 0) };
+
+    private static IEnumerable<Button> FindButtons(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (child is Button button) yield return button;
+            foreach (var nested in FindButtons(child)) yield return nested;
+        }
+    }
+
+    private FrameworkElement Heading(string title, string subtitle)
+    {
+        var heading = new StackPanel { Margin = new Thickness(0, 8, 0, 22) };
+        var name = Text(title, 36, true);
+        name.TextWrapping = TextWrapping.Wrap;
+        heading.Children.Add(name);
+        var caption = Text(subtitle, 15, color: "Muted");
+        caption.Margin = new Thickness(0, 6, 0, 0);
+        caption.TextWrapping = TextWrapping.Wrap;
+        heading.Children.Add(caption);
+        return heading;
+    }
+
+    private Page BrowsePage(string title, ButtonTab tab, string? type = null, string? parent = null, string? search = null,
+        int start = 0, bool favorite = false, string? watched = null, string? sort = null, string? genre = null, int? year = null, double? rating = null,
+        bool? descending = null) =>
+        new(title, tab, async (account, cancellation) =>
+        {
+            // Un changement de tri revient au sens habituel de ce tri ; les autres filtres gardent le sens choisi.
+            Page Again(int offset, string? newWatched, string? newSort, string? newGenre, int? newYear, double? newRating) =>
+                BrowsePage(title, tab, type, parent, search, offset, favorite, newWatched, newSort, newGenre, newYear, newRating, newSort == sort ? descending : null);
+            var reversed = descending ?? DefaultDescending(sort);
+            var result = await account.Browse(type, parent, search, start, false, cancellation, favorite, watched, sort, genre, year, rating, BrowseBatch, descending);
+            if (cancellation.IsCancellationRequested) return;
+            var items = (result.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+            PageContent.Children.Clear();
+            PageContent.Children.Add(Heading(search == null ? title : "« " + search + " »",
+                result.TotalRecordCount is int count ? count == 1 ? "1 titre" : $"{count:N0} titres" : "Catalogue Jellyfin"));
+            if (search != null && account.NoctraRoot != null)
+            {
+                var discoverySearch = Action("Rechercher aussi dans Découverte", () => _ = Navigate(DiscoverySearchPage(search)));
+                discoverySearch.HorizontalAlignment = HorizontalAlignment.Left;
+                discoverySearch.Margin = new Thickness(0, 0, 0, 18);
+                PageContent.Children.Add(discoverySearch);
+            }
+            var filters = new WrapPanel { Margin = new Thickness(0, 0, 0, 16) };
+            (string Label, string? Value)[] statuses = [("Tous les statuts", null), ("Vu", "IsPlayed"), ("Non vu", "IsUnplayed")];
+            (string Label, string? Value)[] orders = [("Ordre alphabétique", null), ("Ajouts récents", "DateCreated"), ("Année de sortie", "ProductionYear"),
+                ("Mieux notés", "CommunityRating"), ("Date de première diffusion", "PremiereDate"), ("Plus courts d’abord", "Runtime"), ("Au hasard", "Random")];
+            (string Label, double? Value)[] ratings = [("Toutes les notes", null), ("★ 6 et plus", 6), ("★ 7 et plus", 7), ("★ 8 et plus", 8)];
+            ComboBox Combo(string name, IEnumerable<string> labels, int selected, double width)
+            {
+                var combo = new ComboBox { ItemsSource = labels.ToArray(), Width = width, MinHeight = 36, SelectedIndex = Math.Max(0, selected), Margin = new Thickness(0, 0, 8, 8) };
+                AutomationProperties.SetName(combo, name);
+                filters.Children.Add(combo);
+                return combo;
+            }
+            var status = Combo("Statut de lecture", statuses.Select(x => x.Label), Array.FindIndex(statuses, option => option.Value == watched), 154);
+            var order = Combo("Trier", orders.Select(x => x.Label), Array.FindIndex(orders, option => option.Value == sort), 200);
+            // Sens du tri : un clic croissant, un autre décroissant (année, note, nom…).
+            if (sort != "Random")
+            {
+                var label = sort == null ? (reversed ? "Z → A" : "A → Z") : reversed ? "↓  Décroissant" : "↑  Croissant";
+                var direction = Action(label, () => _ = Navigate(BrowsePage(title, tab, type, parent, search, 0, favorite, watched, sort, genre, year, rating, !reversed), back: true));
+                direction.MinHeight = 36;
+                direction.Margin = new Thickness(0, 0, 8, 8);
+                direction.ToolTip = "Inverser l’ordre du tri";
+                AutomationProperties.SetAutomationId(direction, "SortDirection");
+                filters.Children.Add(direction);
+            }
+            var stars = Combo("Note minimale", ratings.Select(x => x.Label), Array.FindIndex(ratings, option => option.Value == rating), 160);
+            // Genres et années de la médiathèque (chargés à part : la page s'affiche sans attendre).
+            var genres = Combo("Genre", [genre ?? "Tous les genres"], 0, 170);
+            var years = Combo("Année", [year?.ToString(CultureInfo.InvariantCulture) ?? "Toutes les années"], 0, 150);
+            var ready = false;
+            void ApplyFilters()
+            {
+                if (!ready || genres.Tag is "loading" || years.Tag is "loading" || cancellation.IsCancellationRequested || status.SelectedIndex < 0 || order.SelectedIndex < 0 || stars.SelectedIndex < 0) return;
+                var chosenGenre = genres.SelectedIndex > 0 ? genres.SelectedItem as string : null;
+                var chosenYear = years.SelectedIndex > 0 && int.TryParse(years.SelectedItem as string, out var value) ? value : (int?)null;
+                _ = Navigate(Again(0, statuses[status.SelectedIndex].Value, orders[order.SelectedIndex].Value, chosenGenre, chosenYear, ratings[stars.SelectedIndex].Value), back: true);
+            }
+            foreach (var combo in new[] { status, order, stars, genres, years }) combo.SelectionChanged += (_, _) => ApplyFilters();
+            if (search == null && !favorite) _ = LoadFilterChoices(account, parent, type ?? "Movie,Series", genres, years, genre, year, cancellation);
+            ready = true;
+            PageContent.Children.Add(filters);
+            if (genre != null || year != null || rating != null)
+            {
+                var reset = Action("Effacer les filtres", () => _ = Navigate(Again(0, watched, sort, null, null, null), back: true));
+                reset.HorizontalAlignment = HorizontalAlignment.Left;
+                reset.Margin = new Thickness(0, -6, 0, 16);
+                PageContent.Children.Add(reset);
+            }
+            if (items.Length == 0) { PageContent.Children.Add(Message(genre != null || year != null || rating != null ? "Aucun titre ne correspond à ces filtres." : "Aucun titre.")); return; }
+            // 0.8 : toute la médiathèque sur une seule page (comme Jellyfin) : les titres suivants arrivent en faisant défiler,
+            // les affiches se chargent à l'approche de l'écran, et un alphabet sur le côté mène directement à une lettre.
+            var cards = PosterGrid(items.All(item => item.Square) ? 210 : 178);
+            PageContent.Children.Add(cards);
+            var footer = new Border { Child = Message("Chargement des titres suivants…"), Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0) };
+            PageContent.Children.Add(footer);
+            var loaded = new List<(MediaItem Item, Button Card)>();
+            var artLoaders = new List<Action?>();
+            var known = new HashSet<string>();
+            var next = start + items.Length;
+            var total = result.TotalRecordCount;
+            // Ordre aléatoire : chaque requête est tirée à nouveau, une seule série de titres.
+            var finished = sort == "Random" || (total is int all ? next >= all : items.Length < BrowseBatch);
+            var loading = false;
+            var artTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
+            var letterButtons = new Dictionary<char, Button>();
+            char? current = null;
+            double Top(int index) => loaded[index].Card.TransformToAncestor(Scroller).Transform(new Point()).Y;
+            // Cartes proches de l'écran : recherche dichotomique (les cartes sont rangées de haut en bas).
+            (int First, int Last) NearScreen(double margin)
+            {
+                if (loaded.Count == 0 || !cards.IsLoaded) return (0, -1);
+                try
+                {
+                    int Search(double y) { int low = 0, high = loaded.Count; while (low < high) { var mid = (low + high) / 2; if (Top(mid) < y) low = mid + 1; else high = mid; } return low; }
+                    var first = Math.Max(0, Search(-margin - 420) - 16);
+                    var last = Math.Min(loaded.Count - 1, Search(Scroller.ViewportHeight + margin) + 16);
+                    return (first, last);
+                }
+                catch (InvalidOperationException) { return (0, -1); }
+            }
+            void LoadVisibleArt()
+            {
+                if (cancellation.IsCancellationRequested) return;
+                var (first, last) = NearScreen(900);
+                for (var index = first; index <= last; index++)
+                    if (artLoaders[index] is { } load) { artLoaders[index] = null; load(); }
+                HighlightLetter();
+            }
+            artTimer.Tick += (_, _) => { artTimer.Stop(); LoadVisibleArt(); };
+            async Task Append(IEnumerable<MediaItem> batch)
+            {
+                var added = 0;
+                foreach (var item in batch)
+                {
+                    if (cancellation.IsCancellationRequested) return;
+                    if (!known.Add(item.Id)) continue;
+                    var index = loaded.Count;
+                    artLoaders.Add(null);
+                    var card = Card(item, false, tab, cancellation, fluid: true, defer: load => artLoaders[index] = load);
+                    AutomationProperties.SetAutomationId(card, "LibraryCard" + index);
+                    loaded.Add((item, card));
+                    cards.Children.Add(card);
+                    // Ajout par petits paquets : l'interface reste fluide pendant l'arrivée de centaines de titres.
+                    if (++added % 40 == 0) await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                }
+                await Dispatcher.InvokeAsync(LoadVisibleArt, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            async Task<bool> LoadMore()
+            {
+                if (finished || loading || cancellation.IsCancellationRequested) return false;
+                loading = true;
+                if (footer.Tag is "error") { footer.Child = Message("Chargement des titres suivants…"); footer.Tag = null; }
+                footer.Visibility = Visibility.Visible;
+                try
+                {
+                    var page = await account.Browse(type, parent, search, next, false, cancellation, favorite, watched, sort, genre, year, rating, BrowseBatch, descending);
+                    if (cancellation.IsCancellationRequested) return false;
+                    var batch = (page.Items ?? []).Where(item => PlayRequest.Identifier(item.Id)).ToArray();
+                    var before = loaded.Count;
+                    next += batch.Length;
+                    await Append(batch);
+                    if (batch.Length == 0 || loaded.Count == before || page.TotalRecordCount is int count && next >= count) finished = true;
+                    return loaded.Count > before;
+                }
+                catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+                {
+                    if (!cancellation.IsCancellationRequested) { footer.Child = Message("La suite n’a pas pu être chargée. Faites défiler pour réessayer."); footer.Tag = "error"; }
+                    return false;
+                }
+                finally
+                {
+                    loading = false;
+                    if (finished || footer.Tag is not "error") footer.Visibility = finished ? Visibility.Collapsed : footer.Tag is "error" ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+            bool NearEnd() => Scroller.VerticalOffset + Scroller.ViewportHeight > Scroller.ExtentHeight - Math.Max(1400, Scroller.ViewportHeight * 1.5);
+            async Task FillToEnd()
+            {
+                while (!finished && !cancellation.IsCancellationRequested && NearEnd())
+                {
+                    if (!await LoadMore()) break;
+                    Scroller.UpdateLayout();
+                }
+            }
+            void Scrolled(object? sender, ScrollChangedEventArgs args)
+            {
+                if (cancellation.IsCancellationRequested) return;
+                artTimer.Stop(); artTimer.Start();
+                if (!loading && NearEnd()) _ = FillToEnd();
+            }
+            Scroller.ScrollChanged += Scrolled;
+            cancellation.Register(() => Dispatcher.BeginInvoke(() => { Scroller.ScrollChanged -= Scrolled; artTimer.Stop(); AlphabetRail.Visibility = Visibility.Collapsed; }));
+
+            // Alphabet (tri alphabétique) : # puis A à Z ; la lettre en cours est mise en avant.
+            var rail = sort == null && !reversed && search == null ? "#ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "";
+            void HighlightLetter()
+            {
+                if (letterButtons.Count == 0 || loaded.Count == 0) return;
+                var (first, _) = NearScreen(0);
+                var index = Math.Clamp(first + 16, 0, loaded.Count - 1);
+                try { while (index > 0 && Top(index - 1) >= -60) index--; while (index < loaded.Count - 1 && Top(index) < -60) index++; }
+                catch (InvalidOperationException) { return; }
+                var letter = LetterOf(loaded[index].Item);
+                if (letter == current) return;
+                current = letter;
+                foreach (var (key, button) in letterButtons) button.Foreground = BrushFor(key == letter ? "Accent" : "Muted");
+            }
+            async Task Jump(char letter)
+            {
+                int Target() => letter == '#' ? 0 : loaded.FindIndex(entry => LetterOf(entry.Item) is var key && key != '#' && key >= letter);
+                var target = Target();
+                // Lettre pas encore chargée : titres suivants chargés jusqu'à elle.
+                while (target < 0 && !finished && !cancellation.IsCancellationRequested)
+                {
+                    footer.Visibility = Visibility.Visible;
+                    if (!await LoadMore()) break;
+                    target = Target();
+                }
+                if (cancellation.IsCancellationRequested) return;
+                Scroller.UpdateLayout();
+                if (target < 0) { Scroller.ScrollToEnd(); return; }
+                try
+                {
+                    var y = Scroller.VerticalOffset + Top(target) - 110;
+                    Scroller.ScrollToVerticalOffset(Math.Max(0, y));
+                    Trace($"alphabet {letter} → titre {target + 1} « {loaded[target].Item.Name} »");
+                }
+                catch (InvalidOperationException) { }
+                _ = Dispatcher.BeginInvoke(LoadVisibleArt, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            AlphabetRail.Children.Clear();
+            if (rail.Length > 0)
+            {
+                foreach (var letter in rail)
+                {
+                    var surface = new FrameworkElementFactory(typeof(Border));
+                    surface.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+                    surface.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+                    var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+                    presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                    presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+                    surface.AppendChild(presenter);
+                    var button = new Button
+                    {
+                        Content = letter.ToString(), Template = new ControlTemplate(typeof(Button)) { VisualTree = surface }, Width = 26, Height = 19,
+                        FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = BrushFor("Muted"), Cursor = System.Windows.Input.Cursors.Hand,
+                        Focusable = false, ToolTip = letter == '#' ? "Début de la médiathèque" : "Titres en " + letter
+                    };
+                    AutomationProperties.SetName(button, letter == '#' ? "Début" : "Lettre " + letter);
+                    AutomationProperties.SetAutomationId(button, "Letter-" + (letter == '#' ? "0" : letter.ToString()));
+                    button.Click += (_, _) => _ = Jump(letter);
+                    button.MouseEnter += (_, _) => button.FontSize = 14;
+                    button.MouseLeave += (_, _) => button.FontSize = 11.5;
+                    letterButtons[letter] = button;
+                    AlphabetRail.Children.Add(button);
+                }
+                AlphabetRail.Visibility = Visibility.Visible;
+            }
+            await Append(items);
+            _ = Dispatcher.BeginInvoke(async () => { LoadVisibleArt(); await FillToEnd(); }, System.Windows.Threading.DispatcherPriority.Loaded);
+        });
+
+    private const int BrowseBatch = 120;
+    // Sens habituel de chaque tri (récents, années et notes : du plus grand au plus petit).
+    private static bool DefaultDescending(string? sort) => sort is "DateCreated" or "ProductionYear" or "CommunityRating" or "PremiereDate";
+
+    // Lettre de classement d'un titre (nom de tri Jellyfin, sans accents) ; chiffres et symboles : « # ».
+    private static char LetterOf(MediaItem item)
+    {
+        var name = (string.IsNullOrWhiteSpace(item.SortName) ? item.Name : item.SortName).Trim();
+        if (name.Length == 0) return '#';
+        var plain = name.Normalize(System.Text.NormalizationForm.FormD);
+        var first = plain.FirstOrDefault(character => char.IsLetterOrDigit(character));
+        var letter = char.ToUpperInvariant(first);
+        return letter is >= 'A' and <= 'Z' ? letter : '#';
+    }
+
+    private async Task LoadFilterChoices(Jellyfin account, string? parent, string types, ComboBox genres, ComboBox years, string? genre, int? year, CancellationToken cancellation)
+    {
+        try
+        {
+            var data = await account.Filters(parent, types, cancellation);
+            if (cancellation.IsCancellationRequested) return;
+            var genreList = data.List("Genres").Select(value => value.Str()).Where(value => value.Length is > 0 and < 80).OrderBy(value => value, StringComparer.Create(CultureInfo.GetCultureInfo("fr-FR"), true)).ToList();
+            var yearList = data.List("Years").Select(value => value.Str()).Where(value => value.Length == 4).OrderByDescending(value => value).ToList();
+            if (genre != null && !genreList.Contains(genre)) genreList.Insert(0, genre);
+            var yearText = year?.ToString(CultureInfo.InvariantCulture);
+            if (yearText != null && !yearList.Contains(yearText)) yearList.Insert(0, yearText);
+            void Fill(ComboBox combo, string all, List<string> values, string? selected)
+            {
+                var choices = new List<string> { all };
+                choices.AddRange(values);
+                combo.Tag = "loading";
+                var index = selected == null ? 0 : choices.IndexOf(selected);
+                combo.ItemsSource = choices;
+                combo.SelectedIndex = Math.Max(0, index);
+                combo.Tag = null;
+            }
+            Fill(genres, "Tous les genres", genreList, genre);
+            Fill(years, "Toutes les années", yearList, yearText);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException) { }
+    }
+    private async Task RenderLibraries(Jellyfin account, CancellationToken cancellation)
+    {
+        var libraries = await HomeLibraries(account, cancellation);
+        if (cancellation.IsCancellationRequested) return;
+        PageContent.Children.Clear();
+        PageContent.Children.Add(Heading("Vos médiathèques", "Des univers à explorer, à votre rythme."));
+        if (libraries.Length == 0) PageContent.Children.Add(Message("Aucune médiathèque accessible à ce profil."));
+        else PageContent.Children.Add(LibraryTiles(account, libraries, cancellation));
+    }
+
+    private void OpenDetail(MediaItem item, ButtonTab tab)
+    {
+        if (item.Type == "Photo") { _ = OpenPhoto(item); return; }
+        if (item.Type == "Audio" && item.AlbumId is { } album && PlayRequest.Identifier(album)) item = new MediaItem { Id = album, Name = item.Album ?? item.Name, Type = "MusicAlbum" };
+        if (item.Type is "PhotoAlbum" or "Folder" or "CollectionFolder")
+        {
+            _ = Navigate(BrowsePage(item.Name, tab, "Photo,Video,PhotoAlbum", item.Id, sort: "DateCreated"));
+            return;
+        }
+        _ = Navigate(new(item.DisplayTitle, tab, (account, cancellation) => RenderDetail(account, item.Id, cancellation)));
+    }
+
+    private async Task RenderDetail(Jellyfin account, string id, CancellationToken cancellation)
+    {
+        var item = await account.Detail(id, cancellation);
+        if (cancellation.IsCancellationRequested) return;
+        switch (item.Type)
+        {
+            case "MusicAlbum": await RenderAlbum(account, item, cancellation); return;
+            case "MusicArtist": await RenderArtist(account, item, cancellation); return;
+            case "Playlist": await RenderPlaylist(account, item, cancellation); return;
+            case "Person": await RenderPerson(account, item, cancellation); return;
+        }
+        PageContent.Children.Clear();
+        var type = item.Type switch { "Series" => "SÉRIE", "Episode" => "ÉPISODE", "BoxSet" => "COLLECTION", _ => "FILM" };
+        var metadata = string.Join(" · ", new[] { item.Caption, item.OfficialRating }.Concat(item.Genres?.Take(2) ?? []).Where(value => !string.IsNullOrWhiteSpace(value)));
+        var synopsis = string.IsNullOrWhiteSpace(item.Overview) ? "Synopsis indisponible." : item.Overview;
+        var favorite = FavoriteButton(account, item, cancellation);
+        if (item.Type == "BoxSet")
+        {
+            PageContent.Children.Add(Hero(item, type, item.DisplayTitle, "Collection Jellyfin", synopsis, "Parcourir la collection",
+                () => _ = Navigate(BrowsePage(item.Name, ButtonTab.Library, parent: item.Id)), favorite, cancellation));
+            return;
+        }
+        if (item.CanPlay)
+        {
+            var mark = MarkButton(account, item, cancellation);
+            PageContent.Children.Add(Hero(item, type, item.DisplayTitle, metadata, synopsis, item.Resume > 0 ? "▶   Reprendre" : "▶   Lire",
+                () => StartPlayback(item), mark, cancellation, favorite, facts: DetailFacts(item), visualClick: () => StartPlayback(item)));
+            // 0.7 : actions secondaires regroupées sur une ligne.
+            var extras = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
+            void Extra(Button button) { button.Margin = new Thickness(0, 0, 9, 9); extras.Children.Add(button); }
+            if (item.SeriesId is { } series && PlayRequest.Identifier(series))
+                Extra(Action("Voir la série", () => OpenDetail(item with { Id = series }, page?.Tab ?? ButtonTab.Home)));
+            Extra(Action("Diffuser sur un autre écran", () => _ = Navigate(CastPage(item))));
+            Extra(TogetherButton(item));
+            foreach (var link in DetailLinks(account, item, cancellation)) Extra(link);
+            if (item.Type is "Movie" or "Episode") Extra(OfflineButtonFor(account, item, cancellation));
+            Extra(PlaylistButton(item));
+            if (account.User.Policy?.IsAdministrator == true && account.NoctraRoot != null && item.Type is "Movie" or "Episode")
+                Extra(Action("Corriger l’identification", () => _ = Navigate(IdentifyPage(item))));
+            foreach (var editor in EditorButtons(account, item)) Extra(editor);
+            PageContent.Children.Add(extras);
+            if (item.Taglines?.FirstOrDefault() is { Length: > 0 } tagline)
+            {
+                var quote = Text("« " + tagline + " »", 17, color: "Muted");
+                quote.FontStyle = FontStyles.Italic;
+                quote.Margin = new Thickness(0, 14, 0, 0);
+                quote.TextWrapping = TextWrapping.Wrap;
+                PageContent.Children.Add(quote);
+            }
+            if (TechnicalInfo(item) is { } technical) PageContent.Children.Add(technical);
+            AddPeople(item, cancellation);
+            _ = AddRecommendations(account, item, cancellation);
+            return;
+        }
+        var episodes = new StackPanel { Margin = new Thickness(0, 20, 0, 0) };
+        MediaItem? playable = null;
+        Button? seriesPlay = null;
+        void PlaySeries()
+        {
+            if (playable != null) StartPlayback(playable);
+            else episodes.BringIntoView();
+        }
+        // Comme Jellyfin : « Lecture aléatoire » de tous les épisodes de la série.
+        Button? shuffle = null;
+        if (item.Type == "Series")
+        {
+            shuffle = Action("⤨   Lecture aléatoire", () => _ = ShuffleSeries(account, item));
+            shuffle.ToolTip = "Épisodes de la série dans un ordre aléatoire";
+            AutomationProperties.SetAutomationId(shuffle, "SeriesShuffle");
+        }
+        var seriesHero = Hero(item, type, item.DisplayTitle, metadata, synopsis, "▶   Lire la série", PlaySeries,
+            favorite, cancellation, shuffle, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item),
+            visualClick: item.Type == "Series" ? PlaySeries : null);
+        PageContent.Children.Add(seriesHero);
+        if (item.Type == "Series")
+        {
+            var links = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
+            foreach (var link in DetailLinks(account, item, cancellation).Append(PlaylistButton(item)).Concat(EditorButtons(account, item)))
+            {
+                link.Margin = new Thickness(0, 0, 9, 9);
+                links.Children.Add(link);
+            }
+            PageContent.Children.Add(links);
+        }
+        if (item.Type == "Series") PageContent.Children.Add(SeriesBadge(item.Id, cancellation, true));
+        PageContent.Children.Add(episodes);
+        if (item.Type != "Series") return;
+
+        try { playable = await account.PlayableSeries(item.Id, cancellation); }
+        catch (HttpRequestException) { }
+        if (cancellation.IsCancellationRequested) return;
+        if (seriesPlay != null)
+        {
+            seriesPlay.IsEnabled = true;
+            SetLabel(seriesPlay, playable == null ? "Voir les épisodes" : playable.Resume > 0 ?
+                $"▶   Reprendre S{playable.ParentIndexNumber} E{playable.IndexNumber}" : $"▶   Lire S{playable.ParentIndexNumber} E{playable.IndexNumber}");
+        }
+        var available = (await account.Seasons(item.Id, cancellation)).Items ?? [];
+        if (cancellation.IsCancellationRequested) return;
+        available = available.Where(season => PlayRequest.Identifier(season.Id)).OrderBy(season => season.IndexNumber ?? 0).ToArray();
+        if (available.Length == 0)
+        {
+            episodes.Children.Add(Message("Aucun épisode disponible."));
+            return;
+        }
+        episodes.Children.Add(Heading("Épisodes", "Choisissez une saison."));
+        var seasons = new ComboBox
+        {
+            DisplayMemberPath = nameof(MediaItem.Name), ItemsSource = available, MinWidth = 180, MaxWidth = 340,
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 12),
+            MinHeight = 36, FontSize = 14
+        };
+        AutomationProperties.SetName(seasons, "Saison");
+        episodes.Children.Add(seasons);
+        var list = new StackPanel();
+        episodes.Children.Add(list);
+        var change = 0;
+        seasons.SelectionChanged += async (_, _) =>
+        {
+            if (seasons.SelectedItem is not MediaItem season) return;
+            var request = ++change;
+            list.Children.Clear();
+            list.Children.Add(Message("Chargement des épisodes…"));
+            try
+            {
+                var result = await account.Episodes(item.Id, season.Id, cancellation);
+                if (cancellation.IsCancellationRequested || request != change) return;
+                list.Children.Clear();
+                foreach (var episode in result.Items ?? [])
+                    if (episode.CanPlay && PlayRequest.Identifier(episode.Id)) list.Children.Add(EpisodeRow(account, episode, cancellation));
+                if (list.Children.Count == 0) list.Children.Add(Message("Aucun épisode disponible pour cette saison."));
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+            {
+                if (cancellation.IsCancellationRequested || request != change) return;
+                list.Children.Clear();
+                list.Children.Add(Message("Impossible de charger les épisodes. Rouvrez la fiche pour réessayer."));
+            }
+        };
+        seasons.SelectedIndex = 0;
+        AddPeople(item, cancellation);
+        _ = AddRecommendations(account, item, cancellation);
+    }
+
+    private void AddPeople(MediaItem item, CancellationToken cancellation)
+    {
+        var actors = (item.People ?? []).Where(person => person.Type is "Actor" or "GuestStar").Take(10).ToArray();
+        if (actors.Length == 0) return;
+        var heading = Text("Distribution", 22, true);
+        heading.Margin = new Thickness(0, 25, 0, 14);
+        PageContent.Children.Add(heading);
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var person in actors)
+        {
+            // 0.7 : portrait rond, cliquable (filmographie dans vos médiathèques).
+            var image = new Image { Width = 88, Height = 88, Stretch = Stretch.UniformToFill };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+            FadeInWhenLoaded(image);
+            image.Clip = new EllipseGeometry(new Point(44, 44), 44, 44);
+            var card = new StackPanel { Width = 112 };
+            card.Children.Add(new Grid { Width = 88, Height = 88, HorizontalAlignment = HorizontalAlignment.Left, Children =
+            {
+                new Border { CornerRadius = new CornerRadius(44), Background = BrushFor("Panel"), Child = new TextBlock { Text = person.Name.Length > 0 ? person.Name[..1] : "?",
+                    FontSize = 30, Foreground = ColorOf("#4D5268"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } },
+                image
+            } });
+            var name = Text(person.Name, 12, true);
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            name.Margin = new Thickness(0, 6, 0, 0);
+            card.Children.Add(name);
+            var role = Text(person.Role ?? "", 11, color: "Muted");
+            role.TextTrimming = TextTrimming.CharacterEllipsis;
+            card.Children.Add(role);
+            var open = Action(person.Name, () => OpenDetail(new MediaItem { Id = person.Id, Name = person.Name, Type = "Person" }, page?.Tab ?? ButtonTab.Home), "Card");
+            open.Content = card;
+            open.Margin = new Thickness(0, 0, 14, 0);
+            open.ToolTip = person.Name + (string.IsNullOrWhiteSpace(person.Role) ? "" : " · " + person.Role);
+            row.Children.Add(open);
+            if (PlayRequest.Identifier(person.Id)) _ = artwork?.Load(image, new MediaItem { Id = person.Id, Name = person.Name }, false, 200, cancellation);
+        }
+        PageContent.Children.Add(new ScrollViewer { Content = row, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
+    }
+
+    private async Task AddRecommendations(Jellyfin account, MediaItem item, CancellationToken cancellation)
+    {
+        try
+        {
+            var related = await account.Similar(item.SeriesId ?? item.Id, cancellation);
+            if (cancellation.IsCancellationRequested || related.Items is not { Length: > 0 }) return;
+            AddShelf("Titres similaires", related.Items, "", false, cancellation);
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException) { }
+    }
+
+
+    private Button FavoriteButton(Jellyfin account, MediaItem item, CancellationToken cancellation)
+    {
+        var isFavorite = item.UserData?.IsFavorite == true;
+        string Label() => isFavorite ? "♥  Favori" : "♡  Ajouter aux favoris";
+        var button = Action(Label(), () => { });
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            try
+            {
+                await account.Favorite(item.Id, !isFavorite, cancellation);
+                if (cancellation.IsCancellationRequested) return;
+                isFavorite = !isFavorite;
+                SetLabel(button, Label());
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+            {
+                if (!cancellation.IsCancellationRequested) ShowStatus("Impossible de modifier les favoris.");
+            }
+            finally { button.IsEnabled = true; }
+        };
+        return button;
+    }
+
+    private Button MarkButton(Jellyfin account, MediaItem item, CancellationToken cancellation)
+    {
+        var played = item.UserData?.Played == true;
+        string Label() => played ? "Marquer non vu" : "Marquer vu";
+        var button = Action(Label(), () => { });
+        button.Click += async (_, _) =>
+        {
+            button.IsEnabled = false;
+            try
+            {
+                await account.Mark(item.Id, !played, cancellation);
+                if (cancellation.IsCancellationRequested) return;
+                played = !played;
+                SetLabel(button, Label());
+                ShowStatus(played ? "Marqué comme vu." : "Marqué comme non vu.");
+            }
+            catch (Exception error) when (error is HttpRequestException or OperationCanceledException)
+            {
+                if (!cancellation.IsCancellationRequested) ShowStatus("La modification n’a pas été enregistrée. Réessayez.");
+            }
+            finally { button.IsEnabled = true; }
+        };
+        return button;
+    }
+
+    private FrameworkElement EpisodeRow(Jellyfin account, MediaItem item, CancellationToken cancellation)
+    {
+        var row = new DockPanel();
+        var play = Action(item.Resume > 0 ? "▶   Reprendre" : "▶   Lire", () => StartPlayback(item), "Primary");
+        play.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(play, Dock.Right);
+        row.Children.Add(play);
+        var mark = MarkButton(account, item, cancellation);
+        mark.Margin = new Thickness(8, 0, 10, 0);
+        mark.VerticalAlignment = VerticalAlignment.Center;
+        DockPanel.SetDock(mark, Dock.Right);
+        row.Children.Add(mark);
+        var thumbnail = new Image { Stretch = Stretch.UniformToFill };
+        RenderOptions.SetBitmapScalingMode(thumbnail, BitmapScalingMode.HighQuality);
+        FadeInWhenLoaded(thumbnail);
+        var frame = new Grid { Width = 192, Height = 108, Background = ColorOf("#1A1D29"), ClipToBounds = true, Margin = new Thickness(0, 0, 18, 0) };
+        frame.Children.Add(thumbnail);
+        if (item.Progress > 0)
+        {
+            var track = new Grid { Height = 3, VerticalAlignment = VerticalAlignment.Bottom };
+            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Clamp(item.Progress, .02, 1), GridUnitType.Star) });
+            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Clamp(1 - item.Progress, 0, .98), GridUnitType.Star) });
+            var rail = new Border { Background = ColorOf("#59FFFFFF") };
+            Grid.SetColumnSpan(rail, 2);
+            track.Children.Add(rail);
+            track.Children.Add(new Border { Background = BrushFor("AccentGradient") });
+            frame.Children.Add(track);
+        }
+        frame.SizeChanged += (_, _) => frame.Clip = new RectangleGeometry(new Rect(frame.RenderSize), 10, 10);
+        // Vignette cliquable : lance l'épisode (icône de lecture au survol).
+        var playMark = new Border
+        {
+            Width = 46, Height = 46, CornerRadius = new CornerRadius(23), Background = ColorOf("#B30A0A12"), Opacity = 0,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = "\uE768", FontFamily = (FontFamily)Resources["IconFont"], FontSize = 17, Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) }
+        };
+        frame.Children.Add(playMark);
+        var thumb = Action((item.Resume > 0 ? "Reprendre " : "Lire ") + item.Caption, () => StartPlayback(item), "Card");
+        thumb.Content = frame;
+        thumb.Cursor = System.Windows.Input.Cursors.Hand;
+        thumb.Margin = new Thickness(0, 0, 18, 0);
+        frame.Margin = new Thickness(0);
+        thumb.ToolTip = item.Resume > 0 ? "Reprendre" : "Lire";
+        if (item.IndexNumber is { } number) AutomationProperties.SetAutomationId(thumb, "EpisodeThumb" + number);
+        thumb.MouseEnter += (_, _) => playMark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(.95, TimeSpan.FromMilliseconds(140)));
+        thumb.MouseLeave += (_, _) => playMark.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(180)));
+        DockPanel.SetDock(thumb, Dock.Left);
+        row.Children.Add(thumb);
+        _ = artwork?.Load(thumbnail, item, false, 400, cancellation);
+        var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+        var label = Text(item.Caption, 16, true);
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        copy.Children.Add(label);
+        if (item.RunTimeTicks is > 0)
+        {
+            var length = Text($"{TimeSpan.FromTicks(item.RunTimeTicks.Value).TotalMinutes:0} min" + (item.UserData?.Played == true ? " · Vu" : ""), 12.5, color: "Muted");
+            length.Margin = new Thickness(0, 3, 0, 0);
+            copy.Children.Add(length);
+        }
+        if (!string.IsNullOrWhiteSpace(item.Overview))
+        {
+            var overview = Text(item.Overview, 13, color: "Muted");
+            overview.TextWrapping = TextWrapping.Wrap;
+            overview.TextTrimming = TextTrimming.WordEllipsis;
+            overview.MaxHeight = 38;
+            overview.LineHeight = 19;
+            overview.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            overview.Margin = new Thickness(0, 6, 0, 0);
+            copy.Children.Add(overview);
+        }
+        row.Children.Add(copy);
+        var card = new Border
+        {
+            Background = ColorOf("#0AFFFFFF"), CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 10), Child = row
+        };
+        card.MouseEnter += (_, _) => card.Background = ColorOf("#14FFFFFF");
+        card.MouseLeave += (_, _) => card.Background = ColorOf("#0AFFFFFF");
+        return card;
+    }
+}

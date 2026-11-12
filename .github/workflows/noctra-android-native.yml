@@ -1,0 +1,159 @@
+# Noctra pour Android (appli native Kotlin + Jetpack Compose, reprise de l'appli
+# iOS 26) : APK universel pour téléphones, tablettes, pliables, Chromebooks et
+# Android TV (Android 6 et plus). Téléchargeable dans Actions › Noctra Android ›
+# Artifacts (« noctra-android-native »).
+name: Noctra Android
+
+on:
+  push:
+    paths:
+      - 'apps/android-native/**'
+      # APK Noctra TV (même clé de signature) : interface et construction.
+      - 'apps/androidtv/**'
+      - 'apps/scripts/build-androidtv.mjs'
+      - 'apps/scripts/android-tools.mjs'
+      - '.github/workflows/noctra-android-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noctra-android-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: APK Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+      # Signature stable (mises à jour installées par-dessus) : clé des secrets
+      # NOCTRA_KEYSTORE_* si elle existe ; sinon une clé créée une fois puis
+      # gardée dans le cache GitHub du dépôt. Jamais dans le dépôt.
+      - name: Clé de signature (cache)
+        id: keycache
+        uses: actions/cache@v4
+        with:
+          path: ~/.noctra-android-key
+          key: noctra-android-native-signing-v1
+      - name: Clé de signature
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NOCTRA_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NOCTRA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NOCTRA_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NOCTRA_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/noctra.p12"
+            # Alias par défaut : noctra (seuls NOCTRA_KEYSTORE_BASE64 et
+            # NOCTRA_KEYSTORE_PASSWORD sont nécessaires).
+            {
+              echo "NOCTRA_KEYSTORE_FILE=$RUNNER_TEMP/noctra.p12"
+              echo "NOCTRA_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "NOCTRA_KEY_ALIAS=${KEY_ALIAS:-noctra}"
+              echo "NOCTRA_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            } >> "$GITHUB_ENV"
+            echo "::notice::APK signé avec la clé NOCTRA_KEYSTORE_*."
+            exit 0
+          fi
+          dir="$HOME/.noctra-android-key"
+          mkdir -p "$dir"
+          if [ ! -f "$dir/noctra.p12" ]; then
+            openssl rand -hex 24 > "$dir/password"
+            keytool -genkeypair -keystore "$dir/noctra.p12" -storetype PKCS12 -alias noctra \
+              -keyalg RSA -keysize 3072 -validity 36500 -dname "CN=Noctra, O=Noctra" \
+              -storepass "$(cat "$dir/password")" -keypass "$(cat "$dir/password")"
+            echo "::notice::Nouvelle clé de signature créée et gardée dans le cache."
+          fi
+          echo "::add-mask::$(cat "$dir/password")"
+          {
+            echo "NOCTRA_KEYSTORE_FILE=$dir/noctra.p12"
+            echo "NOCTRA_KEYSTORE_PASSWORD=$(cat "$dir/password")"
+            echo "NOCTRA_KEY_ALIAS=noctra"
+            echo "NOCTRA_KEY_PASSWORD=$(cat "$dir/password")"
+          } >> "$GITHUB_ENV"
+      - name: Vérification du cast et de la télécommande TV
+        run: |
+          node tests/mobile-tv-cast.mjs
+          node tests/mobile-tv-remote.mjs
+      - name: APK
+        working-directory: apps/android-native
+        run: |
+          set +e
+          gradle assembleRelease --no-daemon --console=plain > build.log 2>&1
+          status=$?
+          set -e
+          grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -200 || true
+          tail -15 build.log
+          exit $status
+      - name: Nom de l'APK
+        run: |
+          mkdir -p dist
+          cp apps/android-native/app/build/outputs/apk/release/app-release.apk dist/Noctra-android-native.apk
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native
+          path: dist/Noctra-android-native.apk
+          if-no-files-found: error
+      # Mêmes APK en formats d'installateurs (SAI, APKMirror Installer, XAPK Installer…) :
+      # .apks et .apkm (base.apk + description), .xapk (manifest.json + base.apk).
+      - name: Formats d'installation (APKS, XAPK, APKM)
+        run: |
+          gradle_file=apps/android-native/app/build.gradle.kts
+          version_name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' "$gradle_file" | head -1)
+          version_code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          min_sdk=$(sed -n 's/.*minSdk = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          target_sdk=$(sed -n 's/.*targetSdk = \([0-9]*\).*/\1/p' "$gradle_file" | head -1)
+          work=$(mktemp -d)
+          cp dist/Noctra-android-native.apk "$work/base.apk"
+          size=$(stat -c %s "$work/base.apk")
+          cat > "$work/manifest.json" <<JSON
+          {"xapk_version":2,"package_name":"com.noctra.mobile","name":"Noctra","version_code":"$version_code","version_name":"$version_name","min_sdk_version":"$min_sdk","target_sdk_version":"$target_sdk","permissions":[],"split_configs":[],"total_size":$size,"split_apks":[{"file":"base.apk","id":"base"}]}
+          JSON
+          cat > "$work/info.json" <<JSON
+          {"apkm_version":5,"app_name":"Noctra","pname":"com.noctra.mobile","release_version":"$version_name","versioncode":"$version_code","min_api":"$min_sdk","target_api":"$target_sdk","arches":[],"capabilities":[],"accent_color":"7C5CFF"}
+          JSON
+          name="Noctra-android-$version_name"
+          (cd "$work" && zip -q -X -0 "$OLDPWD/dist/$name.apks" base.apk && zip -q -X -0 "$OLDPWD/dist/$name.xapk" manifest.json base.apk && zip -q -X -0 "$OLDPWD/dist/$name.apkm" info.json base.apk)
+          for file in dist/$name.apks dist/$name.xapk dist/$name.apkm; do unzip -tq "$file"; done
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-apks
+          path: dist/Noctra-android-*.apks
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-xapk
+          path: dist/Noctra-android-*.xapk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-android-native-apkm
+          path: dist/Noctra-android-*.apkm
+          if-no-files-found: error
+      - name: APK Noctra TV avec réception du cast et télécommande
+        run: |
+          node apps/scripts/build-androidtv.mjs > noctra-tv-build.log 2>&1 || { tail -120 noctra-tv-build.log; exit 1; }
+          tail -8 noctra-tv-build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-androidtv
+          path: dist/apps/Noctra-androidtv.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: noctra-android-native-build-log
+          path: apps/android-native/build.log
+          if-no-files-found: ignore
+

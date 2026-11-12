@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { parseWiTvPublishedPlayers } from '../lib/witv-public.mjs';
 const root = new URL('../', import.meta.url);
 const server = await readFile(new URL('server.mjs', root), 'utf8');
 const shell = await readFile(new URL('public/noctra-shell.js', root), 'utf8');
@@ -66,6 +67,7 @@ const resolve = load(extract(server, 'async function resolveTvPageReference(', '
   decodeTvStateReference: (token, kind) => states.get(token)?.kind === kind ? states.get(token) : null,
   encodeTvStateReference: (kind, state) => { const token = `t${states.size}`; states.set(token, { ...state, kind }); return token; },
   tvReferences: new Map(), isWiTvPublicPlayer: () => true,
+  parseWiTvPublishedPlayers,
   fetchTvRemote: async () => new Response('<html>channel</html>'),
   tvIframeCandidatesFromHtml: () => players,
   resolveWiTvPlayerOption: async (item, index, page, signal) => {
@@ -97,20 +99,24 @@ assert.equal(failed.options[0].url, players[0].url); assert.equal(backupCalls, 1
 
 // Real OHA root race: the configured root hangs, its mirror can still win.
 const ohaRequests = [], ohaSignals = [];
-const oha = load(extract(server, 'async function resolveSingleOhaCandidate(', '\nasync function firstSuccessfulOhaCandidate'), 'resolveSingleOhaCandidate', {
-  ...urlDeps, HttpError, AbortController, AbortSignal, setTimeout, clearTimeout,
-  ohaRootAlternatives: () => ['https://kool.ws/live', 'http://185.254.196.78/live', 'https://oha.cx/live'],
-  ohaRequestBody: (kind, value) => value, ohaProviderHttpError: () => null,
-  fetchTvRemote: async (url, options) => {
+const ohaFetch = async (url, options) => {
     ohaRequests.push(url); ohaSignals.push(options.signal);
     assert.equal(JSON.parse(options.body).url, 'provider-specific-stream');
     if (url.includes('kool.ws')) return new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(Error('cancelled')), { once: true }));
     assert.equal(options.headers.origin, 'http://185.254.196.78');
     return new Response(JSON.stringify({ streamUrl: 'https://cdn.test/master' }));
-  },
+};
+// 200.0.167 : vrai appel JSON des miroirs (endpoint MediaHubMX puis ancien MediaURL).
+const ohaApiEndpoints = load(extract(server, 'function ohaApiEndpoints(', '\n// Appel JSON'), 'ohaApiEndpoints', {});
+const ohaPostJson = load(extract(server, 'async function ohaPostJson(', '\nfunction ohaRootAlternatives'), 'ohaPostJson', { fetchTvRemote: ohaFetch, ohaApiEndpoints });
+const oha = load(extract(server, 'async function resolveSingleOhaCandidate(', '\nasync function firstSuccessfulOhaCandidate'), 'resolveSingleOhaCandidate', {
+  ...urlDeps, HttpError, AbortController, AbortSignal, setTimeout, clearTimeout,
+  ohaRootAlternatives: () => ['https://kool.ws/live', 'http://185.254.196.78/live', 'https://oha.cx/live'],
+  ohaRequestBody: (kind, value) => value, ohaProviderHttpError: () => null,
+  ohaPostJson,
   ohaResolvedStreamUrl: payload => payload.streamUrl,
   validateWiTvHlsStream: async (url, headers, timeout, signal, recentSegments) => {
-    assert.equal(recentSegments, true); assert.equal(headers.referer, 'http://185.254.196.78/live');
+    assert.equal(recentSegments, true); assert.equal(headers.referer, 'http://185.254.196.78/');
     return { url, cookie: '' };
   },
   issueTvReference: () => 'verified', tvPublicStreamUrl: token => `/media/${token}`

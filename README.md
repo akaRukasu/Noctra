@@ -1,4 +1,80 @@
-# Version actuelle : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
+# Version actuelle · 200.0.176
+
+Sur la version web mobile, le direct TV affiche sa qualité : « Qualité · Auto · 1080p », les qualités du flux sur iPhone et iPad (lecteur HLS d'iOS compris), et la définition d'une source à une seule qualité. Détails : [MISE-A-JOUR-V200176.md](MISE-A-JOUR-V200176.md).
+
+# Historique · 200.0.171
+
+Le Web reprend les titres en cours de revisionnage et limite « À suivre » aux séries avec une activité dans les 30 derniers jours.
+
+# Historique · 200.0.170
+
+Sur le Web, les états de lecture et « À suivre » sont rattachés à la session Jellyfin active. Le lecteur propose le saut des génériques lorsqu’un segment ou un chapitre les indique.
+
+# Historique · 200.0.169
+
+OHA / Kool réunit les serveurs publiés par les quatre miroirs dans le catalogue France. StreamFree, RockyLive et TimStreams utilisent leurs propres API. Volkamax lit le programme de volkamax.club avec bzzh.lat en secours.
+
+# Historique · 200.0.167
+
+Détails : [MISE-A-JOUR-V200167.md](MISE-A-JOUR-V200167.md).
+
+# Historique : 200.0.166 — serveurs TV refusés expliqués (fournisseur ou accès VIP)
+
+Les serveurs TV en 401/403 affichent la cause donnée par Noctra (refus du fournisseur, compte LiveWatch VIP à reconnecter) dans iOS 2.18.10 et Android 1.9.15, et le diagnostic de l'updater PC vérifie les accès TV. Détails : [MISE-A-JOUR-V200165.md](MISE-A-JOUR-V200165.md).
+
+# Historique : 200.0.165 — « Cannot allocate Wasm memory » / « fetch failed » corrigé
+
+Noctra se relance seul avec le réglage mémoire WebAssembly (`--disable-wasm-trap-handler`) s'il manque au service. La mise à jour et l'updater PC l'ajoutent aussi au service, sans le réécrire. Détails : [MISE-A-JOUR-V200165.md](MISE-A-JOUR-V200165.md).
+
+# Historique : 200.0.164 — ±15 s, « Passer le générique (de fin) » et « Épisode suivant » sur tous les lecteurs
+
+Sur Android TV, LG, Samsung (Tizen et 2014), Android, iPhone, iPad et sur le web, les lecteurs ont maintenant des boutons −15 s et +15 s, avec retour visuel quand on appuie plusieurs fois. En direct, ces boutons n'apparaissent que si le flux a une vraie fenêtre de retour. « Passer le générique » et « Passer le générique de fin » s'appuient seulement sur les marqueurs réels : segments Jellyfin, sinon chapitres nommés. Rien n'est automatique et la scène après le générique est conservée. « Épisode suivant » est un bouton distinct. Sources TV : Streamed est passé sur strmfree.st, et une nouvelle source PPV utilise ppv.st. Détails et mise à jour en gardant les données : [MISE-A-JOUR-V200164.md](MISE-A-JOUR-V200164.md).
+
+# Historique : 200.0.162 — nouveau domaine du serveur (akarukasu.astra.usbx.me), appliqué sans intervention
+
+« Continuer à regarder » montrait 12 titres au plus, partout. Le serveur renvoie maintenant tous les titres commencés (60 au plus). Le carrousel en garde 10 à 12, et la rangée « Autres titres à reprendre » affiche les autres : Noctra TV, iOS 2.17.9, Android 1.9.4 et site web. Validation : `npm run test:v200150`.
+
+# Historique : 200.0.149 — relais pour les Samsung Smart TV 2014 (avec journal de diagnostic)
+
+Les Samsung de 2014 (UE40H6400…) refusent le certificat HTTPS de la seedbox. `bash ultra/install-relais-samsung2014.sh` installe sur la seedbox un relais HTTP (port libre du slot, service `noctra-relais-tv`) que l'appli du téléviseur utilise à la place du HTTPS : aucun appareil à laisser allumé chez soi. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md), guide du téléviseur : [apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md](apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md). Validation : `npm run test:v200148`.
+
+# Historique : 200.0.147 — Noctra TV 1.1.51 : multiview avec les lecteurs des sites
+
+Interface Noctra TV 1.1.51 (LG, Samsung, servie à `/tv-app/`) et appli Android TV noctra.71 : une chaîne sans flux direct (DLStreams…) n'est plus écartée du multiview. Sur Android TV, la vignette ouvre la page du lecteur, repère la liste HLS qu'elle demande et la lit avec le lecteur natif (son, définition et changement de serveur du multiview). Validation : `npm run test:v200147`.
+
+# Samsung Smart TV 2014 (UE40H6400, plateforme Orsay)
+
+Variante de Noctra TV pour les Samsung de 2014, qui n'ont pas Tizen : `apps/samsung-orsay` (compléments du moteur WebKit 537, lecteur AVPlay du téléviseur, touches Samsung, clavier à l'écran, multiview en mosaïque du serveur, relais local HTTP → HTTPS). Le kit `npm run apps:samsung2014` contient l'appli, le serveur d'installation « User App Sync » et le relais. Guide : [apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md](apps/samsung-orsay/GUIDE-INSTALLATION-UE40H6400.md). Validation : `npm run test:orsay` (émulation navigateur ; aucun essai sur téléviseur pour l'instant). Aucun changement côté serveur.
+
+# Historique : 200.0.146 — relais des chaînes diffusées en AirPlay
+
+Une chaîne envoyée en AirPlay passe par un relais du serveur : ffmpeg copie le flux (sans réencodage) dans une liste locale avec une réserve de segments et se reconnecte seul quand le lien de la source expire. Le téléviseur ne lit que des fichiers déjà prêts : plus de « mise en mémoire tampon » à chaque segment, plus de « vidéo inaccessible ». Validation : `npm run test:v200146`.
+
+# Historique : 200.0.145 — diffusion plus fluide
+
+Une chaîne diffusée (Chromecast, AirPlay) démarre ~18 s avant le bord du direct au lieu du dernier segment : le téléviseur garde une réserve et l'image comme le son ne saccadent plus à chaque segment un peu lent. Validation : `npm run test:v200145`.
+
+# Historique : 200.0.144 — multiview diffusé sur Chromecast et AirPlay
+
+Le serveur compose les chaînes du multiview en un seul flux (ffmpeg) : grille ou chaîne mise en avant, son de la chaîne choisie. Un Chromecast, un téléviseur AirPlay ou n'importe quel lecteur le lit comme une chaîne, et l'application le pilote (ajouter, retirer, mettre en avant, changer le son). ffmpeg est cherché dans `NOCTRA_FFMPEG`, le `PATH`, `~/bin`, les applis de la seedbox et la configuration de Jellyfin. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md). Validation : `npm run test:v200144`.
+
+# Historique : 200.0.143 — LiveWatch VIP lu avec l'identité du navigateur
+
+L'autorisation de lecture LiveWatch est liée au navigateur qui l'a obtenue : le serveur présente désormais toujours cette identité (navigateur) avec l'autorisation, au lieu d'essayer d'abord en « Noctra » (refusé en `grant_required`). Le diagnostic montre le début d'une réponse `/api/hls` qui n'est pas une playlist. Validation : `npm run test:v200143`.
+
+# Historique : 200.0.142 — autorisation de lecture LiveWatch VIP
+
+LiveWatch demande maintenant une autorisation de lecture avant chaque flux (`grant_required`). Le serveur l'obtient comme le lecteur officiel (`POST /api/play/grant` avec la session VIP) et la joint aux demandes de flux (`X-Play-Grant`) : les flux VIP directs LiveWatch fonctionnent de nouveau. Validation : `npm run test:v200142`.
+
+# Historique : 200.0.141 — diagnostic de l'autorisation de lecture LiveWatch
+
+LiveWatch refuse le flux VIP avec « grant_required » (autorisation de lecture requise) : le diagnostic suit maintenant les morceaux du lecteur officiel et relève comment il obtient cette autorisation (appels rpc, fonctions, adresses, extraits de code). Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
+
+# Historique : 200.0.140 — serveur des applications
+
+`production` 200.0.137 et les fonctions serveur des applications iPhone, Android et Noctra TV réunies : stockage de la seedbox, déplacements, destinations des demandes, variantes et diagnostic LiveWatch VIP, multiview piloté. Détails : [MISE-A-JOUR-V200140.md](MISE-A-JOUR-V200140.md).
+
+# Historique : 200.0.137 — LiveWatch relayé et bascule de serveur patiente
 
 Serveur de comptes LiveWatch détecté même sur un domaine personnalisé et vérifié ; le lecteur relayé signale les requêtes refusées et « Chaîne introuvable » ; « Tester LiveWatch » dans Accès TV ; changement de serveur plus patient sur un chargement long. Détails : [MISE-A-JOUR-V200137.md](MISE-A-JOUR-V200137.md). Validation : `npm run test:v200137`.
 
@@ -65,6 +141,10 @@ La page « Contrôle à distance » n’est plus recouverte par sa file d’atte
 # Historique : 200.0.121 — survol fluide, fiches fiables, réglages en colonne
 
 Survol des affiches 100× moins coûteux, « Voir la fiche » / « Reprendre » fiables à chaque clic, réglages PC en une colonne, 15 s de réserve au démarrage TV, intro allongée. Détails : [MISE-A-JOUR-V200121.md](MISE-A-JOUR-V200121.md). Validation : `npm run test:v200121`.
+
+# Applications natives — applications Android, Android TV, iOS, LG webOS et Samsung Tizen
+
+Noctra s’installe maintenant en application sur téléphone et tablette Android, Android TV, iPhone et iPad, et sur les téléviseurs LG et Samsung. Ces applis sont construites automatiquement par GitHub Actions. Côté serveur, un pont gère la télécommande, la touche Retour et la veille. Installation : [apps/README.md](apps/README.md). Détails : [MISE-A-JOUR-APPLICATIONS.md](MISE-A-JOUR-APPLICATIONS.md). Validation : `npm run test:apps`.
 
 # Historique : 200.0.120 — défilement natif PC, démarrage unique, TV Shaka stabilisée
 

@@ -27,8 +27,8 @@ const providers=createAdditionalTvProviders({publicPath:p=>'/base'+p,readKeys:as
   request:async (url,opts)=>{
     requests.push({url,opts});const u=new URL(url);let data;
     if(u.pathname.startsWith('/api/livetv/') || u.pathname==='/api/check-vip') {
-      assert.equal(u.origin,'https://api.movix.college');
-      assert.equal(opts.headers.referer,'https://movix.college/');
+      assert.equal(u.origin,'https://api.movix.dog');
+      assert.equal(opts.headers.referer,'https://movix.dog/');
     }
     if(u.pathname==='/api/check-vip'){assert.equal(opts.headers['x-access-key'],key);data={vip:true};}
     else if(u.pathname==='/api/livetv/iptv/categories'){assert.equal(opts.headers['x-access-key'],key);data={categories:Array.from({length:353},(_,i)=>({category_id:String(i),category_name:'FR '+i}))};}
@@ -46,8 +46,8 @@ const cat=await providers.catalog('iptv');assert.equal(cat.groups.length,353,'Do
 const channels=await providers.group(refs.get(cat.groups[0].ref).meta);assert.equal(channels.channels.length,1);
 const playback=await providers.resolve(refs.get(channels.channels[0].resolverUrl.split('/').pop()).meta);
 assert.equal(playback.options[0].playbackType,'stream');assert.ok(playback.options[0].streamUrl.startsWith('/base/stream/opaque'));
-assert.equal(refs.get(playback.options[0].streamUrl.split('/').pop()).headers.referer,'https://movix.college/');
-assert.ok(additionalTvSources.filter(s=>s.id.startsWith('movix-')).every(s=>new URL(s.url).origin==='https://api.movix.college'));
+assert.equal(refs.get(playback.options[0].streamUrl.split('/').pop()).headers.referer,'https://movix.dog/');
+assert.ok(additionalTvSources.filter(s=>s.id.startsWith('movix-')).every(s=>new URL(s.url).origin==='https://api.movix.dog'));
 assert.ok(!JSON.stringify([cat,channels,playback]).includes(key));assert.ok(!JSON.stringify(playback).includes('token=secret'));
 const north=await providers.resolve({provider:'northlive',id:'northlive_bein-sports-1-fhd-b'});
 assert.equal(north.options.length,2);assert.ok(!JSON.stringify(north).includes(northkey));assert.ok(!JSON.stringify(north).includes('play-token'));

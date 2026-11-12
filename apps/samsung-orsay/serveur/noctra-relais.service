@@ -1,0 +1,18 @@
+# Relais local Noctra pour Samsung Smart TV 2014, en service permanent
+# (Raspberry Pi, NAS ou PC Linux). Installation :
+#   sudo cp noctra-relais.service /etc/systemd/system/
+#   sudo nano /etc/systemd/system/noctra-relais.service   (chemin et utilisateur)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now noctra-relais
+[Unit]
+Description=Relais local Noctra (Samsung Smart TV 2014)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/node /home/pi/Noctra-Samsung-2014/serveur/noctra-samsung2014.mjs relais --serveur https://akarukasu.astra.usbx.me/noctra --port 8095
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

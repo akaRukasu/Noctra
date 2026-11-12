@@ -1,0 +1,206 @@
+# Noctra pour Windows (client natif C# / .NET 10 / WPF, lecteur libmpv,
+# WebView2 pour les lecteurs web tiers). Sur une machine Windows de GitHub :
+# construction, tests de protocole et d'audio, publication x64 autonome, setup
+# Inno Setup (normal et de test), puis test de l'interface avec une API locale
+# simulée (aucun serveur réel) et captures d'écran.
+# Téléchargement : Actions › Noctra Windows › Artifacts.
+name: Noctra Windows
+
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/noctra-windows.yml'
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "Version des sources windows/ à construire (commit, branche ou étiquette ; vide = celle du lancement)"
+        required: false
+        default: ''
+
+permissions:
+  # Écriture : seulement la référence refs/noctra-ci/* des captures (aucune branche).
+  contents: write
+  # Suppression des fichiers de build des runs précédents de la même branche (quota de stockage).
+  actions: write
+
+concurrency:
+  group: noctra-windows-${{ github.ref }}-${{ github.event.inputs.sources }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Noctra Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Comparaison avec une version précédente (lancement manuel) : sources windows/ de ce commit.
+      - name: Sources d'une version précédente
+        if: ${{ github.event.inputs.sources != '' && github.event.inputs.sources != null }}
+        working-directory: .
+        run: |
+          git checkout "${{ github.event.inputs.sources }}" -- windows
+          Write-Host "Sources windows/ : ${{ github.event.inputs.sources }}"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Version
+        id: version
+        run: |
+          $version = ([xml](Get-Content Noctra.Windows.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Noctra Windows $version"
+      - name: Construction
+        run: dotnet build Noctra.Windows.csproj -c Release
+      - name: Tests de protocole (récepteur Cast TLS simulé, regroupement TV)
+        run: dotnet run --project tests/protocol/Noctra.Tests.csproj -c Release
+      # Outil d'inspection des sessions audio Windows, piloté par le test
+      # d'interface (--audio-inspector) : construit ici. La machine de GitHub
+      # n'a pas de sortie audio réelle : la mesure se fait sur un vrai PC.
+      - name: Outil d'inspection audio (construction)
+        run: dotnet build tests/audio/Noctra.AudioTests.csproj -c Release
+      - name: Publication x64 autonome
+        id: publish
+        run: dotnet publish Noctra.Windows.csproj -c Release -r win-x64 --self-contained true -o publish
+      # Inno Setup 7 (version de référence) si son site répond, sinon Inno Setup 6.x
+      # (Chocolatey) : le script choisit l'option d'extraction selon la version.
+      - name: Inno Setup
+        run: |
+          $dir = "$env:RUNNER_TEMP\InnoSetup"
+          try {
+            Invoke-WebRequest 'https://jrsoftware.org/download.php/is.exe' -OutFile "$env:RUNNER_TEMP/innosetup.exe" -MaximumRedirection 5
+            Start-Process "$env:RUNNER_TEMP/innosetup.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$dir" -Wait
+          } catch { Write-Host "Inno Setup 7 indisponible : $($_.Exception.Message)" }
+          $iscc = Get-Item "$dir\ISCC.exe" -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress | Out-Null
+            $iscc = Get-ChildItem 'C:\Program Files (x86)', 'C:\Program Files' -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe introuvable' }
+          Write-Host "Compilateur : $($iscc.FullName)"
+          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+      - name: Setups (normal et test)
+        run: |
+          $publish = (Resolve-Path publish).Path
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & $env:ISCC "/DPublishDir=$publish" "/O$PWD/dist" installer/Noctra.iss
+          if ($LASTEXITCODE) { throw "Setup : code $LASTEXITCODE" }
+          & $env:ISCC "/DPublishDir=$publish" "/DTestBuild=1" "/O$PWD/dist" installer/Noctra.iss
+          if ($LASTEXITCODE) { throw "Setup de test : code $LASTEXITCODE" }
+          Get-ChildItem dist | Format-Table Name, Length
+      - name: Outils du test d'interface (Python, pywinauto, FFmpeg, moteur mpv vérifié)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        run: |
+          python -m pip install --quiet pywinauto pillow pywin32
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress | Out-Null }
+          $ffmpeg = (Get-Command ffmpeg).Source
+          "FFMPEG=$ffmpeg" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/noctra" | Out-Null
+          & $ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 -t 120 -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -b:v 800k -c:a libopus "$env:RUNNER_TEMP/noctra/video-120s.webm"
+          # Même archive mpv que le setup (URL et SHA-256 épinglés dans installer/Noctra.iss).
+          $iss = Get-Content installer/Noctra.iss -Raw
+          $url = [regex]::Match($iss, 'Source: "(https://[^"]+mpv-dev[^"]+\.7z)"').Groups[1].Value
+          $hash = [regex]::Match($iss, 'mpv\.7z";[^\r\n]*Hash: "([0-9a-f]{64})"').Groups[1].Value
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP/noctra/mpv.7z"
+          $actual = (Get-FileHash "$env:RUNNER_TEMP/noctra/mpv.7z" -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $hash) { throw "mpv : SHA-256 $actual au lieu de $hash" }
+          7z x "$env:RUNNER_TEMP/noctra/mpv.7z" "-o$env:RUNNER_TEMP/noctra/mpv" libmpv-2.dll -y | Out-Null
+          "MPV_DLL=$env:RUNNER_TEMP/noctra/mpv/libmpv-2.dll" >> $env:GITHUB_ENV
+      # Écran de la machine GitHub (1024 × 768 par défaut) agrandi : fenêtre et captures entières.
+      - name: Écran 1920 × 1080
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host "Écran : $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
+      - name: Test de l'interface (API locale simulée)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        timeout-minutes: 30
+        run: |
+          python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures
+          if ($LASTEXITCODE) { throw "Test de l'interface : code $LASTEXITCODE" }
+      # 0.7 : SyncPlay (WebSocket simulé), musique, listes, hors connexion, Quick Connect, administration, aperçus.
+      - name: Test des nouveautés (API locale simulée)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' && !github.event.inputs.sources }}
+        timeout-minutes: 25
+        run: |
+          python tests/smoke_windows.py publish/Noctra.exe "$env:RUNNER_TEMP/noctra/video-120s.webm" $env:FFMPEG --mpv $env:MPV_DLL --screens captures --features-only
+          if ($LASTEXITCODE) { throw "Test des nouveautés : code $LASTEXITCODE" }
+      - name: Archive des sources
+        if: always()
+        working-directory: .
+        run: |
+          New-Item -ItemType Directory -Force windows/dist | Out-Null
+          git archive --format=zip --prefix="Noctra-Windows-${{ steps.version.outputs.version }}/" -o "windows/dist/Noctra-Windows-${{ steps.version.outputs.version }}-sources.zip" HEAD:windows
+      # Quota de stockage : setup et captures Windows des runs précédents de cette branche supprimés,
+      # sauf ceux du dernier run réussi (son setup reste téléchargeable). Les fichiers des autres
+      # actions (Android, TV, iOS…) ne sont jamais touchés. Le code n'est pas touché.
+      - name: Nettoyage des anciens fichiers de build
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = '${{ github.repository }}'
+          $branch = '${{ github.ref_name }}'
+          $keep = @('${{ github.run_id }}')
+          $green = gh api "repos/$repo/actions/workflows/noctra-windows.yml/runs?branch=$branch&status=success&per_page=1" --jq '.workflow_runs[0].id'
+          if ($green) { $keep += "$green" }
+          Write-Host "Runs conservés : $($keep -join ', ')"
+          # Filtre jq sans guillemets (passage d'arguments PowerShell) ; tri par branche ci-dessous.
+          $old = gh api --paginate "repos/$repo/actions/artifacts?per_page=100" --jq '.artifacts[] | [.id, .workflow_run.id, .workflow_run.head_branch, .name, .size_in_bytes] | @tsv'
+          foreach ($line in $old) {
+            $id, $run, $from, $name, $size = $line -split "`t"
+            # Uniquement les fichiers de cette action (setup et captures Windows), jamais ceux des autres actions.
+            if ($from -ne $branch -or $keep -contains $run -or $name -notin @('noctra-windows-setup', 'noctra-windows-captures')) { continue }
+            gh api -X DELETE "repos/$repo/actions/artifacts/$id" | Out-Null
+            Write-Host "Supprimé : $name (run $run, $([math]::Round($size / 1MB)) Mo)"
+          }
+      # Setup normal et sources seulement (le setup « QA » sert au test automatique), conservés 14 jours.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: noctra-windows-setup
+          path: |
+            windows/dist/Noctra-Setup-*.exe
+            windows/dist/Noctra-Windows-*-sources.zip
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: noctra-windows-captures
+          path: windows/captures/
+          if-no-files-found: ignore
+          retention-days: 7
+      # Captures réduites (JPEG) publiées dans une référence Git dédiée, hors branches :
+      # refs/noctra-ci/captures (lecture : git fetch origin refs/noctra-ci/captures).
+      # Aucune branche n'est modifiée et cette référence ne déclenche aucune action.
+      - name: Captures (référence Git)
+        if: always()
+        # Copie de confort (les captures sont aussi en fichier de build) : un refus passager de
+        # GitHub sur cette référence ne doit pas faire échouer un build dont les tests sont verts.
+        continue-on-error: true
+        working-directory: windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not (Test-Path captures)) { Write-Host 'Aucune capture'; exit 0 }
+          $out = "$env:RUNNER_TEMP/noctra-captures"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          python -c "import pathlib,sys;from PIL import Image;o=pathlib.Path(sys.argv[1]);[Image.open(p).convert('RGB').save(o/(p.stem+'.jpg'),'JPEG',quality=82) for p in sorted(pathlib.Path('captures').glob('*.png'))]" $out
+          Set-Content "$out/RUN.txt" "run ${{ github.run_id }} · sources ${{ github.event.inputs.sources || github.sha }}"
+          Push-Location $out
+          git init -q; git config user.name 'noctra-ci'; git config user.email 'noctra-ci@users.noreply.github.com'
+          git add -A; git commit -q -m "Captures ${{ github.run_id }}"
+          $name = if ('${{ github.event.inputs.sources }}') { 'captures-reference' } else { 'captures' }
+          git push -q --force "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git" "HEAD:refs/noctra-ci/$name"
+          Pop-Location

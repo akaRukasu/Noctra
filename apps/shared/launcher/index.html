@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Noctra</title>
+  <link rel="stylesheet" href="launcher.css">
+  <script src="config.js"></script>
+  <script src="platform.js"></script>
+</head>
+<body>
+  <main class="launcher" id="launcher">
+    <header class="brand">
+      <img src="noctra-mark.svg" alt="" width="96" height="96">
+      <h1>Noctra</h1>
+    </header>
+
+    <section class="card" id="view-auto" hidden>
+      <p class="eyebrow">Serveur</p>
+      <p class="server" id="auto-server"></p>
+      <p class="status" id="auto-status">Connexion…</p>
+      <div class="progress" aria-hidden="true"><i id="auto-progress"></i></div>
+      <div class="actions">
+        <button type="button" class="primary" id="auto-connect">Se connecter</button>
+        <button type="button" id="auto-change">Changer de serveur</button>
+      </div>
+    </section>
+
+    <section class="card" id="view-form" hidden>
+      <form id="server-form" novalidate>
+        <label for="server-url">Adresse de votre serveur Noctra</label>
+        <input id="server-url" name="server" type="url" inputmode="url" autocomplete="url"
+          autocapitalize="off" autocorrect="off" spellcheck="false"
+          placeholder="https://mon-serveur.fr/noctra">
+        <p class="hint">L’adresse qui ouvre Noctra dans un navigateur, sans « /client/index.html ».</p>
+        <label class="check">
+          <input id="server-auto" type="checkbox" checked>
+          <span>Se connecter automatiquement au démarrage</span>
+        </label>
+        <p class="error" id="form-error" role="alert" hidden></p>
+        <div class="actions">
+          <button type="submit" class="primary" id="form-submit">Se connecter</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" id="view-busy" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="status" id="busy-status">Vérification du serveur…</p>
+      <div class="actions">
+        <button type="button" id="busy-cancel">Annuler</button>
+      </div>
+    </section>
+
+    <p class="footer" id="footer"></p>
+  </main>
+  <script src="launcher.js"></script>
+</body>
+</html>

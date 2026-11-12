@@ -112,7 +112,7 @@ flowContext.window = flowContext;
 vm.createContext(flowContext);
 vm.runInContext(flowJs, flowContext);
 const flow = flowContext.NoctraEpisodeFlow;
-assert.equal(flow.version, '200.0.128');
+assert.equal(flow.version, JSON.parse(pkg).version);
 const chapters = flow.chapterSegments({
   RunTimeTicks: 1440 * 1e7,
   Chapters: [
@@ -126,17 +126,21 @@ assert.deepEqual(JSON.parse(JSON.stringify(chapters)), [
   { type: 'intro', startMs: 90_000, endMs: 180_000, source: 'chapitres' },
   { type: 'outro', startMs: 1_350_000, endMs: 1_440_000, source: 'chapitres' }
 ]);
-flow.learnIntro('abcdefabcdefabcdefabcdefabcdef01', 30_000, 120_000);
-assert.equal(flow.learnedIntros().abcdefabcdefabcdefabcdefabcdef01.endMs, 120_000, 'Générique passé à la main appris');
-flow.learnIntro('abcdefabcdefabcdefabcdefabcdef01', 10 * 60_000 + 1, 11 * 60_000);
-assert.equal(flow.learnedIntros().abcdefabcdefabcdefabcdefabcdef01.endMs, 120_000, 'Saut tardif ignoré');
+// 200.0.164 : plus de générique « appris » des avances manuelles (marqueurs réels seulement).
+assert.equal(flow.learnIntro, undefined);
+assert.ok(!/learnIntro|noctra-web-intros|source: 'appris'/.test(flowJs), 'aucun générique appris');
+assert.equal(flow.skipLabel({ type: 'intro' }), 'Passer le générique');
+assert.equal(flow.skipLabel({ type: 'outro' }), 'Passer le générique de fin');
 assert.equal(flow.episodeLabel({ Type: 'Episode', ParentIndexNumber: 2, IndexNumber: 5, Name: 'Le retour' }), 'S2 · É5 — Le retour');
 assert.match(flowJs, /requireJellyfin\(\)\?\.\(39738\)\?\.f/, 'Gestionnaire de lecture Jellyfin');
 assert.match(flowJs, /client\.getUrl\(`MediaSegments\/\$\{item\.Id\}`\)/, 'Segments du serveur d’abord');
-assert.match(flowJs, /if \(server\.length\) return server;\s*const chapters = chapterSegments\(full\);\s*if \(chapters\.length\) return chapters;/);
+assert.match(flowJs, /chapterSegments\(full\)\.filter\(segment => !types\.has\(segment\.type\)\)/);
 assert.match(flowJs, /const COUNTDOWN_SECONDS = 10;/);
-assert.match(flowJs, /const trigger = outro \? outro\.startMs : duration - \(duration > 10 \* 60_000 \? 30_000 : 15_000\);/);
-assert.match(flowJs, /if \(segment\.dismissed \|\| \(segment\.type === 'outro' && upNextHandlesOutro\)\) continue;/, 'Pas deux boutons au générique de fin');
+assert.match(flowJs, /const trigger = outro \? Math\.max\(outro\.endMs, duration - COUNTDOWN_SECONDS \* 1000\)/);
+assert.match(flowJs, /for \(const segment of state\.segments\) \{\s*if \(segment\.dismissed\) continue;/, '« Passer le générique de fin » et « Épisode suivant » distincts');
+assert.ok(!/segment\.type === 'outro' && state\.item\?\.Type === 'Episode' && state\.next\) \{ playNext\(\)/.test(flowJs), 'passer le générique de fin ≠ épisode suivant');
+assert.doesNotMatch(flowJs, /noctra-next-episode/);
+assert.match(flowJs, /const SKIP_STEP_MS = 15_000;/);
 assert.match(flowJs, /if \(state\.nextQueued\) \{\s*state\.advancing = true;/, 'Fin d’épisode : Jellyfin enchaîne, pas de second « suivant »');
 assert.match(flowJs, /state\.stopAtEnd && remaining < 1_200/, '« Plus tard » : arrêt à la fin');
 assert.match(flowCss, /body\.noctra-episode-flow \.skip-button-container,\s*body\.noctra-episode-flow \.skip-button,\s*body\.noctra-episode-flow \.upNextContainer \{ display:none !important; \}/);

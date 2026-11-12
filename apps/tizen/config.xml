@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://noctra.media/tizen" version="1.1.62" viewmodes="maximized">
+    <tizen:application id="NoctraTV01.Noctra" package="NoctraTV01" required_version="4.0"/>
+    <name>Noctra</name>
+    <description>Noctra TV pour téléviseurs Samsung Tizen</description>
+    <icon src="icon.png"/>
+    <content src="index.html"/>
+    <!-- L'appli ouvre l'interface Noctra TV du serveur choisi (/tv-app/). -->
+    <access origin="*" subdomains="true"/>
+    <tizen:allow-navigation>*</tizen:allow-navigation>
+    <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:</tizen:content-security-policy>
+    <feature name="http://tizen.org/feature/screen.size.all"/>
+    <tizen:profile name="tv-samsung"/>
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:setting screen-orientation="landscape" context-menu="enable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+    <tizen:metadata key="http://tizen.org/metadata/app_ui_type/base_screen_resolution" value="extensive"/>
+</widget>

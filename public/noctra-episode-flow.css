@@ -1,4 +1,4 @@
-/* Noctra 200.0.128 — « Passer », « À suivre » et transition entre épisodes. */
+/* Noctra Web — génériques, ±15 s et transition entre épisodes. */
 
 /* Le bouton et l'écran « À suivre » de Noctra remplacent ceux de Jellyfin. */
 body.noctra-episode-flow .skip-button-container,
@@ -33,6 +33,26 @@ body.noctra-episode-flow .upNextContainer { display:none !important; }
 .noctra-skip-segment[data-visible="true"] { opacity:1; pointer-events:auto; transform:none; }
 .noctra-skip-segment:hover, .noctra-skip-segment:focus-visible { background:#fff; outline:none; box-shadow:0 0 0 3px rgba(130,110,255,.65), 0 .55rem 1.8rem rgba(0,0,0,.45); }
 .noctra-skip-segment-icon { font-style:normal; font-size:1.05em; }
+/* Carte « À suivre » ouverte : « Passer le générique de fin » au-dessus (deux commandes distinctes). */
+body.noctra-up-next-open .noctra-skip-segment { bottom:calc(20rem + env(safe-area-inset-bottom)); }
+/* Retour visuel des sauts de 15 s, cumulé. */
+.noctra-seek-note {
+  position:fixed;
+  left:50%;
+  top:40%;
+  transform:translateX(-50%);
+  z-index:100012;
+  padding:.65rem 1.3rem;
+  border-radius:.9rem;
+  background:rgba(9,10,15,.82);
+  color:#fff;
+  font-weight:800;
+  font-size:1.35rem;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .2s ease;
+}
+.noctra-seek-note[data-visible="true"] { opacity:1; }
 
 .noctra-up-next {
   position:fixed;

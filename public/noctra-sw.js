@@ -1,12 +1,12 @@
 'use strict';
 
-const CACHE_NAME = 'noctra-shell-v200-r104';
+const CACHE_NAME = 'noctra-shell-v200-r176';
 const CORE = [
   './noctra.webmanifest?v=182',
   './noctra-mark.svg?v=182',
   './icons/noctra-192.png?v=182',
   './icons/noctra-512.png?v=182',
-  './vendor/hls.min.js?v=182'
+  './vendor/hls.min.js?v=1.7.3'
 ];
 
 self.addEventListener('install', event => {
@@ -28,5 +28,7 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
   const cacheable = CORE.some(item => url.pathname.endsWith(item.split('?')[0].replace(/^\.\//, '')));
   if (!cacheable) return;
-  event.respondWith(caches.match(event.request, { ignoreSearch: true }).then(cached => cached || fetch(event.request)));
+  // Correspondance exacte (version comprise) : un fichier mis à jour n'est jamais
+  // remplacé par l'ancienne copie du cache.
+  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
 });

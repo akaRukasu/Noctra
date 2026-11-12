@@ -14,7 +14,7 @@ La PWA utilise exactement le Noctra hébergé. Il n’y a pas une deuxième copi
 Ouvre cette adresse dans Edge ou Chrome :
 
 ```text
-https://akarukasu.merlion.usbx.me/noctra/client/index.html
+https://akarukasu.astra.usbx.me/noctra/client/index.html
 ```
 
 Puis choisis **Installer Noctra**. L’application aura sa propre fenêtre, sa propre icône et restera connectée comme le navigateur.

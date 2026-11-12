@@ -1,0 +1,84 @@
+# Noctra pour iPhone et iPad : appli native SwiftUI pour iOS 26 (Liquid Glass).
+# IPA non signée et variante à resigner dans E-Sign dans Actions › Artifacts.
+name: Noctra iOS 26
+
+on:
+  push:
+    paths:
+      - 'apps/ios-native/**'
+      - '.github/workflows/noctra-ios-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noctra-ios-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: IPA iOS 26
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$XCODE" ] || XCODE=/Applications/Xcode.app
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: Compilation
+        working-directory: apps/ios-native
+        run: |
+          xcodegen generate
+          set +e
+          xcodebuild -project Noctra.xcodeproj -target Noctra -configuration Release \
+            -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            SYMROOT="$PWD/build" build > build.log 2>&1
+          status=$?
+          set -e
+          grep -E "(error|warning): " build.log | grep -v "^ld: warning" | sort -u | head -150 || true
+          tail -5 build.log
+          exit $status
+      - name: IPA non signée
+        working-directory: apps/ios-native
+        run: |
+          mkdir -p Payload ../../dist/apps
+          cp -R build/Release-iphoneos/Noctra.app Payload/
+          plutil -lint Payload/Noctra.app/Info.plist
+          chmod 755 Payload/Noctra.app/Noctra
+          xcrun strip -S -x Payload/Noctra.app/Noctra
+          zip -qryX ../../dist/apps/Noctra-ios26-unsigned.ipa Payload
+      - name: IPA à resigner avec E-Sign
+        working-directory: apps/ios-native
+        run: |
+          # Garder les exports utilisés par dyld et retirer les symboles locaux
+          # inutiles à l'exécution avant de reconstruire une signature standard.
+          xcrun strip -S -x Payload/Noctra.app/Noctra
+          codesign --force --sign - --timestamp=none Payload/Noctra.app
+          codesign --verify --deep --strict --verbose=2 Payload/Noctra.app
+          codesign --display --verbose=2 Payload/Noctra.app 2>&1
+          # Signature ad hoc locale, sans certificat Apple : E-Sign doit signer
+          # à nouveau l'application avec le certificat de l'utilisateur.
+          zip -qryX ../../dist/apps/Noctra-ios26-ESign.ipa Payload
+          unzip -tq ../../dist/apps/Noctra-ios26-ESign.ipa
+          ls -la ../../dist/apps
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noctra-ios26
+          path: |
+            dist/apps/Noctra-ios26-unsigned.ipa
+            dist/apps/Noctra-ios26-ESign.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: noctra-ios26-build-log
+          path: apps/ios-native/build.log
+          if-no-files-found: ignore

@@ -1,3 +1,4 @@
+import './lib/wasm-memory-guard.mjs';
 import { createMediaAutoRefresh } from './lib/media-auto-refresh.mjs';
 import { parseBrigittePlayers, parseBrigitteNativeDocument } from './lib/brigitte-players.mjs';
 import { normalizeProviders, providerFilter, regionalOffers, verifyProviderItems } from './lib/legal-catalog.mjs';
@@ -5,14 +6,17 @@ import { additionalTvSources, createAdditionalTvProviders } from './lib/tv-addit
 import { rouletteFilters, drawRoulette } from './lib/roulette.mjs';
 import { createTvSegmentCache } from './lib/tv-segment-cache.mjs';
 import { createServer } from 'node:http';
+import { createTvCastAccess } from './lib/tv-cast.mjs';
+import { createTvMosaic, findFfmpeg } from './lib/tv-mosaic.mjs';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline, Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
-import { chmod, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile, unlink } from 'node:fs/promises';
+import { chmod, cp, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, statfs, symlink, writeFile, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lookup } from 'node:dns/promises';
-import { createGunzip, gzipSync } from 'node:zlib';
+import { createGunzip, gzip, gzipSync } from 'node:zlib';
 import { matchTorrentMediaFiles, recoverRelinkByPieces, describeUnmatchedFiles } from './lib/torrent-relink.mjs';
 import { trackerSearchIdentity, searchTrackerReleases } from './lib/tracker-search.mjs';
 import { summarizeReleaseLanguages } from './lib/release-language.mjs';
@@ -23,6 +27,7 @@ import { libraryRefreshState } from './lib/library-refresh.mjs';
 import { createInteractiveSearchCache } from './lib/interactive-search.mjs';
 import { publicIndexer, updateIndexer } from './lib/prowlarr-indexers.mjs';
 import { compareReleaseSize, sonarrPackKind, collectSeriesPacks } from './lib/release-search.mjs';
+import { wiTvRequestHeaders, parseWiTvPublishedPlayers, wiTvPublishedMedia } from './lib/witv-public.mjs';
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 const publicRoot = join(projectRoot, 'public');
@@ -37,7 +42,39 @@ const discoveryFeedbackPath = join(runtimeRoot, 'discovery-feedback.json');
 const defaultTvEpgUrl = 'https://xmltvfr.fr/xmltv/xmltv_fr.xml.gz';
 
 const envPath = process.env.CONFIG_FILE || join(projectRoot, '.env');
-const envText = await readFile(envPath, 'utf8').catch(() => '');
+let envText = await readFile(envPath, 'utf8').catch(() => '');
+// 200.0.162 : seedbox déplacée de merlion.usbx.me vers astra.usbx.me. Les
+// adresses de l'ancien serveur (Jellyfin, qBittorrent, Radarr, Sonarr,
+// Jellyseerr…) sont remplacées au démarrage, sans intervention : .env réécrit,
+// l'original gardé à côté (.env.avant-astra). Autres déplacements :
+// NOCTRA_HOST_MOVES="ancien.usbx.me=nouveau.usbx.me,…".
+const hostMoves = String(process.env.NOCTRA_HOST_MOVES || 'merlion.usbx.me=astra.usbx.me')
+  .split(',').map(pair => pair.split('=').map(part => part.trim().toLowerCase()))
+  .filter(([from, to]) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(from || '') && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(to || '') && from !== to);
+function movedHost(value) {
+  let next = String(value);
+  for (const [from, to] of hostMoves) {
+    const escaped = from.replace(/[.]/g, '\\.');
+    next = next.replace(new RegExp(`(^|[/@.:=\\s'"])${escaped}(?=$|[/:?#\\s'"])`, 'gi'), (_, lead) => lead + to);
+  }
+  return next;
+}
+if (envText && hostMoves.length) {
+  const movedText = movedHost(envText);
+  if (movedText !== envText) {
+    try {
+      await writeFile(`${envPath}.avant-astra`, envText, { flag: 'wx', mode: 0o600 }).catch(error => { if (error?.code !== 'EEXIST') throw error; });
+      await writeFile(envPath, movedText, { mode: 0o600 });
+      console.log('[Noctra] Nouveau domaine du serveur appliqué dans .env (copie : .env.avant-astra).');
+    } catch (error) {
+      console.warn(`[Noctra] .env non réécrit (${error?.code || error?.message}) : nouveau domaine appliqué pour cette exécution.`);
+    }
+    envText = movedText;
+  }
+}
+for (const key of Object.keys(process.env)) {
+  if (/_URL$/.test(key) && process.env[key] && hostMoves.length) process.env[key] = movedHost(process.env[key]);
+}
 for (const line of envText.split(/\r?\n/)) {
   const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
   if (match && !process.env[match[1]]) {
@@ -87,6 +124,12 @@ const normalizedBasePath = value => {
 };
 const basePath = normalizedBasePath(process.env.BASE_URL || '');
 const publicPath = value => `${basePath}${String(value || '').startsWith('/') ? value : `/${value}`}`;
+const tvCastAccess = createTvCastAccess({ basePath });
+// 200.0.144 : multiview composé en un seul flux (ffmpeg) pour Chromecast, AirPlay et tout lecteur.
+const tvMosaic = createTvMosaic({
+  root: join(runtimeRoot, 'mosaic'),
+  locate: async () => findFfmpeg({ extra: await jellyfinFfmpegPaths() })
+});
 const cookiePath = basePath || '/';
 const withoutSlash = value => String(value || '').replace(/\/+$/, '');
 const jellyfinUrl = withoutSlash(process.env.JELLYFIN_URL);
@@ -131,18 +174,32 @@ const mime = {
 
 function json(res, status, data, extraHeaders = {}) {
   const raw = JSON.stringify(data);
+  const rawBytes = Buffer.byteLength(raw);
   const acceptsGzip = /(?:^|,|\s)gzip(?:\s|,|$)/i.test(String(res.req?.headers?.['accept-encoding'] || ''));
-  const compress = acceptsGzip && Buffer.byteLength(raw) >= 24 * 1024;
-  const body = compress ? gzipSync(raw, { level: 4 }) : raw;
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'vary': 'accept-encoding',
-    ...(compress ? { 'content-encoding': 'gzip' } : {}),
-    'content-length': Buffer.byteLength(body),
-    ...extraHeaders
+  const compress = acceptsGzip && rawBytes >= 24 * 1024;
+  const send = (body, compressed) => {
+    if (res.destroyed || res.writableEnded) return;
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'vary': 'accept-encoding',
+      ...(compressed ? { 'content-encoding': 'gzip' } : {}),
+      'content-length': Buffer.byteLength(body),
+      ...extraHeaders
+    });
+    res.end(body);
+  };
+  if (!compress) {
+    send(raw, false);
+    return;
+  }
+  return new Promise(resolve => {
+    gzip(raw, { level: 4 }, (error, compressed) => {
+      if (error || !compressed) send(raw, false);
+      else send(compressed, true);
+      resolve();
+    });
   });
-  res.end(body);
 }
 
 function cleanError(error) {
@@ -206,7 +263,7 @@ function publicUser(user) {
 }
 
 async function authenticateRequest(req) {
-  const suppliedToken = directRequestToken(req);
+  const suppliedToken = directRequestToken(req) || tvCastAccess.tokenForRequest(req);
   const suppliedCookie = requestCookie(req, 'noctra_session');
   const cookieEntry = /^[a-f0-9]{64}$/i.test(suppliedCookie) ? sessionCache.get(suppliedCookie) : null;
   const token = suppliedToken || (
@@ -227,15 +284,26 @@ async function authenticateRequest(req) {
       signal: AbortSignal.timeout(8_000)
     });
   } catch (error) {
+    if (cached && cached.expiresAt > Date.now() && cached.user?.Id) {
+      cached.validationExpiresAt = Date.now() + 15_000;
+      return { token, cacheKey, user: cached.user, ...publicUser(cached.user) };
+    }
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
       throw new HttpError(503, 'Jellyfin ne répond pas pour le moment.');
     }
     throw error;
   }
   if (response.status === 401 || response.status === 403) {
+    sessionCache.delete(cacheKey);
     throw new HttpError(401, 'La session Jellyfin a expiré.');
   }
-  if (!response.ok) throw new HttpError(503, `Validation Jellyfin indisponible (${response.status}).`);
+  if (!response.ok) {
+    if (cached && cached.expiresAt > Date.now() && cached.user?.Id) {
+      cached.validationExpiresAt = Date.now() + 15_000;
+      return { token, cacheKey, user: cached.user, ...publicUser(cached.user) };
+    }
+    throw new HttpError(503, `Validation Jellyfin indisponible (${response.status}).`);
+  }
 
   const user = await response.json();
   if (!user?.Id) throw new HttpError(401, 'Utilisateur Jellyfin introuvable.');
@@ -414,10 +482,9 @@ function strictResumeItems(items, limit = 12) {
     const userData = item?.UserData || {};
     const position = Number(userData.PlaybackPositionTicks || 0);
     const runtime = Number(item?.RunTimeTicks || 0);
-    const playedPercentage = Number(userData.PlayedPercentage);
-    if (!id || seen.has(id) || userData.Played === true || !(position > 0)) return false;
-    if (Number.isFinite(playedPercentage) && playedPercentage >= 99) return false;
-    if (runtime > 0 && position >= runtime * .99) return false;
+    if (!id || seen.has(id) || !Number.isFinite(position) || position <= 0) return false;
+    // Jellyfin conserve « vu » lors d'un revisionnage. La position active prime.
+    if (runtime > 0 ? position >= runtime * .99 : Number(userData.PlayedPercentage) >= 99) return false;
     seen.add(id);
     return true;
   }).slice(0, Math.max(0, Number(limit) || 0));
@@ -1176,6 +1243,44 @@ async function jellyseerrDestinations(mediaType) {
   };
 }
 
+// Rangement automatique d'une demande ou d'un téléchargement : animés (animation
+// japonaise) à part des séries, films d'animation à part des films.
+async function mediaCategoryFor(mediaType, tmdbId) {
+  const type = mediaType === 'tv' ? 'tv' : 'movie';
+  const detail = await requestMetadataDetail(type, tmdbId).catch(() => null);
+  const genres = [...(Array.isArray(detail?.genres) ? detail.genres : []), ...(Array.isArray(detail?.genreIds) ? detail.genreIds : [])]
+    .map(genre => Number(typeof genre === 'object' ? genre?.id : genre));
+  const keywordRows = Array.isArray(detail?.keywords) ? detail.keywords : (detail?.keywords?.results || detail?.keywords?.keywords || []);
+  const keywords = keywordRows.map(keyword => String(keyword?.name || keyword || '').toLowerCase());
+  const countries = [...(detail?.originCountry || detail?.origin_country || []), ...((detail?.productionCountries || []).map(country => country?.iso_3166_1))];
+  const japanese = String(detail?.originalLanguage || detail?.original_language || '').toLowerCase() === 'ja' || countries.includes('JP');
+  const animation = genres.includes(16);
+  const anime = keywords.includes('anime') || (animation && japanese);
+  if (type === 'tv') return anime ? 'animes' : 'series';
+  return animation || anime ? 'animation' : 'films';
+}
+
+const mediaCategoryFolderPatterns = {
+  animes: [/(?:^|[^a-z])anim[eé]s?(?:$|[^a-z])|manga|japanim/i],
+  animation: [/animation|dessins?[ _-]*anim/i, /anim[eé]s?(?:$|[^a-z])|cartoon/i],
+  series: [/s[eé]ries?|shows?|(?:^|[^a-z])tv(?:$|[^a-z])/i],
+  films: [/films?|movies?|cin[eé]ma/i]
+};
+
+/** Dossier d'une catégorie parmi ceux proposés (nom du dernier dossier du chemin). */
+function folderForMediaCategory(paths, category, fallback = '') {
+  const list = (paths || []).map(String).filter(Boolean);
+  const leaf = path => path.split('/').filter(Boolean).at(-1) || path;
+  const plain = ['series', 'films'].includes(category);
+  for (const pattern of mediaCategoryFolderPatterns[category] || []) {
+    const match = list.find(path => pattern.test(leaf(path)) && !(plain && /anim|manga|trash|corbeille/i.test(leaf(path))) && !/trash|corbeille/i.test(leaf(path)));
+    if (match) return match;
+  }
+  return fallback || list.find(path => !/trash|corbeille/i.test(leaf(path))) || list[0] || '';
+}
+
+const mediaCategoryLabels = { animes: 'Animés', series: 'Séries', animation: 'Films d’animation', films: 'Films' };
+
 let cachedQbitCookie = '';
 let cachedQbitCookieUntil = 0;
 
@@ -1911,6 +2016,98 @@ async function renameMediaEntry(rootId, relativePath, newName) {
   if (await stat(target).catch(() => null)) throw new HttpError(409, 'Un élément porte déjà ce nom.');
   await rename(source.absolute, target);
   return { ok: true, path: relativeMediaPath(source.rootReal, target) };
+}
+
+/** Déplace un fichier ou un dossier vers un autre dossier (même médiathèque ou une autre). */
+async function moveMediaEntry(rootId, relativePath, targetRootId, targetPath = '') {
+  const source = await existingMediaPath(rootId, relativePath);
+  if (!source.clean) throw new HttpError(400, 'La racine ne peut pas être déplacée.');
+  const destination = await existingMediaPath(targetRootId, targetPath);
+  const destinationInfo = await lstat(destination.absolute);
+  if (!destinationInfo.isDirectory()) throw new HttpError(400, 'La destination doit être un dossier.');
+  if (pathIsInside(source.absolute, destination.absolute)) throw new HttpError(400, 'Un dossier ne peut pas être déplacé dans lui-même.');
+  const target = join(destination.absolute, basename(source.absolute));
+  if (!pathIsInside(destination.rootReal, target)) throw new HttpError(400, 'Destination invalide.');
+  if (target === source.absolute) throw new HttpError(400, 'L’élément est déjà dans ce dossier.');
+  if (await stat(target).catch(() => null)) throw new HttpError(409, 'Un élément porte déjà ce nom dans la destination.');
+  try {
+    await rename(source.absolute, target);
+  } catch (error) {
+    // Médiathèques sur des disques différents : copie puis suppression de l'original.
+    if (error?.code !== 'EXDEV') throw error;
+    await cp(source.absolute, target, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false });
+    await rm(source.absolute, { recursive: true, force: true });
+  }
+  return { ok: true, root: destination.root.id, path: relativeMediaPath(destination.rootReal, target), message: `« ${basename(source.absolute)} » déplacé.` };
+}
+
+// MARK: Stockage de la seedbox (administrateurs)
+
+function runCommand(command, args, timeoutMs) {
+  return new Promise((resolveCommand, rejectCommand) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } }, (error, stdout) => {
+      if (error && !stdout) rejectCommand(error);
+      else resolveCommand(String(stdout || ''));
+    });
+  });
+}
+
+/** Quota du compte (seedbox mutualisée) : « quota -w -p », blocs de 1 Kio. */
+function parseQuotaOutput(text) {
+  for (const line of String(text || '').split('\n')) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 4 || !/^\d+\*?$/.test(fields[1] || '')) continue;
+    const used = Number(fields[1].replace('*', '')) * 1024;
+    const soft = Number(fields[2]) * 1024;
+    const hard = Number(fields[3]) * 1024;
+    const limit = soft || hard;
+    if (limit > 0) return { used, limit, free: Math.max(0, limit - used), filesystem: fields[0] };
+  }
+  return null;
+}
+
+const mediaRootSizeCache = { sizes: [], updatedAt: 0, running: null };
+
+/** Taille de chaque médiathèque (du), recalculée en arrière-plan au plus toutes les 10 minutes. */
+function refreshMediaRootSizes() {
+  if (mediaRootSizeCache.running) return mediaRootSizeCache.running;
+  mediaRootSizeCache.running = (async () => {
+    const sizes = [];
+    for (const root of mediaRoots) {
+      const real = await realpath(root.path).catch(() => null);
+      if (!real) continue;
+      const output = await runCommand('du', ['-s', '--block-size=1', real], 300_000).catch(() => '');
+      const bytes = Number(output.trim().split(/\s+/)[0]);
+      if (Number.isFinite(bytes)) sizes.push({ id: root.id, label: root.label, bytes });
+    }
+    mediaRootSizeCache.sizes = sizes;
+    mediaRootSizeCache.updatedAt = Date.now();
+  })().finally(() => { mediaRootSizeCache.running = null; });
+  return mediaRootSizeCache.running;
+}
+
+async function seedboxStorage(force = false) {
+  const home = process.env.HOME || '/';
+  const [quotaText, disk] = await Promise.all([
+    runCommand('quota', ['-w', '-p'], 8_000).catch(() => ''),
+    statfs(home).catch(() => null)
+  ]);
+  const quota = parseQuotaOutput(quotaText);
+  const total = disk ? Number(disk.blocks) * Number(disk.bsize) : 0;
+  const free = disk ? Number(disk.bavail) * Number(disk.bsize) : 0;
+  const filesystem = disk ? { total, free, used: Math.max(0, total - Number(disk.bfree) * Number(disk.bsize)) } : null;
+  if (force || Date.now() - mediaRootSizeCache.updatedAt > 10 * 60_000) void refreshMediaRootSizes().catch(() => undefined);
+  const capacity = quota ? { source: 'quota', used: quota.used, total: quota.limit, free: quota.free }
+    : filesystem ? { source: 'disk', used: filesystem.used, total: filesystem.total, free: filesystem.free } : null;
+  return {
+    capacity,
+    quota,
+    disk: filesystem,
+    libraries: mediaRootSizeCache.sizes,
+    librariesUpdatedAt: mediaRootSizeCache.updatedAt || null,
+    librariesComputing: Boolean(mediaRootSizeCache.running),
+    checkedAt: Date.now()
+  };
 }
 
 async function trashMediaEntry(rootId, relativePath) {
@@ -3729,6 +3926,7 @@ async function grabDiscoveryTorrent(body) {
       if (!location) throw new HttpError(502, 'Redirection du tracker invalide.');
       url = new URL(location, url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new HttpError(502, 'Redirection du tracker non prise en charge.');
+      if (url.origin !== original.origin) await assertPublicTvUrl(url.toString());
     }
     if (!response.ok) { await response.body?.cancel(); throw new HttpError(502, `Le tracker a refusé le fichier (${response.status}). Actualise la recherche.`); }
     if (Number(response.headers.get('content-length') || 0) > 8 * 1024 * 1024) { await response.body?.cancel(); throw new HttpError(413, 'Fichier .torrent trop volumineux.'); }
@@ -3849,7 +4047,7 @@ async function loadProwlarrAvailability(mediaType, title, year = '', options = {
     ? indexerIds
     : (prowlarrIndexerCache.fastIds?.filter(id => indexerIds.includes(id)) || []).slice(0, 2);
   const { rows, rejectedRows, query, error: searchError, checkedIndexerIds } = await searchTrackerReleases({
-    mediaType, identity, indexerIds, preferredIndexerIds, exhaustive: force,
+    mediaType, identity, indexerIds, preferredIndexerIds, exhaustive: force, patient: Boolean(options?.patient),
     request: async (path, requestOptions) => (await prowlarrRequest(path, requestOptions)).payload
   });
   const lastError = searchError || (tmdbId && !metadata ? new Error('Métadonnées du titre indisponibles. Relance la vérification.') : null);
@@ -4710,6 +4908,24 @@ async function setArrMonitored(type, id, monitored) {
   return result;
 }
 
+/** Change le dossier racine d'un film ou d'une série : Radarr/Sonarr déplacent les fichiers. */
+async function moveArrItem(type, id, rootFolder) {
+  const service = arrService(type);
+  const folders = (await arrSettings(type)).rootFolders.map(folder => folder.path);
+  const targetRoot = String(rootFolder || '').trim();
+  if (!folders.includes(targetRoot)) throw new HttpError(400, 'Dossier racine inconnu de ' + (service.isSonarr ? 'Sonarr.' : 'Radarr.'));
+  const kind = service.isSonarr ? 'series' : 'movie';
+  const item = await arr(service.url, service.apiKey, `/api/v3/${kind}/${id}`);
+  const folderName = String(item?.path || '').split('/').filter(Boolean).at(-1) || item?.folder || item?.title;
+  if (!folderName) throw new HttpError(409, 'Dossier actuel introuvable.');
+  const nextPath = `${targetRoot.replace(/\/+$/, '')}/${folderName}`;
+  if (nextPath === item.path) return { ok: true, path: nextPath, message: 'Déjà dans ce dossier.' };
+  const updated = { ...item, path: nextPath, rootFolderPath: targetRoot };
+  await arrRequest(service.url, service.apiKey, `/api/v3/${kind}/${id}?moveFiles=true`, { method: 'PUT', body: JSON.stringify(updated) });
+  arrCatalogCache.delete(type);
+  return { ok: true, path: nextPath, message: `Déplacement vers ${targetRoot} lancé par ${service.isSonarr ? 'Sonarr' : 'Radarr'}.` };
+}
+
 async function runArrCommand(type, body) {
   const service = arrService(type);
   const allowed = new Set([
@@ -4748,6 +4964,48 @@ const tvProviderChildReferenceCache = new Map();
 // à la chaîne + variante + media-sequence. Une URL CDN signée peut ainsi être
 // renouvelée sans que HLS.js change de ressource locale en plein direct.
 const liveWatchStableMediaResourceCache = new Map();
+const liveWatchVariantUrlCache = new Map();
+
+function pruneBoundedMap(map, maxEntries, now = Date.now()) {
+  if (!(map instanceof Map) || map.size === 0) return;
+  for (const [key, entry] of map) {
+    if (entry && typeof entry === 'object') {
+      const expiresAt = Number(entry.expiresAt || 0);
+      if (expiresAt > 0 && expiresAt <= now && !entry.pending) map.delete(key);
+    }
+  }
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+const runtimeCacheReaper = setInterval(() => {
+  const now = Date.now();
+  pruneBoundedMap(sessionCache, 250, now);
+  pruneBoundedMap(identificationJobs, 120, now);
+  pruneBoundedMap(arrCatalogCache, 16, now);
+  pruneBoundedMap(seriesStatusCache, 600, now);
+  pruneBoundedMap(discoveryCache, 400, now);
+  pruneBoundedMap(discoverySeedCache, 400, now);
+  pruneBoundedMap(discoveryStatusCache, 1200, now);
+  pruneBoundedMap(requestMetadataCache, 1200, now);
+  pruneBoundedMap(discoveryCatalogCache, 120, now);
+  pruneBoundedMap(tasteProfileCache, 100, now);
+  pruneBoundedMap(trackerAvailabilityCache, 800, now);
+  pruneBoundedMap(discoveryGrabReleases, 4000, now);
+  pruneBoundedMap(discoveryPlatformCache, 250, now);
+  pruneBoundedMap(discoveryProviderListCache, 64, now);
+  pruneBoundedMap(tvCatalogCache, 120, now);
+  pruneBoundedMap(tvEpgCache, 64, now);
+  pruneBoundedMap(tvReferences, 12000, now);
+  pruneBoundedMap(liveWatchVipDirectCache, 1500, now);
+  pruneBoundedMap(tvProviderChildReferenceCache, 8000, now);
+  pruneBoundedMap(liveWatchStableMediaResourceCache, 6000, now);
+  pruneBoundedMap(liveWatchVariantUrlCache, 1500, now);
+}, 5 * 60_000);
+runtimeCacheReaper.unref?.();
 
 function tvLogoIdentityKeys(value) {
   const raw = String(value || '')
@@ -4960,22 +5218,143 @@ async function iptvOrgLogoIndex(waitForRefresh = false) {
   return waitForRefresh || !previousMap ? iptvOrgLogoCache.promise : iptvOrgLogoCache;
 }
 
+// 200.0.153 : second référentiel de logos, tv-logo/tv-logos (PNG pour fonds sombres,
+// plus de 10 000 chaînes). Il couvre des chaînes absentes d'iptv-org (RMC Sport Live,
+// Ligue 1+, Multisports, DAZN…) et ses PNG s'affichent partout, y compris sur iPhone
+// qui ne lit pas le SVG. Liste des fichiers gardée sur disque une semaine.
+const tvLogosRepoIndexPath = join(runtimeRoot, 'tv-logos-repo-index.json');
+const tvLogosRepoSchemaVersion = 1;
+const tvLogosRepoCountryRank = { france: 0, belgium: 1, switzerland: 1, luxembourg: 1, canada: 1, international: 2, 'world-europe': 3, 'united-kingdom': 4, 'united-states': 4 };
+let tvLogosRepoCache = { expiresAt: 0, map: null, promise: null };
+let tvLogosRepoDiskChecked = false;
+
+function tvLogosRepoEntry(pathValue) {
+  const match = /^countries\/(.+)\/([^/]+)\.png$/i.exec(String(pathValue || ''));
+  if (!match) return null;
+  const folders = match[1].toLowerCase().split('/');
+  const country = folders[0] === 'nordic' ? (folders[1] || 'nordic') : folders[0];
+  // Suffixe de pays du fichier : « -fr », « -fr-be »…
+  const slug = match[2].toLowerCase().replace(/-(?:(?:fr|nl|de|en|it|ar)-)?[a-z]{2}$/, '');
+  if (!slug) return null;
+  // « canal-plus-sport » est « Canal+ Sport », « ligue-1plus-2 » est « Ligue 1+ 2 ».
+  const plus = slug.replace(/(^|-)plus(?=-|$)/g, '$1+').replace(/(\d)plus(?=-|$)/g, '$1+').replace(/-/g, ' ');
+  const plain = slug.replace(/-/g, ' ');
+  return {
+    path: match[0],
+    country,
+    rank: tvLogosRepoCountryRank[country] ?? 5,
+    hd: folders.includes('hd'),
+    names: plus === plain ? [plain] : [plus, plain]
+  };
+}
+
+function buildTvLogosRepoIndex(paths) {
+  const entries = (Array.isArray(paths) ? paths : []).map(tvLogosRepoEntry).filter(Boolean);
+  entries.sort((left, right) => left.rank - right.rank || Number(left.hd) - Number(right.hd) || left.path.localeCompare(right.path));
+  const index = new Map();
+  for (const entry of entries) {
+    const logo = `https://raw.githubusercontent.com/tv-logo/tv-logos/main/${entry.path.split('/').map(encodeURIComponent).join('/')}`;
+    for (const name of entry.names) {
+      for (const key of tvLogoIdentityKeys(name)) {
+        // Clé d'une seule lettre (« a-tv » donne « a ») : « A+ » prendrait ce logo.
+        if (key.replace(/^compact:/, '').replace(/[^a-z0-9]/g, '').length < 2) continue;
+        if (!index.has(key)) index.set(key, { logo, name, country: entry.country });
+      }
+    }
+  }
+  return index;
+}
+
+async function tvLogosRepoIndex() {
+  if (!tvLogosRepoDiskChecked) {
+    tvLogosRepoDiskChecked = true;
+    try {
+      const saved = JSON.parse(await readFile(tvLogosRepoIndexPath, 'utf8'));
+      if (saved?.version === tvLogosRepoSchemaVersion && Array.isArray(saved.paths) && saved.paths.length) {
+        tvLogosRepoCache = { expiresAt: Number(saved.expiresAt || 0), map: buildTvLogosRepoIndex(saved.paths), promise: null };
+      }
+    } catch {}
+  }
+  if (tvLogosRepoCache.map && tvLogosRepoCache.expiresAt > Date.now()) return tvLogosRepoCache.map;
+  if (!tvLogosRepoCache.promise) {
+    const previous = tvLogosRepoCache.map;
+    tvLogosRepoCache.promise = (async () => {
+      const response = await fetchTvRemote('https://api.github.com/repos/tv-logo/tv-logos/git/trees/main?recursive=1', {
+        signal: AbortSignal.timeout(25_000),
+        headers: { accept: 'application/vnd.github+json', 'user-agent': 'Noctra-Media-Client/151' }
+      });
+      if (!response.ok) throw new Error(`liste tv-logos indisponible (${response.status})`);
+      const payload = await response.json();
+      const paths = (Array.isArray(payload?.tree) ? payload.tree : [])
+        .filter(item => item?.type === 'blob')
+        .map(item => String(item.path || ''))
+        .filter(path => /^countries\/.+\.png$/i.test(path));
+      if (!paths.length) throw new Error('liste tv-logos vide');
+      const expiresAt = Date.now() + 7 * 24 * 60 * 60_000;
+      tvLogosRepoCache = { expiresAt, map: buildTvLogosRepoIndex(paths), promise: null };
+      await mkdir(runtimeRoot, { recursive: true }).catch(() => undefined);
+      await writeFile(tvLogosRepoIndexPath, JSON.stringify({ version: tvLogosRepoSchemaVersion, savedAt: Date.now(), expiresAt, paths })).catch(() => undefined);
+      return tvLogosRepoCache.map;
+    })().catch(error => {
+      tvLogosRepoCache = { expiresAt: Date.now() + 30 * 60_000, map: previous || new Map(), promise: null };
+      console.warn('Noctra TV : logos tv-logos indisponibles.', error?.message || error);
+      return tvLogosRepoCache.map;
+    });
+  }
+  // Liste du disque encore utilisable : l'affichage n'attend pas sa mise à jour.
+  return tvLogosRepoCache.map || tvLogosRepoCache.promise;
+}
+
+// Chaînes d'événements numérotées (« AMAZON PRIME 3 », « C+Live 12 », « RMC Sport 7 ») :
+// sans logo propre, elles prennent celui de leur famille quand il existe.
+const tvLogoFamilyAliases = new Map([
+  ['c live', 'Canal+'], ['canal live', 'Canal+'], ['canal plus live', 'Canal+'],
+  ['amazon prime', 'Prime Video'], ['amazon prime video', 'Prime Video']
+]);
+
+function tvLogoFamilyNames(value) {
+  const name = String(value || '').trim();
+  const family = name.replace(/[\s._-]*\d{1,3}\s*$/, '').trim();
+  if (!family || family === name || !/[a-z]{2}/i.test(family)) return [];
+  const alias = tvLogoFamilyAliases.get(normalizedIdentifier(family));
+  return alias ? [family, alias] : [family];
+}
+
+function tvLogoLookup(index, names) {
+  if (!index?.size) return null;
+  for (const name of names || []) {
+    for (const key of tvLogoIdentityKeys(name)) {
+      const match = index.get(key);
+      if (match) return match;
+    }
+  }
+  return null;
+}
+
 async function enrichTvLogosFromIptvOrg(channels, preferFresh = false, waitForRefresh = false) {
   const metadata = await iptvOrgLogoIndex(waitForRefresh);
   const index = metadata?.map;
-  if (!index?.size) return channels;
+  const repo = await tvLogosRepoIndex().catch(() => null);
+  if (!index?.size && !repo?.size) return channels;
   return (channels || []).map(channel => {
-    let match = [channel?.iptvOrgId, channel?.epgId]
+    let match = !index?.size ? null : [channel?.iptvOrgId, channel?.epgId]
       .map(tvLogoChannelIdKey)
       .filter(Boolean)
       .map(key => index.get(key))
       .find(Boolean) || null;
-    for (const key of tvLogoIdentityKeys(channel?.name)) {
-      if (match) break;
-      match = index.get(key);
-      if (match) break;
+    if (!match) match = tvLogoLookup(index, [channel?.name]);
+    if (!match) {
+      // Autre référentiel, puis famille d'une chaîne numérotée : ils complètent le logo
+      // de la source (logo de secours), ou le précèdent quand la source est peu fiable.
+      const extra = tvLogoLookup(repo, [channel?.name])
+        || tvLogoLookup(index, tvLogoFamilyNames(channel?.name))
+        || tvLogoLookup(repo, tvLogoFamilyNames(channel?.name));
+      if (!extra?.logo || extra.logo === channel?.logo) return channel;
+      if (!channel.logo) return { ...channel, logo: extra.logo };
+      // Sources aux logos peu fiables (LiveWatch, WiTV, OHA) : le référentiel passe devant.
+      if (preferFresh) return { ...channel, logo: extra.logo, secondaryLogo: channel.logo };
+      return channel.secondaryLogo ? channel : { ...channel, secondaryLogo: extra.logo };
     }
-    if (!match) return channel;
     const fallbackLogo = match.logo || '';
     const primaryLogo = preferFresh && fallbackLogo ? fallbackLogo : (channel.logo || fallbackLogo);
     const secondaryLogo = preferFresh && fallbackLogo && channel.logo && channel.logo !== fallbackLogo
@@ -5056,12 +5435,16 @@ function safeTvRemoteUrl(value) {
   const host = url.hostname.toLocaleLowerCase('en').replace(/^\[|\]$/g, '');
   const privateHost = host === 'localhost'
     || host === '::1'
+    || host === '::'
+    || host === '0.0.0.0'
     || host.endsWith('.local')
     || /^127\./.test(host)
     || /^10\./.test(host)
     || /^192\.168\./.test(host)
     || /^169\.254\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    || /^(?:fc|fd|fe[89ab])[0-9a-f]*:/i.test(host)
+    || /^::ffff:(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|7f|0a|c0a8|a9fe|ac1[0-f]|ac[23][0-9a-f])/i.test(host);
   if (privateHost) throw new HttpError(400, 'Les adresses réseau privées ne peuvent pas être utilisées comme source TV.');
   return url;
 }
@@ -5087,11 +5470,12 @@ function tvBridgeMediaResponseAllowed(urlValue, contentTypeValue = '') {
 function privateTvAddress(address) {
   const value = String(address || '').toLowerCase();
   return value === '::1'
+    || value === '::'
     || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')
     || /^127\./.test(value) || /^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)
     || /^172\.(1[6-9]|2\d|3[01])\./.test(value)
     || /^0\./.test(value)
-    || /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value);
+    || /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.|7f|0a|c0a8|a9fe|ac1[0-f]|ac[23][0-9a-f])/.test(value);
 }
 
 async function assertPublicTvUrl(urlValue) {
@@ -5106,7 +5490,7 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
   let url = await assertPublicTvUrl(currentLiveWatchUrl(urlValue instanceof URL ? urlValue.toString() : urlValue));
   let requestOptions = { ...options, headers: { ...(options.headers || {}) } };
   for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
-    const response = await fetch(url, { ...requestOptions, redirect: 'manual' });
+    const response = await fetch(url, { ...requestOptions, headers: wiTvRequestHeaders(url, requestOptions.headers), redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get('location');
     if (!location) return response;
@@ -5119,13 +5503,14 @@ async function fetchTvRemote(urlValue, options = {}, maxRedirects = 7) {
       // revanche conservées lors d'une redirection strictement OHA -> OHA
       // (www/oha.cx), sinon un redirect canonique casserait l'appel
       // signé avant même que le client officiel puisse recevoir sa réponse.
-      const trustedOhaRedirect = /^(?:www\.)?oha\.(?:to|cx)$/i.test(url.hostname)
-        && /^(?:www\.)?oha\.(?:to|cx)$/i.test(nextUrl.hostname);
+      const trustedOhaRedirect = ohaAllowedHost(url.toString()) && ohaAllowedHost(nextUrl.toString());
       // 200.0.134 : redirection vers un sous-domaine LiveWatch (serveur de flux) : session VIP conservée.
       const trustedLiveWatchRedirect = isLiveWatchFamilyHost(url.hostname) && isLiveWatchFamilyHost(nextUrl.hostname);
       const trustedProviderRedirect = trustedOhaRedirect || trustedLiveWatchRedirect;
       const strip = [
         ...(trustedLiveWatchRedirect ? [] : ['authorization', 'apikey']),
+        // 200.0.142 : l'autorisation de lecture LiveWatch ne quitte jamais LiveWatch.
+        ...(trustedLiveWatchRedirect ? [] : ['x-play-grant']),
         ...(trustedProviderRedirect ? [] : ['cookie']),
         ...(trustedOhaRedirect ? [] : ['mediahubmx-signature', 'mediaurl-signature'])
       ];
@@ -5229,7 +5614,7 @@ function decodeTvWrappedUrl(value) {
 
 function normalizeTvSourceType(value) {
   const type = String(value || 'auto').toLocaleLowerCase('en');
-  return ['auto', 'playlist', 'json', 'livewatch', 'witv', 'oha', 'fstv', 'dlstreams', 'streamsports99', 'streamed', 'volkamax', 'alternative', 'daddylive', 'brigitte', 'portal'].includes(type) ? type : 'auto';
+  return ['auto', 'playlist', 'json', 'livewatch', 'witv', 'oha', 'fstv', 'dlstreams', 'streamsports99', 'streamed', 'ppv', 'volkamax', 'alternative', 'daddylive', 'brigitte', 'portal'].includes(type) ? type : 'auto';
 }
 
 function optionalTvRemoteUrl(value) {
@@ -5855,7 +6240,7 @@ async function liveWatchBridgeRequest(kindValue, idValue, targetValue, req, res,
     for (const [name, value] of Object.entries(req?.headers || {})) {
       const lower = String(name || '').toLowerCase();
       if (!value || lower in headers) continue;
-      if (lower === 'prefer' || lower.startsWith('x-client-') || lower.startsWith('x-supabase-') || lower.startsWith('x-livewatch-')) headers[lower] = String(value).slice(0, 4096);
+      if (lower === 'prefer' || lower.startsWith('x-client-') || lower.startsWith('x-supabase-') || lower.startsWith('x-livewatch-') || lower.startsWith('x-play-')) headers[lower] = String(value).slice(0, 4096);
     }
     return headers;
   };
@@ -6059,16 +6444,19 @@ async function proxyLiveWatchVipTokenHttp(tokenValue, req, res, requestUrl) {
   });
 }
 
+const wiTvRoot = 'https://witv.eu/';
 const complementaryTvBuiltInSources = [
   { id: 'fstv-public', name: 'FSTV', section: 'channels', description: 'French Stream TV · catalogue public de chaînes', url: 'https://fstv.rest/', type: 'fstv', provider: 'FSTV' },
-  { id: 'witv-public', name: 'WiTV', section: 'channels', description: 'Catalogue public WiTV classé par catégories', url: 'https://witv.football/', type: 'witv', provider: 'WiTV' },
-  { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · source Kool actuelle', url: 'https://kool.ws/live', type: 'oha', provider: 'OHA' },
+  { id: 'witv-public', name: 'WiTV', section: 'channels', description: 'Catalogue public WiTV classé par catégories', url: wiTvRoot, type: 'witv', provider: 'WiTV' },
+  // Les catalogues OHA / Kool sont réunis par chaîne.
+  { id: 'oha-live', name: 'OHA / Kool', section: 'channels', description: 'Live TV · France · A–Z · huhu.bz (secours : kool.ws, vavoo.top, oha.cx)', url: 'https://huhu.bz/#/channels', type: 'oha', provider: 'OHA' },
   { id: 'streamsports99-live-tv', name: 'StreamSports99 TV', section: 'channels', description: 'Chaînes internationales · pays et programmes Live TV', url: 'https://streamsports99.su/live-tv', type: 'streamsports99', provider: 'StreamSports99' },
   { id: 'dlstreams-sports', name: 'DLStreams', section: 'sports', description: 'Programme sportif public · lecteurs intégrés DLStreams', url: 'https://dlstreams.st/', type: 'dlstreams', provider: 'DLStreams' },
-  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · streamed.pk', url: 'https://streamed.pk/', type: 'streamed', provider: 'Streamed' },
-  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH-Sport / Volkamax · catégories et chaînes sportives', url: 'https://bzh-sport.lat/', type: 'volkamax', provider: 'Volkamax' },
+  { id: 'streamed-sports', name: 'Streamed', section: 'sports', description: 'Événements sportifs publics · strmfree.pk', url: 'https://strmfree.pk/', type: 'streamed', provider: 'Streamed' },
+  { id: 'ppv-sports', name: 'PPV', section: 'sports', description: 'Événements sportifs publics · rockylive.st (secours : tim-streams.com)', url: 'https://rockylive.st/', type: 'ppv', provider: 'PPV' },
+  { id: 'volkamax-sports', name: 'Volkamax', section: 'sports', description: 'BZH / Volkamax · événements et chaînes sportives', url: 'https://volkamax.club/', type: 'volkamax', provider: 'Volkamax' },
   { id: 'daddylive-sports', name: 'DaddyLive', section: 'sports', description: 'Programme sportif · lecteurs DaddyLive intégrés', url: 'https://dlive.sx/', type: 'daddylive', provider: 'DaddyLive' },
-  { id: 'brigitte-sports', name: 'BrigitteTV', section: 'sports', description: 'Programme QuelleFrappe · lecteur du fournisseur', url: 'https://quellefrappe.click/prog.php', type: 'brigitte', provider: 'BrigitteTV' },
+  { id: 'brigitte-sports', name: 'Streamonsport', section: 'sports', description: 'Programme Streamonsport · lecteur du fournisseur', url: 'https://choc2foot.biz/', type: 'brigitte', provider: 'Streamonsport' },
   { id: 'xtemus-box', name: 'Xtemus · Ma sélection', section: 'personal', description: 'Playlist Xtemus · portail du fournisseur', url: 'https://box.xtemus.com/?playlist=u256y494u21596x2', type: 'portal', provider: 'Xtemus' },
   { id: 'haloule-alternatives', name: 'Alternative', section: 'alternatives', description: 'Chaînes et variantes · Haloule section 1.1', url: 'https://www.haloule.com/2024/01/meilleurs-sites-applications-android-PC-regarder-live-tv-gratuitement.html', type: 'alternative', provider: 'Haloule' }
 ].map(source => ({ ...source, origin: 'builtin', editable: false }));
@@ -6282,6 +6670,25 @@ function decodeTvStateReference(tokenValue, expectedKind = '') {
   }
 }
 
+/** Adresse locale du serveur pour ffmpeg (multiview diffusé). */
+function tvMosaicLoopbackHost() {
+  if (!host || host === '0.0.0.0' || host === '::' || host === 'localhost') return '127.0.0.1';
+  return host.includes(':') ? `[${host}]` : host;
+}
+
+/** ffmpeg de Jellyfin (même machine) proposé pour composer le multiview diffusé. */
+async function jellyfinFfmpegPaths() {
+  if (!jellyfinUrl || !process.env.JELLYFIN_API_KEY) return [];
+  try {
+    const response = await fetch(`${jellyfinUrl}/System/Configuration/encoding`, { headers: jellyfinHeaders(), signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return [];
+    const config = await response.json();
+    return [config?.EncoderAppPathDisplay, config?.EncoderAppPath].filter(value => typeof value === 'string' && value);
+  } catch {
+    return [];
+  }
+}
+
 function tvPublicStreamUrl(token) {
   return publicPath(`/api/tv/stream/${token}`);
 }
@@ -6395,16 +6802,28 @@ function tvFallbackImageUrl(labelValue) {
   return publicPath(`/api/tv/image/${token}`);
 }
 
-function tvPublicImageUrl(urlValue, labelValue = '') {
+function tvPublicImageUrl(urlValue, labelValue = '', alternateValue = '') {
   const raw = String(urlValue || '').trim();
   if (!raw) return tvFallbackImageUrl(labelValue);
   if (!/^https?:\/\//i.test(raw)) return raw;
   try {
     const normalized = safeTvRemoteUrl(raw).toString();
+    // 200.0.153 : second logo essayé par le serveur si le premier ne répond plus.
+    // Les applis iPhone et Android n'ont qu'une adresse par chaîne ; sans lui,
+    // un logo de source mort laissait une case vide.
+    let alternate = '';
+    try {
+      const rawAlternate = String(alternateValue || '').trim();
+      if (/^https?:\/\//i.test(rawAlternate)) alternate = safeTvRemoteUrl(rawAlternate).toString();
+    } catch {}
     // Référence stateless : elle survit aux redémarrages du processus et
     // produit toujours la même URL, ce qui rend enfin le cache navigateur
     // réellement efficace pour les grands catalogues.
-    const token = signedTvImageToken({ u: normalized, n: String(labelValue || '').trim().slice(0, 120) });
+    const token = signedTvImageToken({
+      u: normalized,
+      n: String(labelValue || '').trim().slice(0, 120),
+      ...(alternate && alternate !== normalized ? { a: alternate } : {})
+    });
     return publicPath(`/api/tv/image/${token}`);
   } catch {
     return tvFallbackImageUrl(labelValue);
@@ -6417,7 +6836,7 @@ function decorateTvCatalogImages(catalog) {
     ...item,
     // Lorsqu'une seconde source existe, laisser le premier <img> echouer permet
     // au client de tenter ce vrai logo au lieu de figer un SVG genere prioritaire.
-    logo: tvPublicImageUrl(item.logo, item.secondaryLogo ? '' : item.name),
+    logo: tvPublicImageUrl(item.logo, item.secondaryLogo ? '' : item.name, item.secondaryLogo),
     secondaryLogo: tvPublicImageUrl(item.secondaryLogo),
     image: tvPublicImageUrl(item.image)
   } : item;
@@ -7065,6 +7484,118 @@ function liveWatchStreamUrlFromPayload(payload) {
   return visit(payload);
 }
 
+// LiveWatch peut refuser (401/403) un appel qui ne ressemble pas à son lecteur. Le serveur
+// alterne alors avec les en-têtes d'un navigateur sur le lecteur officiel (origine, langue,
+// cookies de la page du lecteur) et garde le mode qui fonctionne.
+const liveWatchBrowserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
+// 200.0.143 : l'autorisation de lecture est liée au navigateur qui l'a obtenue : mode navigateur par défaut.
+let liveWatchClientMode = { browser: true, changedAt: 0 };
+
+function switchLiveWatchClientMode() {
+  // Plusieurs requêtes échouent souvent ensemble : une seule bascule à la fois.
+  if (Date.now() - liveWatchClientMode.changedAt < 15_000) return false;
+  liveWatchClientMode = { browser: !liveWatchClientMode.browser, changedAt: Date.now() };
+  return true;
+}
+
+function liveWatchClientHeaders(playerPath, browser = liveWatchClientMode.browser) {
+  return browser
+    ? { 'user-agent': liveWatchBrowserAgent, origin: liveWatchOrigin, referer: `${liveWatchOrigin}${playerPath}`, 'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6' }
+    : { 'user-agent': 'Noctra-Media-Client/87', referer: `${liveWatchOrigin}${playerPath}` };
+}
+
+/** En-têtes d'une requête vers LiveWatch repris d'une référence de flux (mode navigateur compris). */
+function liveWatchForwardHeaders(headers = {}) {
+  return {
+    'user-agent': headers['user-agent'] || 'Noctra-Media-Client/87',
+    ...(headers.referer ? { referer: headers.referer } : {}),
+    ...(headers.origin ? { origin: headers.origin } : {}),
+    ...(headers['accept-language'] ? { 'accept-language': headers['accept-language'] } : {}),
+    ...(headers.authorization ? { authorization: headers.authorization } : {}),
+    ...(headers['x-play-grant'] ? { 'x-play-grant': headers['x-play-grant'] } : {}),
+    ...(headers.cookie ? { cookie: headers.cookie } : {})
+  };
+}
+
+/** Cookies posés par la page du lecteur officiel (comme dans un navigateur), gardés avec ceux du pont VIP. */
+async function liveWatchPlayerCookies(kind, id, playerPath, session) {
+  const key = `${kind}:${id}`;
+  const known = liveWatchBridgeCookies.get(key);
+  if (known?.value && Date.now() - Number(known.updatedAt || 0) < 10 * 60_000) return known.value;
+  try {
+    const response = await fetchTvRemote(`${liveWatchOrigin}${playerPath}`, {
+      headers: { ...liveWatchClientHeaders(playerPath, true), accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8', authorization: `Bearer ${session.accessToken}` },
+      signal: AbortSignal.timeout(6_000)
+    });
+    const received = tvResponseCookieHeader(response);
+    try { await response.body?.cancel?.(); } catch {}
+    if (received) {
+      const value = mergeTvCookieHeaders(known?.value || '', received);
+      liveWatchBridgeCookies.set(key, { value, updatedAt: Date.now() });
+      return value;
+    }
+  } catch {}
+  return known?.value || '';
+}
+
+// 200.0.142 : LiveWatch exige une autorisation de lecture avant chaque flux (« grant_required »).
+// Comme son lecteur officiel : POST /api/play/grant avec la session du compte (VIP : tier « vip »),
+// puis en-tête X-Play-Grant sur les demandes de flux ; 425 = patienter puis recommencer.
+const liveWatchPlayGrants = new Map();
+
+async function liveWatchPlayGrant(session, force = false) {
+  const key = String(session?.userId || session?.email || 'vip');
+  const known = liveWatchPlayGrants.get(key);
+  if (!force && known?.value && known.exp - Date.now() > 120_000) return known.value;
+  if (known?.promise) return known.promise;
+  const promise = (async () => {
+    let last = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await fetchTvRemote(`${liveWatchOrigin}/api/play/grant`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/plain, */*',
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.accessToken}`,
+          origin: liveWatchOrigin,
+          referer: `${liveWatchOrigin}/`,
+          'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
+          'user-agent': liveWatchBrowserAgent
+        },
+        body: '{}',
+        signal: AbortSignal.timeout(10_000)
+      });
+      let data = {};
+      try { data = JSON.parse((await response.text()).slice(0, 64 * 1024) || '{}') || {}; } catch {}
+      if (response.status === 200 && data.grant) {
+        const value = String(data.grant);
+        liveWatchPlayGrants.set(key, { value, tier: String(data.tier || ''), exp: Date.now() + 1000 * Math.max(60, Number(data.expires_in) || 3600) });
+        return value;
+      }
+      last = { status: response.status, code: String(data?.code || data?.error || '') };
+      if (response.status === 425) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(3_000, 1000 * (Number(data?.retry_after) || 1) + 120)));
+        continue;
+      }
+      break;
+    }
+    throw new HttpError(last?.status === 401 ? 401 : 403, `LiveWatch refuse l’autorisation de lecture (${last?.status || 0}${last?.code ? ` · ${last.code}` : ''}).`);
+  })();
+  liveWatchPlayGrants.set(key, { ...(known || {}), promise });
+  try {
+    return await promise;
+  } finally {
+    const current = liveWatchPlayGrants.get(key);
+    if (current?.promise === promise) { delete current.promise; if (!current.value) liveWatchPlayGrants.delete(key); }
+  }
+}
+
+/** Autorisation déjà obtenue (pour un diagnostic) : palier et durée restante, sans la valeur. */
+function liveWatchPlayGrantInfo(session) {
+  const known = liveWatchPlayGrants.get(String(session?.userId || session?.email || 'vip'));
+  return known?.value ? { ok: true, tier: known.tier || '', expiresIn: Math.max(0, Math.round((known.exp - Date.now()) / 1000)) } : { ok: false };
+}
+
 async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, signal = null) {
   const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
   if (kind === 'page') throw new HttpError(422, 'Ce wrapper LiveWatch utilise le lecteur Premium officiel plutôt qu’une route HLS directe.');
@@ -7073,18 +7604,37 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
   if (cached && cached.expiresAt > Date.now() && tvReferences.has(String(cached.token || ''))) return cached.token;
   const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
   const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
-  const requestStream = async (session, retry = true) => {
+  const requestStream = async (session, attempt = 0, grantRetried = false) => {
     const endpointUrl = `${liveWatchOrigin}${apiPath}?vip=1&embed=1`;
+    const grant = await liveWatchPlayGrant(session, grantRetried).catch(() => '');
+    // Autorisation obtenue en navigateur : LiveWatch la refuse (grant_required) avec une autre identité.
+    const browser = Boolean(grant) || liveWatchClientMode.browser;
+    const client = liveWatchClientHeaders(playerPath, browser);
+    const playerCookie = browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
     const response = await fetchTvRemote(endpointUrl, {
       headers: {
         accept: 'application/json, application/vnd.apple.mpegurl, application/x-mpegURL, text/plain;q=0.8, */*;q=0.5',
         authorization: `Bearer ${session.accessToken}`,
-        referer: `${liveWatchOrigin}${playerPath}`,
-        'user-agent': 'Noctra-Media-Client/87'
+        ...client,
+        ...(grant ? { 'x-play-grant': grant } : {}),
+        ...(playerCookie ? { cookie: playerCookie } : {})
       },
       signal: AbortSignal.any([AbortSignal.timeout(Math.max(3_500, Number(timeoutMs) || 8_500)), ...(signal ? [signal] : [])])
     });
-    if (retry && [401, 403].includes(response.status)) return requestStream(await liveWatchAccessSession(true), false);
+    if (response.status === 403 && !grantRetried) {
+      // Autorisation expirée ou absente : nouvelle autorisation puis un seul nouvel essai, comme le lecteur officiel.
+      const body = await response.clone().text().catch(() => '');
+      if (/grant_required/.test(body)) {
+        try { await response.body?.cancel?.(); } catch {}
+        return requestStream(session, attempt, true);
+      }
+    }
+    if ([401, 403].includes(response.status) && attempt < 2) {
+      try { await response.body?.cancel?.(); } catch {}
+      // 1 : jeton VIP renouvelé ; 2 : autre manière de se présenter (lecteur dans un navigateur).
+      if (attempt === 1) liveWatchClientMode = { browser: !liveWatchClientMode.browser, changedAt: Date.now() };
+      return requestStream(attempt === 0 ? await liveWatchAccessSession(true) : session, attempt + 1, grantRetried);
+    }
     if (!response.ok) throw new HttpError(response.status, `LiveWatch VIP n’a pas pu ouvrir cette chaîne (${response.status}).`);
     const text = await response.text();
     if (text.length > 512 * 1024) throw new HttpError(413, 'La réponse LiveWatch est trop volumineuse.');
@@ -7114,13 +7664,14 @@ async function liveWatchStreamReference(kindValue, idValue, timeoutMs = 8_500, s
     const officialProxy = liveWatchHost && /^\/api\/(?:hls\b|proxy\b|stream\b|(?:daddy|north|frame)\/(?:proxy|stream)\b)/i.test(streamUrl.pathname);
     const publicHls = streamUrl.protocol === 'https:' && /\.m3u8?(?:$|[?#/])/i.test(streamUrl.toString());
     if (!officialProxy && !publicHls) throw new HttpError(502, 'LiveWatch a renvoyé une adresse de flux inattendue.');
-    const cookie = tvResponseCookieHeader(response);
+    const received = tvResponseCookieHeader(response);
+    const cookie = playerCookie && received ? mergeTvCookieHeaders(playerCookie, received) : (received || playerCookie);
     const inlinePlaylist = /^\s*#EXTM3U/i.test(text) || /mpegurl/i.test(contentType);
     const token = issueTvReference(streamUrl.toString(), {
       ...(liveWatchHost ? { authorization: `Bearer ${session.accessToken}` } : {}),
       ...(cookie && liveWatchHost ? { cookie } : {}),
-      referer: `${liveWatchOrigin}${playerPath}`,
-      'user-agent': 'Noctra-Media-Client/87'
+      ...(grant && liveWatchHost ? { 'x-play-grant': grant } : {}),
+      ...client
     }, inlinePlaylist ? { kind: 'livewatch-vip', provider: 'LiveWatch', forceHls: true } : { kind: 'livewatch-vip', provider: 'LiveWatch' });
     liveWatchVipDirectCache.set(cacheKey, { token, expiresAt: Date.now() + 45_000 });
     return token;
@@ -7210,15 +7761,16 @@ function liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders = {
   let partOffset = 0;
   let keyOffset = 0;
   let mapOffset = 0;
+  let pendingDuration = 0;
   for (const line of lines) {
     const match = line.trim().match(/^#EXT-X-MEDIA-SEQUENCE\s*:\s*(\d+)/i);
     if (match) { mediaSequence = Number(match[1]) || 0; break; }
   }
-  const add = (key, lineIndex, rawUrl, kind) => {
+  const add = (key, lineIndex, rawUrl, kind, duration = 0) => {
     try {
       const url = resolveTvUrl(rawUrl, baseUrl);
       const headers = tvChildReferenceHeaders(inheritedHeaders, baseUrl, url);
-      const value = { key, lineIndex, kind, url, headers };
+      const value = { key, lineIndex, kind, url, headers, duration };
       byKey.set(key, value);
       byLine.set(lineIndex, value);
     } catch {}
@@ -7228,9 +7780,14 @@ function liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders = {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (!trimmed.startsWith('#')) {
-      add(`s${mediaSequence + segmentOffset}`, lineIndex, trimmed, 'segment');
+      add(`s${mediaSequence + segmentOffset}`, lineIndex, trimmed, 'segment', pendingDuration);
+      pendingDuration = 0;
       segmentOffset += 1;
       partOffset = 0;
+      continue;
+    }
+    if (/^#EXTINF\s*:/i.test(trimmed)) {
+      pendingDuration = Number(trimmed.slice(8).split(',')[0]) || 0;
       continue;
     }
     if (/^#EXT-X-PART\s*:/i.test(trimmed)) {
@@ -7268,13 +7825,33 @@ function liveWatchMediaResourceCacheKey(kind, id, selector, resourceKey) {
   return `${kind}:${id}:${selector || 'root'}:${resourceKey}`;
 }
 
-function rememberLiveWatchMediaPointers(kind, id, selector, pointers) {
+function rememberLiveWatchMediaPointers(kind, id, selector, pointers, canWarm = false) {
   const now = Date.now();
+  const segments = [];
   for (const pointer of pointers?.byKey?.values?.() || []) {
+    const cacheKey = liveWatchMediaResourceCacheKey(kind, id, selector, pointer.key);
     liveWatchStableMediaResourceCache.set(
-      liveWatchMediaResourceCacheKey(kind, id, selector, pointer.key),
+      cacheKey,
       { ...pointer, expiresAt: now + 30_000 }
     );
+    if (canWarm && pointer.kind === 'segment' && pointer.duration > 0) {
+      segments.push({ cacheKey, pointer });
+    }
+  }
+  if (canWarm && segments.length && typeof tvSegmentCache !== 'undefined' && typeof fetchTvRemoteUntilHeaders === 'function' && process.env.NOCTRA_TV_PREFETCH !== '0') {
+    let distance = 0, start = segments.length - 1;
+    for (; start > 0; start--) {
+      distance += segments[start].pointer.duration;
+      if (distance >= 12) break;
+    }
+    for (const item of segments.slice(start, start + 2)) {
+      const deadlineMs = Math.min(20_000, Math.max(6_000, Math.round(Number(item.pointer.duration || 0) * 1_500)));
+      void tvSegmentCache.prime(item.cacheKey, signal => fetchTvRemoteUntilHeaders(
+        safeTvRemoteUrl(item.pointer.url),
+        { headers: { accept: '*/*', ...liveWatchForwardHeaders(item.pointer.headers || {}) }, signal },
+        4_000
+      ), { deadlineMs });
+    }
   }
   if (liveWatchStableMediaResourceCache.size > 20_000) {
     for (const [key, value] of liveWatchStableMediaResourceCache) {
@@ -7285,8 +7862,9 @@ function rememberLiveWatchMediaPointers(kind, id, selector, pointers) {
 }
 
 function rewriteLiveWatchStableMediaPlaylist(textValue, baseUrl, kind, id, selector = '', inheritedHeaders = {}) {
+  const canWarm = !/#EXT-X-(?:BYTERANGE|ENDLIST|PART|PRELOAD-HINT)/i.test(String(textValue || ''));
   const pointers = liveWatchMediaPlaylistPointers(textValue, baseUrl, inheritedHeaders);
-  rememberLiveWatchMediaPointers(kind, id, selector, pointers);
+  rememberLiveWatchMediaPointers(kind, id, selector, pointers, canWarm);
   return pointers.lines.map((line, lineIndex) => {
     const pointer = pointers.byLine.get(lineIndex);
     if (!pointer) return line;
@@ -7300,13 +7878,52 @@ function liveWatchRefreshableMediaStatus(statusValue) {
   return [401, 403, 404, 410, 429, 502, 503, 504].includes(Number(statusValue || 0));
 }
 
+// 200.0.152 : Shaka interroge chaque segment LiveWatch en HEAD pour connaître son
+// type MIME car l'URL /api/tv/livewatch/hls/...?res=s100 n'a pas d'extension .ts.
+// Sans réponse 200 en HEAD, Shaka réessaie 5 fois puis télécharge chaque segment
+// deux fois en GET (~30 s perdues au démarrage et famine de tampon en lecture).
+function headLiveWatchVipHls(kindValue, idValue, selectorValue, resourceKeyValue, res) {
+  const safe = validLiveWatchChannelReference(kindValue, idValue);
+  const selector = String(selectorValue || '').trim();
+  const resourceKey = String(resourceKeyValue || '').trim();
+  if (!resourceKey) {
+    res.writeHead(200, {
+      'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
+      'cache-control': 'no-store',
+      'access-control-allow-origin': 'same-origin'
+    });
+    res.end();
+    return;
+  }
+  if (!/^(?:s\d+|p\d+\.\d+|q\d+\.\d+|[km][a-f0-9]{12})$/i.test(resourceKey)) {
+    res.writeHead(400, { 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  const cacheKey = liveWatchMediaResourceCacheKey(safe.kind, safe.id, selector, resourceKey);
+  const pointer = liveWatchStableMediaResourceCache.get(cacheKey);
+  const cachedType = (typeof tvSegmentCache !== 'undefined' && tvSegmentCache.get(cacheKey)?.type)
+    || (typeof tvMediaTypeFromUrl === 'function' && pointer?.url ? tvMediaTypeFromUrl(pointer.url) : '');
+  const type = cachedType
+    || (/^m[a-f0-9]{12}$/i.test(resourceKey) ? 'video/mp4'
+      : /^k[a-f0-9]{12}$/i.test(resourceKey) ? 'application/octet-stream'
+        : 'video/mp2t');
+  res.writeHead(200, {
+    'content-type': type,
+    'cache-control': 'no-store',
+    'access-control-allow-origin': 'same-origin',
+    'x-noctra-livewatch-resource': resourceKey
+  });
+  res.end();
+}
+
 async function liveWatchFreshMediaPointer(kind, id, selector, resourceKey) {
   const resource = await liveWatchFreshHlsResource(kind, id, selector, null);
   if (!resource.playlist || liveWatchPlaylistIsMaster(resource.text)) {
     throw new HttpError(502, 'La ressource LiveWatch ne pointe plus vers une media-playlist.');
   }
   const pointers = liveWatchMediaPlaylistPointers(resource.text, resource.finalUrl, resource.headers);
-  rememberLiveWatchMediaPointers(kind, id, selector, pointers);
+  rememberLiveWatchMediaPointers(kind, id, selector, pointers, false);
   return pointers.byKey.get(resourceKey) || null;
 }
 
@@ -7318,6 +7935,57 @@ async function proxyLiveWatchVipHlsMediaResource(kindValue, idValue, selectorVal
     throw new HttpError(400, 'Ressource HLS LiveWatch invalide.');
   }
   const cacheKey = liveWatchMediaResourceCacheKey(safe.kind, safe.id, selector, resourceKey);
+  if (!req?.headers?.range && typeof tvSegmentCache !== 'undefined') {
+    const ready = tvSegmentCache.get(cacheKey);
+    if (ready) {
+      res.writeHead(200, {
+        'content-type': ready.type,
+        'content-length': String(ready.body.length),
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-hit',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      res.end(ready.body);
+      return;
+    }
+  }
+  // 200.0.158 : segment redemandé par l'appli Android TV (bloqué depuis 3 s) :
+  // préchargement abandonné, segment redemandé à la source.
+  const relaunch = String(req?.headers?.['x-noctra-hedge'] || '') === '1';
+  if (relaunch && typeof tvSegmentCache !== 'undefined') tvSegmentCache.abort?.(cacheKey);
+  if (!req?.headers?.range && typeof tvSegmentCache !== 'undefined' && !relaunch) {
+    const shared = await tvSegmentCache.attach?.(cacheKey);
+    if (req?.aborted || res.destroyed) { shared?.stream.destroy(); return; }
+    if (shared) {
+      res.writeHead(200, {
+        'content-type': shared.type,
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-stream',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      const stop = () => shared.stream.destroy();
+      res.once('close', stop);
+      shared.stream.on('error', () => { res.removeListener('close', stop); res.destroy(); });
+      shared.stream.pipe(res);
+      return;
+    }
+    const memCached = await tvSegmentCache.read?.(cacheKey);
+    if (req?.aborted || res.destroyed) return;
+    if (memCached) {
+      res.writeHead(200, {
+        'content-type': memCached.type,
+        'content-length': String(memCached.body.length),
+        'cache-control': 'no-store',
+        'access-control-allow-origin': 'same-origin',
+        'x-noctra-relay': 'memory-hit',
+        'x-noctra-livewatch-resource': resourceKey
+      });
+      res.end(memCached.body);
+      return;
+    }
+  }
   const cached = liveWatchStableMediaResourceCache.get(cacheKey);
   let pointer = cached && cached.expiresAt > Date.now() ? cached : null;
   if (!pointer) pointer = await liveWatchFreshMediaPointer(safe.kind, safe.id, selector, resourceKey);
@@ -7326,10 +7994,7 @@ async function proxyLiveWatchVipHlsMediaResource(kindValue, idValue, selectorVal
   const open = async value => {
     const headers = {
       accept: '*/*',
-      'user-agent': value.headers?.['user-agent'] || 'Noctra-Media-Client/87',
-      ...(value.headers?.referer ? { referer: value.headers.referer } : {}),
-      ...(value.headers?.authorization ? { authorization: value.headers.authorization } : {}),
-      ...(value.headers?.cookie ? { cookie: value.headers.cookie } : {}),
+      ...liveWatchForwardHeaders(value.headers || {}),
       ...(req?.headers?.range ? { range: req.headers.range } : {})
     };
     return fetchTvRemoteUntilHeaders(value.url, { headers }, 18_000);
@@ -7411,6 +8076,40 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
   const selector = String(selectorValue || '').trim();
   if (selector && !/^(?:[vmi]\d+)(?:\.(?:[vmi]\d+))*$/.test(selector)) throw new HttpError(400, 'Sélecteur HLS LiveWatch invalide.');
   const chain = selector ? selector.split('.') : [];
+  const variantCacheKey = selector ? `${kind}:${id}:${selector}` : '';
+  if (variantCacheKey && typeof liveWatchVariantUrlCache !== 'undefined') {
+    const cachedVariant = liveWatchVariantUrlCache.get(variantCacheKey);
+    if (cachedVariant && cachedVariant.expiresAt > Date.now() && cachedVariant.url) {
+      try {
+        const directUrl = safeTvRemoteUrl(cachedVariant.url);
+        const directHeaders = {
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/*,audio/*,*/*;q=0.7',
+          ...liveWatchForwardHeaders(cachedVariant.headers || {}),
+          ...(req?.headers?.range ? { range: req.headers.range } : {})
+        };
+        const directResponse = await fetchTvRemoteUntilHeaders(directUrl, { headers: directHeaders }, 10_000);
+        if (directResponse.ok || directResponse.status === 206) {
+          const directType = String(directResponse.headers.get('content-type') || '');
+          const directFinalUrl = directResponse.url || directUrl.toString();
+          const isPlaylist = /(?:mpegurl|m3u8)/i.test(directType) || /\.m3u8?(?:$|[?#/])/i.test(directFinalUrl);
+          if (isPlaylist) {
+            const directText = await readTvPlaylistBody(directResponse);
+            if (!liveWatchPlaylistIsMaster(directText)) {
+              const directCookie = tvResponseCookieHeader(directResponse);
+              const mergedDirectHeaders = {
+                ...(cachedVariant.headers || {}),
+                ...(directCookie ? { cookie: mergeTvCookieHeaders(cachedVariant.headers?.cookie || '', directCookie) } : {})
+              };
+              liveWatchVariantUrlCache.set(variantCacheKey, { url: directFinalUrl, headers: mergedDirectHeaders, expiresAt: Date.now() + 45_000 });
+              return { response: directResponse, playlist: true, text: directText, contentType: directType, finalUrl: directFinalUrl, headers: mergedDirectHeaders, selector };
+            }
+          }
+        }
+        try { await directResponse.body?.cancel?.(); } catch {}
+      } catch {}
+      liveWatchVariantUrlCache.delete(variantCacheKey);
+    }
+  }
   const token = await liveWatchStreamReference(kind, id);
   const root = tvReferences.get(String(token || ''));
   if (!root?.url) throw new HttpError(502, 'LiveWatch n’a pas fourni de flux direct exploitable.');
@@ -7422,10 +8121,7 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
     const url = safeTvRemoteUrl(currentUrl);
     const headers = {
       accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/*,audio/*,*/*;q=0.7',
-      'user-agent': currentHeaders['user-agent'] || 'Noctra-Media-Client/87',
-      ...(currentHeaders.referer ? { referer: currentHeaders.referer } : {}),
-      ...(currentHeaders.authorization ? { authorization: currentHeaders.authorization } : {}),
-      ...(currentHeaders.cookie ? { cookie: currentHeaders.cookie } : {}),
+      ...liveWatchForwardHeaders(currentHeaders),
       ...(depth === chain.length && req?.headers?.range ? { range: req.headers.range } : {})
     };
     const response = await fetchTvRemoteUntilHeaders(url, { headers }, 18_000);
@@ -7466,6 +8162,9 @@ async function liveWatchFreshHlsResource(kindValue, idValue, selectorValue = '',
     currentUrl = pointer.url;
     currentHeaders = childHeaders;
     currentPrefix = currentPrefix ? `${currentPrefix}.${key}` : key;
+    if (typeof liveWatchVariantUrlCache !== 'undefined') {
+      liveWatchVariantUrlCache.set(`${kind}:${id}:${currentPrefix}`, { url: currentUrl, headers: currentHeaders, expiresAt: Date.now() + 45_000 });
+    }
   }
 }
 
@@ -7483,6 +8182,8 @@ async function proxyLiveWatchVipHls(kind, id, selector, req, res) {
     const refreshable = [401, 403, 404, 410, 415, 429, 502, 503, 504].includes(status);
     if (!refreshable) throw error;
     liveWatchVipDirectCache.delete(cacheKey);
+    // Liste refusée alors que l'API a répondu : se présenter autrement pour la suivante.
+    if ([401, 403].includes(status)) switchLiveWatchClientMode();
     resource = await open();
   }
 
@@ -7527,13 +8228,7 @@ async function proxyLiveWatchVipStream(kind, id, req, res) {
 }
 
 function liveWatchProbeHeaders(reference, accept = '*/*') {
-  return {
-    accept,
-    'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87',
-    ...(reference.headers.referer ? { referer: reference.headers.referer } : {}),
-    ...(reference.headers.authorization ? { authorization: reference.headers.authorization } : {}),
-    ...(reference.headers.cookie ? { cookie: reference.headers.cookie } : {})
-  };
+  return { accept, ...liveWatchForwardHeaders(reference.headers || {}) };
 }
 
 function liveWatchFirstPlaylistUri(textValue, baseUrl) {
@@ -7932,12 +8627,187 @@ async function liveWatchVipDiagnosticCheck(label, catalogUrl) {
     const contentType = String(response.headers.get('content-type') || '');
     try { await response.body?.cancel?.(); } catch {}
     if (!response.ok || !/html/i.test(contentType)) throw new HttpError(response.status || 502, `Lecteur LiveWatch officiel inaccessible (${response.status || 0}).`);
+    // Flux VIP direct (celui des applis et du lecteur natif), jusqu'au premier segment.
+    let vip;
+    try {
+      liveWatchVipDirectCache.delete(`main:${ref.id}`);
+      const token = await liveWatchStreamReference('main', ref.id, 10_000);
+      await validateLiveWatchStreamReference(token, 12_000);
+      vip = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
+    } catch (error) {
+      vip = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', message: cleanError(error) };
+    }
+    const [api, player] = await Promise.all([
+      liveWatchStreamApiProbe('main', ref.id).catch(() => []),
+      liveWatchPlayerApiHints('main', ref.id).catch(error => ({ errors: [cleanError(error)] }))
+    ]);
     // 200.0.134 : flux direct de la même chaîne (hôte et réponse de la playlist).
     const stream = await liveWatchDiagnosticStream(ref).catch(error => ({ ok: false, message: cleanError(error) }));
-    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream };
+    return { label, ok: true, channel: channel.name || 'Chaîne test', mode: 'vip-official-embed', status: response.status, contentType, stream, vip, api, player };
   } catch (error) {
     return { label, ok: false, message: cleanError(error) };
   }
+}
+
+/**
+ * Réponse brute de l'API de flux LiveWatch pour une chaîne, avec chaque manière de se présenter
+ * (client Noctra, lecteur dans un navigateur) : code HTTP et nature de la réponse, jetons masqués.
+ */
+async function liveWatchStreamApiProbe(kindValue, idValue) {
+  const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
+  if (kind === 'page') return [];
+  const session = await liveWatchAccessSession();
+  const apiPath = kind === 'main' ? `/api/stream/${encodeURIComponent(id)}` : `/api/${kind}/stream/${encodeURIComponent(id)}`;
+  const playerPath = kind === 'main' ? `/embed/${encodeURIComponent(id)}` : `/embed/${kind}/${encodeURIComponent(id)}`;
+  const results = [];
+  // Autorisation de lecture (POST /api/play/grant), demandée comme le lecteur officiel.
+  let grant = '';
+  try {
+    grant = await liveWatchPlayGrant(session, true);
+    const info = liveWatchPlayGrantInfo(session);
+    results.push({ client: 'autorisation', status: 200, ok: true, detail: `palier ${info.tier || '?'} · valable ${info.expiresIn || 0} s`, url: `${new URL(liveWatchOrigin).hostname}/api/play/grant` });
+  } catch (error) {
+    results.push({ client: 'autorisation', status: Number(error?.status || 0), ok: false, detail: cleanError(error), url: `${new URL(liveWatchOrigin).hostname}/api/play/grant` });
+  }
+  for (const browser of [false, true]) {
+    const client = browser ? 'navigateur' : 'Noctra';
+    try {
+      const cookie = browser ? await liveWatchPlayerCookies(kind, id, playerPath, session) : '';
+      const response = await fetchTvRemote(`${liveWatchOrigin}${apiPath}?vip=1&embed=1`, {
+        headers: {
+          accept: 'application/json, application/vnd.apple.mpegurl, text/plain;q=0.8, */*;q=0.5',
+          authorization: `Bearer ${session.accessToken}`,
+          ...liveWatchClientHeaders(playerPath, browser),
+          ...(grant ? { 'x-play-grant': grant } : {}),
+          ...(cookie ? { cookie } : {})
+        },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const text = (await response.text()).slice(0, 8_000);
+      let detail;
+      if (!response.ok) {
+        detail = text.replace(/<[^>]+>/g, ' ').replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[jeton]').replace(/\s+/g, ' ').trim().slice(0, 220) || 'réponse vide';
+      } else if (/^\s*#EXTM3U/i.test(text)) {
+        detail = 'liste HLS reçue';
+      } else {
+        try { detail = liveWatchStreamUrlFromPayload(JSON.parse(text)) ? 'adresse de flux reçue' : 'réponse sans flux'; }
+        catch { detail = 'réponse illisible'; }
+      }
+      // En-têtes utiles pour comprendre un refus (blocage Cloudflare, authentification demandée).
+      const headers = {};
+      for (const name of ['content-type', 'server', 'cf-mitigated', 'www-authenticate', 'x-error', 'location']) {
+        const value = response.headers.get(name);
+        if (value) headers[name] = String(value).slice(0, 120);
+      }
+      if (response.headers.get('cf-ray')) headers['cf-ray'] = 'présent';
+      results.push({ client, status: response.status, ok: response.ok, detail, cookies: Boolean(cookie), headers, url: `${new URL(liveWatchOrigin).hostname}${apiPath}?vip=1&embed=1` });
+    } catch (error) {
+      results.push({ client, status: 0, ok: false, detail: cleanError(error) });
+    }
+  }
+  return results;
+}
+
+/**
+ * Adresses d'API présentes dans le code du lecteur officiel d'une chaîne (ex. /api/stream/…,
+ * fonctions Supabase) : montre si LiveWatch a changé la manière de demander un flux VIP.
+ */
+async function liveWatchPlayerApiHints(kindValue, idValue) {
+  const { kind, id } = validLiveWatchChannelReference(kindValue, idValue);
+  const playerUrl = liveWatchOfficialPlayerUrl(kind, id);
+  const found = new Map();
+  const errors = [];
+  const contexts = { grant: new Set(), stream: new Set() };
+  const calls = { rpc: new Set(), functions: new Set(), tables: new Set() };
+  const note = (value, where) => {
+    const key = String(value || '').slice(0, 160);
+    if (!key) return;
+    if (!found.has(key)) found.set(key, new Set());
+    found.get(key).add(where);
+  };
+  // Extrait lisible du code autour d'un mot (jetons longs masqués) : montre comment le lecteur
+  // obtient l'autorisation de lecture demandée par l'API (« grant_required »).
+  const excerpt = (text, index, length) => String(text).slice(Math.max(0, index - 220), index + length + 260)
+    .replace(/eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g, '[jeton]').replace(/[A-Za-z0-9+/=_-]{60,}/g, '…').replace(/\s+/g, ' ');
+  const scan = (text, where) => {
+    const body = String(text);
+    for (const match of body.matchAll(/["'`](\/api\/[A-Za-z0-9_\-/${}.:]{2,120})["'`]/g)) note(match[1], where);
+    for (const match of body.matchAll(/["'`](\/api\/?)["'`]\s*\+/g)) note(match[1] + '+…', where);
+    for (const match of body.matchAll(/functions\/v1\/[A-Za-z0-9_-]{2,60}/g)) note(match[0], where);
+    for (const match of body.matchAll(/["'`](x-[a-z0-9-]{3,40})["'`]\s*:/gi)) note('en-tête ' + match[1].toLowerCase(), where);
+    for (const match of body.matchAll(/https:\/\/[a-z0-9.-]+\/[A-Za-z0-9_\-/]*(?:stream|hls|m3u8|proxy|grant)[A-Za-z0-9_\-/.]*/gi)) note(match[0], where);
+    for (const match of body.matchAll(/\.rpc\(\s*["'`]([A-Za-z0-9_]{2,80})["'`]/g)) calls.rpc.add(match[1]);
+    for (const match of body.matchAll(/functions\.invoke\(\s*["'`]([A-Za-z0-9_-]{2,80})["'`]/g)) calls.functions.add(match[1]);
+    for (const match of body.matchAll(/\.from\(\s*["'`]([A-Za-z0-9_]{2,60})["'`]\s*\)/g)) calls.tables.add(match[1]);
+    for (const match of body.matchAll(/grant/gi)) if (contexts.grant.size < 14) contexts.grant.add(excerpt(body, match.index, 5));
+    for (const match of body.matchAll(/\/stream\b|stream\/["'`$]/g)) if (contexts.stream.size < 8) contexts.stream.add(excerpt(body, match.index, 7));
+  };
+  const read = async (url, accept) => {
+    const response = await fetchTvRemote(url, { signal: AbortSignal.timeout(15_000), headers: { accept, 'user-agent': liveWatchBrowserAgent, referer: `${liveWatchOrigin}/` } });
+    return { response, text: response.ok ? (await response.text()).slice(0, 6 * 1024 * 1024) : '' };
+  };
+  const scripts = new Set();
+  const add = (value, base) => {
+    try { const url = new URL(value, base); if (isLiveWatchFamilyHost(url.hostname) && /\.m?js(?:$|\?)/i.test(url.pathname + url.search)) scripts.add(url.toString()); } catch {}
+  };
+  try {
+    const { response, text } = await read(playerUrl, 'text/html,*/*;q=0.5');
+    if (!response.ok) errors.push(`lecteur : HTTP ${response.status}`);
+    scan(text, 'page');
+    for (const match of text.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) add(match[1], response.url || playerUrl);
+    for (const match of text.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.m?js)["']/gi)) add(match[1], response.url || playerUrl);
+  } catch (error) {
+    errors.push(`lecteur : ${cleanError(error)}`);
+  }
+  // Script principal, puis les morceaux chargés à la demande (le lecteur est souvent l'un d'eux).
+  const done = new Set();
+  for (let round = 0; round < 3; round += 1) {
+    const batch = [...scripts].filter(url => !done.has(url)).slice(0, 40);
+    if (!batch.length) break;
+    for (let index = 0; index < batch.length; index += 6) {
+      await Promise.all(batch.slice(index, index + 6).map(async scriptUrl => {
+        done.add(scriptUrl);
+        try {
+          const { text } = await read(scriptUrl, 'application/javascript,*/*;q=0.5');
+          scan(text, round ? 'morceau' : 'code');
+          // « assets/x.js » (préchargement Vite) part de la racine du site, « ./x.js » du script.
+          for (const match of text.matchAll(/["'`]((?:\.{0,2}\/)?(?:assets\/)?[A-Za-z0-9._-]+\.js)["'`]/g)) add(match[1], match[1].startsWith('assets/') ? `${liveWatchOrigin}/` : scriptUrl);
+        } catch (error) { errors.push(`script : ${cleanError(error)}`); }
+      }));
+    }
+  }
+  return {
+    scripts: done.size,
+    endpoints: [...found.entries()].map(([value, where]) => ({ value, where: [...where] }))
+      .sort((a, b) => Number(/grant|stream|hls|vip/i.test(b.value)) - Number(/grant|stream|hls|vip/i.test(a.value))).slice(0, 50),
+    rpc: [...calls.rpc].slice(0, 40),
+    functions: [...calls.functions].slice(0, 40),
+    tables: [...calls.tables].slice(0, 40),
+    grant: [...contexts.grant],
+    stream: [...contexts.stream],
+    errors: errors.slice(0, 10)
+  };
+}
+
+/** Chaîne choisie dans l'appli : flux VIP direct jusqu'au premier segment, puis réponse brute de l'API. */
+async function liveWatchChannelDiagnostic(referenceValue) {
+  const [kindValue, ...rest] = String(referenceValue || '').split('/');
+  const { kind, id } = validLiveWatchChannelReference(kindValue, decodeURIComponent(rest.join('/')));
+  const startedAt = Date.now();
+  let stream;
+  try {
+    liveWatchVipDirectCache.delete(`${kind}:${id}`);
+    const token = await liveWatchStreamReference(kind, id, 10_000);
+    await validateLiveWatchStreamReference(token, 12_000);
+    stream = { ok: true, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra' };
+  } catch (error) {
+    stream = { ok: false, client: liveWatchClientMode.browser ? 'navigateur' : 'Noctra', status: Number(error?.status || 0), message: cleanError(error) };
+  }
+  const [api, player] = await Promise.all([
+    liveWatchStreamApiProbe(kind, id).catch(error => [{ client: '?', status: 0, ok: false, detail: cleanError(error) }]),
+    liveWatchPlayerApiHints(kind, id).catch(error => ({ errors: [cleanError(error)] }))
+  ]);
+  return { kind, id, stream, api, player, durationMs: Date.now() - startedAt };
 }
 
 async function liveWatchDiagnosticStream(ref) {
@@ -7951,6 +8821,7 @@ async function liveWatchDiagnosticStream(ref) {
   });
   const text = response.ok ? (await response.text()).slice(0, 4096) : '';
   if (!response.ok) { try { await response.body?.cancel?.(); } catch {} }
+  const playlist = /^\s*#EXTM3U/.test(text);
   return {
     ok: response.ok && /^\s*#EXTM3U/.test(text),
     host: target.hostname,
@@ -7959,7 +8830,12 @@ async function liveWatchDiagnosticStream(ref) {
     sessionSent: Boolean(reference.headers?.authorization),
     status: response.status,
     finalHost: (() => { try { return new URL(response.url || reference.url).hostname; } catch { return ''; } })(),
-    playlist: /^\s*#EXTM3U/.test(text) ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide')
+    playlist: playlist ? (/#EXT-X-STREAM-INF/.test(text) ? 'principale' : 'segments') : (text ? 'autre contenu' : 'vide'),
+    // 200.0.143 : début d'une réponse qui n'est pas une playlist (jetons masqués), pour en trouver la cause.
+    ...(!playlist && text ? {
+      contentType: String(response.headers.get('content-type') || ''),
+      excerpt: text.slice(0, 300).replace(/[A-Za-z0-9_\-.]{32,}/g, '…').replace(/\s+/g, ' ').trim()
+    } : {})
   };
 }
 
@@ -8019,7 +8895,7 @@ function liveWatchAuthDiagnostic(config) {
   return { host, source: String(config?.source || 'fallback'), verified: Boolean(config?.verified), keyType: String(config?.anonKey || '').startsWith('sb_publishable_') ? 'publishable' : 'anon' };
 }
 
-async function liveWatchVipDiagnostics() {
+async function liveWatchVipDiagnostics(reference = '') {
   const startedAt = Date.now();
   const stored = await readLiveWatchSession();
   const siteConfig = await discoverLiveWatchPublicConfig(false).catch(() => null);
@@ -8044,6 +8920,7 @@ async function liveWatchVipDiagnostics() {
     liveWatchSiteHosts().catch(error => ({ errors: [cleanError(error)] }))
   ]);
   const reachable = checks.filter(item => item.ok).length;
+  const channel = reference ? await liveWatchChannelDiagnostic(reference).catch(error => ({ error: cleanError(error) })) : null;
   return {
     ok: profileVip && reachable === checks.length,
     authenticated: true,
@@ -8051,8 +8928,11 @@ async function liveWatchVipDiagnostics() {
     sessionIssuer: liveWatchTokenIssuerHost(session.accessToken),
     isVip: profileVip,
     account: maskedLiveWatchEmail(session.email),
+    sessionExpiresIn: Math.max(0, Number(session.expiresAt || 0) - Math.floor(Date.now() / 1000)),
+    clientMode: liveWatchClientMode.browser ? 'navigateur' : 'Noctra',
     checks,
     site,
+    channel,
     durationMs: Date.now() - startedAt,
     message: profileVip
       ? (reachable ? 'VIP Premium confirmé · lecteur officiel LiveWatch accessible.' : 'VIP Premium confirmé, mais le lecteur officiel LiveWatch est actuellement inaccessible depuis le serveur.')
@@ -8241,14 +9121,30 @@ function parseWiTvCategoryHtml(htmlValue, baseUrl, group = 'WiTV') {
   const html = String(htmlValue || '');
   const channels = [];
   const seen = new Set();
-  const expression = /href=["']([^"']*\/chaines-live\/(?!\s*(?:sport|cinema|documentaire|generaliste|enfants|info|musique|belgique|suisse)\/?["'])[^"']+\.html(?:\?[^"']*)?)["']/gi;
+  const base = new URL(baseUrl);
+  const currentSite = /^(?:www\.)?witv\.eu$/i.test(base.hostname);
+  // On the current site, each channel card gives its own title and artwork after the link.
+  const expression = currentSite
+    ? /<div\s+class=["']ann-short_item["']>\s*(?:<span[^>]*>[^<]*<\/span>\s*)?<a\s+href=["']([^"']+)["'][^>]*>[^<]*<\/a>\s*<div\s+class=["']ann-short_price["']>([^<]+)<\/div>(?:\s*<img\b[^>]*?\s+src=["']([^"']+)["'])?/gi
+    : /href=["']([^"']*\/chaines-live\/(?!\s*(?:sport|cinema|documentaire|generaliste|enfants|info|musique|belgique|suisse)\/?["'])[^"']+\.html(?:\?[^"']*)?)["']/gi;
   let match;
   while ((match = expression.exec(html)) && channels.length < 500) {
     let pageUrl;
     try { pageUrl = resolveTvUrl(decodeTvHtml(match[1]), baseUrl); } catch { continue; }
+    if (currentSite) {
+      const page = new URL(pageUrl);
+      if (page.origin !== base.origin || !/^\/chaines-live\/\d+-[^/]+\.html$/i.test(page.pathname)) continue;
+      pageUrl = page.origin + page.pathname;
+    }
     if (seen.has(pageUrl)) continue;
     seen.add(pageUrl);
-    const nearby = wiTvNearbyImage(html, match.index || 0, baseUrl);
+    const nearby = currentSite ? { alt: decodeTvHtml(match[2]).trim(), logo: '' } : wiTvNearbyImage(html, match.index || 0, baseUrl);
+    if (currentSite && match[3]) {
+      try {
+        const logo = new URL(resolveTvUrl(decodeTvHtml(match[3]), baseUrl));
+        if (logo.origin === base.origin) nearby.logo = logo.href;
+      } catch {}
+    }
     const name = nearby.alt && !/^(?:regarder|live)$/i.test(nearby.alt) ? nearby.alt : wiTvNameFromUrl(pageUrl);
     const resolveRef = encodeTvStateReference('witv-page', {
       url: safeTvRemoteUrl(pageUrl).toString(),
@@ -8298,7 +9194,7 @@ function tvIframeCandidatesFromHtml(htmlValue, baseUrl) {
     const adLike = /(?:^|\.)(?:ad|ads|doubleclick|googlesyndication)\./i.test(host) || /(?:^|[\/_-])(?:ad|ads)(?:[\/_-]|$)/i.test(pathname);
     let score = 0;
     if (/player|embed|live|watch|stream/i.test(`${host}${pathname}`)) score += 10;
-    if (['witv.football', 'www.witv.football'].includes(host) && /^\/player\/playerjs\/witv-player\.php$/i.test(pathname)) score += 120;
+    if (/^(?:www\.)?witv\.(?:eu|football)$/.test(host) && /^\/player\/playerjs\/witv-player\.php$/i.test(pathname)) score += 120;
     if (/(?:^|\.)livehdtvs?\.com$/i.test(host)) score -= 160;
     if (/apl425\.me$/i.test(host)) score += 4;
     if (adLike) score -= 30;
@@ -8322,8 +9218,9 @@ function tvIframeCandidatesFromHtml(htmlValue, baseUrl) {
 function isWiTvPublicPlayer(urlValue) {
   try {
     const parsed = new URL(urlValue);
-    return ['witv.football', 'www.witv.football'].includes(parsed.hostname.toLowerCase())
-      && /^\/player\/playerjs\/witv-player\.php$/i.test(parsed.pathname);
+    return /^(?:www\.)?witv\.(?:eu|football)$/i.test(parsed.hostname)
+      && ( /^\/player\/playerjs\/witv-player\.php$/i.test(parsed.pathname) ||
+        /^(?:www\.)?witv\.eu$/i.test(parsed.hostname) && /^\/player\/source[1-9]\/?$/i.test(parsed.pathname) );
   } catch {
     return false;
   }
@@ -8336,6 +9233,10 @@ function wiTvStreamFromPlayerHtml(htmlValue, baseUrl) {
 
 function wiTvStreamCandidatesFromPlayerHtml(htmlValue, baseUrl) {
   const html = String(htmlValue || '');
+  if (/^(?:www\.)?witv\.eu$/i.test(new URL(baseUrl).hostname)) {
+    const published = wiTvPublishedMedia(html, baseUrl);
+    if (published.length) return published;
+  }
   const values = [];
   const seen = new Set();
   const add = rawValue => {
@@ -8446,6 +9347,7 @@ function tvRecentPlaylistProbeUri(text, baseUrl, offset = 0) {
 
 async function validateWiTvHlsStream(streamUrlValue, headers = {}, timeoutMs = 8_000, signal = null, recentSegments = true) {
   const streamUrl = safeTvRemoteUrl(streamUrlValue);
+  const wiTvLive = /^(?:www\.)?witv\.eu$/i.test(streamUrl.hostname) && /^\/player\/source[1-9]\/?$/i.test(streamUrl.pathname);
   const relayHeaders = {
     accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain;q=0.8,*/*;q=0.3',
     'user-agent': headers['user-agent'] || 'Mozilla/5.0 Noctra/152',
@@ -8491,6 +9393,7 @@ async function validateWiTvHlsStream(streamUrlValue, headers = {}, timeoutMs = 8
       return { url: rootUrl, cookie: cookies.get(new URL(rootUrl).origin) || '' };
     }
     const text = await readTvPlaylistBody(response);
+    if (wiTvLive && /#EXT-X-ENDLIST\b/.test(text)) throw new HttpError(502, 'WiTV renvoie une vidéo de remplacement au lieu du direct.');
     const next = recentSegments
       ? tvRecentPlaylistProbeUri(text, response.url || currentUrl)
       : liveWatchFirstPlaylistUri(text, response.url || currentUrl);
@@ -8710,11 +9613,33 @@ function sanitizeWiTvPlayerHtml(htmlValue, baseUrl) {
   return html;
 }
 
+function wiTvOfficialTabOptions(html, pageUrl) {
+  const page = new URL(pageUrl);
+  if (page.protocol !== 'https:' || !/^(?:www\.)?witv\.eu$/i.test(page.hostname) ||
+    !/^\/chaines-live\/\d+-[^/]+\.html$/i.test(page.pathname)) return [];
+  const options = new Map();
+  // Read the public selector. Opaque data-v values are not stream or player URLs.
+  for (const [, , attributes, body] of html.matchAll(/<(span|button)\b([^>]*)>((?:[^<]|<(?!\/?(?:span|button)\b)[^>]*>)*)<\/\1>/gi)) {
+    const classes = attributes.match(/(?:^|\s)class=["']([^"']+)["']/i)?.[1]?.split(/\s+/) || [];
+    const target = attributes.match(/(?:^|\s)data-target=["']player([1-9]\d?)["']/i)?.[1];
+    if (!target || !classes.includes('player-tab') || options.has(target)) continue;
+    const tabName = decodeTvHtml(body.replace(/<[^>]+>/g, '')).trim().slice(0, 60) || `Source ${target}`;
+    const url = new URL(page);
+    url.hash = `player${target}`;
+    options.set(target, {
+      label: `${tabName} · à choisir sur WiTV`, serverIndex: Number(target) - 1, sourceLabel: tabName,
+      url: url.href, externalUrl: url.href, playbackType: 'external', officialClient: true, manualOnly: true
+    });
+    if (options.size === 12) break;
+  }
+  return [...options.values()];
+}
+
 async function resolveTvPageReference(token) {
   const additionalRef = tvReferences.get(String(token || ''));
   if (additionalRef?.meta?.kind === 'brigitte-event') {
-    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme BrigitteTV.');
-    const page = await fetchPublicTvHtml(additionalRef.url, 'BrigitteTV', 12_000);
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme Streamonsport.');
+    const page = await fetchPublicTvHtml(additionalRef.url, 'Streamonsport', 12_000);
     const choices = parseBrigittePlayers(page.html, page.finalUrl).sort((a,b)=>Number(!/Cartel/i.test(a.label))-Number(!/Cartel/i.test(b.label)));
     const options = choices.map(choice => {
       const id = issueTvReference(safeTvRemoteUrl(choice.url).toString(), {}, {kind:'brigitte-player'});
@@ -8723,7 +9648,7 @@ async function resolveTvPageReference(token) {
     return {options: [...options,{label:'Page du match · compatibilité mobile',url:page.finalUrl,playbackType:'embed',compatPage:true,manualOnly:options.length>0}], externalUrl:page.finalUrl};
   }
   if (additionalRef?.meta?.kind === 'brigitte-player') {
-    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme BrigitteTV.');
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme Streamonsport.');
     // Keep the published embed document: its nested player requires the
     // provider's real embedding origin. Do not extract the protected leaf URL.
     const target = safeTvRemoteUrl(additionalRef.url).toString();
@@ -8731,12 +9656,12 @@ async function resolveTvPageReference(token) {
       let current=target;let parentUrl='';const seen=new Set();
       for(let depth=0;depth<4&&!seen.has(current);depth++){
         seen.add(current);
-        const page=await fetchPublicTvHtml(current,'BrigitteTV',6000,parentUrl);
+        const page=await fetchPublicTvHtml(current,'Streamonsport',6000,parentUrl);
         const parsed=parseBrigitteNativeDocument(page.html,page.finalUrl);
         if(parsed.urls.length){
           const headers={referer:page.finalUrl};
           const ready=await Promise.any(parsed.urls.slice(0,3).map(async url=>validateWiTvHlsStream(url,headers,6000,null,true)));
-          const nativeToken=issueTvReference(ready.url,{...headers,...(ready.cookie?{cookie:ready.cookie}:{})},{provider:'BrigitteTV',forceHls:true});
+          const nativeToken=issueTvReference(ready.url,{...headers,...(ready.cookie?{cookie:ready.cookie}:{})},{provider:'Streamonsport',forceHls:true});
           return {options:[{playbackType:'stream',streamUrl:publicPath('/api/tv/stream/'+nativeToken),resolveUrl:publicPath('/api/tv/resolve/'+token)}],externalUrl:target};
         }
         if(!parsed.next)break;
@@ -8749,6 +9674,10 @@ async function resolveTvPageReference(token) {
   if (['streamed-event', 'streamed-source'].includes(additionalRef?.meta?.kind)) {
     if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge la source Streamed.');
     return resolveStreamedReference(additionalRef);
+  }
+  if (additionalRef?.meta?.kind === 'sports-public-players') {
+    if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Recharge le programme sportif.');
+    return { options: additionalRef.meta.options, externalUrl: additionalRef.url };
   }
   if (additionalRef?.meta?.kind === 'additional-resolver') {
     if (additionalRef.expiresAt <= Date.now()) throw new HttpError(410, 'Rechargez la source TV.');
@@ -8794,7 +9723,8 @@ async function resolveTvPageReference(token) {
   const html = await response.text();
   if (html.length > 4 * 1024 * 1024) throw new HttpError(413, 'La page du lecteur est trop volumineuse.');
   const baseUrl = response.url || reference.url;
-  const candidates = tvIframeCandidatesFromHtml(html, baseUrl);
+  const publishedPlayers = parseWiTvPublishedPlayers(html, baseUrl);
+  const candidates = publishedPlayers.length ? publishedPlayers : tvIframeCandidatesFromHtml(html, baseUrl);
   const internalCandidates = candidates.filter(item => isWiTvPublicPlayer(item.url));
   const players = internalCandidates.slice(0, 6);
   const controller = new AbortController();
@@ -8841,6 +9771,7 @@ async function resolveTvPageReference(token) {
   }));
   if (!active) options.push(...officialOptions, ...choices);
   else options.push(...officialOptions);
+  if (!players.length) options.push(...wiTvOfficialTabOptions(html, baseUrl));
   options.push(backup);
   const liveWatchBackupToken = encodeTvStateReference('witv-backup', { name: reference.meta?.channelName || '', provider: 'LiveWatch' });
   options.push({
@@ -8866,10 +9797,13 @@ async function resolveTvPageReference(token) {
       host: internalCandidates[0].host
     });
   }
-  const embeds = options.filter(item => item.url);
+  const embeds = options.filter(item => item.url && item.playbackType !== 'external');
+  const officialPageOnly = !embeds.length && /^(?:www\.)?witv\.eu$/i.test(new URL(baseUrl).hostname);
   return { externalUrl: reference.url, resolvedFrom: baseUrl, options, embeds, fallbackAvailable: true,
     nativeFailures, nativeUnavailable: !active,
-    warning: active ? '' : 'HLS WiTV indisponible depuis le serveur Noctra ; lecteur officiel WiTV conservé.' };
+    officialPageOnly,
+    warning: active ? '' : officialPageOnly ? 'WiTV ne fournit pas de direct intégré pour cette chaîne. Le lecteur officiel est disponible sur son site.' :
+      'HLS WiTV indisponible depuis le serveur Noctra ; lecteur officiel WiTV conservé.' };
 }
 
 const wiTvCategories = [
@@ -8884,7 +9818,7 @@ const wiTvCategories = [
   ['Suisse', 'suisse']
 ];
 
-async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
+async function tvCatalogFromWiTv(rootValue = wiTvRoot) {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `witv::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
@@ -8898,12 +9832,14 @@ async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
     if (!response.ok) throw new Error(`${group}: HTTP ${response.status}`);
     const html = await response.text();
     if (html.length > 4 * 1024 * 1024) throw new Error(`${group}: page trop volumineuse`);
-    return parseWiTvCategoryHtml(html, response.url || url, group);
+    const channels = parseWiTvCategoryHtml(html, response.url || url, group);
+    if (!channels.length) throw new Error(`${group}: aucune chaîne exploitable`);
+    return channels;
   }));
   const map = new Map();
   const errors = [];
   results.forEach((result, index) => {
-    if (result.status === 'fulfilled') result.value.forEach(channel => map.set(channel.embedUrl || channel.id, channel));
+    if (result.status === 'fulfilled') result.value.forEach(channel => map.set(channel.externalUrl || channel.id, channel));
     else errors.push(`${wiTvCategories[index][0]} indisponible`);
   });
   const channels = [...map.values()];
@@ -8915,7 +9851,7 @@ async function tvCatalogFromWiTv(rootValue = 'https://witv.football/') {
     count: channels.length,
     warning: channels.length ? (errors.length ? `Catalogue partiel : ${errors.join(', ')}.` : '') : 'Le catalogue public WiTV est temporairement indisponible.'
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 10 * 60_000, value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (errors.length ? 30_000 : 10 * 60_000), value });
   return value;
 }
 
@@ -9577,25 +10513,35 @@ async function tvCatalogFromSportsPage(source) {
   let channels = [];
   let warning = '';
   try {
-    const page = await fetchPublicTvHtml(root, source.name, 10_000);
+    let page = await fetchPublicTvHtml(root, source.name, 10_000);
     if (source.type === 'daddylive') channels = parseDlStreamsSports(page.html, page.finalUrl, 'DaddyLive');
     else {
-      const seen = new Set();
-      for (const match of page.html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-        let target;
-        try { target = new URL(decodeTvHtml(match[1]), page.finalUrl); } catch { continue; }
-        // Only published event links, never guessed player IDs or navigation links.
-        if (target.origin !== new URL(page.finalUrl).origin || !/(?:\/regarder-[^/]+|\/(?:match|watch|event|live|stream|player)[^/]*(?:\.php|\/))/i.test(target.pathname)) continue;
-        if (seen.has(target.href)) continue;
-        const name = publicTvPageName(match[2], '', '');
-        if (!name) continue;
-        const channel = normalizeTvChannel({name, embed_url:target.href, provider:source.name, group:'Sports', description:'Lecteur du fournisseur'}, page.finalUrl, 'Sports');
-        if (channel) {
-          seen.add(target.href);
-          const token = issueTvReference(target.href, {}, {kind:'brigitte-event'});
-          channels.push({...channel, playbackType:'resolver', embedUrl:'', resolverUrl:publicPath('/api/tv/resolve/'+token), externalUrl:target.href, streamKind:'Serveurs du match'});
+      const collectEventChannels = (doc) => {
+        const seen = new Set();
+        for (const match of doc.html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+          let target;
+          try { target = new URL(decodeTvHtml(match[1]), doc.finalUrl); } catch { continue; }
+          // Only published event links, never guessed player IDs or navigation links.
+          if (target.origin !== new URL(doc.finalUrl).origin || !/(?:\/regarder-[^/]+|\/(?:match|watch|event|live|stream|player)[^/]*(?:\.php|\/))/i.test(target.pathname)) continue;
+          if (seen.has(target.href)) continue;
+          const name = publicTvPageName(match[2], '', '');
+          if (!name) continue;
+          const channel = normalizeTvChannel({name, embed_url:target.href, provider:source.name, group:'Sports', description:'Lecteur du fournisseur'}, doc.finalUrl, 'Sports');
+          if (channel) {
+            seen.add(target.href);
+            const token = issueTvReference(target.href, {}, {kind:'brigitte-event'});
+            channels.push({...channel, playbackType:'resolver', embedUrl:'', resolverUrl:publicPath('/api/tv/resolve/'+token), externalUrl:target.href, streamKind:'Serveurs du match'});
+          }
+          if (channels.length >= 500) break;
         }
-        if (channels.length >= 500) break;
+      };
+      collectEventChannels(page);
+      if (!channels.length && new URL(page.finalUrl).pathname === '/') {
+        try {
+          const progUrl = new URL('/prog.php', page.finalUrl).toString();
+          page = await fetchPublicTvHtml(progUrl, source.name, 10_000);
+          collectEventChannels(page);
+        } catch {}
       }
     }
     if (!channels.length) warning = 'Le programme ne fournit pas de liens de lecture exploitables : ouvre le portail du fournisseur.';
@@ -10202,10 +11148,27 @@ function streamedMatchChannel(item, baseUrl, fallbackGroup = 'Sports') {
   }, baseUrl, group);
 }
 
-async function fetchStreamedJson(urlValue, root, allowMirror = true) {
+// Seuls les anciens miroirs Streamed partagent les routes /api/matches.
+const STREAMED_HOSTS = ['streamed.pk', 'streamed.st'];
+const STREAMFREE_HOSTS = ['strmfree.pk', 'strmfree.st', 'streamfree.top'];
+// Adresse qui a répondu en dernier : les requêtes suivantes partent d'elle
+// (une adresse morte n'est pas réessayée à chaque rubrique du catalogue).
+let streamedHealthyHost = null;
+
+async function fetchStreamedJson(urlValue, root, allowMirror = true, tried = [], signal = null) {
+  signal?.throwIfAborted();
+  if (!tried.length && allowMirror && streamedHealthyHost?.expiresAt > Date.now()) {
+    const start = new URL(urlValue);
+    if (STREAMED_HOSTS.includes(start.hostname) && start.hostname !== streamedHealthyHost.host) {
+      start.hostname = streamedHealthyHost.host;
+      urlValue = start.href;
+      root = start.origin + '/';
+    }
+  }
   try {
+  const timeout = AbortSignal.timeout(allowMirror ? 6_000 : 8_000);
   const response = await fetchTvRemote(urlValue, {
-    signal: AbortSignal.timeout(allowMirror ? 6_000 : 8_000),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     headers: {
       accept: 'application/json,text/plain;q=0.9,*/*;q=0.4',
       'accept-language': 'fr-FR,fr;q=0.9,en;q=0.6',
@@ -10216,12 +11179,19 @@ async function fetchStreamedJson(urlValue, root, allowMirror = true) {
   if (!response.ok) throw new HttpError(response.status, `API Streamed indisponible (${response.status}).`);
   const text = await response.text();
   if (text.length > 4 * 1024 * 1024) throw new HttpError(413, 'Catalogue Streamed trop volumineux.');
-  try { return JSON.parse(text); } catch { throw new HttpError(502, 'Catalogue Streamed invalide.'); }
+  let payload;
+  try { payload = JSON.parse(text); } catch { throw new HttpError(502, 'Catalogue Streamed invalide.'); }
+  const answered = new URL(urlValue).hostname;
+  if (STREAMED_HOSTS.includes(answered)) streamedHealthyHost = { host: answered, expiresAt: Date.now() + 300_000 };
+  return payload;
   } catch (error) {
     const target = new URL(urlValue);
-    if (!allowMirror || !['streamed.pk','streamed.st'].includes(target.hostname)) throw error;
-    target.hostname = target.hostname === 'streamed.pk' ? 'streamed.st' : 'streamed.pk';
-    return fetchStreamedJson(target.href, target.origin+'/', false);
+    if (!allowMirror || !STREAMED_HOSTS.includes(target.hostname)) throw error;
+    const seen = [...tried, target.hostname];
+    const nextHost = STREAMED_HOSTS.find(host => !seen.includes(host));
+    if (!nextHost) throw error;
+    target.hostname = nextHost;
+    return fetchStreamedJson(target.href, target.origin + '/', seen.length + 1 < STREAMED_HOSTS.length, seen, signal);
   }
 
 }
@@ -10288,13 +11258,10 @@ async function resolveStreamedReference(reference) {
   return {options};
 }
 
-async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
-  const root = safeTvRemoteUrl(rootValue).toString();
-  const cacheKey = `streamed::${root}`;
-  const cached = tvCatalogCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+async function legacyStreamedChannels(root) {
+  const signal = AbortSignal.timeout(8_000);
   const sportsEndpoint = new URL('/api/sports', root).toString();
-  const sports = await fetchStreamedJson(sportsEndpoint, root).catch(() => []);
+  const sports = await fetchStreamedJson(sportsEndpoint, root, true, [], signal).catch(() => []);
   const endpoints = [
     ['/api/matches/live/popular', 'Popular Live'],
     ['/api/matches/live/popular-viewcount', 'Popular Live'],
@@ -10302,7 +11269,7 @@ async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
     ...((Array.isArray(sports) ? sports : []).slice(0, 16).map(sport => [`/api/matches/${encodeURIComponent(String(sport.id || ''))}/popular`, String(sport.name || sport.id || 'Sports')]))
   ];
   const results = await Promise.allSettled(endpoints.map(async ([path, group]) => {
-    const payload = await fetchStreamedJson(new URL(path, root).toString(), root);
+    const payload = await fetchStreamedJson(new URL(path, root).toString(), root, true, [], signal);
     if (!Array.isArray(payload)) return [];
     return payload.map(item => streamedDeferredChannel(item, root, group)).filter(Boolean);
   }));
@@ -10312,23 +11279,221 @@ async function tvCatalogFromStreamed(rootValue = 'https://streamed.pk/') {
     if (result.status !== 'fulfilled') { failedCount += 1; return; }
     result.value.forEach(channel => map.set(channel.id, channel));
   });
-  const channels = [...map.values()];
+  if (!map.size && failedCount === endpoints.length) throw new HttpError(502, 'API Streamed historique indisponible.');
+  return [...map.values()];
+}
+
+async function fetchSportsJson(url, root, provider) {
+  const response = await fetchTvRemote(url, {
+    signal: AbortSignal.timeout(6_000),
+    headers: { accept: 'application/json', referer: root, 'user-agent': 'Mozilla/5.0 Noctra' }
+  });
+  if (!response.ok) {
+    try { await response.body?.cancel?.(); } catch {}
+    throw new HttpError(502, `API ${provider} indisponible (HTTP ${response.status}).`);
+  }
+  const text = await response.text();
+  if (text.length > 6 * 1024 * 1024) throw new HttpError(413, `Programme ${provider} trop volumineux.`);
+  try { return JSON.parse(text); } catch { throw new HttpError(502, `Réponse ${provider} non JSON.`); }
+}
+
+function sportsPlayerOptions(entries, root, defaultLabel) {
+  const options = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (typeof entry?.url !== 'string' || !entry.url.trim()) continue;
+    let url;
+    try { url = safeTvRemoteUrl(new URL(entry.url, root)).href; } catch { continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    options.push({ label: String(entry.name || entry.quality || `${defaultLabel} ${options.length + 1}`), url, playbackType: 'embed', compatPage: true });
+  }
+  return options;
+}
+
+function sportsChannelWithPlayers(channel, options, externalUrl, provider) {
+  if (!channel || !options.length) return null;
+  const playback = { ...channel, externalUrl, compatPage: true, streamKind: `${provider} · lecteur web` };
+  if (options.length === 1) return { ...playback, embedUrl: options[0].url };
+  const token = issueTvReference(externalUrl, {}, { kind: 'sports-public-players', options });
+  return { ...playback, embedUrl: '', playbackType: 'resolver', resolverUrl: publicPath(`/api/tv/resolve/${token}`), streamKind: `${provider} · serveurs au clic` };
+}
+
+async function streamFreeChannels(root) {
+  const payload = await fetchSportsJson(new URL('/api/v1/streams', root), root, 'StreamFree');
+  if (!Array.isArray(payload?.streams)) throw new HttpError(502, 'Format du programme StreamFree inattendu.');
+  return payload.streams.map(item => {
+    if (!item?.name || !Array.isArray(item.sources)) return null;
+    const sources = [...item.sources].sort((a, b) => Number(Boolean(b?.live)) - Number(Boolean(a?.live)));
+    const options = sportsPlayerOptions(sources, root, 'StreamFree');
+    for (const option of options) {
+      const url = new URL(option.url);
+      // Les liens publiés pointent souvent vers strmfree.st. Le miroir qui
+      // sert le programme expose aussi la même route /embed.
+      if (STREAMFREE_HOSTS.includes(url.hostname) && url.pathname.startsWith('/embed/')) {
+        option.url = new URL(url.pathname + url.search + url.hash, root).href;
+      }
+    }
+    if (!options.length) return null;
+    const page = options[0].url;
+    const start = new Date(Number(item.match_timestamp) * 1000);
+    const channel = normalizeTvChannel({
+      name: item.name, embed_url: page, group: item.league || item.category || 'Sports',
+      category: item.category, provider: 'Streamed', logo: item.thumbnail_url || item.team1?.logo,
+      secondaryLogo: item.team2?.logo, eventId: item.stream_key || item.id,
+      kick_off_iso: item.match_timestamp && Number.isFinite(start.getTime()) ? start.toISOString() : null,
+      is_live: sources.some(source => source?.live === true)
+    }, root);
+    return sportsChannelWithPlayers(channel, options, page, 'StreamFree');
+  }).filter(Boolean);
+}
+
+async function tvCatalogFromStreamed(rootValue = 'https://strmfree.pk/') {
+  const root = safeTvRemoteUrl(rootValue).href;
+  const cacheKey = `streamed::${root}`;
+  const cached = tvCatalogCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const roots = [...new Set([root, ...STREAMFREE_HOSTS.map(host => `https://${host}/`), 'https://streamed.pk/'])];
+  return sportsCatalogWithFallback('Streamed', 'streamed', cacheKey, roots, STREAMED_SITES, candidate => {
+    return STREAMFREE_HOSTS.includes(new URL(candidate).hostname) ? streamFreeChannels(candidate) : legacyStreamedChannels(candidate);
+  });
+}
+
+// Site du fournisseur, proposé quand aucune de ses adresses ne publie de
+// programme exploitable (lecture dans le lecteur web de Noctra).
+function providerSiteChannels(provider, urls) {
+  return urls.map(url => {
+    const host = new URL(url).hostname;
+    const channel = normalizeTvChannel({ name: `${provider} · site ${host}`, embed_url: url, group: 'Sites du fournisseur', provider, description: 'Programme affiché par le site du fournisseur' }, url, 'Sites du fournisseur');
+    return channel ? { ...channel, externalUrl: url, compatPage: true, streamKind: 'Site du fournisseur' } : null;
+  }).filter(Boolean);
+}
+
+// Chaque fournisseur PPV garde ses routes et son format de programme.
+const PPV_HOSTS = ['rockylive.st', 'tim-streams.com', 'ppv.st', 'ppv.to'];
+const PPV_SITES = ['https://rockylive.st/', 'https://tim-streams.com/'];
+const STREAMED_SITES = ['https://strmfree.pk/'];
+
+function ppvEvents(payload) {
+  const groups = Array.isArray(payload) ? payload : Array.isArray(payload?.streams) ? payload.streams : Array.isArray(payload?.data) ? payload.data : [];
+  const out = [];
+  for (const group of groups) {
+    if (!group || typeof group !== 'object') continue;
+    const inner = Array.isArray(group.streams) ? group.streams : null;
+    if (inner) inner.forEach(event => out.push({ event, category: String(group.category || group.name || '').trim() }));
+    else out.push({ event: group, category: String(group.category_name || group.category || '').trim() });
+  }
+  return out;
+}
+
+function ppvChannel(event, category, root) {
+  if (!event || typeof event !== 'object') return null;
+  const name = String(event.name || event.title || '').replace(/\s+/g, ' ').trim();
+  const slug = String(event.uri_name || event.slug || '').trim().replace(/^\/+/, '');
+  let embed = String(event.embed_url || event.iframe || event.embed || event.embedUrl || '').trim();
+  if (embed && !/^https?:\/\//i.test(embed)) { try { embed = new URL(embed, root).toString(); } catch { embed = ''; } }
+  let page = slug ? new URL(`/live/${slug.split('/').map(encodeURIComponent).join('/')}`, root).href : '';
+  if (event.event_url) {
+    try { page = resolveTvUrl(event.event_url, root); } catch {}
+  }
+  if (!name || (!embed && !page)) return null;
+  const now = Date.now() / 1000;
+  const start = Number(event.start_timestamp || event.starts_at || event.start || 0) || 0;
+  const date = new Date(start * 1000);
+  const end = Number(event.ends_at || event.end || 0) || 0;
+  const always = Boolean(event.always_live || event.alwaysLive);
+  // Événement terminé depuis plus d'une heure : retiré.
+  if (!always && end && end < now - 3600) return null;
+  const group = String(event.category_name || category || 'Sports').replace(/[-_]+/g, ' ').trim() || 'Sports';
+  const channel = normalizeTvChannel({
+    name,
+    embed_url: embed || page,
+    group,
+    category: group,
+    provider: 'PPV',
+    eventId: event.id,
+    kick_off_iso: start && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+    description: [start && Number.isFinite(date.getTime()) ? date.toISOString() : '', event.tag ? String(event.tag) : ''].filter(Boolean).join(' · '),
+    logo: event.poster || event.image || '',
+    is_live: always || (start && start <= now && (!end || end >= now))
+  }, root, group);
+  if (!channel) return null;
+  return { ...channel, externalUrl: page || embed, playbackType: 'embed', compatPage: true, streamKind: embed ? 'PPV · lecteur intégré' : 'PPV · page de l’événement' };
+}
+
+async function timStreamsChannels(root) {
+  const payload = await fetchSportsJson(new URL('/api/live-upcoming', root), root, 'TimStreams');
+  if (!Array.isArray(payload?.events)) throw new HttpError(502, 'Format du programme TimStreams inattendu.');
+  const genres = new Map((Array.isArray(payload.genres) ? payload.genres : []).map(genre => [genre.id, genre]));
+  return payload.events.map(event => {
+    if (!event?.name || !event.url || event.vip || !Array.isArray(event.streams)) return null;
+    const options = sportsPlayerOptions(event.streams.filter(stream => stream && !stream.vip), root, 'TimStreams');
+    if (!options.length) return null;
+    const page = new URL(`/watch/${encodeURIComponent(event.url)}`, root).href;
+    const genre = genres.get(event.genre);
+    const group = genre?.sub_categories?.find(category => category.id === event.sub_genre)?.name || genre?.name || 'Sports';
+    const channel = normalizeTvChannel({
+      name: event.name, embed_url: options[0].url, group, category: genre?.name,
+      provider: 'PPV', logo: event.logo, eventId: event.url,
+      description: [typeof event.time === 'string' ? `${event.time.replace('T', ' ')} ET` : '', event.description].filter(Boolean).join(' · ')
+    }, root);
+    return sportsChannelWithPlayers(channel, options, page, 'TimStreams');
+  }).filter(Boolean);
+}
+
+async function tvCatalogFromPpv(rootValue = 'https://rockylive.st/') {
+  const root = safeTvRemoteUrl(rootValue).toString();
+  const cacheKey = `ppv::${root}`;
+  const cached = tvCatalogCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const roots = [...new Set([root, ...PPV_HOSTS.map(host => `https://${host}/`)])];
+  return sportsCatalogWithFallback('PPV', 'ppv', cacheKey, roots, PPV_SITES, async candidate => {
+    const host = new URL(candidate).hostname;
+    if (host === 'tim-streams.com' || host === 'timst.top') return timStreamsChannels(candidate);
+    if (host === 'rockylive.st') {
+      const payload = await fetchSportsJson(new URL('/api/events.php?limit=1000', candidate), candidate, 'RockyLive');
+      if (payload?.success !== true || !Array.isArray(payload.events)) throw new HttpError(502, 'Format du programme RockyLive inattendu.');
+      return payload.events.map(event => ppvChannel(event, event?.league || event?.league_slug, candidate)).filter(Boolean);
+    }
+    const payload = await fetchSportsJson(new URL('/api/streams', candidate), candidate, 'PPV');
+    return ppvEvents(payload).map(({ event, category }) => ppvChannel(event, category, candidate)).filter(Boolean);
+  });
+}
+
+async function sportsCatalogWithFallback(name, sourceType, cacheKey, roots, sites, loadChannels) {
+  const failures = [];
+  for (const root of roots) {
+    const host = new URL(root).hostname;
+    try {
+      const channels = [...new Map((await loadChannels(root)).map(channel => [channel.id, channel])).values()];
+      if (channels.length) {
+        const value = {
+          name, sourceType, groups: [], channels, count: channels.length,
+          ...(failures.length ? { retryAfterMs: 20_000 } : {}),
+          warning: failures.length ? `Programme de secours · ${host}. ${failures.join(' ; ')}.` : ''
+        };
+        tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (failures.length ? 20_000 : 60_000), value });
+        return value;
+      }
+      failures.push(`${host} : programme vide`);
+    } catch (error) {
+      failures.push(`${host} : ${error instanceof HttpError ? error.message : 'connexion impossible'}`);
+    }
+  }
+  const channels = providerSiteChannels(name, sites);
   const value = {
-    name: 'Streamed',
-    sourceType: 'streamed',
-    groups: [],
-    channels,
-    count: channels.length,
-    warning: channels.length
-      ? (failedCount ? `${failedCount} rubrique(s) Streamed n’ont pas répondu.` : '')
-      : 'Aucun événement Streamed public exploitable n’est actuellement publié.'
+    name, sourceType, groups: [], channels, count: channels.length,
+    retryAfterMs: 20_000,
+    warning: `Aucun programme ${name} exploitable. ${failures.join(' ; ')}. Sites des fournisseurs proposés.`
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 60_000, value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 20_000, value });
   return value;
 }
 
+const VOLKAMAX_ROOTS = ['https://volkamax.club/', 'https://bzzh.lat/', 'https://bzh.lat/', 'https://bzh-sport.lat/'];
+
 function volkamaxAllowedHost(urlValue) {
-  try { return /(?:^|\.)(?:volkamax\.club|bzh-sport\.lat)$/i.test(new URL(urlValue).hostname); }
+  try { return /^(?:www\.)?(?:volkamax\.club|bzzh\.lat|bzh-sport\.lat|bzh\.lat)$/i.test(new URL(urlValue).hostname); }
   catch { return false; }
 }
 
@@ -10338,21 +11503,21 @@ function volkamaxExtractEmbedUrl(htmlValue, baseUrl) {
   for (const match of html.matchAll(/embeds\s*\[\s*\d+\s*\]\s*=\s*(['"])([\s\S]*?)\1\s*;/gi)) {
     values.push(decodeTvHtml(match[2]));
   }
-  values.push(html);
+  values.push(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
   for (const value of values) {
-    const iframe = String(value || '').match(/<iframe\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1]
-      || String(value || '').match(/\bsrc=["']([^"']+)["']/i)?.[1];
-    if (!iframe) continue;
-    try { return safeTvRemoteUrl(resolveTvUrl(iframe, baseUrl)).toString(); } catch {}
+    for (const [, iframe] of value.matchAll(/<iframe\b[^>]*\s+src\s*=\s*["']([^"']+)["']/gi)) {
+      try {
+        const target = safeTvRemoteUrl(resolveTvUrl(decodeTvHtml(iframe), baseUrl));
+        if (target.origin === new URL(baseUrl).origin && target.pathname === '/') continue;
+        return target.href;
+      } catch {}
+    }
   }
   return '';
 }
 
 function volkamaxBridgeUrl(pageUrl) {
-  const token = issueTvReference(pageUrl, {
-    referer: 'https://bzh-sport.lat/',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36 Noctra/163'
-  }, { kind: 'volkamax-page', provider: 'Volkamax' });
+  const token = issueTvReference(pageUrl, {}, { kind: 'volkamax-page', provider: 'Volkamax' });
   return publicPath(`/api/tv/volkamax/embed/${token}`);
 }
 
@@ -10360,8 +11525,17 @@ async function proxyVolkamaxEmbed(tokenValue, res, mobile = false) {
   const reference = tvReferences.get(String(tokenValue || ''));
   if (!reference || reference.expiresAt <= Date.now() || reference.meta?.kind !== 'volkamax-page') throw new HttpError(410, 'Le lecteur Volkamax a expiré. Recharge la chaîne.');
   if (!volkamaxAllowedHost(reference.url)) throw new HttpError(403, 'Lecteur Volkamax non autorisé.');
-  const page = await fetchPublicTvHtml(reference.url, 'Volkamax', 12_000);
-  const embedUrl = volkamaxExtractEmbedUrl(page.html, page.finalUrl);
+  const source = new URL(reference.url);
+  const candidates = new Set([source.href, ...VOLKAMAX_ROOTS.slice(0, 2).map(root => new URL(source.pathname + source.search, root).href)]);
+  let embedUrl = '';
+  for (const candidate of candidates) {
+    try {
+      const page = await fetchPublicTvHtml(candidate, 'Volkamax', 6_000, new URL('/', candidate).href);
+      if (!volkamaxAllowedHost(page.finalUrl)) continue;
+      embedUrl = volkamaxExtractEmbedUrl(page.html, page.finalUrl);
+      if (embedUrl) break;
+    } catch {}
+  }
   if (!embedUrl) throw new HttpError(422, 'Volkamax n’a pas publié de lecteur exploitable pour cette entrée.');
   if (mobile) { res.writeHead(302, { location: embedUrl, 'cache-control': 'no-store', 'referrer-policy': 'origin-when-cross-origin' }); res.end(); return; }
   // Le lecteur BZH/Volkamax refuse désormais toute iframe possédant un
@@ -10380,11 +11554,12 @@ function parseVolkamaxSports(htmlValue, baseUrl) {
   const html = String(htmlValue || '');
   const channels = [];
   const seen = new Set();
-  const add = (hrefValue, labelValue, attrs = '', index = 0, forcedGroup = '') => {
+  const add = (hrefValue, labelValue, attrs = '', forcedGroup = '', isLive = false) => {
     let url = '';
     try { url = resolveTvUrl(decodeTvHtml(hrefValue), baseUrl); } catch { return; }
     if (!volkamaxAllowedHost(url) || seen.has(url)) return;
     const path = new URL(url).pathname.toLowerCase();
+    if (!forcedGroup && !/^\/regarder-la-chaine-/i.test(path)) return;
     const body = stripTvHtml(labelValue).replace(/\s+/g, ' ').trim();
     const attrName = decodeTvHtml((attrs.match(/\b(?:title|alt)=["']([^"']+)["']/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
     let name = body || attrName;
@@ -10408,57 +11583,49 @@ function parseVolkamaxSports(htmlValue, baseUrl) {
       embedUrl: volkamaxBridgeUrl(url),
       externalUrl: url,
       compatPage: true,
-      isLive: true,
-      streamKind: 'Volkamax · lecteur résolu'
+      isLive: isLive || !forcedGroup,
+      streamKind: 'Volkamax · lecteur web'
     });
   };
-  for (const row of html.matchAll(/<tr\b[^>]*class=["'][^"']*\bevent\b[^"']*["'][^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const href = row[1].match(/<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/i);
-    if (!href) continue;
-    const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(cell => stripTvHtml(cell[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const title = cells.find(value => / - | vs | v /i.test(value)) || stripTvHtml(href[4]);
+  for (const [, attrs, body] of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    const links = [...body.matchAll(/<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi)];
+    const href = links.find(link => /\bclass=["'][^"']*\bevent\b/i.test(link[1] + link[3]))
+      || (/\bclass=["'][^"']*\bevent\b/i.test(attrs) ? links[0] : null);
+    if (!href || !/-streaming-direct(?:[/?#]|$)/i.test(href[2])) continue;
+    const cells = [...body.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(cell => stripTvHtml(cell[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const title = stripTvHtml(body.match(/<td\b[^>]*class=["'][^"']*\bevent-title\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1] || '')
+      || cells.find(value => / - | vs | v /i.test(value)) || stripTvHtml(href[4]);
     const competition = cells.find(value => value && value !== title && !/^(?:aujourd'hui|\d{1,2}[:h]\d{2}|\d{1,2}-[A-Za-z]+-\d{4})$/i.test(value)) || '';
-    add(href[2], title, `${href[1]} ${href[3]}`, row.index, competition ? `Événements · ${competition}` : 'Événements');
+    add(href[2], title, `${href[1]} ${href[3]}`, competition ? `Événements · ${competition}` : 'Événements', /\/live\.gif/i.test(body));
   }
   const expression = /<a\b([^>]*?)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
   let match;
-  while ((match = expression.exec(html)) && channels.length < 900) {
-    add(match[2], match[4], `${match[1]} ${match[3]}`, match.index);
+  while ((match = expression.exec(html))) {
+    add(match[2], match[4], `${match[1]} ${match[3]}`);
   }
   return channels;
 }
 
-async function tvCatalogFromVolkamax(rootValue = 'https://volkamax.club/') {
+async function tvCatalogFromVolkamax(rootValue = VOLKAMAX_ROOTS[0]) {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `volkamax::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  let page;
-  try { page = await fetchPublicTvHtml(root, 'Volkamax', 9_000); }
-  catch (error) {
-    if (!volkamaxAllowedHost(root)) throw error;
-    const alternate = new URL(root).hostname === 'bzh-sport.lat' ? 'https://volkamax.club/' : 'https://bzh-sport.lat/';
-    page = await fetchPublicTvHtml(alternate, 'Volkamax', 9_000);
-  }
-  const jsRedirect = String(page.html || '').match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)?.[1]
-    || String(page.html || '').match(/location\.replace\s*\(\s*['"]([^'"]+)['"]\s*\)/i)?.[1];
-  if (jsRedirect) {
-    try {
-      const redirected = resolveTvUrl(decodeTvHtml(jsRedirect), page.finalUrl);
-      if (volkamaxAllowedHost(redirected)) page = await fetchPublicTvHtml(redirected, 'Volkamax', 18_000);
-    } catch {}
-  }
-  const channels = parseVolkamaxSports(page.html, page.finalUrl);
-  const value = {
-    name: 'Volkamax',
-    sourceType: 'volkamax',
-    groups: [],
-    channels,
-    count: channels.length,
-    warning: channels.length ? '' : 'Aucun lien Sport Volkamax exploitable n’a été trouvé sur le domaine public actuel.'
-  };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 2 * 60_000, value });
-  return value;
+  if (!volkamaxAllowedHost(root)) throw new HttpError(403, 'Domaine Volkamax non autorisé.');
+  const roots = [...new Set([root, ...VOLKAMAX_ROOTS])];
+  return sportsCatalogWithFallback('Volkamax', 'volkamax', cacheKey, roots, [VOLKAMAX_ROOTS[0]], async candidate => {
+    const page = await fetchPublicTvHtml(candidate, 'Volkamax', 6_000);
+    if (!volkamaxAllowedHost(page.finalUrl)) throw new HttpError(502, 'Redirection Volkamax vers un domaine inconnu.');
+    const channels = parseVolkamaxSports(page.html, page.finalUrl);
+    if (channels.length) return channels;
+    const jsRedirect = page.html.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)?.[1]
+      || page.html.match(/location\.replace\s*\(\s*['"]([^'"]+)['"]\s*\)/i)?.[1];
+    if (!jsRedirect) return [];
+    const target = resolveTvUrl(decodeTvHtml(jsRedirect), page.finalUrl);
+    if (!volkamaxAllowedHost(target) || roots.includes(target)) return [];
+    const redirected = await fetchPublicTvHtml(target, 'Volkamax', 6_000);
+    return volkamaxAllowedHost(redirected.finalUrl) ? parseVolkamaxSports(redirected.html, redirected.finalUrl) : [];
+  });
 }
 
 function halouleLinkGroup(contextValue, urlValue, labelValue) {
@@ -10670,7 +11837,7 @@ function ohaChannelIdentity(value) {
 // Le client Kool actuel utilise directement `ids.id` dans /watch?live=<id>.
 const ohaConfirmedPublicRoutes = new Map();
 
-function ohaWatchRouteFromValue(value, rootValue = 'https://oha.cx/live') {
+function ohaWatchRouteFromValue(value, rootValue = 'https://huhu.bz/live') {
   const raw = String(value || '').trim();
   if (!raw) return '';
   try {
@@ -10695,7 +11862,7 @@ function ohaRouteCandidatesFromValue(value, rootValue, keyHint = '', depth = 0, 
     add(raw);
     // Certaines réponses JSON échappent les URLs ou les injectent dans un
     // fragment de texte/JS plutôt que dans un champ URL dédié.
-    for (const match of raw.matchAll(/(?:https?:\/\/(?:www\.)?(?:oha\.cx|kool\.ws|kool\.to)|https?:\/\/185\.254\.196\.78)?\/watch\?live=([a-z0-9_-]{12,128})/gi)) {
+    for (const match of raw.matchAll(/(?:https?:\/\/(?:www\.)?(?:huhu\.bz|oha\.cx|kool\.ws|kool\.to|vavoo\.top)|https?:\/\/185\.254\.196\.78)?\/watch\?live=([a-z0-9_-]{12,128})/gi)) {
       add(new URL(`/watch?live=${match[1]}`, safeTvRemoteUrl(rootValue)).toString());
     }
     if (/^(?:live|watch|route|page|href|external|public|web|slug|hash|token|id)$/i.test(String(keyHint || '')) && /^[a-f0-9]{18,64}$/i.test(raw)) {
@@ -10736,7 +11903,7 @@ function ohaPublicRouteCandidates(entryGroup, rootValue) {
 function ohaServerLabel(value, index) {
   const name = String(value || '');
   const quality = name.match(/\b(?:UHD|FHD|HD|SD|4K)\b/i)?.[0]?.toUpperCase() || 'Auto';
-  const server = name.match(/\|\s*([A-Z0-9]+)\s*$/i)?.[1]?.toUpperCase() || String(index + 1);
+  const server = (name.match(/\|\s*([A-Z0-9]+)\s*$/i)?.[1] || name.match(/\((\d+)\)\s*$/)?.[1] || String(index + 1)).toUpperCase();
   return `${quality} · Serveur ${server}`;
 }
 
@@ -10755,6 +11922,105 @@ function ohaProgramme(epgValue) {
 
 let ohaHealthyRoot = null;
 
+// 200.0.167 : miroirs actuels d'OHA / Kool (même application « #/channels »),
+// dans l'ordre d'essai, puis anciennes adresses gardées en secours.
+const OHA_MIRRORS = ['huhu.bz', 'kool.ws', 'vavoo.top', 'oha.cx'];
+const OHA_LEGACY_HOSTS = ['kool.to', '185.254.196.78', '178.83.5.50'];
+const OHA_HOSTS = [...OHA_MIRRORS, ...OHA_LEGACY_HOSTS].flatMap(host => /^\d/.test(host) ? [host] : [host, `www.${host}`]);
+
+function ohaIsMirror(value) {
+  try { return OHA_MIRRORS.includes(new URL(value).hostname.toLowerCase().replace(/^www\./, '')); } catch { return false; }
+}
+
+function ohaV2PlayUrl(value, mirror, id) {
+  try {
+    const url = safeTvRemoteUrl(new URL(value, `https://${mirror}/`));
+    const host = url.hostname.replace(/^www\./, '');
+    const expected = /^\/live\/play\/(\d+)$/.exec(url.pathname);
+    if (url.protocol !== 'https:' || url.port || !expected || (id && expected[1] !== String(id))) return '';
+    if (host === mirror || (mirror === 'vavoo.top' && host === 'vavoo.to')) return url.href;
+  } catch {}
+  return '';
+}
+
+async function ohaV2Json(mirror, path, params, signal) {
+  const root = `https://${mirror}/`;
+  const url = new URL(path, root);
+  url.search = new URLSearchParams({ language: 'fr', region: 'FR', ...params });
+  const response = await fetchTvRemote(url, {
+    signal,
+    headers: { accept: 'application/json', referer: root, 'user-agent': 'Mozilla/5.0 Noctra' }
+  });
+  if (!response.ok) {
+    await response.body?.cancel?.();
+    throw new HttpError(502, `Miroir OHA ${mirror} indisponible (HTTP ${response.status}).`);
+  }
+  const text = await response.text();
+  if (text.length > 2 * 1024 * 1024) throw new HttpError(413, `Réponse OHA ${mirror} trop volumineuse.`);
+  try { return JSON.parse(text); } catch { throw new HttpError(502, `Réponse OHA ${mirror} non JSON.`); }
+}
+
+async function ohaV2CatalogGroup(mirror, group) {
+  const items = [];
+  const seen = new Set();
+  const signal = AbortSignal.timeout(8_000);
+  let cursor = '';
+  try {
+    for (let page = 0; page < 5; page += 1) {
+      const payload = await ohaV2Json(mirror, '/live/catalog/live/channels.json', {
+        sort: 'name', 'filter[group]': group, ...(cursor ? { cursor } : {})
+      }, signal);
+      if (!Array.isArray(payload?.items)) throw new HttpError(502, 'Format du catalogue OHA inattendu.');
+      for (const item of payload.items) {
+        if (!item?.id || typeof item.name !== 'string' || !item.name.trim() || !item.url) continue;
+        if (!Array.isArray(item.tags) || !item.tags.includes(group)) continue;
+        const url = ohaV2PlayUrl(item.url, mirror, item.id);
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        let logo = '';
+        if (item.images?.logo) {
+          try { logo = resolveTvUrl(item.images.logo, `https://${mirror}/`); } catch {}
+        }
+        items.push({ name: item.name, url, ids: { id: item.id }, logo, epg: item.epg, group, mirror });
+      }
+      const next = String(payload.nextCursor ?? '');
+      if (!next || next === cursor || !payload.items.length) return { items, partial: false };
+      cursor = next;
+    }
+  } catch (error) {
+    if (!items.length) throw error;
+  }
+  return { items, partial: true };
+}
+
+// API de catalogue / résolution : « mediahubmx » (Kool, Vavoo, Huhu) ou
+// « mediaurl » (ancien OHA). Les deux sont essayées, la plus probable d'abord.
+function ohaApiEndpoints(rootValue, kind) {
+  const host = new URL(rootValue).hostname.toLowerCase().replace(/^www\./, '');
+  const hub = `/mediahubmx-${kind}.json`;
+  const legacy = `/mediaurl-${kind}.json`;
+  return host === 'oha.cx' ? [legacy, hub] : [hub, legacy];
+}
+
+// Appel JSON d'un miroir : endpoint suivant si celui-ci n'existe pas (404/405)
+// ou ne renvoie pas de JSON.
+async function ohaPostJson(candidateRoot, kind, options, makeError) {
+  let lastError = null;
+  for (const endpointName of ohaApiEndpoints(candidateRoot, kind)) {
+    const response = await fetchTvRemote(new URL(endpointName, candidateRoot).toString(), options);
+    if (!response.ok) {
+      try { await response.body?.cancel?.(); } catch {}
+      lastError = makeError(response.status);
+      if ([404, 405].includes(response.status)) continue;
+      throw lastError;
+    }
+    const text = await response.text();
+    try { return text ? JSON.parse(text) : {}; }
+    catch { lastError = makeError(0, 'réponse non JSON'); }
+  }
+  throw lastError || makeError(0, 'réponse non JSON');
+}
+
 function ohaRootAlternatives(rootValue) {
   const roots = [];
   const add = value => {
@@ -10765,13 +12031,11 @@ function ohaRootAlternatives(rootValue) {
   };
   if (ohaHealthyRoot?.expiresAt > Date.now()) add(ohaHealthyRoot.url);
   add(rootValue);
-  // OHA a migré vers Kool. L'IP reste un secours utile lorsque le DNS du
-  // nouveau domaine est filtré sur la seedbox ; l'ancien domaine vient enfin.
-  add('https://kool.ws/live');
+  // 200.0.167 : miroirs actuels (huhu.bz, kool.ws, vavoo.top, oha.cx), puis
+  // les adresses IP de Kool, utiles si le DNS d'un domaine est filtré.
+  for (const host of OHA_MIRRORS) add(`https://${host}/live`);
   add('http://185.254.196.78/live');
   add('http://178.83.5.50/live');
-  add('http://vavoo.top/live');
-  add('https://oha.cx/live');
   return roots;
 }
 
@@ -10809,30 +12073,25 @@ async function ohaCatalogPage(root, group, cursor = null, timeoutMs = 9_000) {
         signal.addEventListener('abort', onAbort, {once:true});
       });
       signal.throwIfAborted();
-    const endpointName = /(?:^|\.)(?:kool\.ws|vavoo\.top)$|^(?:185\.254\.196\.78|178\.83\.5\.50)$/i.test(new URL(candidateRoot).hostname)
-      ? '/mediahubmx-catalog.json'
-      : '/mediaurl-catalog.json';
-    const endpoint = new URL(endpointName, candidateRoot).toString();
     const origin = new URL(candidateRoot).origin;
-      const response = await fetchTvRemote(endpoint, {
+      const payload = await ohaPostJson(candidateRoot, 'catalog', {
         method: 'POST',
         signal,
         headers: {
           accept: 'application/json, text/plain;q=0.8, */*;q=0.4',
           'content-type': 'application/json; charset=utf-8',
           origin,
-          referer: candidateRoot,
+          referer: `${origin}/`,
           'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36'
         },
         body: JSON.stringify(ohaRequestBody('catalog', { group, cursor }))
-      });
-      if (!response.ok) throw ohaProviderHttpError(response.status, 'catalogue') || new HttpError(response.status, `Catalogue OHA ${group} indisponible (${response.status}).`);
-      const text = await response.text();
-      let payload;
-      try { payload = text ? JSON.parse(text) : {}; }
-      catch { throw new HttpError(502, `Catalogue OHA ${group} : réponse non JSON.`); }
-      if (!Array.isArray(payload?.items)) throw new HttpError(502, 'Catalogue OHA : format inattendu.');
+      }, (status, detail) => status
+        ? ohaProviderHttpError(status, 'catalogue') || new HttpError(status, `Catalogue OHA ${group} indisponible (${status}).`)
+        : new HttpError(502, `Catalogue OHA ${group} : ${detail}.`));
+      if (!Array.isArray(payload?.items) || !payload.items.some(item => item?.url && item.ids?.id)) {
+        throw new HttpError(502, 'Catalogue OHA vide ou format inattendu.');
+      }
       ohaHealthyRoot = {url:candidateRoot, expiresAt:Date.now()+300_000};
       // V79 : si oha.cx redirige sa requête d'API vers un hôte canonique,
       // on accepte la réponse mais on conserve oha.cx comme racine fonctionnelle
@@ -10867,7 +12126,8 @@ function issueOhaResolverReference(entries, root, fallbackUrl = '', channelId = 
   const candidates = entries.map((entry, index) => ({
     url: safeTvRemoteUrl(entry.url).toString(),
     channelId: String(entry?.ids?.id || ''),
-    label: ohaServerLabel(entry.name, index)
+    label: ohaServerLabel(entry.name, index),
+    ...(entry.mirror ? { mirror: entry.mirror } : {})
   }));
   if (!candidates.length) throw new HttpError(422, 'Aucun serveur OHA disponible pour cette chaîne.');
   const routes = [...new Set((Array.isArray(routeCandidates) ? routeCandidates : []).map(value => ohaWatchRouteFromValue(value, root)).filter(Boolean))].slice(0, 12);
@@ -10900,6 +12160,9 @@ function ohaOfficialPageCandidates(rootValue, channelId = '', fallbackUrl = '', 
   // Kool publie actuellement `ids.id` comme identifiant exact de la route.
   // On reconstruit toujours la deep-link sur le miroir testé afin de ne jamais
   // mélanger une route oha.cx obsolète avec les assets/API de kool.ws.
+  // 200.0.167 : miroirs actuels = application « #/channels » (la chaîne y est
+  // ensuite choisie par le pont de Noctra) ; anciennes routes /watch en secours.
+  if (ohaIsMirror(root.toString())) add(new URL('/#/channels', root).toString());
   addWatchId(channelId);
   for (const candidate of routeCandidates) addWatchId(candidate);
   addWatchId(fallbackUrl);
@@ -10908,7 +12171,7 @@ function ohaOfficialPageCandidates(rootValue, channelId = '', fallbackUrl = '', 
 }
 
 async function selectOhaOfficialPage(reference) {
-  const roots = ohaRootAlternatives(reference?.meta?.root || 'https://oha.cx/live');
+  const roots = ohaRootAlternatives(reference?.meta?.root || 'https://huhu.bz/live');
   const channelId = reference?.meta?.channelId || '';
   const fallbackUrl = reference?.meta?.fallbackUrl || '';
   const routeCandidates = Array.isArray(reference?.meta?.routeCandidates) ? reference.meta.routeCandidates : [];
@@ -10924,11 +12187,15 @@ async function selectOhaOfficialPage(reference) {
         if (!response.ok) continue;
         const html = await response.text();
         if (ohaPageLooksMissing(html)) continue;
-        return { url: response.url || candidate, root, htmlChecked: true };
+        // fetch() n'envoie pas le fragment (« #/channels ») : il est remis sur l'adresse finale.
+        const hash = new URL(candidate).hash;
+        const finalUrl = new URL(response.url || candidate);
+        if (hash && !finalUrl.hash) finalUrl.hash = hash;
+        return { url: finalUrl.toString(), root, htmlChecked: true };
       } catch {}
     }
   }
-  return { url: new URL('/', safeTvRemoteUrl(reference?.meta?.root || 'https://oha.cx/live')).toString(), root: reference?.meta?.root || 'https://oha.cx/live', htmlChecked: false };
+  return { url: new URL('/#/channels', safeTvRemoteUrl(reference?.meta?.root || 'https://huhu.bz/live')).toString(), root: reference?.meta?.root || 'https://huhu.bz/live', htmlChecked: false };
 }
 
 function ohaWebFallbackOption(reference, token = '') {
@@ -11084,11 +12351,14 @@ async function validateOhaNativeHlsStream(streamUrlValue, headers = {}, timeoutM
   return true;
 }
 
-async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs = 6_000, signal = null) {
+async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs = 6_000, signal = null, onlyRoot = '') {
   const controller = new AbortController();
   const deadline = AbortSignal.timeout(Math.max(2_500, timeoutMs));
   const attemptSignal = AbortSignal.any([controller.signal, deadline, ...(signal ? [signal] : [])]);
-  const roots = ohaRootAlternatives(reference.meta.root).slice(0, 6);
+  // 200.0.167 : serveur d'un miroir précis (choisi dans la liste) ou course entre miroirs.
+  const mirror = candidate.mirror;
+  const modern = mirror && OHA_MIRRORS.includes(mirror);
+  const roots = modern ? [`https://${mirror}/live`] : onlyRoot ? [onlyRoot] : ohaRootAlternatives(reference.meta.root).slice(0, 6);
   try {
     return await Promise.any(roots.map(async (candidateRoot, rootIndex) => {
       // Un miroir lent ne bloque plus tous les suivants pendant 8 secondes.
@@ -11103,38 +12373,30 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
         attemptSignal.addEventListener('abort', onAbort, { once: true });
       });
       attemptSignal.throwIfAborted();
-      const endpointName = /(?:^|\.)(?:kool\.ws|vavoo\.top)$|^(?:185\.254\.196\.78|178\.83\.5\.50)$/i.test(new URL(candidateRoot).hostname)
-        ? '/mediahubmx-resolve.json'
-        : '/mediaurl-resolve.json';
-      const endpoint = new URL(endpointName, candidateRoot).toString();
       const origin = new URL(candidateRoot).origin;
-      const response = await fetchTvRemote(endpoint, {
+      const url = modern ? ohaV2PlayUrl(candidate.url, mirror, candidate.channelId) : '';
+      if (modern && !url) throw new HttpError(422, 'Référence de chaîne OHA invalide.');
+      const payload = modern ? await ohaV2Json(mirror, '/live/resolve', { url }, attemptSignal) : await ohaPostJson(candidateRoot, 'resolve', {
         method: 'POST',
         signal: AbortSignal.any([attemptSignal, AbortSignal.timeout(8_000)]),
         headers: {
           accept: 'application/json, text/plain;q=0.8, */*;q=0.5',
           'content-type': 'application/json; charset=utf-8',
           origin,
-          referer: candidateRoot,
+          referer: `${origin}/`,
           'accept-language': 'fr-FR,fr;q=0.9,en;q=0.7',
           'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87'
         },
         body: JSON.stringify(ohaRequestBody('resolve', { url: candidate.url }))
-      });
-      if (!response.ok) {
-        try { await response.body?.cancel?.(); } catch {}
-        throw ohaProviderHttpError(response.status, `serveur ${index + 1}`) || new HttpError(response.status, `Serveur OHA ${index + 1} indisponible (${response.status}).`);
-      }
-      const text = await response.text();
-      let payload;
-      try { payload = text ? JSON.parse(text) : {}; }
-      catch { throw new HttpError(502, `Serveur OHA ${index + 1} : réponse non JSON.`); }
-      const streamValue = ohaResolvedStreamUrl(payload);
+      }, (status, detail) => status
+        ? ohaProviderHttpError(status, `serveur ${index + 1}`) || new HttpError(status, `Serveur OHA ${index + 1} indisponible (${status}).`)
+        : new HttpError(502, `Serveur OHA ${index + 1} : ${detail}.`));
+      const streamValue = modern ? (payload?.format === 'hls' && payload.url) : ohaResolvedStreamUrl(payload);
       if (!streamValue) throw new HttpError(422, `Serveur OHA ${index + 1} n'a renvoyé aucun flux vidéo.`);
       const streamUrl = safeTvRemoteUrl(streamValue);
       const nativeHeaders = {
         origin,
-        referer: candidateRoot,
+        referer: `${origin}/`,
         'user-agent': reference.headers['user-agent'] || 'Noctra-Media-Client/87'
       };
       // V108 : un résolveur OHA peut répondre « succès » tout en retournant une
@@ -11151,7 +12413,8 @@ async function resolveSingleOhaCandidate(reference, candidate, index, timeoutMs 
         playbackType: 'stream',
         native: true,
         verified: true,
-        serverIndex: index
+        serverIndex: index,
+        mirror: new URL(candidateRoot).hostname.replace(/^www\./, '')
       };
     }));
   } catch (error) {
@@ -11195,7 +12458,16 @@ async function firstSuccessfulOhaCandidate(reference, candidates, signal = null)
   });
 }
 
-async function resolveOhaStreamReference(token, preferredIndex = null) {
+function ohaServerChoices(candidates, resolverPath) {
+  return candidates.map((candidate, index) => ({
+    index, server: index, mirror: candidate.mirror || '',
+    label: [candidate.mirror, candidate.label || `Serveur ${index + 1}`].filter(Boolean).join(' · '),
+    resolveUrl: `${resolverPath}?server=${index}`,
+    playbackType: 'resolver'
+  }));
+}
+
+async function resolveOhaStreamReference(token, preferredIndex = null, preferredMirror = '') {
   const state = decodeTvStateReference(token, 'oha');
   const stored = tvReferences.get(String(token || ''));
   const reference = state ? {
@@ -11208,33 +12480,32 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   if (reference.meta?.kind !== 'oha' || !Array.isArray(reference.meta.candidates) || !reference.meta.candidates.length) throw new HttpError(403, 'Référence OHA invalide.');
   const candidates = reference.meta.candidates;
   const resolverPath = publicPath(`/api/tv/oha/resolve/${encodeURIComponent(String(token || ''))}`);
-  const serverChoices = candidates.map((candidate, index) => ({
-    index,
-    label: candidate.label || `Serveur ${index + 1}`,
-    resolveUrl: `${resolverPath}?server=${index}`,
-    playbackType: 'resolver'
-  }));
-  let preferredFailure = '';
-  // Le flux natif ne doit pas attendre les sondes HTML des miroirs : les SPA
-  // renvoient souvent HTTP 200 même pour une fausse route. L'embed n'est chargé
-  // que s'il est utilisé et conserve l'ID du serveur effectivement sélectionné.
+  const mirror = OHA_MIRRORS.includes(String(preferredMirror || '').toLowerCase()) ? String(preferredMirror).toLowerCase() : '';
   const nativeController = new AbortController();
   const nativeDeadline = setTimeout(() => nativeController.abort(), 24_000);
   let nativeAttempt = null;
   try {
     nativeAttempt = await (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < candidates.length
-      ? resolveSingleOhaCandidate(reference, candidates[preferredIndex], preferredIndex, 22_000, nativeController.signal)
+      ? resolveSingleOhaCandidate(reference, candidates[preferredIndex], preferredIndex, 22_000, nativeController.signal, mirror ? `https://${mirror}/live` : '')
       : firstSuccessfulOhaCandidate(reference, candidates, nativeController.signal));
-  } catch (error) {
-    preferredFailure = cleanError(error);
-  } finally {
+  } catch {} finally {
     clearTimeout(nativeDeadline);
     nativeController.abort(); // Annule les sondes concurrentes dès qu'un flux est prêt.
   }
   const selectedIndex = Number.isInteger(preferredIndex) && candidates[preferredIndex]
     ? preferredIndex : Number(nativeAttempt?.serverIndex ?? 0);
+  const serverChoices = ohaServerChoices(candidates, resolverPath);
+  const activeChoice = nativeAttempt ? serverChoices[selectedIndex] : null;
+  if (nativeAttempt && activeChoice) {
+    nativeAttempt.label = activeChoice.label;
+    nativeAttempt.serverIndex = activeChoice.index;
+    nativeAttempt.index = activeChoice.index;
+  }
+  // Applis : serveurs des autres miroirs proposés comme serveurs à demander.
+  const otherServers = serverChoices.filter(choice => choice !== activeChoice).map(choice => ({ label: choice.label, resolveUrl: choice.resolveUrl, playbackType: 'resolver', mirror: choice.mirror || '' }));
   const selectedChannelId = candidates[selectedIndex]?.channelId || reference.meta.channelId || '';
-  const officialRoot = reference.meta.root;
+  const selectedMirror = candidates[selectedIndex]?.mirror;
+  const officialRoot = OHA_MIRRORS.includes(selectedMirror) ? `https://${selectedMirror}/live` : reference.meta.root;
   const externalUrl = ohaOfficialPageCandidates(officialRoot, selectedChannelId, reference.meta.fallbackUrl, reference.meta.routeCandidates)[0];
   // La route officielle est conservée comme secours sans la charger en avance.
   // Le catalogue conserve sa référence stateless, mais le lecteur reçoit
@@ -11258,7 +12529,7 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   bridge.manualOnly = true;
 
   if (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < candidates.length) {
-    if (nativeAttempt) return { externalUrl, options: [nativeAttempt, bridge], serverChoices, activeServer: preferredIndex, embeds: [] };
+    if (nativeAttempt) return { externalUrl, options: [nativeAttempt, bridge], serverChoices, activeServer: activeChoice ? activeChoice.index : preferredIndex, embeds: [] };
     throw new HttpError(502, 'Ce serveur OHA ne fournit pas de flux HLS vérifiable. Essaie un autre serveur ou ouvre manuellement le lecteur officiel.');
   }
 
@@ -11266,7 +12537,8 @@ async function resolveOhaStreamReference(token, preferredIndex = null) {
   // lancé automatiquement pour masquer un échec du résolveur natif.
   return {
     externalUrl,
-    options: nativeAttempt ? [nativeAttempt, bridge] : [bridge],
+    // Sans flux vérifié : lecteur officiel d'abord (comme avant), serveurs des miroirs à essayer ensuite.
+    options: nativeAttempt ? [nativeAttempt, ...otherServers, bridge] : [bridge, ...otherServers],
     serverChoices,
     activeServer: nativeAttempt ? Number(nativeAttempt.serverIndex ?? 0) : null,
     nativeUnavailable: !nativeAttempt,
@@ -11290,14 +12562,14 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
   const grouped = new Map();
   rawItems.forEach(item => {
     if (!item?.url || !item?.ids?.id) return;
-    const name = cleanOhaChannelName(item.name);
+    const name = cleanOhaChannelName(item.mirror ? item.name.replace(/\s*\(\d+\)\s*$/, '') : item.name);
     const key = ohaChannelIdentity(name);
     if (!key) return;
     const current = grouped.get(key) || { name, entries: [], logo: '', epg: [], group: item.group || 'France', id: String(item.ids.id) };
     // Les variantes BACKUP / LIVE DURING EVENTS ONLY sont des serveurs de la
     // même chaîne. Le libellé le plus court reste celui affiché à l'écran.
     if (name.length < current.name.length) current.name = name;
-    if (!current.entries.some(entry => entry.url === item.url)) current.entries.push(item);
+    if (!current.entries.some(entry => entry.url === item.url && entry.mirror === item.mirror)) current.entries.push(item);
     if (!current.logo && item.logo) current.logo = item.logo;
     if ((!current.epg || !current.epg.length) && Array.isArray(item.epg)) current.epg = item.epg;
     grouped.set(key, current);
@@ -11309,7 +12581,18 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
     // qu'avec un identifiant qui ressemble réellement au hash public OHA.
     const routeCandidates = ohaPublicRouteCandidates(item, root);
     const externalUrl = ohaCatalogPublicPageUrl(item, root);
-    const reference = issueOhaResolverReference(item.entries, root, externalUrl, item.id, item.name, routeCandidates);
+    const entries = item.entries;
+    if (entries[0]?.mirror) {
+      // Essayer d'abord un candidat par miroir, même si le premier publie plusieurs variantes.
+      const rank = new Map();
+      const order = entries.map(entry => {
+        const index = rank.get(entry.mirror) || 0;
+        rank.set(entry.mirror, index + 1);
+        return { entry, index };
+      }).sort((a, b) => a.index - b.index);
+      entries.splice(0, entries.length, ...order.map(value => value.entry));
+    }
+    const reference = issueOhaResolverReference(entries, root, externalUrl, item.id, item.name, routeCandidates);
     const programme = ohaProgramme(item.epg);
     return {
       id: `oha-${createHash('sha1').update(item.name).digest('hex').slice(0, 12)}`,
@@ -11342,18 +12625,39 @@ function buildOhaCatalog(rawItems, root, cacheKey, options = {}) {
     count: channels.length,
     nativePlayback: true,
     progressive: Boolean(options.progressive),
+    ...(options.partial ? { retryAfterMs: 30_000 } : {}),
     warning: options.warning || ''
   };
-  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, value });
+  tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + (options.partial ? 30_000 : 5 * 60_000), value });
   return value;
 }
 
-async function tvCatalogFromOha(rootValue = 'https://kool.ws/live') {
+async function tvCatalogFromOha(rootValue = 'https://huhu.bz/#/channels') {
   const root = safeTvRemoteUrl(rootValue).toString();
   const cacheKey = `oha::native::${root}`;
   const cached = tvCatalogCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const staleValue = cached?.value || null;
+
+  const configuredMirror = new URL(root).hostname.replace(/^www\./, '');
+  const mirrors = [...new Set([configuredMirror, ...OHA_MIRRORS])].filter(mirror => OHA_MIRRORS.includes(mirror));
+  const catalogues = await Promise.all(mirrors.map(async mirror => {
+    const groups = await Promise.allSettled(ohaPublicGroups.map(group => ohaV2CatalogGroup(mirror, group)));
+    return { mirror, groups };
+  }));
+  const items = catalogues.flatMap(({ groups }) => groups.flatMap(result => result.value?.items || []));
+  if (items.length) {
+    const partial = catalogues.filter(({ groups }) => groups.some(result => !result.value?.items.length || result.value.partial));
+    return buildOhaCatalog(items, `https://${items[0].mirror}/live`, cacheKey, {
+      partial: Boolean(partial.length),
+      warning: partial.length ? `Catalogues OHA absents ou partiels · ${partial.map(({ mirror }) => mirror).join(', ')}.` : ''
+    });
+  }
+  if (staleValue?.channels?.length) {
+    const value = { ...staleValue, stale: true, retryAfterMs: 20_000, warning: 'Miroirs OHA indisponibles : dernier catalogue connu affiché.' };
+    tvCatalogCache.set(cacheKey, { expiresAt: Date.now() + 20_000, value });
+    return value;
+  }
 
   const firstPageState = Array(ohaPublicGroups.length).fill(null);
   const firstPages = ohaPublicGroups.map((group, index) =>
@@ -11834,6 +13138,7 @@ async function tvCatalogBySource(sourceId, options = {}) {
   else if (source.id === 'streamsports99-live-tv') catalog = await tvCatalogFromStreamSports99LiveTv(source.url);
   else if (source.type === 'streamsports99') catalog = await tvCatalogFromStreamSports99(source.url);
   else if (source.type === 'streamed') catalog = await tvCatalogFromStreamed(source.url);
+  else if (source.type === 'ppv') catalog = await tvCatalogFromPpv(source.url);
   else if (source.type === 'volkamax') catalog = await tvCatalogFromVolkamax(source.url);
   else if (source.type === 'alternative') catalog = await tvCatalogFromAlternative(source.url);
   else catalog = await tvCatalogFromUrl(source.url, source.name, {
@@ -12079,8 +13384,11 @@ function tvImageReference(tokenValue) {
       const rawUrl = String(payload?.u || '').trim();
       if (!rawUrl) return label ? { url: '', label, fallbackOnly: true, headers: {} } : null;
       const url = safeTvRemoteUrl(rawUrl);
+      let alternate = '';
+      try { if (payload?.a) alternate = safeTvRemoteUrl(String(payload.a)).toString(); } catch {}
       return {
         url: url.toString(),
+        alternate,
         label,
         fallbackOnly: false,
         headers: {
@@ -12203,6 +13511,13 @@ async function proxyTvImage(token, req, res) {
     const asset = await fetchTvLogoAsset(reference, reference.url);
     sendTvImage(res, asset.image, asset.contentType, asset.cacheState);
   } catch (error) {
+    if (reference.alternate) {
+      try {
+        const origin = new URL(reference.alternate).origin;
+        const asset = await fetchTvLogoAsset({ ...reference, headers: { ...reference.headers, referer: `${origin}/` } }, reference.alternate);
+        return sendTvImage(res, asset.image, asset.contentType, asset.cacheState);
+      } catch {}
+    }
     if (reference.label) return sendTvFallbackLogo(res, reference.label);
     throw error;
   }
@@ -12250,7 +13565,7 @@ async function proxyWiTvEmbed(token, res) {
 }
 
 function ohaAllowedHost(value) {
-  try { return ['kool.ws', 'www.kool.ws', 'kool.to', 'www.kool.to', '185.254.196.78', '178.83.5.50', 'vavoo.top', 'www.vavoo.top', 'oha.cx', 'www.oha.cx'].includes(new URL(value).hostname.toLowerCase()); }
+  try { return OHA_HOSTS.includes(new URL(value).hostname.toLowerCase()); }
   catch { return false; }
 }
 
@@ -12294,7 +13609,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   const encodedToken = encodeURIComponent(String(token));
   const tunnel = publicPath(`/api/tv/oha/http/${encodedToken}`);
   const siteRoot = publicPath(`/api/tv/oha/site/${encodedToken}`);
-  const allowedHosts = ['kool.ws', 'www.kool.ws', 'kool.to', 'www.kool.to', '185.254.196.78', '178.83.5.50', 'vavoo.top', 'www.vavoo.top', 'oha.cx', 'www.oha.cx'];
+  const allowedHosts = OHA_HOSTS;
   const proxiedUrl = value => {
     try {
       const target = new URL(String(value || ''), page);
@@ -12325,6 +13640,13 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
     const tag = `${before}${target}${after}`;
     return target !== String(value || '') ? stripBridgeIntegrity(tag) : tag;
   });
+  if (ohaIsMirror(page.href)) {
+    // Le démarrage v2 importe son module dans un script inline et charge
+    // le manifeste à la racine du site.
+    html = html.replace(/(\bfrom\s*["'])(\/vuma\/[^"']+\.js)(["'])/g,
+      (_, before, value, after) => before + proxiedUrl(value) + after);
+    html = html.replace(/addons:\s*\[new URL\("\/", location\.href\)\.href\]/, `addons: [${inlineJson(page.origin + '/')} ]`);
+  }
   html = html.replace(/(<link\b[^>]*\bhref\s*=\s*["'])([^"']+)(["'][^>]*>)/gi, (_, before, value, after) => {
     const target = proxiedUrl(value);
     const tag = `${before}${target}${after}`;
@@ -12332,7 +13654,7 @@ function sanitizeOhaPlayerHtml(htmlValue, pageUrl, token, targetInfo = {}) {
   });
   const siteBase = `${siteRoot}${page.pathname.replace(/[^/]*$/, '')}`;
   const remoteRoute = `${page.pathname || '/'}${page.search || ''}${page.hash || ''}`;
-  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const T=${inlineJson(tunnel)},S=${inlineJson(siteRoot)},O=${inlineJson(page.toString())},PO=${inlineJson(page.origin)},R=${inlineJson(remoteRoute)},CID=${inlineJson(String(targetInfo?.channelId || ''))},CN=${inlineJson(String(targetInfo?.channelName || ''))},NativeURL=window.URL,NO=new NativeURL(location.href).origin,A=new Set(${inlineJson(allowedHosts)}),F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map(),store={getItem:k=>mem.has(String(k))?mem.get(String(k)):null,setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}addEventListener('message',e=>{try{if(e.source!==window&&e.data&&e.data.type==='noctra-oha-state')parent.postMessage(e.data,'*')}catch{}});function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function notifyMedia(u,m){if(!/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/i.test(u.pathname+u.search))return;try{parent.postMessage({type:'noctra-oha-state',state:'media',url:m},'*')}catch{}}function findMedia(v,d=0,k=''){if(d>7||v==null)return'';if(typeof v==='string'){try{const u=new URL(v,O),q=(u.pathname+u.search).toLowerCase();if(/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/.test(q)||(/(?:hls|manifest|playlist|stream|source|file)/i.test(k)&&/^https?:$/.test(u.protocol)))return u.href}catch{}return''}if(Array.isArray(v)){for(const x of v){const f=findMedia(x,d+1,k);if(f)return f}return''}if(typeof v==='object'){for(const key of ['streamUrl','stream_url','hls','hlsUrl','hls_url','file','src','url','link']){if(key in v){const f=findMedia(v[key],d+1,key);if(f)return f}}for(const [key,x] of Object.entries(v)){const f=findMedia(x,d+1,key);if(f)return f}}return''}function map(v,media){try{const raw=String(v);if(/^(?:blob:|data:|about:)/i.test(raw))return raw;const fixed=/^null\//i.test(raw)?PO+raw.slice(4):raw,u=new URL(fixed,O);if(u.pathname.startsWith(T)||u.pathname.startsWith(S))return raw;if(media){const m=A.has(u.hostname.toLowerCase())?(u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href)):T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}if(A.has(u.hostname.toLowerCase()))return u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/oha/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}return String(v)}catch{return v}}function emitResolved(v){try{const u=findMedia(v);if(!u)return;const m=map(u,true);if(m)notifyMedia(new URL(u,O),m)}catch{}}function inspectPayloadText(t){try{const raw=String(t||'').trim();if(!raw)return;if(raw[0]==='{'||raw[0]==='['){emitResolved(JSON.parse(raw));return}const m=raw.match(/https?:\/\/[^\s"'<>]+(?:m3u8?|mpd|mp4)(?:[^\s"'<>]*)?/i);if(m)emitResolved(m[0])}catch{}}function inspectResponse(r){try{const c=String(r?.headers?.get?.('content-type')||'').toLowerCase(),u=String(r?.url||'');if(/(?:mediaurl|mediahubmx)-resolve\.json|\/resolve(?:[/?]|$)/i.test(u))r.clone().text().then(inspectPayloadText).catch(()=>{})}catch{}}window.fetch=async function(input,init){try{let r;if(typeof input==='string'||input instanceof URL){r=await F(map(input,false),Object.assign({credentials:'omit'},init||{}));inspectResponse(r);return r}if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();r=await F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));inspectResponse(r);return r}}}catch{}const r=await F(input,init);inspectResponse(r);return r};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);if(!this.__noctraInspect){this.__noctraInspect=true;this.addEventListener('load',()=>{try{if(this.responseType==='json')emitResolved(this.response);else if(!this.responseType||this.responseType==='text')inspectPayloadText(this.responseText)}catch{}})}return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};let routeRecoveryDone=false;function routeLooksMissing(){try{const text=String(document.body?.innerText||document.documentElement?.innerText||'').replace(/\s+/g,' ').slice(0,5000);return /(?:\bNOT FOUND\b|that route doesn['’]t exist|route doesn['’]t exist|page not found|unknown route)/i.test(text)}catch{return false}}function recoverBrokenRoute(){if(routeRecoveryDone||!routeLooksMissing())return false;routeRecoveryDone=true;try{parent.postMessage({type:'noctra-oha-state',state:'route-fallback',message:'Route OHA expirée · retour au catalogue Live TV'},'*')}catch{};try{history.replaceState({},'','/live');dispatchEvent(new PopStateEvent('popstate'))}catch{}return true}let targetDone=false,targetSearchUsed=false;function normTarget(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\b(?:fhd|uhd|hd|sd|4k)\b/g,' ').replace(/\s+/g,' ').trim()}function chooseTarget(){if(targetDone||(!CID&&!CN)||document.querySelector('video'))return false;const want=normTarget(CN),id=String(CID||'').toLowerCase();let best=null,bestScore=-1;for(const el of document.querySelectorAll('button,a,[role=button],[data-id],[data-channel],[data-channel-id],[data-stream-id],li,article')){if(!(el instanceof HTMLElement))continue;const txt=normTarget(el.innerText||el.textContent||''),attrs=[el.dataset?.id,el.dataset?.channel,el.dataset?.channelId,el.dataset?.streamId,el.getAttribute('href')].filter(Boolean).map(v=>String(v).toLowerCase());let score=0;if(id&&attrs.some(v=>v===id||v.includes(id)))score=120;else if(want&&txt===want)score=100;else if(want&&txt&&txt.includes(want))score=72;else if(want&&txt&&want.includes(txt)&&txt.length>3)score=45;if(score>bestScore){bestScore=score;best=el}}if(best&&bestScore>=70){targetDone=true;try{best.scrollIntoView({block:'center',inline:'nearest'})}catch{};try{best.click()}catch{};return true}if(!targetSearchUsed&&want){const input=document.querySelector('input[type=search],input[placeholder*=search i],input[placeholder*=recher i],input[name*=search i]');if(input){targetSearchUsed=true;try{const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d?.set?.call(input,CN);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));setTimeout(chooseTarget,350)}catch{}}}return false}let targetTimer=0;function scheduleTarget(){if(targetDone)return;clearTimeout(targetTimer);targetTimer=setTimeout(chooseTarget,90)};let playing=false;function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';v.addEventListener('playing',()=>{playing=true;parent.postMessage({type:'noctra-oha-state',state:'playing'},'*')});v.addEventListener('error',()=>parent.postMessage({type:'noctra-oha-state',state:'error'},'*'));}new MutationObserver(()=>{document.querySelectorAll('video').forEach(bind);if(!recoverBrokenRoute())scheduleTarget()}).observe(document.documentElement,{childList:true,subtree:true});addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('video').forEach(bind);scheduleTarget();setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},500);setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},1500);setTimeout(()=>{if(!playing&&!routeRecoveryDone)parent.postMessage({type:'noctra-oha-state',state:'stalled'},'*')},30000)});})();</script>`
+  const bridge = String.raw`<base href="${siteBase.replace(/"/g, '&quot;')}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body{width:100%;min-height:100%;margin:0;background:#000}video{max-width:100%}</style><script>(function(){const T=${inlineJson(tunnel)},S=${inlineJson(siteRoot)},O=${inlineJson(page.toString())},PO=${inlineJson(page.origin)},R=${inlineJson(remoteRoute)},CID=${inlineJson(String(targetInfo?.channelId || ''))},CN=${inlineJson(String(targetInfo?.channelName || ''))},NativeURL=window.URL,NO=new NativeURL(location.href).origin,A=new Set(${inlineJson(allowedHosts)}),F=window.fetch.bind(window),XO=XMLHttpRequest.prototype.open;try{if(R)history.replaceState(history.state,'',R)}catch{};try{window.URL=new Proxy(NativeURL,{construct(Target,args,newTarget){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.construct(Target,a,newTarget)},apply(Target,thisArg,args){const a=[...args];if(a.length>1&&(String(a[1])==='null'||String(a[1])==='null/'))a[1]=PO;return Reflect.apply(Target,thisArg,a)}})}catch{};const mem=new Map(),store={getItem:k=>mem.has(String(k))?mem.get(String(k)):null,setItem:(k,v)=>mem.set(String(k),String(v)),removeItem:k=>mem.delete(String(k)),clear:()=>mem.clear(),key:i=>Array.from(mem.keys())[i]||null,get length(){return mem.size}};for(const n of ['localStorage','sessionStorage']){try{Object.defineProperty(window,n,{configurable:true,value:store})}catch{}}addEventListener('message',e=>{try{if(e.source!==window&&e.data&&e.data.type==='noctra-oha-state')parent.postMessage(e.data,'*')}catch{}});function mediaLike(u){const x=(u.pathname+u.search).toLowerCase();return /\.(?:m3u8?|mpd|m4s|ts|aac|m4a|mp4|webm|mkv|key)(?:$|[?#&])/.test(x)||/(?:^|\/)(?:hls|dash|manifest|playlist|segments?|chunks?)(?:\/|$|[?._-])/.test(u.pathname.toLowerCase())||/(?:manifest|playlist|m3u8|mpd|segment|chunk|stream)=/.test(u.search.toLowerCase())}function notifyMedia(u,m){if(!/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/i.test(u.pathname+u.search))return;try{parent.postMessage({type:'noctra-oha-state',state:'media',url:m},'*')}catch{}}function findMedia(v,d=0,k=''){if(d>7||v==null)return'';if(typeof v==='string'){try{const u=new URL(v,O),q=(u.pathname+u.search).toLowerCase();if(/\.(?:m3u8?|mpd|mp4)(?:$|[?#&])/.test(q)||(/(?:hls|manifest|playlist|stream|source|file)/i.test(k)&&/^https?:$/.test(u.protocol)))return u.href}catch{}return''}if(Array.isArray(v)){for(const x of v){const f=findMedia(x,d+1,k);if(f)return f}return''}if(typeof v==='object'){for(const key of ['streamUrl','stream_url','hls','hlsUrl','hls_url','file','src','url','link']){if(key in v){const f=findMedia(v[key],d+1,key);if(f)return f}}for(const [key,x] of Object.entries(v)){const f=findMedia(x,d+1,key);if(f)return f}}return''}function map(v,media){try{const raw=String(v);if(/^(?:blob:|data:|about:)/i.test(raw))return raw;const fixed=/^null\//i.test(raw)?PO+raw.slice(4):raw,u=new URL(fixed,O);if(u.pathname.startsWith(T)||u.pathname.startsWith(S))return raw;if(media){const m=A.has(u.hostname.toLowerCase())?(u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href)):T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}if(A.has(u.hostname.toLowerCase()))return u.origin===PO?S+u.pathname+u.search:T+'?url='+encodeURIComponent(u.href);if(u.origin===NO&&!u.pathname.includes('/api/tv/oha/'))return S+u.pathname+u.search;if(mediaLike(u)){const m=T+'?media=1&url='+encodeURIComponent(u.href);notifyMedia(u,m);return m}return String(v)}catch{return v}}function emitResolved(v){try{const u=findMedia(v);if(!u)return;const m=map(u,true);if(m)notifyMedia(new URL(u,O),m)}catch{}}function inspectPayloadText(t){try{const raw=String(t||'').trim();if(!raw)return;if(raw[0]==='{'||raw[0]==='['){emitResolved(JSON.parse(raw));return}const m=raw.match(/https?:\/\/[^\s"'<>]+(?:m3u8?|mpd|mp4)(?:[^\s"'<>]*)?/i);if(m)emitResolved(m[0])}catch{}}function inspectResponse(r){try{const c=String(r?.headers?.get?.('content-type')||'').toLowerCase(),u=String(r?.url||'');if(/(?:mediaurl|mediahubmx)-resolve\.json|\/resolve(?:[/?]|$)/i.test(u))r.clone().text().then(inspectPayloadText).catch(()=>{})}catch{}}window.fetch=async function(input,init){try{let r;if(typeof input==='string'||input instanceof URL){r=await F(map(input,false),Object.assign({credentials:'omit'},init||{}));inspectResponse(r);return r}if(input instanceof Request){const mapped=map(input.url,false);if(mapped!==input.url){const clone=input.clone(),cfg={method:clone.method,headers:new Headers(clone.headers),redirect:clone.redirect,cache:clone.cache,credentials:'omit'};if(!/^(?:GET|HEAD)$/i.test(clone.method))cfg.body=await clone.arrayBuffer();r=await F(mapped,Object.assign(cfg,init||{},{credentials:'omit'}));inspectResponse(r);return r}}}catch{}const r=await F(input,init);inspectResponse(r);return r};XMLHttpRequest.prototype.open=function(method,url){const args=[...arguments];args[1]=map(url,false);if(!this.__noctraInspect){this.__noctraInspect=true;this.addEventListener('load',()=>{try{if(this.responseType==='json')emitResolved(this.response);else if(!this.responseType||this.responseType==='text')inspectPayloadText(this.responseText)}catch{}})}return XO.apply(this,args)};function patchSrc(proto,media){try{const d=Object.getOwnPropertyDescriptor(proto,'src');if(!d||!d.set||!d.get)return;Object.defineProperty(proto,'src',{configurable:d.configurable,enumerable:d.enumerable,get:d.get,set:function(v){return d.set.call(this,map(v,!!media))}})}catch{}}patchSrc(HTMLMediaElement.prototype,true);if(window.HTMLSourceElement)patchSrc(HTMLSourceElement.prototype,true);if(window.HTMLScriptElement)patchSrc(HTMLScriptElement.prototype,false);if(window.HTMLIFrameElement)patchSrc(HTMLIFrameElement.prototype,false);if(window.HTMLImageElement)patchSrc(HTMLImageElement.prototype,false);try{const lh=Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype,'href');if(lh?.set&&lh?.get)Object.defineProperty(HTMLLinkElement.prototype,'href',{configurable:lh.configurable,enumerable:lh.enumerable,get:lh.get,set:function(v){return lh.set.call(this,map(v,false))}})}catch{}const SA=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){const k=String(n||'').toLowerCase(),tag=String(this.tagName||'').toLowerCase(),media=k==='poster'||(k==='src'&&['video','audio','source'].includes(tag));if(['src','href','poster','action'].includes(k))v=map(v,media);return SA.call(this,n,v)};let routeRecoveryDone=false;function routeLooksMissing(){try{const text=String(document.body?.innerText||document.documentElement?.innerText||'').replace(/\s+/g,' ').slice(0,5000);return /(?:\bNOT FOUND\b|that route doesn['’]t exist|route doesn['’]t exist|page not found|unknown route)/i.test(text)}catch{return false}}function recoverBrokenRoute(){if(routeRecoveryDone||!routeLooksMissing())return false;routeRecoveryDone=true;try{parent.postMessage({type:'noctra-oha-state',state:'route-fallback',message:'Route OHA expirée · retour au catalogue Live TV'},'*')}catch{};try{history.replaceState({},'','/#/channels');dispatchEvent(new PopStateEvent('popstate'));dispatchEvent(new HashChangeEvent('hashchange'))}catch{}return true}let targetDone=false,targetSearchUsed=false;function normTarget(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\b(?:fhd|uhd|hd|sd|4k)\b/g,' ').replace(/\s+/g,' ').trim()}function chooseTarget(){if(targetDone||(!CID&&!CN)||document.querySelector('video'))return false;const want=normTarget(CN),id=String(CID||'').toLowerCase();let best=null,bestScore=-1;for(const el of document.querySelectorAll('button,a,[role=button],[data-id],[data-channel],[data-channel-id],[data-stream-id],li,article')){if(!(el instanceof HTMLElement))continue;const txt=normTarget(el.innerText||el.textContent||''),attrs=[el.dataset?.id,el.dataset?.channel,el.dataset?.channelId,el.dataset?.streamId,el.getAttribute('href')].filter(Boolean).map(v=>String(v).toLowerCase());let score=0;if(id&&attrs.some(v=>v===id||v.includes(id)))score=120;else if(want&&txt===want)score=100;else if(want&&txt&&txt.includes(want))score=72;else if(want&&txt&&want.includes(txt)&&txt.length>3)score=45;if(score>bestScore){bestScore=score;best=el}}if(best&&bestScore>=70){targetDone=true;try{best.scrollIntoView({block:'center',inline:'nearest'})}catch{};try{best.click()}catch{};return true}if(!targetSearchUsed&&want){const input=document.querySelector('input[type=search],input[placeholder*=search i],input[placeholder*=recher i],input[name*=search i]');if(input){targetSearchUsed=true;try{const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d?.set?.call(input,CN);input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));setTimeout(chooseTarget,350)}catch{}}}return false}let targetTimer=0;function scheduleTarget(){if(targetDone)return;clearTimeout(targetTimer);targetTimer=setTimeout(chooseTarget,90)};let playing=false;function bind(v){if(!v||v.dataset.noctraBound)return;v.dataset.noctraBound='1';v.addEventListener('playing',()=>{playing=true;parent.postMessage({type:'noctra-oha-state',state:'playing'},'*')});v.addEventListener('error',()=>parent.postMessage({type:'noctra-oha-state',state:'error'},'*'));}new MutationObserver(()=>{document.querySelectorAll('video').forEach(bind);if(!recoverBrokenRoute())scheduleTarget()}).observe(document.documentElement,{childList:true,subtree:true});addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('video').forEach(bind);scheduleTarget();setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},500);setTimeout(()=>{if(!recoverBrokenRoute())scheduleTarget()},1500);setTimeout(()=>{if(!playing&&!routeRecoveryDone)parent.postMessage({type:'noctra-oha-state',state:'stalled'},'*')},30000)});})();</script>`
   // Seed the exact public route before the SPA bundle executes. Previously the
   // bridge always forced /live, which lost the selected channel and could make
   // Kool display a stale or false route after its own navigation.
@@ -12369,7 +13691,8 @@ async function proxyOhaEmbed(token, res) {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'referrer-policy': 'origin-when-cross-origin',
-      'x-content-type-options': 'nosniff'
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "frame-ancestors 'self'"
     });
     res.end(html);
   } catch (error) {
@@ -12485,6 +13808,7 @@ async function proxyOhaSite(token, req, res, requestUrl, path) {
     delete responseHeaders['content-length'];
     responseHeaders['content-type'] = 'text/html; charset=utf-8';
     responseHeaders['cache-control'] = 'no-store';
+    responseHeaders['content-security-policy'] = "frame-ancestors 'self'";
     res.writeHead(response.status, responseHeaders);
     res.end(buffer);
     return;
@@ -12551,7 +13875,7 @@ async function proxyOhaHttp(token, req, res, requestUrl) {
   const method = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? req.method : 'GET';
   if (externalMedia && !['GET', 'HEAD'].includes(method)) throw new HttpError(405, 'Une ressource média OHA externe ne peut être relayée qu’en lecture.');
   const body = ['GET', 'HEAD'].includes(method) ? undefined : await readTvProxyBody(req);
-  const fallbackUrl = state?.fallbackUrl || storedBridge?.meta?.fallbackUrl || state?.root || storedBridge?.meta?.root || 'https://oha.cx/';
+  const fallbackUrl = state?.fallbackUrl || storedBridge?.meta?.fallbackUrl || state?.root || storedBridge?.meta?.root || 'https://huhu.bz/#/channels';
   const rememberedPage = ohaBridgePages.get(String(token))?.pageUrl || fallbackUrl;
   const origin = externalMedia ? new URL(rememberedPage).origin : target.origin;
   const upstreamHeaders = {
@@ -12679,6 +14003,17 @@ function rememberTvPlaylist(token, text) {
   while (tvPlaylistMemory.size > 64) tvPlaylistMemory.delete(tvPlaylistMemory.keys().next().value);
 }
 
+// 200.0.165 : refus du fournisseur distingué d'une panne de Noctra (les applis
+// affichent ce message dans la liste des serveurs, à côté du code).
+function tvUpstreamError(status, provider, url) {
+  let host = '';
+  try { host = new URL(String(url)).hostname; } catch {}
+  const who = provider || host || 'Le fournisseur';
+  if (status === 401 || status === 403) return new HttpError(status, `${who} refuse ce flux au serveur Noctra (${status}) : refus du fournisseur, essaie un autre serveur.`);
+  if (status === 404 || status === 410) return new HttpError(status, `${who} : lien du flux expiré (${status}), recharge la chaîne.`);
+  return new HttpError(status, `Flux TV indisponible chez ${who} (${status}).`);
+}
+
 function refreshTvPlaylistDetached(token, reference, url, headers, provider) {
   const entry = tvPlaylistMemory.get(token);
   if (entry.flight) return entry.flight;
@@ -12686,7 +14021,7 @@ function refreshTvPlaylistDetached(token, reference, url, headers, provider) {
     const response = await fetchTvRemoteUntilHeaders(url, { headers, signal: AbortSignal.timeout(30_000) }, 18_000);
     if (!response.ok) {
       try { await response.body?.cancel?.(); } catch {}
-      throw new HttpError(response.status, `Flux TV indisponible (${response.status}).`);
+      throw tvUpstreamError(response.status, provider, url);
     }
     const finalUrl = response.url || url.toString();
     const rewritten = await rewriteProxiedTvPlaylist(response, reference, url, finalUrl, token, provider);
@@ -12754,12 +14089,18 @@ function headTvStream(token, res) {
 async function proxyTvStream(token, req, res) {
   const reference = tvReferences.get(String(token || ''));
   if (!reference || reference.expiresAt <= Date.now()) throw new HttpError(410, 'Le lien TV a expiré. Recharge la chaîne.');
+  // 200.0.158 : nouvelle demande de l'appli Android TV pour un segment bloqué
+  // (aucun octet depuis 3 s) : jamais rattachée au téléchargement bloqué.
+  const relaunch = String(req.headers['x-noctra-hedge'] || '') === '1';
   if (reference.meta?.finiteSegment && !req.headers.range) {
     const ready = tvSegmentCache.get(String(token));
     if (ready) {
       res.writeHead(200, { 'content-type': ready.type, 'content-length': String(ready.body.length), 'cache-control': 'no-store', 'access-control-allow-origin': '*', 'x-noctra-relay': 'memory-hit' });
       res.end(ready.body); return;
     }
+  }
+  if (relaunch) tvSegmentCache.abort?.(String(token));
+  if (reference.meta?.finiteSegment && !req.headers.range && !relaunch) {
     // 200.0.110 : un préchargement déjà commencé est partagé en direct
     // (octets déjà reçus puis suivants) au lieu d'être refait depuis le début.
     const shared = await tvSegmentCache.attach?.(String(token));
@@ -12815,7 +14156,7 @@ async function proxyTvStream(token, req, res) {
     const response = await fetchTvRemoteUntilHeaders(url, { headers, signal: controller.signal }, 18_000);
     if (!response.ok && response.status !== 206) {
       try { await response.body?.cancel?.(); } catch {}
-      throw new HttpError(response.status, `Flux TV indisponible (${response.status}).`);
+      throw tvUpstreamError(response.status, provider, url);
     }
     const contentType = response.headers.get('content-type') || '';
     const finalUrl = response.url || url.toString();
@@ -12873,10 +14214,28 @@ async function readJsonBody(req, limit = 2 * 1024 * 1024) {
   return text ? JSON.parse(text) : {};
 }
 
+// Interface Noctra TV (apps/androidtv/web) : embarquée dans l'appli Android TV,
+// servie ici pour les applis LG webOS et Samsung Tizen (même origine que
+// l'API Noctra et Jellyfin, donc sans CORS). Noms de fichiers en liste fermée.
+const tvAppRoot = join(projectRoot, 'apps', 'androidtv', 'web');
+async function serveTvApp(pathname, res) {
+  const name = pathname.replace(/^\/tv-app\/?/, '') || 'index.html';
+  if (!/^[a-z0-9-]+\.(?:html|js|css|svg)$/.test(name)) return false;
+  const content = await readFile(join(tvAppRoot, name)).catch(() => null);
+  if (!content) return false;
+  res.writeHead(200, {
+    'content-type': mime[extname(name).toLowerCase()] || 'application/octet-stream',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff'
+  });
+  res.end(content);
+  return true;
+}
+
 async function serveStatic(pathname, res) {
   const relative = normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, '');
-  const filePath = join(publicRoot, relative);
-  if (!filePath.startsWith(publicRoot)) return false;
+  const filePath = resolve(publicRoot, relative);
+  if (filePath !== publicRoot && !filePath.startsWith(`${publicRoot}${sep}`)) return false;
   const info = await stat(filePath).catch(() => null);
   if (!info?.isFile()) return false;
   const content = await readFile(filePath);
@@ -12916,6 +14275,8 @@ const additionalTv = createAdditionalTvProviders({ request: fetchTvRemote, issue
   validateStream: (url, headers) => validateWiTvHlsStream(url, headers, 8_000, null, true) });
 
 const server = createServer(async (req, res) => {
+  const castRequest = tvCastAccess.wrapResponse(req, res);
+  if (castRequest && req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
   const incomingPath = requestUrl.pathname;
   const path = basePath && (incomingPath === basePath || incomingPath.startsWith(`${basePath}/`))
@@ -12930,12 +14291,17 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/health') {
-      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.137', baseUrl: basePath || '/' });
+      // 200.0.121 : lu par l'écran de connexion des applications Noctra
+      // (page locale de l'appli, donc autre origine). Aucune donnée sensible.
+      const appProbe = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
+      if (req.method === 'OPTIONS') { res.writeHead(204, appProbe); return res.end(); }
+      // tvApp : l'interface Noctra TV est servie à /tv-app/ (applis LG webOS et Samsung Tizen).
+      return json(res, 200, { status: 'ok', client: 'Noctra', version: '200.0.176', baseUrl: basePath || '/', tvApp: true }, appProbe);
     }
 
     if (path === '/api/config') {
       return json(res, 200, {
-        version: '200.0.137',
+        version: '200.0.176',
         jellyfinUrl,
         baseUrl: basePath || '/',
         clientUrl: publicPath('/client/index.html'),
@@ -12955,6 +14321,22 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Interface Noctra TV intégrée aux applis LG webOS et Samsung Tizen (page
+    // locale de l'appli, donc autre origine) : l'API est lisible depuis une
+    // autre origine, authentifiée par l'en-tête x-noctra-token. Sans cookie
+    // (pas d'« allow-credentials ») : un site tiers ne peut rien lire avec la
+    // session de l'utilisateur.
+    if (path.startsWith('/api/') && req.headers.origin) {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-headers', 'x-noctra-token, content-type, authorization, range, accept');
+      res.setHeader('access-control-allow-methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.setHeader('access-control-expose-headers', 'content-length, content-type, content-range');
+      if (req.method === 'OPTIONS' && req.headers['access-control-request-method']) {
+        res.writeHead(204, { 'access-control-max-age': '600' });
+        return res.end();
+      }
+    }
+
     if (path.startsWith('/api/')) {
       const ohaBridgeToken = ohaBridgeTokenFromPath(path);
       const trustedOhaBridgeRequest = Boolean(ohaBridgeToken && validOhaBridgeToken(ohaBridgeToken));
@@ -12970,11 +14352,105 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           const libraryImageFallback = Boolean(process.env.JELLYFIN_API_KEY)
             && req.method === 'GET'
-            && (path === '/api/libraries' || path.startsWith('/api/jellyfin/image/'));
+            && path.startsWith('/api/jellyfin/image/');
           if (!libraryImageFallback) throw error;
           session = null;
         }
         if (administratorRoute(path, req.method || 'GET')) requireAdministrator(session);
+      }
+    }
+
+    if (path === '/api/tv/cast' && req.method === 'POST') {
+      const body = await readJsonBody(req, 16 * 1024);
+      const address = String(body.url || '');
+      const requestOrigin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+      const target = new URL(address, requestOrigin);
+      let media;
+      if (target.host === new URL(requestOrigin).host && tvCastAccess.mediaPath(target.pathname)) {
+        media = target.pathname + target.search;
+      } else {
+        // Le relais habituel valide les adresses publiques et réécrit les segments HLS.
+        const safe = safeTvRemoteUrl(target.href);
+        const headers = {};
+        for (const [name, value] of Object.entries(body.headers || {})) {
+          if (/^(referer|origin|user-agent)$/i.test(name) && typeof value === 'string') headers[name] = value;
+        }
+        media = tvPublicStreamUrl(issueTvReference(safe.toString(), headers, { kind: 'stream' }));
+      }
+      return json(res, 200, tvCastAccess.issue({ token: session.token, path: media, origin: requestOrigin }));
+    }
+
+    if (path === '/api/tv/mosaic' && req.method === 'GET') {
+      const found = await tvMosaic.binary();
+      return json(res, 200, { available: Boolean(found), version: found?.version || '' });
+    }
+
+    if (path === '/api/tv/mosaic' && req.method === 'POST') {
+      const body = await readJsonBody(req, 64 * 1024);
+      const requestOrigin = `${String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim()}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+      const relay = body.relay === true;
+      const tiles = (Array.isArray(body.tiles) ? body.tiles : []).slice(0, relay ? 1 : 9);
+      // Chaque chaîne est lue par ffmpeg à travers le relais Noctra local, avec un droit de lecture TV.
+      const inputs = tiles.map(tile => {
+        const target = new URL(String(tile?.url || ''), requestOrigin);
+        let media;
+        if (target.host === new URL(requestOrigin).host && tvCastAccess.mediaPath(target.pathname) && !/\/api\/tv\/mosaic\//.test(target.pathname)) {
+          media = target.pathname + target.search;
+        } else {
+          const safe = safeTvRemoteUrl(target.href);
+          const headers = {};
+          for (const [name, value] of Object.entries(tile?.headers || {})) {
+            if (/^(referer|origin|user-agent)$/i.test(name) && typeof value === 'string') headers[name] = value;
+          }
+          media = tvPublicStreamUrl(issueTvReference(safe.toString(), headers, { kind: 'stream' }));
+        }
+        const access = tvCastAccess.issue({ token: session.token, path: media, origin: requestOrigin });
+        return `http://${tvMosaicLoopbackHost()}:${port}${access.url}`;
+      });
+      try {
+        const mosaic = await tvMosaic.start({
+          // Relais d'une chaîne (AirPlay, Chromecast) : à part du multiview diffusé du même compte.
+          owner: `${session.id || session.token}${relay ? ':relais' : ''}`,
+          relay,
+          id: String(body.id || ''),
+          inputs,
+          names: tiles.map(tile => tile?.name),
+          audio: Number(body.audio) || 0,
+          featured: Number.isInteger(body.featured) ? body.featured : -1,
+          wait: body.wait === false ? 0 : (relay ? 35_000 : 25_000)
+        });
+        const cast = tvCastAccess.issue({ token: session.token, path: publicPath(mosaic.playlist), origin: requestOrigin });
+        return json(res, 200, { ...mosaic, playlist: publicPath(mosaic.playlist), cast: cast.url, expiresAt: cast.expiresAt });
+      } catch (error) {
+        throw new HttpError(Number(error?.status) || 502, cleanError(error));
+      }
+    }
+
+    {
+      const mosaicMatch = path.match(/^\/api\/tv\/mosaic\/([a-f0-9]{24})(?:\/([^/]+))?$/);
+      if (mosaicMatch && !mosaicMatch[2] && req.method === 'DELETE') {
+        const owner = session.id || session.token;
+        return json(res, 200, { stopped: tvMosaic.stop(mosaicMatch[1], owner) || tvMosaic.stop(mosaicMatch[1], `${owner}:relais`) });
+      }
+      if (mosaicMatch && !mosaicMatch[2] && req.method === 'GET') {
+        const mosaic = tvMosaic.get(mosaicMatch[1]);
+        if (!mosaic) throw new HttpError(404, 'Multiview diffusé terminé.');
+        return json(res, 200, tvMosaic.describe(mosaic));
+      }
+      if (mosaicMatch && mosaicMatch[2] && ['GET', 'HEAD'].includes(req.method)) {
+        const file = tvMosaic.file(mosaicMatch[1], mosaicMatch[2]);
+        if (!file) throw new HttpError(404, 'Multiview diffusé terminé.');
+        if (mosaicMatch[2] === 'index.m3u8') {
+          const text = await readFile(file, 'utf8').catch(() => '');
+          if (!text) throw new HttpError(404, 'Multiview en préparation.');
+          res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store' });
+          return res.end(req.method === 'HEAD' ? undefined : text);
+        }
+        const info = await stat(file).catch(() => null);
+        if (!info) throw new HttpError(404, 'Segment expiré.');
+        res.writeHead(200, { 'content-type': 'video/mp2t', 'content-length': info.size, 'cache-control': 'no-store' });
+        if (req.method === 'HEAD') return res.end();
+        return pipeline(createReadStream(file), res, () => {});
       }
     }
 
@@ -13086,6 +14562,15 @@ const server = createServer(async (req, res) => {
       return json(res, 200, await renameMediaEntry(body.root, body.path, body.name));
     }
 
+    if (path === '/api/files/move' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      return json(res, 200, await moveMediaEntry(body.root, body.path, body.targetRoot || body.root, body.targetPath || ''));
+    }
+
+    if (path === '/api/files/storage' && req.method === 'GET') {
+      return json(res, 200, await seedboxStorage(requestUrl.searchParams.get('refresh') === '1'));
+    }
+
     if (path === '/api/files/trash' && req.method === 'POST') {
       const body = await readJsonBody(req);
       return json(res, 200, await trashMediaEntry(body.root, body.path));
@@ -13130,7 +14615,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === '/api/tv/livewatch/diagnostics' && req.method === 'GET') {
-      return json(res, 200, await liveWatchVipDiagnostics());
+      return json(res, 200, await liveWatchVipDiagnostics(requestUrl.searchParams.get('ref') || ''));
     }
 
     if (path.startsWith('/api/tv/livewatch/prepare/') && req.method === 'GET') {
@@ -13157,7 +14642,7 @@ const server = createServer(async (req, res) => {
       const token = path.split('/').at(-1) || '';
       const serverValue = requestUrl.searchParams.get('server');
       const preferredIndex = serverValue !== null && /^\d+$/.test(serverValue) ? Number(serverValue) : null;
-      return json(res, 200, await resolveOhaStreamReference(token, preferredIndex));
+      return json(res, 200, await resolveOhaStreamReference(token, preferredIndex, requestUrl.searchParams.get('mirror') || ''));
     }
 
     if (path.startsWith('/api/tv/streamsports99/resolve/') && req.method === 'GET') {
@@ -13269,6 +14754,39 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Variantes d'une chaîne VIP (même nom dans le catalogue LiveWatch, secours des autres
+    // familles), sans la vérification VIP : les applis les listent dès l'ouverture.
+    if (path.startsWith('/api/tv/livewatch/variants/') && req.method === 'GET') {
+      const parts = path.slice('/api/tv/livewatch/variants/'.length).split('/');
+      const safe = validLiveWatchChannelReference(parts.shift() || '', decodeURIComponent(parts.join('/')));
+      if (safe.kind === 'page') return json(res, 200, { variants: [] });
+      const name = requestUrl.searchParams.get('name') || '';
+      const country = requestUrl.searchParams.get('country') || '';
+      const source = requestUrl.searchParams.get('source') || '';
+      const selected = await liveWatchChannelVariants(safe.kind, safe.id, name, country, source).catch(() => []);
+      let timer;
+      const cross = await Promise.race([
+        liveWatchCrossFamilyVariants(safe.kind, safe.id, name, country, source, selected).catch(() => []),
+        new Promise(resolveCross => { timer = setTimeout(() => resolveCross([]), 12_000); })
+      ]).finally(() => clearTimeout(timer));
+      const seen = new Set();
+      const variants = [];
+      for (const variant of [...selected, ...(cross || [])]) {
+        try { validLiveWatchChannelReference(variant?.kind, variant?.id); } catch { continue; }
+        const key = `${variant.kind}:${variant.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        variants.push({
+          label: variant.crossFamily ? `Secours ${variant.familyLabel || liveWatchFamilyLabel(variant.kind)} · ${variant.label || 'direct'}` : (variant.label || 'Serveur principal'),
+          streamUrl: liveWatchStableHlsUrl(variant.kind, variant.id),
+          kind: variant.kind,
+          id: variant.id,
+          crossFamily: Boolean(variant.crossFamily)
+        });
+      }
+      return json(res, 200, { variants: variants.slice(0, 16) });
+    }
+
     if (path.startsWith('/api/tv/livewatch/resolve/') && req.method === 'GET') {
       const parts = path.slice('/api/tv/livewatch/resolve/'.length).split('/');
       const kind = parts.shift() || '';
@@ -13281,21 +14799,30 @@ const server = createServer(async (req, res) => {
       }));
     }
 
-    if (path.startsWith('/api/tv/livewatch/hls/') && req.method === 'GET') {
+    if (path.startsWith('/api/tv/livewatch/hls/') && ['GET', 'HEAD'].includes(req.method)) {
       const parts = path.slice('/api/tv/livewatch/hls/'.length).split('/');
       const kind = decodeURIComponent(parts.shift() || '');
       const id = decodeURIComponent(parts.join('/'));
       const selector = requestUrl.searchParams.get('sel') || '';
       const resourceKey = requestUrl.searchParams.get('res') || '';
+      if (req.method === 'HEAD') {
+        headLiveWatchVipHls(kind, id, selector, resourceKey, res);
+        return;
+      }
       if (resourceKey) await proxyLiveWatchVipHlsMediaResource(kind, id, selector, resourceKey, req, res);
       else await proxyLiveWatchVipHls(kind, id, selector, req, res);
       return;
     }
 
-    if (path.startsWith('/api/tv/livewatch/stream/') && req.method === 'GET') {
+    if (path.startsWith('/api/tv/livewatch/stream/') && ['GET', 'HEAD'].includes(req.method)) {
       const parts = path.slice('/api/tv/livewatch/stream/'.length).split('/');
       const kind = parts.shift() || '';
       const id = decodeURIComponent(parts.join('/'));
+      if (req.method === 'HEAD') {
+        const token = await liveWatchStreamReference(kind, id);
+        headTvStream(token, res);
+        return;
+      }
       await proxyLiveWatchVipStream(kind, id, req, res);
       return;
     }
@@ -13381,13 +14908,19 @@ const server = createServer(async (req, res) => {
         {
           tmdbId: requestUrl.searchParams.get('tmdbId'),
           force: requestUrl.searchParams.get('force') === '1' || requestUrl.searchParams.get('live') === '1',
+          patient: requestUrl.searchParams.get('patient') === '1',
           limit: Number(requestUrl.searchParams.get('limit') || 8)
         }
       ));
     }
 
     if (path === '/api/discovery/download-options' && req.method === 'GET') {
-      return json(res, 200, { destinations: await qbitAllowedDestinations() });
+      const destinations = await qbitAllowedDestinations();
+      const tmdbId = positiveInteger(requestUrl.searchParams.get('tmdbId'));
+      const mediaType = requestUrl.searchParams.get('mediaType') === 'tv' ? 'tv' : 'movie';
+      if (!tmdbId) return json(res, 200, { destinations });
+      const category = await mediaCategoryFor(mediaType, tmdbId);
+      return json(res, 200, { destinations, suggested: { category, label: mediaCategoryLabels[category], path: folderForMediaCategory(destinations.map(item => item.path), category) } });
     }
     if (path === '/api/discovery/grab' && req.method === 'POST') {
       return json(res, 200, await grabDiscoveryTorrent(await readJsonBody(req)));
@@ -13460,11 +14993,14 @@ const server = createServer(async (req, res) => {
 
     if (path === '/api/home/resume' && req.method === 'GET') {
       if (!session?.user?.Id) throw new HttpError(401, 'Connexion requise.');
+      // Tous les titres commencés (60 au plus) : les applis en montrent 10 à 12 dans le
+      // carrousel et le reste dans la rangée « Autres titres à reprendre ».
+      const wanted = Math.min(60, Math.max(1, Number(requestUrl.searchParams.get('limit')) || 60));
       const rawItems = await jellyfinItems('/Users/{userId}/Items/Resume', {
-        Limit: 36, MediaTypes: 'Video', EnableUserData: true,
+        Limit: 100, MediaTypes: 'Video', EnableUserData: true,
         Fields: 'PrimaryImageAspectRatio', EnableTotalRecordCount: false
       }, session);
-      const items = strictResumeItems(rawItems, 12);
+      const items = strictResumeItems(rawItems, wanted);
       res.setHeader('Cache-Control', 'private, no-store, max-age=0');
       res.setHeader('Vary', 'Cookie, X-Noctra-Token');
       return json(res, 200, { userId: session.user.Id, items });
@@ -13712,6 +15248,34 @@ const server = createServer(async (req, res) => {
       requireAdministrator(session);
       const requestId = Number(requestStatusMatch[1]);
       const status = requestStatusMatch[2];
+      if (status === 'approve') {
+        // Validation d'une demande : destination choisie par l'administrateur, sinon
+        // dossier de la catégorie (animés, séries, films d'animation, films).
+        const body = await readJsonBody(req).catch(() => ({}));
+        const current = await jellyseerr(`/api/v1/request/${requestId}`);
+        const mediaType = current?.type === 'tv' || current?.media?.mediaType === 'tv' ? 'tv' : 'movie';
+        const destinations = await jellyseerrDestinations(mediaType);
+        const server = destinations.servers.find(item => item.id === Number(body.serverId ?? current?.serverId))
+          || destinations.servers.find(item => item.isDefault) || destinations.servers[0];
+        if (server) {
+          const folders = server.rootFolders.map(folder => folder.path);
+          const rootFolder = folders.includes(String(body.rootFolder || ''))
+            ? String(body.rootFolder)
+            : folderForMediaCategory(folders, await mediaCategoryFor(mediaType, current?.media?.tmdbId), current?.rootFolder || server.defaultRootFolder);
+          const profileId = server.profiles.some(profile => profile.id === Number(body.profileId)) ? Number(body.profileId)
+            : server.profiles.some(profile => profile.id === Number(current?.profileId)) ? Number(current.profileId) : server.defaultProfileId;
+          await jellyseerr(`/api/v1/request/${requestId}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              mediaType,
+              serverId: server.id,
+              profileId,
+              rootFolder,
+              ...(mediaType === 'tv' ? { seasons: (current?.seasons || []).map(season => Number(season.seasonNumber)).filter(Number.isInteger) } : {})
+            })
+          });
+        }
+      }
       const result = await jellyseerr(`/api/v1/request/${requestId}/${status}`, { method: 'POST' });
       return json(res, 200, { ok: true, request: result });
     }
@@ -13744,7 +15308,16 @@ const server = createServer(async (req, res) => {
       const requestPolicy = mediaType === 'tv' && mediaId
         ? await seriesRequestPolicyFor(mediaId)
         : { status: null, forceAutomatic: false, completed: false, reason: null };
-      if (session.isAdmin) return json(res, 200, { ...destinations, requestPolicy });
+      const category = mediaId ? await mediaCategoryFor(mediaType, mediaId) : (mediaType === 'tv' ? 'series' : 'films');
+      const suggestedServer = destinations.servers.find(server => server.isDefault) || destinations.servers[0];
+      const suggested = suggestedServer ? {
+        category,
+        label: mediaCategoryLabels[category],
+        serverId: suggestedServer.id,
+        profileId: suggestedServer.defaultProfileId,
+        rootFolder: folderForMediaCategory(suggestedServer.rootFolders.map(folder => folder.path), category, suggestedServer.defaultRootFolder)
+      } : null;
+      if (session.isAdmin) return json(res, 200, { ...destinations, requestPolicy, suggested });
       return json(res, 200, {
         ...destinations,
         requestPolicy,
@@ -13823,9 +15396,10 @@ const server = createServer(async (req, res) => {
         ? requestedProfileId
         : selectedServer.defaultProfileId;
       const requestedRootFolder = String(body.rootFolder || '').trim();
+      // Sans choix de l'administrateur : dossier de la catégorie (animés, séries, films d'animation, films).
       const rootFolder = session.isAdmin && selectedServer.rootFolders.some(folder => folder.path === requestedRootFolder)
         ? requestedRootFolder
-        : selectedServer.defaultRootFolder;
+        : folderForMediaCategory(selectedServer.rootFolders.map(folder => folder.path), await mediaCategoryFor(mediaType, mediaId), selectedServer.defaultRootFolder);
       if (!selectedServer.profiles.some(profile => profile.id === profileId)) {
         throw new HttpError(409, `Aucun profil qualité valide n’est disponible sur ${selectedServer.name}.`);
       }
@@ -13871,6 +15445,19 @@ const server = createServer(async (req, res) => {
     if (path === '/api/servarr/add' && req.method === 'POST') {
       const body = await readJsonBody(req);
       return json(res, 200, await addArrItem(body.type, body));
+    }
+
+    if (path === '/api/servarr/rootfolders' && req.method === 'GET') {
+      const type = requestUrl.searchParams.get('type');
+      if (!['sonarr', 'radarr'].includes(type)) return json(res, 400, { error: 'Service invalide.' });
+      return json(res, 200, { type, rootFolders: (await arrSettings(type)).rootFolders });
+    }
+
+    if (path === '/api/servarr/move' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const id = positiveInteger(body.id);
+      if (!id || !['sonarr', 'radarr'].includes(body.type)) return json(res, 400, { error: 'Élément Arr invalide.' });
+      return json(res, 200, await moveArrItem(body.type, id, body.rootFolder));
     }
 
     if (path === '/api/servarr/monitor' && req.method === 'POST') {
@@ -14098,6 +15685,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    if ((path === '/tv-app' || path.startsWith('/tv-app/')) && req.method === 'GET' && await serveTvApp(path, res)) return;
     if (await serveStatic(path, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Not found');
@@ -14130,11 +15718,13 @@ server.on('error', error => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => server.close(() => process.exit(0)));
+  process.once(signal, () => { tvMosaic.stopAll(); server.close(() => process.exit(0)); });
 }
 
 server.listen(port, host, async () => {
   await mkdir(runtimeRoot, { recursive: true });
+  // Mosaïques d'une exécution précédente : plus aucun ffmpeg ne les écrit.
+  await rm(join(runtimeRoot, 'mosaic'), { recursive: true, force: true }).catch(() => {});
   await writeFile(pidPath, String(process.pid), 'utf8');
   if (process.env.JELLYFIN_API_KEY && process.env.NOCTRA_AUTO_LIBRARY_REFRESH !== 'false') {
     const roots = [...new Set(mediaRoots.filter(root => root.id !== 'trash' && !/trash/i.test(root.label)).map(root => root.path))];
@@ -14151,3 +15741,4 @@ server.listen(port, host, async () => {
   setTimeout(() => void tvCatalogFromLiveWatchCurated().catch(() => undefined), 250);
   setTimeout(() => void tvEpg(defaultTvEpgUrl).catch(() => undefined), 500);
 });
+

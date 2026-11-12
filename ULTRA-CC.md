@@ -61,7 +61,7 @@ curl http://127.0.0.1:TON_PORT/noctra/health
 Puis ouvre :
 
 ```text
-https://akarukasu.merlion.usbx.me/noctra/client/index.html
+https://akarukasu.astra.usbx.me/noctra/client/index.html
 ```
 
 ## Commandes utiles

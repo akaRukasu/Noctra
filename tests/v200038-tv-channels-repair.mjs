@@ -17,7 +17,7 @@ assert.ok(server.includes("resolverUrl: publicPath(`/api/tv/fstv/resolve/${token
 assert.ok(server.includes('async function resolveFstvPageReference') && server.includes("label: 'FSTV · direct vérifié'"),
   'Le HLS FSTV doit être sondé avant d’être rendu au lecteur.');
 
-assert.ok(server.includes("url: 'https://kool.ws/live'") && server.includes("'/mediahubmx-catalog.json'") && server.includes("'/mediahubmx-resolve.json'"),
+assert.ok(server.includes("url: 'https://huhu.bz/#/channels'") && server.includes("const OHA_MIRRORS = ['huhu.bz', 'kool.ws', 'vavoo.top', 'oha.cx'];") && server.includes('const hub = `/mediahubmx-${kind}.json`;'),
   'OHA doit utiliser la migration Kool et son protocole MediaHubMX actuel.');
 assert.ok(server.includes("'185.254.196.78'") && server.includes("'oha.cx'"),
   'Kool doit conserver les replis IP et OHA historiques.');

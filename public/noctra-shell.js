@@ -180,6 +180,8 @@
   try { tvState.showSports = window.localStorage?.getItem('noctra-tv-sports-visible') === '1'; } catch {}
   let tvFilterTimer = null;
   let tvHls = null;
+  // 200.0.176 : qualités lues dans la liste principale quand iOS lit le flux en HLS natif.
+  let tvNativeQuality = null;
   let tvShaka = null;
   let tvShakaLoader = null;
   let tvShakaCleanup = Promise.resolve();
@@ -217,6 +219,8 @@
     mainMutedBeforeMulti: null,
     mainPausedBeforeMulti: null,
     mainHlsSuspended: false,
+    mainShakaSuspended: false,
+    mainShakaStreamUrl: '',
     mainEmbedSrc: '',
     multiGeneration: 0,
     multiQuality: 'stable',
@@ -325,7 +329,7 @@
     if (noctraBasePath && (path === noctraBasePath || path.startsWith(`${noctraBasePath}/`))) return path;
     return `${noctraBasePath}${path}` || '/';
   };
-  const NOCTRA_BUILD_VERSION = '200.0.137';
+  const NOCTRA_BUILD_VERSION = '200.0.176';
   document.documentElement.dataset.noctraBuild = NOCTRA_BUILD_VERSION;
 
   const formatDate = value => value ? new Intl.DateTimeFormat('fr-FR', {
@@ -389,6 +393,12 @@
         } catch {}
       })();
     }, profile.desktop ? 1800 : 650);
+  }
+
+  // 200.0.121 : :focus-visible (Chromium 86) lève une erreur sur les
+  // téléviseurs et boîtiers Android plus anciens.
+  function focusVisible(element) {
+    try { return Boolean(element?.matches(':focus-visible')); } catch { return Boolean(element && element === document.activeElement); }
   }
 
   function jellyfinAccessToken() {
@@ -477,7 +487,8 @@
     if (cached?.promise) return cached.promise;
     const promise = api(path, options)
       .then(value => {
-        apiResponseCache.set(path, { value, expiresAt: Date.now() + ttl });
+        const cacheTtl = value?.retryAfterMs > 0 && path.startsWith('/api/tv/catalog?') ? Math.min(ttl, value.retryAfterMs) : ttl;
+        apiResponseCache.set(path, { value, expiresAt: Date.now() + cacheTtl });
         return value;
       })
       .finally(() => {
@@ -1960,24 +1971,27 @@
 
   const recentEpisodeRepairs = new WeakSet();
   async function repairRecentEpisodeCards(section) {
-    if (recentEpisodeRepairs.has(section) || !window.ApiClient?.getItems) return;
-    const cards = [...section.querySelectorAll('.card:is([data-type="Episode" i],[data-type="Season" i])[data-id]')];
-    const userId = window.ApiClient.getCurrentUserId?.();
+    const watch = window.NoctraWatchState;
+    const owner = watch?.session();
+    if (!owner?.client.getItems || recentEpisodeRepairs.has(section)) return;
+    const cards = [...section.querySelectorAll('.card[data-type="Episode" i][data-id], .card[data-type="Season" i][data-id]')];
+    const { client, userId } = owner;
     const tools = homeCarouselCardTools();
-    if (!cards.length || !userId || !tools?.cards?.getCardsHtml) return;
+    if (!cards.length || !tools?.cards?.getCardsHtml) return;
     recentEpisodeRepairs.add(section);
     try {
-      const episodes = await window.ApiClient.getItems(userId, { Ids: cards.map(card => card.dataset.id).join(','), Fields: 'SeriesId', Limit: cards.length });
+      const episodes = await client.getItems(userId, { Ids: cards.map(card => card.dataset.id).join(','), Fields: 'SeriesId', Limit: cards.length });
       const parents = new Map((episodes.Items || []).filter(item => item.SeriesId).map(item => [homeCarouselItemKey(item.Id), item.SeriesId]));
       const ids = [...new Set(parents.values())];
-      if (!ids.length) return;
-      const result = await window.ApiClient.getItems(userId, { Ids: ids.join(','), Fields: 'PrimaryImageAspectRatio,ProductionYear', Limit: ids.length });
+      if (!ids.length || !watch.sameAccount(owner, watch.session())) return;
+      const result = await client.getItems(userId, { Ids: ids.join(','), Fields: 'PrimaryImageAspectRatio,ProductionYear', EnableUserData: true, Limit: ids.length });
       const series = new Map((result.Items || []).filter(item => item.Type === 'Series').map(item => [homeCarouselItemKey(item.Id), item]));
       const activeScroller = section.querySelector('.emby-scroller');
       while (activeScroller && homeCarouselTargets.get(activeScroller)?.until > Date.now()) {
         await new Promise(resolve => window.setTimeout(resolve, 80));
         if (!section.isConnected) return;
       }
+      if (!watch.sameAccount(owner, watch.session())) return;
       const seen = new Set([...section.querySelectorAll('.card[data-type="Series" i]')].map(card => homeCarouselItemKey(card.dataset.id)));
       for (const card of cards) {
         if (!section.contains(card)) continue;
@@ -2029,7 +2043,6 @@
   }
 
   let premiereHomeController = null;
-  let premiereResumeCache = null;
   let premiereVisitIndex = 0;
 
   function premiereCardData(card) {
@@ -2117,69 +2130,14 @@
     return { id: item.Id, title: item.SeriesName || item.Name, subtitle: item.Type === 'Episode' ? 'S' + (item.ParentIndexNumber || 1) + ':E' + (item.IndexNumber || 1) + ' · ' + item.Name : String(item.ProductionYear || ''), image, logo, resume: action('resume'), visual: action('link') };
   }
 
-  function currentJellyfinUserId() {
-    try { return String(window.ApiClient?.getCurrentUserId?.() || authContext?.user?.id || ''); }
-    catch { return String(authContext?.user?.id || ''); }
-  }
-
-  function resumeItemsForUser(items) {
-    const seen = new Set();
-    return (Array.isArray(items) ? items : []).filter(item => {
-      const id = String(item?.Id || '');
-      const userData = item?.UserData || {};
-      const position = Number(userData.PlaybackPositionTicks || 0);
-      const runtime = Number(item?.RunTimeTicks || 0);
-      const playedPercentage = Number(userData.PlayedPercentage);
-      if (!id || seen.has(id) || userData.Played === true || !(position > 0)) return false;
-      if (Number.isFinite(playedPercentage) && playedPercentage >= 99) return false;
-      if (runtime > 0 && position >= runtime * .99) return false;
-      seen.add(id);
-      return true;
-    }).slice(0, 12);
-  }
-
-  function nativeResumeSections(home) {
-    return [...home.querySelectorAll('.sectionTitle')].map(title => {
-      const label = normalizedText(title.textContent);
-      const section = title.closest('.verticalSection');
-      const isContinueWatching = (label.includes('continuer') && label.includes('regarder')) || label.includes('continue watching');
-      const isResume = label.includes('reprendre la lecture') || label === 'continuer';
-      return section && (isContinueWatching || isResume) ? section : null;
-    }).filter(Boolean);
-  }
-
-  function reconcileNativeResumeSections(home, items, userId = '') {
-    const allowedIds = new Set(resumeItemsForUser(items).map(item => String(item.Id)));
-    nativeResumeSections(home).forEach(section => {
-      section.dataset.noctraResumeUser = String(userId || '');
-      section.dataset.noctraResumeSynced = 'true';
-      let visibleCount = 0;
-      section.querySelectorAll('.card[data-id]').forEach(card => {
-        const allowed = allowedIds.has(String(card.dataset.id || ''));
-        card.dataset.noctraResumeState = allowed ? 'allowed' : 'filtered';
-        if (allowed) {
-          visibleCount += 1;
-          if (card.dataset.noctraResumeHidden === 'true') {
-            delete card.dataset.noctraResumeHidden;
-            card.hidden = false;
-            card.removeAttribute('aria-hidden');
-          }
-        } else {
-          card.dataset.noctraResumeHidden = 'true';
-          card.hidden = true;
-          card.setAttribute('aria-hidden', 'true');
-        }
-      });
-      if (visibleCount === 0) {
-        section.dataset.noctraResumeHidden = 'true';
-        section.hidden = true;
-        section.setAttribute('aria-hidden', 'true');
-      } else if (section.dataset.noctraResumeHidden === 'true') {
-        delete section.dataset.noctraResumeHidden;
-        section.hidden = false;
-        section.removeAttribute('aria-hidden');
-      }
-    });
+  function syncHomeWatchAccount() {
+    const watch = window.NoctraWatchState;
+    if (!watch) return;
+    const require = homeWebpackRequire();
+    if (require) {
+      try { watch.bind(window.ApiClient, require(44797).A, require(10736).default); } catch {}
+    }
+    watch.syncAccount();
   }
 
   function premiereHomeCards(home) {
@@ -2193,18 +2151,17 @@
   }
 
   function enhancePremiereHome(home) {
-    if (premiereHomeController?.home === home) { premiereHomeController.refresh(); return; }
+    const watch = window.NoctraWatchState;
+    if (!watch) return;
+    const owner = watch.session();
+    if (premiereHomeController?.home === home && watch.sameAccount(premiereHomeController.owner, owner)) {
+      premiereHomeController.refresh();
+      return;
+    }
     premiereHomeController?.destroy();
     const container = home.querySelector('.homeSectionsContainer');
-    const resumeUser = currentJellyfinUserId();
-    if (premiereResumeCache?.user && resumeUser && premiereResumeCache.user !== resumeUser) premiereResumeCache = null;
-    const cachedResumeItems = premiereResumeCache?.user === resumeUser ? resumeItemsForUser(premiereResumeCache.items) : null;
-    if (cachedResumeItems) reconcileNativeResumeSections(home, cachedResumeItems, resumeUser);
-    let resumeItems = cachedResumeItems?.map(premiereResumeData) ?? null;
-    // Ne jamais utiliser une rangée native non vérifiée comme reprise : lors d'un
-    // changement de compte, Jellyfin peut conserver quelques cartes de l'ancien DOM.
-    let items = resumeItems ?? [];
-    items.forEach(entry => preloadPremiereLogo(entry.logo));
+    let resumeItems = null;
+    let items = [];
     if (!container) return;
     home.querySelector('.noctra-premiere')?.remove();
     const premiere = document.createElement('section');
@@ -2222,7 +2179,7 @@
     previews.setAttribute('aria-label', 'Choisir un titre à la une');
     premiere.append(previews);
     let index = 0;
-    const request = new AbortController();
+    let request;
     let disposed = false;
     let timer = 0, paused = false, hovering = false, focused = false, visible = true, touchedAt = 0, pressedIndex = -1;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -2425,35 +2382,42 @@
     document.addEventListener('visibilitychange', sync);
     reduced.addEventListener?.('change', sync);
     const destroy = () => {
-      disposed = true; request.abort();
+      disposed = true; request?.abort();
       clearTimeout(timer); cancelAnimationFrame(imageFrame); imageObserver.disconnect(); intersection?.disconnect();
       document.removeEventListener('visibilitychange', sync); reduced.removeEventListener?.('change', sync);
       premiere.remove();
+      homeHeading.remove();
       if (premiereHomeController?.home === home) premiereHomeController = null;
     };
-    premiereHomeController = { home, refresh, sync, destroy };
-    render(); sync();
-    api('/api/home/resume', { signal: request.signal, timeoutMs: 15000 }).then(payload => {
-      if (disposed || !home.isConnected) return;
-      const payloadUser = String(payload.userId || '');
-      const liveUser = currentJellyfinUserId();
-      if (payloadUser && liveUser && payloadUser !== liveUser) {
-        premiereResumeCache = null;
-        void syncAuthContext(true).finally(() => scheduleHomeEnhancement());
-        return;
+    const loadResume = async () => {
+      if (!owner || !watch.sameAccount(owner, watch.session())) return;
+      request?.abort();
+      const currentRequest = request = new AbortController();
+      const active = () => !disposed && home.isConnected && !currentRequest.signal.aborted
+        && watch.sameAccount(owner, watch.session());
+      try {
+        const payload = await api('/api/home/resume', { signal: currentRequest.signal, timeoutMs: 15_000, cache: 'no-store' });
+        if (!active() || String(payload.userId || '') !== String(owner.userId)) return;
+        resumeItems = watch.resumeItems(payload.items, 12).map(premiereResumeData);
+        refresh();
+      } catch {
+        if (active() && !items.length) text('.noctra-premiere-subtitle', 'Les lectures en cours sont momentanément indisponibles. Revenez sur l’accueil pour réessayer.');
       }
-      const resolvedUser = payloadUser || liveUser || resumeUser;
-      const cleanItems = resumeItemsForUser(payload.items || []);
-      premiereResumeCache = {user: resolvedUser, items: cleanItems};
-      reconcileNativeResumeSections(home, cleanItems, resolvedUser);
-      resumeItems = cleanItems.map(premiereResumeData);
-      resumeItems.forEach(entry => preloadPremiereLogo(entry.logo));
-      refresh();
-    }).catch(error => {
-      if (disposed || error.name === 'AbortError') return;
-      if (!items.length) text('.noctra-premiere-subtitle', 'Les lectures en cours sont momentanément indisponibles. Revenez sur l’accueil pour réessayer.');
-    });
+    };
+    premiereHomeController = { home, owner, refresh, loadResume, sync, destroy };
+    render(); sync();
+    void loadResume();
   }
+
+  window.addEventListener('noctra:watch-state-changed', () => {
+    const controller = premiereHomeController;
+    if (controller && window.NoctraWatchState.sameAccount(controller.owner, window.NoctraWatchState.session())) {
+      void controller.loadResume();
+    } else {
+      controller?.destroy();
+      if (document.body.classList.contains('noctra-home') && !document.body.classList.contains('noctra-playing')) scheduleHomeEnhancement();
+    }
+  });
 
   function enhanceCinemaHome(home) {
     // Retire the injected landing section, including after a cached-page update.
@@ -3103,14 +3067,16 @@
   }
 
   function homeCarouselFeed(scroller) {
-    if (!desktopPerformanceProfile() || !window.ApiClient?.getItems) return null;
+    const watch = window.NoctraWatchState;
+    const owner = watch?.session();
+    if (!desktopPerformanceProfile() || !owner?.client.getItems) return null;
     const section = scroller?.closest?.('.verticalSection');
     const title = normalizedText(section?.querySelector?.('.sectionTitle')?.textContent);
     const recent = /ajout.*recent|recent.*ajout|recently added|latest/.test(title);
     if (!section || !recent) return null;
 
     let state = homeCarouselFeeds.get(scroller);
-    if (state) return state;
+    if (state && watch.sameAccount(state.owner, owner)) return state;
     const itemsContainer = scroller.getScrollSlider?.()
       || scroller.querySelector?.('.scrollSlider, .itemsContainer')
       || null;
@@ -3139,6 +3105,7 @@
               ? 'backdrop'
               : sample?.classList.contains('squareCard') ? 'square' : 'portrait';
     state = {
+      owner,
       scroller,
       section,
       itemsContainer,
@@ -3201,8 +3168,7 @@
       state.advanceAfterLoad ||= advanceAfterLoad;
       return false;
     }
-    const userId = window.ApiClient?.getCurrentUserId?.() || authContext?.user?.id || '';
-    if (!userId) return false;
+    const { client, userId } = state.owner;
     state.loading = true;
     state.section.dataset.noctraFeedLoading = 'true';
     const before = getCarouselMetrics(scroller);
@@ -3219,10 +3185,12 @@
           Fields: 'PrimaryImageAspectRatio,DateCreated,ProductionYear,MediaSourceCount',
           ImageTypeLimit: 1,
           EnableImageTypes: 'Primary,Backdrop,Thumb',
+          EnableUserData: true,
           EnableTotalRecordCount: true
         };
         if (state.parentId) query.ParentId = state.parentId;
-        const result = await window.ApiClient.getItems(userId, query);
+        const result = await client.getItems(userId, query);
+        if (!window.NoctraWatchState.sameAccount(state.owner, window.NoctraWatchState.session())) return false;
         const page = Array.isArray(result?.Items) ? result.Items : [];
         state.startIndex += page.length;
         // Jellyfin can populate its first cards after the feed state is created.
@@ -5525,7 +5493,7 @@
 
   const tvDefaultIframeSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation';
   // 200.0.132 : livewatch.icu (nouveau domaine LiveWatch) ; livewatch.top gardé pour les liens anciens.
-  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
+  const tvTrustedEmbedHosts = new Set(['livewatch.icu', 'www.livewatch.icu', 'livewatch.top', 'www.livewatch.top', 'witv.football', 'www.witv.football', 'oha.cx', 'www.oha.cx', 'streamed.pk', 'www.streamed.pk', 'strmfree.st', 'www.strmfree.st', 'ppv.st', 'www.ppv.st', 'strmfree.pk', 'www.strmfree.pk', 'rockylive.st', 'www.rockylive.st', 'tim-streams.com', 'www.tim-streams.com', 'huhu.bz', 'www.huhu.bz', 'kool.ws', 'www.kool.ws', 'vavoo.top', 'www.vavoo.top', 'embed.st', 'www.embed.st', 'volkamax.club', 'www.volkamax.club', 'bzh-sport.lat', 'www.bzh-sport.lat', 'bzh.lat', 'www.bzh.lat', 'choc2foot.biz', 'www.choc2foot.biz', 'zonalive.click', 'www.zonalive.click', '178.239.115.119']);
 
   function configureTvIframe(frame, channel) {
     if (!frame) return;
@@ -5533,7 +5501,7 @@
     frame.setAttribute('scrolling', frame.dataset.tvCompatPage === 'true' ? 'auto' : 'no');
     // Published Brigitte players reject every sandbox attribute. Keep their
     // document external: never grant this exception to a local proxy page.
-    if (['BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].includes(channel?.provider)) {
+    if (['Streamonsport', 'BrigitteTV', 'DLStreams', 'DaddyLive', 'Streamed', 'Volkamax', 'FCTV33', 'RénéVéo', 'BowdTV', 'Xtemus'].includes(channel?.provider)) {
       try {
         const target = new URL(channel.embedUrl, window.location.href);
         if (/^https?:$/.test(target.protocol) && target.origin !== window.location.origin) {
@@ -5604,6 +5572,11 @@
     tvFrameResizeObserver = null;
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     const video = document.querySelector('#noctra-tv-video');
     if (video) {
       try { video.pause(); } catch {}
@@ -5945,6 +5918,11 @@
       button.hidden = !available;
       button.disabled = !available;
     }
+    const seekWindow = available && tvLiveSeekWindow(video);
+    document.querySelectorAll('[data-tv-seek]').forEach(seek => {
+      seek.hidden = !seekWindow;
+      seek.disabled = !seekWindow;
+    });
     if (!available) {
       if (button) button.dataset.state = 'idle';
       refreshTvDesktopLiveState(video);
@@ -5987,7 +5965,7 @@
     tvDesktopControlsHideTimer = window.setTimeout(() => {
       tvDesktopControlsHideTimer = 0;
       if (!screen?.isConnected || video.paused || video.ended || video.hidden) return;
-      if (screen.contains?.(document.activeElement) && document.activeElement?.matches(':focus-visible')) return;
+      if (screen.contains?.(document.activeElement) && focusVisible(document.activeElement)) return;
       if (tvSafeExtras.menuOpen) return;
       screen.setAttribute('data-tv-controls-hidden', 'true');
     }, delay);
@@ -6074,6 +6052,55 @@
       const pipDisabled = !tvPictureInPictureSupported(video);
       if (pip.disabled !== pipDisabled) pip.disabled = pipDisabled;
     }
+  }
+
+  // Fenêtre de retour du direct (seekable) d'au moins 30 s, sinon null.
+  function tvLiveSeekWindow(video = document.querySelector('#noctra-tv-video')) {
+    try {
+      const ranges = video?.seekable;
+      if (!ranges?.length) return null;
+      const start = ranges.start(0);
+      const end = ranges.end(ranges.length - 1);
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= 30 ? { start, end } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  let tvSeekNoteTotal = 0;
+  let tvSeekNoteAt = 0;
+  let tvSeekNoteTimer = 0;
+  // −15 s / +15 s dans la fenêtre du direct (lecture ou pause gardée), retour visuel cumulé.
+  function seekTvLive(deltaSeconds) {
+    const video = document.querySelector('#noctra-tv-video');
+    const range = tvLiveSeekWindow(video);
+    if (!video || video.hidden || !range) return false;
+    const position = Number(video.currentTime) || 0;
+    const low = Math.min(range.start + 2, position);
+    const high = Math.max(range.end - 3, position);
+    const target = Math.min(high, Math.max(low, position + deltaSeconds));
+    try { video.currentTime = target; } catch { return false; }
+    const now = Date.now();
+    const moved = target - position;
+    tvSeekNoteTotal = now - tvSeekNoteAt < 1500 && (tvSeekNoteTotal < 0) === (deltaSeconds < 0) ? tvSeekNoteTotal + moved : moved;
+    tvSeekNoteAt = now;
+    const seconds = Math.round(Math.abs(tvSeekNoteTotal));
+    const screen = video.closest('.noctra-tv-screen');
+    let note = screen?.querySelector('.noctra-tv-seek-note');
+    if (screen && !note) {
+      note = document.createElement('div');
+      note.className = 'noctra-tv-seek-note';
+      note.setAttribute('aria-live', 'polite');
+      screen.appendChild(note);
+    }
+    if (note) {
+      note.textContent = (deltaSeconds < 0 ? '⟲ ' : '⟳ ') + (seconds ? `${tvSeekNoteTotal < 0 ? '−' : '+'}${seconds} s` : deltaSeconds < 0 ? 'Début' : 'En direct');
+      note.hidden = false;
+      window.clearTimeout(tvSeekNoteTimer);
+      tvSeekNoteTimer = window.setTimeout(() => { note.hidden = true; }, 1500);
+    }
+    window.requestAnimationFrame(refreshTvLiveEdgeControl);
+    return true;
   }
 
   function returnTvToLiveEdge() {
@@ -6875,6 +6902,8 @@
                 <iframe id="noctra-tv-embed" title="Lecteur TV intégré" hidden allow="autoplay *; fullscreen *; encrypted-media *; picture-in-picture *" allowfullscreen loading="eager" referrerpolicy="strict-origin-when-cross-origin"></iframe>
                 <div class="noctra-tv-screen-brand"><span></span><strong>NOCTRA LIVE</strong></div>
                 <div class="noctra-tv-screen-tools" role="toolbar" aria-label="Contrôles du lecteur TV">
+                  <button class="noctra-tv-live-edge noctra-tv-seek" type="button" data-tv-seek="-15" aria-label="Reculer de 15 secondes" title="Reculer de 15 secondes" hidden><span>−15 s</span></button>
+                  <button class="noctra-tv-live-edge noctra-tv-seek" type="button" data-tv-seek="15" aria-label="Avancer de 15 secondes" title="Avancer de 15 secondes" hidden><span>+15 s</span></button>
                   <button class="noctra-tv-live-edge" type="button" data-tv-live-edge data-state="idle" aria-label="Revenir au direct" title="Revenir au direct" hidden>${icons.live}<span>Direct</span></button>
                   <button class="noctra-tv-safe-tools-launcher" type="button" data-tv-safe-tools-launcher aria-label="Outils TV" title="Outils TV">${icons.tools}</button>
                   <button class="noctra-tv-screen-fullscreen" type="button" data-tv-screen-fullscreen aria-label="Plein écran" title="Plein écran">${icons.fullscreen}</button>
@@ -7118,6 +7147,11 @@
     try { tvVideoEventsController?.abort?.(); } catch {}
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     tvVideoEventsController = null;
     window.clearTimeout(tvWaitingStatusTimer);
     tvWaitingStatusTimer = 0;
@@ -7135,8 +7169,9 @@
     frame.hidden = false;
     const external = document.querySelector('[data-tv-open-external]');
     if (external) {
-      external.href = url;
-      external.dataset.tvOpenExternal = url;
+      const page = ['PPV', 'Streamed', 'Volkamax'].includes(channel.provider) ? channel.externalUrl || url : url;
+      external.href = page;
+      external.dataset.tvOpenExternal = page;
       external.hidden = false;
     }
     const resolvedChannel = { ...channel, embedUrl: url };
@@ -7358,7 +7393,7 @@
       const liveWatchVipBridge = (channel.vipPlayback || channel.provider === 'LiveWatch') && /\/api\/tv\/livewatch\/(?:embed\/|vip\/[^/]+\/embed(?:$|[?#]))/.test(String(url));
       const wiTvPreparedBridge = channel.provider === 'WiTV' && /\/api\/tv\/embed\//.test(String(url));
       const wiTvWebFrame = channel.provider === 'WiTV';
-      const untrackedWebFrame = ['DaddyLive', 'BrigitteTV', 'Xtemus', 'Streamed', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
+      const untrackedWebFrame = ['DaddyLive', 'Streamonsport', 'BrigitteTV', 'Xtemus', 'Streamed', 'PPV', 'Alternative', 'Volkamax', 'DLStreams'].includes(channel.provider);
       const loadedLabel = channel.provider === 'OHA' && options.compatPage
         ? 'OHA · lecteur chargé · démarrage du média…'
         : wiTvPreparedBridge
@@ -7403,8 +7438,16 @@
   function resetTvQualitySelector() {
     const wrap = document.querySelector('[data-tv-quality-wrap]');
     const select = document.querySelector('[data-tv-quality]');
-    if (select) select.innerHTML = '<option value="-1">Auto</option>';
-    if (wrap) wrap.hidden = true;
+    tvNativeQuality = null;
+    if (select) {
+      select.innerHTML = '<option value="-1" data-base="Auto">Auto</option>';
+      select.disabled = false;
+    }
+    if (wrap) {
+      wrap.hidden = true;
+      delete wrap.dataset.single;
+      delete wrap.dataset.current;
+    }
   }
 
   function applyTvChannelAutoQuality(hls, automatic = true) {
@@ -7432,10 +7475,16 @@
       width: Number(level?.width || 0)
     })).filter(level => level.height || level.bitrate);
     if (rows.length < 2) {
+      // Une seule qualité : la définition lue reste affichée (refreshTvQualityReadout).
+      wrap.dataset.single = 'true';
       wrap.hidden = true;
+      refreshTvQualityReadout();
       return;
     }
-    select.innerHTML = '<option value="-1">' + (hls._noctraChannelAutoCap >= 0 ? 'Auto stable · 720p max' : 'Auto') + '</option>' + rows
+    delete wrap.dataset.single;
+    select.disabled = false;
+    const autoBase = hls._noctraChannelAutoCap >= 0 ? 'Auto stable · 720p max' : 'Auto';
+    select.innerHTML = `<option value="-1" data-base="${autoBase}">${autoBase}</option>` + rows
       .sort((a, b) => (b.height - a.height) || (b.bitrate - a.bitrate))
       .map(level => {
         const resolution = level.height ? `${level.height}p` : (level.width ? `${level.width}px` : 'Source');
@@ -7444,7 +7493,95 @@
       }).join('');
     select.value = '-1';
     wrap.hidden = false;
+    refreshTvQualityReadout();
     if (tvSafeExtras.menuOpen) refreshTvSafeToolsMenu();
+  }
+
+  // 200.0.176 : définition réellement lue, visible sur PC comme sur mobile
+  // (« Auto · 1080p »), y compris pour une source à une seule qualité et pour
+  // le lecteur HLS natif d'iPhone/iPad.
+  function refreshTvQualityReadout() {
+    const wrap = document.querySelector('[data-tv-quality-wrap]');
+    const select = wrap?.querySelector('[data-tv-quality]');
+    const video = document.querySelector('#noctra-tv-video');
+    if (!wrap || !select || !video) return;
+    const playing = !video.hidden && tvState.currentPlaybackType === 'stream';
+    const height = playing ? Number(video.videoHeight || 0) : 0;
+    const current = height > 0 ? `${height}p` : '';
+    if ((wrap.dataset.current || '') !== current) {
+      if (current) wrap.dataset.current = current;
+      else delete wrap.dataset.current;
+    }
+    const auto = select.querySelector('option[value="-1"]');
+    if (auto) {
+      const base = auto.dataset.base || 'Auto';
+      const label = wrap.dataset.single === 'true' ? (current || 'Source') : (current ? `${base} · ${current}` : base);
+      if (auto.textContent !== label) auto.textContent = label;
+    }
+    if (wrap.dataset.single === 'true') {
+      select.disabled = true;
+      if (wrap.hidden === Boolean(current)) wrap.hidden = !current;
+    }
+  }
+
+  // HLS natif (iPhone/iPad) : le navigateur choisit seul la variante. Noctra lit
+  // la liste principale du flux pour proposer les mêmes qualités qu'avec HLS.js ;
+  // un choix charge la sous-liste de cette qualité, « Auto » la liste principale.
+  function parseTvMasterPlaylist(text, baseUrl) {
+    const lines = String(text || '').split(/\r?\n/).map(line => line.trim());
+    const levels = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!lines[index].startsWith('#EXT-X-STREAM-INF:')) continue;
+      const attributes = lines[index].slice(18);
+      const uri = lines.slice(index + 1).find(line => line && !line.startsWith('#'));
+      if (!uri) continue;
+      const resolution = /(?:^|,)RESOLUTION=(\d+)x(\d+)/i.exec(attributes);
+      const bandwidth = /(?:^|,)(?:AVERAGE-)?BANDWIDTH=(\d+)/i.exec(attributes);
+      let url = '';
+      try { url = new URL(uri, baseUrl).href; } catch { continue; }
+      if (levels.some(level => level.url === url)) continue;
+      levels.push({ url, width: resolution ? Number(resolution[1]) : 0, height: resolution ? Number(resolution[2]) : 0, bitrate: bandwidth ? Number(bandwidth[1]) : 0 });
+    }
+    return levels;
+  }
+
+  async function loadTvNativeQualities(streamUrl, playbackSequence) {
+    let master = '';
+    try { master = new URL(appPath(streamUrl), window.location.href).href; } catch { return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(master, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+      if (!response.ok) return;
+      const text = await response.text();
+      if (playbackSequence !== tvPlaybackSequence || tvHls || tvShaka) return;
+      const levels = parseTvMasterPlaylist(text, response.url || master);
+      tvNativeQuality = { master, levels, sequence: playbackSequence };
+      populateTvQualitySelector({ levels });
+    } catch {
+      // Liste illisible : la définition lue reste affichée par refreshTvQualityReadout.
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  function setTvNativeQuality(value) {
+    const video = document.querySelector('#noctra-tv-video');
+    const select = document.querySelector('[data-tv-quality]');
+    const native = tvNativeQuality;
+    if (!video || !native || native.sequence !== tvPlaybackSequence || tvHls || tvShaka) return false;
+    const level = Number(value);
+    const target = Number.isInteger(level) && level >= 0 ? native.levels[level] : null;
+    if (level >= 0 && !target) return false;
+    const url = target ? target.url : native.master;
+    if (select) select.value = String(target ? level : -1);
+    if (video.currentSrc !== url && video.src !== url) {
+      video.src = url;
+      video.play().catch(() => {});
+    }
+    setTvPlaybackStatus(target ? `Qualité ${select?.selectedOptions?.[0]?.textContent || ''}` : 'Qualité automatique', 'playing');
+    if (tvSafeExtras.menuOpen) refreshTvSafeToolsMenu();
+    return true;
   }
 
 
@@ -7475,7 +7612,7 @@
         if (!frame || frame.hidden) return;
         screen.removeAttribute('data-tv-controls-hidden');
         idleTimer = setTimeout(() => {
-          if (screen.isConnected && !frame.hidden && !tvSafeExtras.menuOpen && !screen.querySelector('.noctra-tv-screen-tools :focus-visible')) screen.setAttribute('data-tv-controls-hidden', 'true');
+          if (screen.isConnected && !frame.hidden && !tvSafeExtras.menuOpen && !(screen.querySelector('.noctra-tv-screen-tools')?.contains(document.activeElement) && focusVisible(document.activeElement))) screen.setAttribute('data-tv-controls-hidden', 'true');
         }, 1800);
       };
       ['pointerenter','pointermove','pointerdown','focusout'].forEach(event => screen.addEventListener(event, idle, {passive:true}));
@@ -7514,6 +7651,21 @@
       liveEdgeButton.hidden = true;
       liveEdgeButton.innerHTML = `${icons.live}<span>Direct</span>`;
       toolbar.insertBefore(liveEdgeButton, toolbar.firstChild);
+    }
+    // ±15 s du direct (affichés seulement avec une fenêtre de retour réelle).
+    if (!toolbar.querySelector('[data-tv-seek]')) {
+      for (const step of [-15, 15]) {
+        const seek = document.createElement('button');
+        seek.type = 'button';
+        seek.className = 'noctra-tv-live-edge noctra-tv-seek';
+        seek.dataset.tvSeek = String(step);
+        seek.hidden = true;
+        const label = step < 0 ? 'Reculer de 15 secondes' : 'Avancer de 15 secondes';
+        seek.setAttribute('aria-label', label);
+        seek.title = label;
+        seek.innerHTML = `<span>${step < 0 ? '−15 s' : '+15 s'}</span>`;
+        toolbar.insertBefore(seek, liveEdgeButton);
+      }
     }
     let hud = screen.querySelector('[data-tv-safe-status-hud]');
     if (!hud) {
@@ -7722,6 +7874,7 @@
 
   function setTvSafeQuality(value) {
     const select = tvSafeExtrasPanel()?.querySelector('[data-tv-quality]');
+    if (select && !tvHls && !tvShaka && setTvNativeQuality(value)) { refreshTvSafeToolsMenu(); return; }
     if (!select || (!tvHls && !tvShaka)) return;
     const level = Number(value);
     if (tvShaka) {
@@ -7784,6 +7937,10 @@
       try { instance?.destroy?.(); } catch {}
     }
     tvSafeExtras.hls.clear();
+    for (const player of (tvSafeExtras.shaka?.values?.() || [])) {
+      try { void player?.destroy?.().catch?.(() => undefined); } catch {}
+    }
+    tvSafeExtras.shaka?.clear?.();
     document.querySelectorAll('[data-tv-safe-multi-video]').forEach(video => {
       try { video.pause(); } catch {}
       video.removeAttribute('src');
@@ -7806,12 +7963,19 @@
       frame.src = 'about:blank';
     }
     // Le lecteur principal resterait sinon comme un flux supplémentaire caché
-    // (2 cases = 3 téléchargements). On suspend uniquement le réseau HLS courant
+    // (2 cases = 3 téléchargements). On suspend uniquement le réseau HLS/Shaka courant
     // pendant le Multiview, sans détruire ni résoudre un autre serveur.
     if (tvHls && tvState.currentPlaybackType === 'stream' && !tvSafeExtras.mainHlsSuspended) {
       try {
         tvHls.stopLoad();
         tvSafeExtras.mainHlsSuspended = true;
+      } catch {}
+    }
+    if (tvShaka && tvState.currentPlaybackType === 'stream' && !tvSafeExtras.mainShakaSuspended) {
+      try {
+        tvSafeExtras.mainShakaStreamUrl = String(tvState.currentStreamUrl || '');
+        tvSafeExtras.mainShakaSuspended = true;
+        void tvShaka.unload?.().catch?.(() => undefined);
       } catch {}
     }
   }
@@ -7824,6 +7988,11 @@
       try { tvHls.startLoad(-1); } catch {}
     }
     tvSafeExtras.mainHlsSuspended = false;
+    if (tvShaka && tvSafeExtras.mainShakaSuspended && tvSafeExtras.mainShakaStreamUrl) {
+      try { void tvShaka.load?.(tvSafeExtras.mainShakaStreamUrl).catch?.(() => undefined); } catch {}
+    }
+    tvSafeExtras.mainShakaSuspended = false;
+    tvSafeExtras.mainShakaStreamUrl = '';
     if (video && tvSafeExtras.mainMutedBeforeMulti !== null) video.muted = Boolean(tvSafeExtras.mainMutedBeforeMulti);
     if (video && shouldResume) window.setTimeout(() => void video.play().catch(() => undefined), 60);
     if (frame && tvSafeExtras.mainEmbedSrc) frame.src = tvSafeExtras.mainEmbedSrc;
@@ -7937,6 +8106,9 @@
     const instance = tvSafeExtras.hls.get(key);
     try { instance?.destroy?.(); } catch {}
     tvSafeExtras.hls.delete(key);
+    const shakaPlayer = tvSafeExtras.shaka?.get?.(key);
+    try { void shakaPlayer?.destroy?.().catch?.(() => undefined); } catch {}
+    tvSafeExtras.shaka?.delete?.(key);
     const tile = [...document.querySelectorAll('[data-tv-safe-multi-tile]')].find(node => node.dataset.tvSafeMultiTile === key);
     const video = tile?.querySelector('video');
     if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
@@ -8536,6 +8708,11 @@
     try { tvVideoEventsController?.abort?.(); } catch {}
     try { tvHls?.destroy?.(); } catch {}
     tvHls = null;
+    if (tvShaka) {
+      const activeShaka = tvShaka;
+      tvShaka = null;
+      tvShakaCleanup = activeShaka.destroy().catch(() => undefined);
+    }
     tvVideoEventsController = new AbortController();
     const startSignal = tvVideoEventsController.signal;
     await tvShakaCleanup;
@@ -8966,6 +9143,7 @@
       nativeFallbackStarted = true;
       recordTvDiagnostic('native-player-started', { elapsedMs: tvPlaybackElapsedMs(), provider: playbackProvider });
       video.src = streamUrl;
+      void loadTvNativeQualities(streamUrl, playbackSequence);
       if (label) setTvPlaybackStatus(label, 'loading');
       video.play().catch(error => {
         if (playbackSequence !== tvPlaybackSequence || benignTvPlayInterruption(error)) return;
@@ -9776,12 +9954,30 @@
         // rafraîchir, il partait avec ~7,5 s (diagnostic 200.0.122) malgré
         // rebufferingGoal. Shaka télécharge déjà pendant que la vidéo est en
         // pause : on attend 15 s de réserve (20 s d'attente au plus) avant play().
+        // 200.0.152 : dès que le 1er segment est en mémoire (>= 3 s), on ouvre
+        // segmentPrefetchLimit à 2 pour précharger le suivant pendant la pause ;
+        // si la fenêtre live du fournisseur plafonne à 1 segment (>= 5 s) sans
+        // progresser pendant 2,2 s, on démarre immédiatement au lieu de figer 20 s.
         const startupWaitStarted = performance.now();
+        let startupLastBuffered = tvBufferedAhead(video);
+        let startupLastGrowthAt = startupWaitStarted;
+        let startupPrefetchBoosted = false;
         setTvPlaybackStatus(`Préchargement du direct · ${TV_SHAKA_STARTUP_RESERVE} s…`, 'loading');
         await new Promise(resolve => {
           const check = () => {
             if (videoEventSignal.aborted || playbackSequence !== tvPlaybackSequence) return resolve();
             if (tvBufferedAhead(video) >= TV_SHAKA_STARTUP_RESERVE || performance.now() - startupWaitStarted >= TV_SHAKA_STARTUP_WAIT_MS) return resolve();
+            const currentBuffered = tvBufferedAhead(video);
+            const now = performance.now();
+            if (currentBuffered > startupLastBuffered + 0.25) {
+              startupLastBuffered = currentBuffered;
+              startupLastGrowthAt = now;
+            }
+            if (!startupPrefetchBoosted && currentBuffered >= 3) {
+              startupPrefetchBoosted = true;
+              try { player.configure({ streaming: { segmentPrefetchLimit: 2 } }); } catch {}
+            }
+            if (currentBuffered >= 5 && now - startupLastGrowthAt >= 2_200) return resolve();
             window.setTimeout(check, 250);
           };
           check();
@@ -9873,6 +10069,13 @@
       }
     }
     const label = `${channel.provider || 'TV'} · ${resolvedOption?.label || option?.label || `Serveur ${Number(index) + 1}`}`;
+    if (resolvedOption?.playbackType === 'external' && resolvedOption.url) {
+      const target = new URL(resolvedOption.url);
+      if (target.protocol !== 'https:' || target.username || target.password) return;
+      setTvPlaybackStatus(resolvedOption.sourceLabel ? `Choisir ${resolvedOption.sourceLabel} sur le site du fournisseur` : label, 'idle');
+      if (manual) window.open(target.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (resolvedOption?.streamUrl || resolvedOption?.playbackType === 'stream') {
       await playTvDirectStream({ ...channel, transport: resolvedOption.transport || 'hls' }, resolvedOption.streamUrl, label, playbackSequence, index);
       return;
@@ -9970,10 +10173,12 @@
       ? Math.max(0, options.findIndex(item => Number(item.index ?? item.serverIndex) === Number(result.activeServer)))
       : options.findIndex(item => !item.manualOnly);
     if (initialOptionIndex < 0) {
-      setTvPlaybackStatus(`${provider} · aucun lecteur propre disponible · secours manuels uniquement`, 'error');
+      setTvPlaybackStatus(provider === 'WiTV' && result.officialPageOnly
+        ? 'WiTV · lecteur officiel disponible via Ouvrir le lecteur · secours manuels'
+        : `${provider} · aucun lecteur propre disponible · secours manuels uniquement`, 'error');
       return;
     }
-    if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1) {
+    if (tvState.section === 'channels' && window.NoctraServerChoice && options.length > 1 && !options[initialOptionIndex]?.verified) {
       setTvPlaybackStatus('Vérification rapide des serveurs… · choix manuel disponible', 'loading');
       initialOptionIndex = await window.NoctraServerChoice.choose({ ...channel, sourceId: tvActiveSourceId() }, options, initialOptionIndex, {
         signal: tvResolverController.signal,
@@ -11106,7 +11311,8 @@
         // Serveur d'une source « automatique » : ses voisins restent les secours
         // internes de la source (reprise, autre serveur du même fournisseur).
         tvState.resolvedEmbeds = server.group.slice();
-        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence, false);
+        await playTvResolvedOption({ ...server.entry.channel }, server.option, server.optionIndex, playbackSequence,
+          manual && server.option.playbackType === 'external');
       } else {
         await playTvSourceChannel({ ...server.entry.channel }, run.channelIndex, playbackSequence, { prefetched, unified: true });
       }
@@ -13363,6 +13569,12 @@
       return;
     }
 
+    const tvSeekButton = event.target.closest('[data-tv-seek]');
+    if (tvSeekButton) {
+      seekTvLive(Number(tvSeekButton.dataset.tvSeek) || 0);
+      return;
+    }
+
     if (event.target.closest('[data-tv-live-toggle]')) {
       const video = document.querySelector('#noctra-tv-video:not([hidden])');
       if (video) {
@@ -13473,7 +13685,10 @@
 
     const tvExternal = event.target.closest('[data-tv-open-external]');
     if (tvExternal?.dataset.tvOpenExternal) {
-      if (tvExternal.tagName !== 'A') window.open(tvExternal.dataset.tvOpenExternal, '_blank', 'noopener,noreferrer');
+      const targetUrl = String(tvExternal.dataset.tvOpenExternal || '').trim();
+      if (tvExternal.tagName !== 'A' && (/^https?:\/\//i.test(targetUrl) || targetUrl.startsWith('/'))) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      }
       return;
     }
 
@@ -13853,6 +14068,7 @@
     }
     if (event.target.matches('[data-tv-quality]')) {
       if (tvShaka) { setTvSafeQuality(event.target.value); return; }
+      if (!tvHls && setTvNativeQuality(event.target.value)) return;
       if (tvHls) {
         const level = Number(event.target.value);
         tvHls._noctraContinuity?.release();
@@ -14329,6 +14545,7 @@
       }
       const back = document.querySelector('#noctra-back');
       if (back) back.dataset.visible = String(hasBack);
+      syncHomeWatchAccount();
       if (home && !playing) scheduleHomeEnhancement();
       else premiereHomeController?.destroy();
       repairAuthenticatedViewState();
@@ -14977,6 +15194,12 @@
   document.addEventListener('pointermove', revealNativePlayerControls, { passive: true, capture: true });
   document.addEventListener('pointerdown', revealNativePlayerControls, { passive: true, capture: true });
   document.addEventListener('touchstart', revealNativePlayerControls, { passive: true, capture: true });
+  // 200.0.176 : la définition affichée suit la variante lue (changement de qualité, ABR).
+  ['resize', 'loadedmetadata', 'emptied'].forEach(type => {
+    document.addEventListener(type, event => {
+      if (event.target?.id === 'noctra-tv-video') refreshTvQualityReadout();
+    }, { passive: true, capture: true });
+  });
   ['loadstart', 'loadedmetadata', 'canplay', 'play', 'playing', 'pause', 'ended', 'emptied', 'abort', 'error'].forEach(type => {
     document.addEventListener(type, event => {
       const target = event.target;
