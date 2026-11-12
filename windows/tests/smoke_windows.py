@@ -1229,11 +1229,15 @@ def check_metadata_editor():
     until(lambda: control("ImageDelete-Backdrop-0").exists(timeout=.1), "Image editor not reloaded after the upload")
     control("ImageDelete-Backdrop-0").invoke()
     def confirm():
-        dialogs = [item for item in Desktop(backend="uia").windows() if item.process_id() == process.pid and item.window_text() == "Supprimer l’image"]
-        if not dialogs:
-            return False
-        dialogs[0].child_window(auto_id="6", control_type="Button").invoke()
-        return True
+        # Boîte de confirmation (fenêtre possédée par Noctra : sous la fenêtre principale ou au premier niveau selon Windows).
+        dialogs = [item for item in window.descendants(control_type="Window") if item.window_text() == "Supprimer l’image"] + \
+                  [item for item in Desktop(backend="uia").windows() if item.process_id() == process.pid and item.window_text() == "Supprimer l’image"]
+        for dialog in dialogs:
+            for button in dialog.descendants(control_type="Button"):
+                if button.element_info.automation_id == "6" or button.window_text() in ("Oui", "Yes", "&Oui", "&Yes"):
+                    button.invoke()
+                    return True
+        return False
     until(confirm, "No confirmation before deleting an image")
     until(lambda: seen("image-delete", lambda user, body: body["path"].endswith("/Images/Backdrop/0")), "The image was not deleted")
     assert any(file.name.startswith("Backdrop-0-") for file in backups.iterdir()), "The deleted backdrop was not kept on the PC"
