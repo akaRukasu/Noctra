@@ -1198,7 +1198,7 @@ def check_library_alphabet():
     control("SortDirection").invoke()
     until(lambda: control("SortDirection").exists(timeout=.1) and control("SortDirection").window_text() == "A → Z", "Sort direction did not switch back to ascending")
     until(lambda: control("LibraryCard0").exists(timeout=.1) and control("LibraryCard0").window_text() == "1900 Odyssee", "Ascending order does not start with the first title")
-    print("OK · Tri dans un sens puis dans l'autre (Z → A, puis A → Z).", flush=True)
+    print("OK · Tri dans un sens puis dans l'autre (Z -> A, puis A -> Z).", flush=True)
 
 
 def check_metadata_editor():
