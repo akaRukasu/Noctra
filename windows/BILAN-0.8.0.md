@@ -86,6 +86,10 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Lecture aléatoire d'une série
+
+- Bouton « Lecture aléatoire » à côté de « Lire la série » (comme Jellyfin) : tous les épisodes lisibles, mélangés, lus depuis le début. Précédent / suivant et « À suivre » suivent cette file ; en séance SyncPlay, le premier épisode est lancé pour le groupe.
+
 ## Images et métadonnées (comme la PWA)
 
 - **Administrateurs** : « Modifier les images » et « Modifier les métadonnées » sur la fiche (film, épisode, série…) et au clic droit d'une carte.
@@ -231,6 +235,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - administration.
 - **Test des nouveautés** :
   - plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris ;
+  - lecture aléatoire d'une série puis titre suivant de la file ;
   - images (choix en ligne, image du PC, suppression confirmée) et métadonnées (modification, actualisation), avec sauvegarde sur le PC ;
   - médiathèque de 404 titres sur une page : chargement au défilement, affiches à la demande, alphabet (T puis #), tri Z → A puis A → Z ;
   - logo de la série dans l'en-tête du lecteur, titre de l'épisode conservé ;

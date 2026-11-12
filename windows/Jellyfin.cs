@@ -287,6 +287,12 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
         Get<ItemPage>("Items/" + id + "/Similar", new() { ["UserId"] = user.Id, ["Limit"] = "12", ["Fields"] = Details }, cancellation);
     internal Task<ItemPage> Seasons(string id, CancellationToken cancellation) =>
         Get<ItemPage>("Shows/" + id + "/Seasons", new() { ["UserId"] = user.Id, ["EnableUserData"] = "true" }, cancellation);
+    // Tous les épisodes lisibles d'une série (lecture aléatoire).
+    internal Task<ItemPage> SeriesEpisodes(string id, CancellationToken cancellation) =>
+        Get<ItemPage>("Shows/" + id + "/Episodes", new()
+        {
+            ["UserId"] = user.Id, ["IsMissing"] = "false", ["EnableUserData"] = "true", ["Fields"] = Details
+        }, cancellation);
     internal Task<ItemPage> Episodes(string id, string seasonId, CancellationToken cancellation) =>
         Get<ItemPage>("Shows/" + id + "/Episodes", new()
         {

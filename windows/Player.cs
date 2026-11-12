@@ -144,6 +144,25 @@ public partial class MainWindow
         else MediaTitle.Visibility = Visibility.Collapsed;
     }
 
+    // Lecture aléatoire d'une série : tous ses épisodes lisibles, mélangés, lus depuis le début.
+    private async Task ShuffleSeries(Jellyfin account, MediaItem series)
+    {
+        MediaItem[] episodes;
+        try { episodes = (await account.SeriesEpisodes(series.Id, lifetime.Token)).Items ?? []; }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            ShowStatus("Les épisodes de la série n’ont pas pu être chargés.");
+            return;
+        }
+        var shuffled = episodes.Where(episode => episode.CanPlay && PlayRequest.Identifier(episode.Id)).OrderBy(_ => Random.Shared.Next()).ToArray();
+        if (shuffled.Length == 0) { ShowStatus("Aucun épisode lisible dans cette série."); return; }
+        Trace($"lecture aléatoire {series.Id} : {shuffled.Length} épisodes, premier {shuffled[0].Id}");
+        if (syncGroup != null) { SyncPlayItem(shuffled[0], 0); return; }
+        playQueue = shuffled;
+        playQueueIndex = 0;
+        StartPlayback(shuffled[0], 0, keepQueue: true);
+    }
+
     private void PlayQueue(MediaItem[] items, int index, long start = 0)
     {
         items = items.Where(entry => entry.CanPlay && PlayRequest.Identifier(entry.Id)).ToArray();
@@ -255,6 +274,12 @@ public partial class MainWindow
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
             var (previous, next) = await account.AdjacentEpisodes(item, timeout.Token);
             if (active != state) return;
+            // File de lecture (lecture aléatoire d'une série) : précédent / suivant et « À suivre » suivent la file.
+            if (playQueue.Length > 1 && playQueueIndex < playQueue.Length && playQueue[playQueueIndex].Id == item.Id)
+            {
+                previous = playQueueIndex > 0 ? playQueue[playQueueIndex - 1] : null;
+                next = playQueueIndex + 1 < playQueue.Length ? playQueue[playQueueIndex + 1] : null;
+            }
             state.Previous = previous; state.Next = next;
             Trace($"épisodes voisins {item.Id} : {previous?.Id ?? "-"} / {next?.Id ?? "-"}");
             UpdateEpisodeButtons();

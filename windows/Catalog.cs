@@ -1191,8 +1191,16 @@ public partial class MainWindow
             if (playable != null) StartPlayback(playable);
             else episodes.BringIntoView();
         }
+        // Comme Jellyfin : « Lecture aléatoire » de tous les épisodes de la série.
+        Button? shuffle = null;
+        if (item.Type == "Series")
+        {
+            shuffle = Action("⤨   Lecture aléatoire", () => _ = ShuffleSeries(account, item));
+            shuffle.ToolTip = "Épisodes de la série dans un ordre aléatoire";
+            AutomationProperties.SetAutomationId(shuffle, "SeriesShuffle");
+        }
         var seriesHero = Hero(item, type, item.DisplayTitle, metadata, synopsis, "▶   Lire la série", PlaySeries,
-            favorite, cancellation, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item),
+            favorite, cancellation, shuffle, configurePrimary: button => { seriesPlay = button; button.IsEnabled = false; }, facts: DetailFacts(item),
             visualClick: item.Type == "Series" ? PlaySeries : null);
         PageContent.Children.Add(seriesHero);
         if (item.Type == "Series")

@@ -1120,6 +1120,18 @@ def check_card_playback():
     until(lambda: wake_player() is not False and control("QueuePrevious").is_visible() and control("QueuePrevious").is_enabled(), "No previous episode after a thumbnail", timeout=20)
     control("ReturnButton").invoke()
     print("OK · Lecture au clic sur le visuel d'une série et sur la vignette d'un épisode.", flush=True)
+    # Lecture aléatoire de la série (comme Jellyfin) : épisodes mélangés, puis épisode suivant de la file.
+    until(lambda: control("SeriesShuffle").exists(timeout=.1), "No « Lecture aléatoire » on the series page", timeout=30)
+    control("SeriesShuffle").invoke()
+    until(lambda: re.search(r"lecture aléatoire teen : 2 épisodes, premier (\S+)", (profile / "trace.log").read_text(encoding="utf-8", errors="replace")), "Shuffle did not queue the series episodes", timeout=20)
+    first = re.findall(r"lecture aléatoire teen : 2 épisodes, premier (\S+)", (profile / "trace.log").read_text(encoding="utf-8", errors="replace"))[-1]
+    other = "episode" if first == "episode-next" else "episode-next"
+    count = plays(other)
+    until(lambda: wake_player() is not False and control("QueueNext").is_visible() and control("QueueNext").is_enabled(), "No next title in the shuffled queue", timeout=30)
+    control("QueueNext").invoke()
+    until(lambda: plays(other) > count, "The next shuffled episode did not start", timeout=60)
+    control("ReturnButton").invoke()
+    print("OK · Lecture aléatoire d'une série (file mélangée, titre suivant).", flush=True)
 
 
 def check_fullscreen_at_start():
