@@ -90,6 +90,7 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 
 - L'image est dessinée par la fenêtre du moteur vidéo (autre fil d'exécution) : ses mouvements de souris n'arrivaient pas toujours au lecteur, la barre et les boutons restaient alors cachés.
 - La position du pointeur est maintenant aussi relevée (toutes les 100 ms) : tout mouvement au-dessus du lecteur, dans une fenêtre de Noctra, les fait réapparaître.
+- Plein écran demandé pendant l'ouverture de la vidéo : la fenêtre des commandes était préparée sans elles (encore cachées) et ne revenait plus ; elle est maintenant rouverte quand la vidéo démarre, remesurée après chaque passage en plein écran, et une désactivation venant d'une fenêtre de Noctra (moteur vidéo) ne les masque plus.
 
 ## Épisodes, vignettes et SyncPlay
 
@@ -211,6 +212,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - multivue ;
   - administration.
 - **Test des nouveautés** :
+  - plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris ;
   - épisode lancé depuis une carte de l'accueil puis épisode suivant / précédent ; lecture au clic sur le visuel d'une série et sur la vignette d'un épisode ;
   - SyncPlay : « Rejoindre la lecture » après avoir quitté le lecteur, à la position du groupe ;
   - « Passer le générique » à partir des marqueurs de l'extension Intro Skipper (épisode sans segments côté serveur) ;

@@ -1060,6 +1060,42 @@ def check_card_playback():
     print("OK · Lecture au clic sur le visuel d'une série et sur la vignette d'un épisode.", flush=True)
 
 
+def check_fullscreen_at_start():
+    # Plein écran demandé dès le lancement (pendant l'ouverture de la vidéo) : la barre de lecture doit revenir
+    # au mouvement de la souris, au premier plan et cliquable, sans repasser par Échap.
+    def plays(item):
+        return sum(1 for path, user, p in events if path == "/jellyfin/Sessions/Playing" and p.get("ItemId") == item)
+    control("HomeTab").invoke()
+    until(lambda: control("PrimaryPlayback", "Button").exists(timeout=.1), "Home missing before the fullscreen test")
+    before = {item: plays(item) for item in ("episode", "episode-next")}
+    original = tuple(win32gui.GetWindowRect(window.handle))
+    control("PrimaryPlayback", "Button").invoke()
+    until(lambda: control("ReturnButton").exists(timeout=.1), "Player did not open")
+    window.set_focus()
+    send_keys("{F11}")
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == monitor_rect(window), "Fullscreen requested while opening did not cover the monitor", timeout=15)
+    until(lambda: any(plays(item) > count for item, count in before.items()), "Playback did not start in fullscreen", timeout=60)
+    sleep(4)  # commandes masquées après l'inactivité
+    bounds = monitor_rect(window)
+    def shown():
+        for step in range(6):
+            win32api.SetCursorPos(((bounds[0] + bounds[2]) // 2 + step * 9, bounds[3] - 160 - step * 3)); sleep(.08)
+        buttons = popup_buttons()
+        if not buttons:
+            return False
+        rect = buttons[0].rectangle()
+        hit = win32gui.WindowFromPoint(((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2))
+        root = win32gui.GetAncestor(hit, 2) if hit else 0
+        # Bouton réellement au premier plan : sous le pointeur, c'est la fenêtre des commandes, pas l'image.
+        return bool(root) and root != window.handle
+    until(shown, "Player controls did not come back in fullscreen started while opening", timeout=15)
+    screenshot("plein-ecran-au-lancement")
+    send_keys("{ESC}")
+    until(lambda: tuple(win32gui.GetWindowRect(window.handle)) == original, "Escape did not leave the fullscreen started while opening", timeout=15)
+    control("ReturnButton").invoke()
+    print("OK · Plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris.", flush=True)
+
+
 def check_bowd_preroll():
     # BowdTV : publicité lue dans le lecteur Noctra (son coupé), « start », délai respecté, « continue », puis direct HLS (comme la PWA).
     control("TvTab").invoke()
@@ -1667,6 +1703,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             check_bowd_preroll()
             check_episode_flow()
             check_card_playback()
+            check_fullscreen_at_start()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)

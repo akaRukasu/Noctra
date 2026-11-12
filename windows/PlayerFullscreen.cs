@@ -74,7 +74,12 @@ public partial class MainWindow
         // Les fenêtres superposées suivent la fenêtre principale et disparaissent avec elle.
         LocationChanged += (_, _) => RepositionOverlays();
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) HideOverlays(); else Dispatcher.BeginInvoke(() => { SizeOverlays(); RepositionOverlays(); }); };
-        Deactivated += (_, _) => { if (!miniPlayer) { HideOverlays(); ClosePlayerPanel(); } };
+        // Désactivation par une fenêtre de Noctra (moteur vidéo, commandes flottantes) : les commandes restent.
+        Deactivated += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            if (miniPlayer || IsActive || ForegroundIsNoctra()) return;
+            HideOverlays(); ClosePlayerPanel();
+        }, DispatcherPriority.Input);
         Activated += (_, _) => { if (FloatingControls) WakeFullscreenControls(force: true); };
         Timeline.SizeChanged += (_, _) => DrawChapterMarks();
         Closed += (_, _) =>
@@ -133,6 +138,15 @@ public partial class MainWindow
         }
         UpdateOverlayMode();
         if (FloatingControls) WakeFullscreenControls(force: true);
+        // La fenêtre change de taille après coup : commandes remesurées et replacées sur le nouvel écran.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!FloatingControls) return;
+            SizeOverlays();
+            if (fullscreenControls?.IsOpen == true) { fullscreenControls.IsOpen = false; fullscreenControls.IsOpen = PlayerControls.Visibility == Visibility.Visible; }
+            if (headerOverlay?.IsOpen == true) { headerOverlay.IsOpen = false; headerOverlay.IsOpen = !miniPlayer; }
+            RepositionOverlays();
+        }, DispatcherPriority.Loaded);
     }
 
     private Popup Overlay(Func<Size, Size, Point> place) => new()
@@ -204,6 +218,20 @@ public partial class MainWindow
         if (headerOverlay != null) headerOverlay.IsOpen = false;
     }
 
+    // Commandes affichées après l'ouverture de la vidéo : si le plein écran a été demandé pendant le chargement,
+    // la fenêtre des commandes avait été préparée sans elles (cachées) ; elle est réouverte avec elles.
+    private void ControlsReady()
+    {
+        if (!FloatingControls) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!FloatingControls) return;
+            UpdateOverlayMode();
+            SizeOverlays();
+            WakeFullscreenControls(force: true);
+        }, DispatcherPriority.Loaded);
+    }
+
     private void WakeFullscreenControls() => WakeFullscreenControls(false);
     private void WakeFullscreenControls(bool force)
     {
@@ -212,7 +240,16 @@ public partial class MainWindow
         if (!force && position == lastVideoPointer) return;
         lastVideoPointer = position; pointerHidden = false; Forms.Cursor.Current = Forms.Cursors.Default;
         if (fullscreenControls != null && fullscreenControls.Child == PlayerControls && PlayerControls.Visibility == Visibility.Visible)
+        {
+            // Fenêtre ouverte mais commandes invisibles (ouverte vide pendant le chargement, ou avant le passage en plein
+            // écran) : elle est refermée puis rouverte pour être mesurée et placée à nouveau.
+            if (fullscreenControls.IsOpen && (!PlayerControls.IsVisible || PlayerControls.ActualHeight < 1))
+            {
+                fullscreenControls.IsOpen = false;
+                Trace("commandes flottantes rouvertes");
+            }
             fullscreenControls.IsOpen = true;
+        }
         if (headerOverlay != null && headerOverlay.Child == PlayerHeader) headerOverlay.IsOpen = !miniPlayer;
         controlsIdle.Stop(); controlsIdle.Start();
     }

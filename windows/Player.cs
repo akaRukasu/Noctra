@@ -397,6 +397,7 @@ public partial class MainWindow
             AudioStage.Visibility = state.Session.Audio ? Visibility.Visible : Visibility.Collapsed;
             PlaybackNotice.Visibility = Visibility.Collapsed;
             PlayerControls.Visibility = Visibility.Visible;
+            ControlsReady();
             PlaybackMode.Text = MethodLabel(state);
             await Dispatcher.InvokeAsync(() => VideoHost.UpdateLayout(), DispatcherPriority.Loaded);
             if (active != state) return;
@@ -916,6 +917,7 @@ public partial class MainWindow
                 VideoHost.Visibility = Visibility.Visible;
                 PlaybackNotice.Visibility = Visibility.Collapsed;
                 PlayerControls.Visibility = Visibility.Visible;
+                ControlsReady();
                 PlaybackMode.Text = $"Connexion au serveur {state.Next} / {state.Streams.Length}…";
                 // 0.8 : serveur en cours, et passage manuel au suivant depuis le lecteur.
                 LiveServerButton.Content = $"Serveur {state.Next} / {state.Streams.Length}";
