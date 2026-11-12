@@ -756,6 +756,16 @@ public partial class MainWindow
             together.Click += (_, _) => SyncPlayItem(item, item.Resume);
             menu.Items.Add(together);
         }
+        if (CanEditMetadata(client) && item.Type is "Movie" or "Series" or "Episode" or "Season" or "BoxSet" or "MusicAlbum" or "Video" or "MusicVideo")
+        {
+            menu.Items.Add(new Separator());
+            foreach (var (label, open) in new (string, Func<Page>)[] { ("Modifier les images…", () => ImagesPage(item)), ("Modifier les métadonnées…", () => MetadataPage(item)) })
+            {
+                var entry = new MenuItem { Header = label, Foreground = BrushFor("Ink"), Padding = new Thickness(6, 8, 18, 8) };
+                entry.Click += (_, _) => _ = Navigate(open());
+                menu.Items.Add(entry);
+            }
+        }
         if (item.Progress > 0)
             Add("Retirer de « Continuer à regarder »", async account =>
             {
@@ -1158,6 +1168,7 @@ public partial class MainWindow
             Extra(PlaylistButton(item));
             if (account.User.Policy?.IsAdministrator == true && account.NoctraRoot != null && item.Type is "Movie" or "Episode")
                 Extra(Action("Corriger l’identification", () => _ = Navigate(IdentifyPage(item))));
+            foreach (var editor in EditorButtons(account, item)) Extra(editor);
             PageContent.Children.Add(extras);
             if (item.Taglines?.FirstOrDefault() is { Length: > 0 } tagline)
             {
@@ -1187,7 +1198,7 @@ public partial class MainWindow
         if (item.Type == "Series")
         {
             var links = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) };
-            foreach (var link in DetailLinks(account, item, cancellation).Append(PlaylistButton(item)))
+            foreach (var link in DetailLinks(account, item, cancellation).Append(PlaylistButton(item)).Concat(EditorButtons(account, item)))
             {
                 link.Margin = new Thickness(0, 0, 9, 9);
                 links.Children.Add(link);

@@ -412,6 +412,36 @@ internal sealed class Jellyfin(Uri root, string deviceId, Viewer user, string to
     internal Task<HttpResponseMessage> Image(string path, CancellationToken cancellation) =>
         Send(HttpMethod.Get, path, null, cancellation);
 
+    // 0.8 : édition des images et des métadonnées (comme l'éditeur de Jellyfin / de la PWA), réservée aux administrateurs.
+    internal Task<JsonElement> ItemImages(string id, CancellationToken cancellation) => Get<JsonElement>("Items/" + id + "/Images", null, cancellation);
+    internal Task<JsonElement> RemoteImages(string id, string type, bool allLanguages, CancellationToken cancellation) =>
+        Get<JsonElement>("Items/" + id + "/RemoteImages", new() { ["type"] = type, ["includeAllLanguages"] = allLanguages ? "true" : "false", ["limit"] = "60" }, cancellation);
+    internal Task DownloadRemoteImage(string id, string type, string url, CancellationToken cancellation) =>
+        Command("Items/" + id + "/RemoteImages/Download?type=" + Uri.EscapeDataString(type) + "&imageUrl=" + Uri.EscapeDataString(url), null, cancellation);
+    internal Task DeleteImage(string id, string type, int index, CancellationToken cancellation) =>
+        Command("Items/" + id + "/Images/" + Uri.EscapeDataString(type) + "/" + index.ToString(CultureInfo.InvariantCulture), null, cancellation, HttpMethod.Delete);
+    // Jellyfin attend l'image encodée en base64 dans le corps, avec son type (image/jpeg, image/png…).
+    internal async Task UploadImage(string id, string type, byte[] data, string mime, CancellationToken cancellation)
+    {
+        using var response = await Transmit(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, new Uri(root, "Items/" + id + "/Images/" + Uri.EscapeDataString(type)));
+            request.Headers.TryAddWithoutValidation("Authorization", Authorization(deviceId, token));
+            request.Content = new ByteArrayContent(Encoding.ASCII.GetBytes(Convert.ToBase64String(data)));
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
+            return request;
+        }, HttpCompletionOption.ResponseContentRead, false, cancellation);
+        response.EnsureSuccessStatusCode();
+    }
+    // Fiche complète telle que Jellyfin la renvoie, modifiée puis renvoyée telle quelle (comme l'éditeur de métadonnées de Jellyfin).
+    internal async Task<System.Text.Json.Nodes.JsonObject> ItemDocument(string id, CancellationToken cancellation) =>
+        System.Text.Json.Nodes.JsonNode.Parse((await Get<JsonElement>("Users/" + user.Id + "/Items/" + id, null, cancellation)).GetRawText())?.AsObject()
+        ?? throw new InvalidOperationException("Fiche Jellyfin vide.");
+    internal Task UpdateItem(string id, System.Text.Json.Nodes.JsonObject item, CancellationToken cancellation) => Command("Items/" + id, item, cancellation);
+    internal Task RefreshItem(string id, bool replaceMetadata, bool replaceImages, CancellationToken cancellation) =>
+        Command("Items/" + id + "/Refresh?Recursive=true&MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=" +
+            (replaceMetadata ? "true" : "false") + "&ReplaceAllImages=" + (replaceImages ? "true" : "false"), null, cancellation);
+
     internal Task<JsonElement> ReadJson(string path, CancellationToken cancellation) => Get<JsonElement>(path, null, cancellation);
 
     internal async Task Command(string path, object? body, CancellationToken cancellation, HttpMethod? method = null)

@@ -547,8 +547,22 @@ class Fixture(BaseHTTPRequestHandler):
             # Extension Intro Skipper sans segments copiés côté serveur : générique de début seulement (fin invalide).
             return self.send({"Introduction": {"EpisodeId": "episode-next", "Valid": True, "IntroStart": 2.0, "IntroEnd": 20.0, "ShowSkipPromptAt": 0.0, "HideSkipPromptAt": 10.0},
                               "Credits": {"EpisodeId": "episode-next", "Valid": False, "IntroStart": 0.0, "IntroEnd": 0.0}})
+        # 0.8 : éditeur d'images (comme Jellyfin) : images actuelles et images proposées en ligne.
+        if path == "/jellyfin/Items/film/Images":
+            return self.send([{"ImageType": "Primary", "ImageTag": "film", "Width": 600, "Height": 900},
+                              {"ImageType": "Backdrop", "ImageIndex": 0, "ImageTag": "film", "Width": 1920, "Height": 1080}])
+        if path == "/jellyfin/Items/film/RemoteImages":
+            events.append(("remote-images", user, q))
+            host = self.headers["Host"]
+            return self.send({"Images": [{"ProviderName": "TheMovieDb", "Url": f"http://{host}/remote/poster-{n}.jpg", "ThumbnailUrl": f"http://{host}/remote/poster-{n}.jpg",
+                                          "Width": 1000, "Height": 1500, "Language": "fr", "CommunityRating": 7.5, "Type": q.get("type", ["Primary"])[0]} for n in range(3)],
+                              "TotalRecordCount": 3, "Providers": ["TheMovieDb"]})
+        if path.startswith("/remote/poster-"):
+            events.append(("remote-thumb", user, {"path": path}))
+            return self.send(art("film", False), content_type="image/jpeg")
         if "/Images/" in path:
-            _, _, _, key, _, kind = path.split("/")
+            parts = path.split("/")
+            key, kind = parts[3], parts[5]
             if key.startswith("big-"):
                 events.append(("big-image", user, {"key": key}))
             data = artwork.get((key, kind))
@@ -588,7 +602,23 @@ class Fixture(BaseHTTPRequestHandler):
         if "/FavoriteItems/" in path:
             favorites.add((self.user, path.rsplit("/", 1)[1]))
             return self.send({"IsFavorite": True})
+        if re.fullmatch(r"/jellyfin/Items/film/Images/\w+", path):
+            # Comme Jellyfin : image envoyée en base64 dans le corps, avec son type.
+            body = base64.b64decode(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            events.append(("image-upload", self.user, {"type": path.rsplit("/", 1)[1], "bytes": len(body), "png": body[:8] == b"\x89PNG\r\n\x1a\n",
+                                                        "mime": self.headers.get("Content-Type", "")}))
+            return self.send(status=204)
         payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        query = parse_qs(target.query)
+        if path == "/jellyfin/Items/film/RemoteImages/Download":
+            events.append(("image-download", self.user, {"type": query["type"][0], "url": query["imageUrl"][0]}))
+            return self.send(status=204)
+        if path == "/jellyfin/Items/film/Refresh":
+            events.append(("metadata-refresh", self.user, query))
+            return self.send(status=204)
+        if path == "/jellyfin/Items/film":
+            events.append(("metadata-update", self.user, payload))
+            return self.send(status=204)
         if path == "/jellyfin/Users/AuthenticateByName":
             assert payload["Pw"] == "motdepasse", repr(payload["Pw"])
             user = "profile-a" if payload["Username"] == "Camille" else "profile-b"
@@ -687,6 +717,9 @@ class Fixture(BaseHTTPRequestHandler):
         self.send(status=204)
 
     def do_DELETE(self):
+        if self.path.startswith("/jellyfin/Items/film/Images/"):
+            events.append(("image-delete", self.user, {"path": self.path}))
+            return self.send(status=204)
         self.mark(False)
 
     def mark(self, value):
@@ -1166,6 +1199,58 @@ def check_library_alphabet():
     until(lambda: control("SortDirection").exists(timeout=.1) and control("SortDirection").window_text() == "A → Z", "Sort direction did not switch back to ascending")
     until(lambda: control("LibraryCard0").exists(timeout=.1) and control("LibraryCard0").window_text() == "1900 Odyssee", "Ascending order does not start with the first title")
     print("OK · Tri dans un sens puis dans l'autre (Z → A, puis A → Z).", flush=True)
+
+
+def check_metadata_editor():
+    # Comme la PWA (éditeur de Jellyfin) : images en ligne, image du PC, suppression, métadonnées, actualisation ;
+    # ancienne image et anciennes métadonnées gardées sur le PC avant chaque modification.
+    backups = profile / "sauvegardes-metadonnees" / "film"
+    logo = Image.new("RGBA", (500, 160), (0, 0, 0, 0)); ImageDraw.Draw(logo).ellipse((10, 10, 490, 150), fill=(40, 160, 220, 255)); logo.save(profile / "logo-du-pc.png")
+    control("LibraryTab").invoke()
+    by_name("Cinéma", found_index=0).invoke()
+    until(lambda: by_name("Horizon polaire", found_index=0).exists(timeout=.1), "Library contents missing")
+    by_name("Horizon polaire", found_index=0).invoke()
+    until(lambda: control("EditImages").exists(timeout=.1), "No « Modifier les images » for an administrator", timeout=20)
+    control("EditImages").invoke()
+    until(lambda: control("ImageDelete-Backdrop-0").exists(timeout=.1) and control("ImageSearch-Primary").exists(timeout=.1), "Image editor missing")
+    sleep(1); screenshot("images")
+    control("ImageSearch-Primary").invoke()
+    until(lambda: control("RemoteImage-1").exists(timeout=.1), "Online images missing")
+    until(lambda: seen("remote-thumb"), "Online image thumbnails not loaded")
+    sleep(1); screenshot("images-en-ligne")
+    control("RemoteImage-1").invoke()
+    until(lambda: seen("image-download", lambda user, body: body["type"] == "Primary" and body["url"].endswith("/remote/poster-1.jpg")), "The chosen online image was not saved")
+    until(lambda: backups.exists() and any(file.name.startswith("Primary-0-") for file in backups.iterdir()), "The replaced poster was not kept on the PC")
+    until(lambda: control("ImageUpload-Logo").exists(timeout=.1), "Back to the image editor failed")
+    control("ImageUpload-Logo").invoke()
+    until(lambda: seen("image-upload", lambda user, body: body["type"] == "Logo" and body["png"] and body["mime"] == "image/png"), "The image from the PC was not sent (base64 PNG)")
+    until(lambda: control("ImageDelete-Backdrop-0").exists(timeout=.1), "Image editor not reloaded after the upload")
+    control("ImageDelete-Backdrop-0").invoke()
+    def confirm():
+        dialogs = [item for item in Desktop(backend="uia").windows() if item.process_id() == process.pid and item.window_text() == "Supprimer l’image"]
+        if not dialogs:
+            return False
+        dialogs[0].child_window(auto_id="6", control_type="Button").invoke()
+        return True
+    until(confirm, "No confirmation before deleting an image")
+    until(lambda: seen("image-delete", lambda user, body: body["path"].endswith("/Images/Backdrop/0")), "The image was not deleted")
+    assert any(file.name.startswith("Backdrop-0-") for file in backups.iterdir()), "The deleted backdrop was not kept on the PC"
+    print("OK · Images : choix en ligne, image du PC, suppression confirmée, anciennes images gardées sur le PC.", flush=True)
+    until(lambda: by_name("Modifier les métadonnées").exists(timeout=.1), "Metadata editor link missing")
+    by_name("Modifier les métadonnées").invoke()
+    until(lambda: control("MetaName").exists(timeout=.1) and control("MetaName").window_text() != "", "Metadata editor missing")
+    control("MetaName").set_edit_text("Horizon polaire (version longue)")
+    control("MetaYear").set_edit_text("2023")
+    control("MetaGenres").set_edit_text("Science-fiction, Aventure")
+    screenshot("metadonnees")
+    control("MetaSave").invoke()
+    until(lambda: seen("metadata-update", lambda user, body: body.get("Id") == "film" and body.get("Name") == "Horizon polaire (version longue)"
+                       and body.get("ProductionYear") == 2023 and body.get("Genres") == ["Science-fiction", "Aventure"]), "Metadata were not saved")
+    assert any(file.name.startswith("metadonnees-") for file in backups.iterdir()), "The previous metadata were not kept on the PC"
+    until(lambda: control("MetaRefresh").exists(timeout=.1), "Metadata editor not reloaded after saving")
+    control("MetaRefresh").invoke()
+    until(lambda: seen("metadata-refresh", lambda user, body: body.get("ReplaceAllMetadata") == ["false"] and body.get("MetadataRefreshMode") == ["FullRefresh"]), "Refresh was not requested")
+    print("OK · Métadonnées : modification enregistrée (ancienne version gardée sur le PC), actualisation depuis Internet.", flush=True)
 
 
 def check_bowd_preroll():
@@ -1708,7 +1793,8 @@ def open_app(profile, address=None):
     # 0.7 : aperçus au survol désactivés pendant le parcours principal (vérifiés dans --features-only).
     process = subprocess.Popen(command, env={**os.environ, "NOCTRA_WINDOWS_DATA": str(profile), "NOCTRA_HERO_AUTOPLAY": "0",
                                              "NOCTRA_TRACE": str(profile / "trace.log"), "NOCTRA_SYNC_IDLE_SECONDS": "6",
-                                             **({} if args.features_only else {"NOCTRA_HOVER_PREVIEW": "0"})})
+                                             **({} if args.features_only else {"NOCTRA_HOVER_PREVIEW": "0"}),
+                                             **({"NOCTRA_TEST_IMAGE": str(profile / "logo-du-pc.png")} if args.features_only else {})})
     try:
         app = Application(backend="uia").connect(process=process.pid, timeout=30)
         dialog = app.window(title="Noctra", control_type="Window")
@@ -1777,6 +1863,7 @@ with TemporaryDirectory(prefix="native-smoke-", dir=Path.cwd()) as temporary:
             check_card_playback()
             check_fullscreen_at_start()
             check_library_alphabet()
+            check_metadata_editor()
             window.close(); process.wait(timeout=12)
             print("OK · Nouveautés 0.7 vérifiées.", flush=True)
             raise SystemExit(0)

@@ -86,6 +86,13 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Images et métadonnées (comme la PWA)
+
+- **Administrateurs** : « Modifier les images » et « Modifier les métadonnées » sur la fiche (film, épisode, série…) et au clic droit d'une carte.
+- **Images** : affiche, fonds, logo, vignette, bannière (affiche seule pour un épisode). Images proposées en ligne par Jellyfin (fournisseurs, taille, langue, note ; « Toutes les langues »), image depuis le PC, suppression avec confirmation.
+- **Métadonnées** : titre, titre original, titre de tri, année, date de sortie, synopsis, slogan, classification, note, genres, tags, studios. « Compléter depuis Internet » et « Tout remplacer depuis Internet… » (métadonnées seulement, avec confirmation).
+- **Sauvegarde** : avant chaque remplacement ou suppression, l'image actuelle et les métadonnées actuelles sont gardées sur ce PC (dossier « sauvegardes-metadonnees » des données de Noctra, un sous-dossier par titre).
+
 ## Médiathèque sur une seule page, alphabet et sens du tri
 
 - **Plus de pages à parcourir** : toute la médiathèque est sur une page, comme Jellyfin. Les titres suivants arrivent par lots de 120 en faisant défiler ; les affiches ne sont téléchargées qu'à l'approche de l'écran (une grande médiathèque reste fluide).
@@ -224,6 +231,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - administration.
 - **Test des nouveautés** :
   - plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris ;
+  - images (choix en ligne, image du PC, suppression confirmée) et métadonnées (modification, actualisation), avec sauvegarde sur le PC ;
   - médiathèque de 404 titres sur une page : chargement au défilement, affiches à la demande, alphabet (T puis #), tri Z → A puis A → Z ;
   - logo de la série dans l'en-tête du lecteur, titre de l'épisode conservé ;
   - épisode lancé depuis une carte de l'accueil puis épisode suivant / précédent ; lecture au clic sur le visuel d'une série et sur la vignette d'un épisode ;
