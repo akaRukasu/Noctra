@@ -93,6 +93,7 @@ public partial class MainWindow
         MediaEyebrow.Text = item.Type == "Episode" && !string.IsNullOrWhiteSpace(item.SeriesName) ? item.SeriesName.ToUpperInvariant() :
             item.IsAudio ? "MUSIQUE" : localFile != null ? "HORS CONNEXION" : "LECTURE EN COURS";
         MediaTitle.Text = item.Type == "Episode" ? item.Name : item.IsAudio ? item.Name : item.DisplayTitle;
+        _ = ShowMediaLogo(item);
         MediaSubtitle.Text = item.Type == "Episode" || item.IsAudio ? item.Caption : item.ProductionYear is { } year ? year.ToString(CultureInfo.InvariantCulture) : "";
         MediaSubtitle.Visibility = MediaSubtitle.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         LiveDot.Visibility = LiveServerButton.Visibility = Visibility.Collapsed;
@@ -116,6 +117,31 @@ public partial class MainWindow
         ShowPauseState(false);
         if (File.Exists(Mpv.LibraryPath)) _ = OpenPlayback(item);
         else InstallPlayer(this, new RoutedEventArgs());
+    }
+
+    // En-tête du lecteur : logo de l'œuvre (film) ou de la série (épisode) à la place du nom écrit, comme sur l'accueil.
+    // Sans logo (musique, direct, titre sans logo), le texte reste.
+    private CancellationTokenSource? mediaLogoLoad;
+    private void HideMediaLogo()
+    {
+        mediaLogoLoad?.Cancel();
+        MediaLogo.Source = null;
+        MediaLogo.Visibility = Visibility.Collapsed;
+        MediaEyebrow.Visibility = MediaTitle.Visibility = Visibility.Visible;
+    }
+    private async Task ShowMediaLogo(MediaItem item)
+    {
+        HideMediaLogo();
+        if (artwork is not { } art || item.IsAudio || item.Type is not ("Movie" or "Episode" or "Video" or "MusicVideo")) return;
+        var load = mediaLogoLoad = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        try { await art.LoadLogo(MediaLogo, item, load.Token); }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or IOException or NotSupportedException) { return; }
+        if (load.IsCancellationRequested || pendingMedia != item || MediaLogo.Source == null) return;
+        MediaLogo.ToolTip = item.Type == "Episode" ? item.SeriesName : item.DisplayTitle;
+        MediaLogo.Visibility = Visibility.Visible;
+        // Épisode : le logo remplace le nom de la série, le titre de l'épisode reste ; film : le logo remplace le titre.
+        if (item.Type == "Episode") MediaEyebrow.Visibility = Visibility.Collapsed;
+        else MediaTitle.Visibility = Visibility.Collapsed;
     }
 
     private void PlayQueue(MediaItem[] items, int index, long start = 0)
@@ -883,6 +909,7 @@ public partial class MainWindow
         pendingLive = new LivePlayback(streams);
         MediaEyebrow.Text = "EN DIRECT";
         MediaTitle.Text = name;
+        HideMediaLogo();
         MediaSubtitle.Visibility = Visibility.Collapsed;
         LiveDot.Visibility = Visibility.Visible;
         LibraryShell.Visibility = Visibility.Collapsed;

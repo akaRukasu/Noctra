@@ -116,6 +116,11 @@ def art(key, landscape):
 
 artwork = {(item["Id"], kind): art(item["Id"], kind == "Backdrop")
            for item in [series, *movies, album] for kind in ("Backdrop", "Primary")}
+if features:
+    # Logo de la série (PNG transparent) : affiché dans l'en-tête du lecteur à la place du nom.
+    logo = Image.new("RGBA", (600, 180), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rounded_rectangle((20, 40, 580, 140), 30, fill=(214, 48, 72, 255))
+    logo_bytes = BytesIO(); logo.save(logo_bytes, "PNG"); artwork[("teen", "Logo")] = logo_bytes.getvalue()
 
 
 def trickplay_tile():
@@ -1028,6 +1033,10 @@ def check_card_playback():
     cards[0].invoke()
     until(lambda: any(plays(item) > count for item, count in before.items()), "A card of the home page did not start the episode", timeout=60)
     started = "episode" if plays("episode") > before["episode"] else "episode-next"
+    # En-tête du lecteur : logo de la série à la place de son nom, titre de l'épisode conservé.
+    until(lambda: control("MediaLogo").exists(timeout=.1), "Series logo missing from the player header", timeout=20)
+    assert control("MediaTitle").window_text() in ("Abomination", "Venomous"), "Episode title hidden by the series logo"
+    wake_player(); screenshot("lecteur-logo")
     until(lambda: traced(f"épisodes voisins {started} :"), "Neighbour episodes were not looked up", timeout=20)
     if started == "episode":
         target, button = "episode-next", "QueueNext"

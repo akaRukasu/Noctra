@@ -86,6 +86,11 @@ La 0.8 refait le lecteur et rend l'accueil plus fluide. Elle adapte aussi les m�
 - **Ajout à chaud** : une chaîne ajoutée pendant que la multivue est ouverte y entre tout de suite.
 - Les lecteurs web gardent les protections du lecteur externe : publicités bloquées, navigation limitée, ni fenêtre ni téléchargement.
 
+## Logo dans l'en-tête du lecteur
+
+- Comme le grand visuel de l'accueil : le logo de l'œuvre remplace le titre écrit en haut du lecteur (film), ou le nom de la série (épisode, le titre de l'épisode reste dessous).
+- Sans logo sur le serveur (et pour la musique et la TV en direct), le texte reste affiché.
+
 ## Barre de lecture au passage de la souris
 
 - L'image est dessinée par la fenêtre du moteur vidéo (autre fil d'exécution) : ses mouvements de souris n'arrivaient pas toujours au lecteur, la barre et les boutons restaient alors cachés.
@@ -213,6 +218,7 @@ L'action **Noctra Windows** les fait sur une machine Windows de GitHub, avec un 
   - administration.
 - **Test des nouveautés** :
   - plein écran demandé à l'ouverture de la vidéo : barre de lecture au premier plan au mouvement de la souris ;
+  - logo de la série dans l'en-tête du lecteur, titre de l'épisode conservé ;
   - épisode lancé depuis une carte de l'accueil puis épisode suivant / précédent ; lecture au clic sur le visuel d'une série et sur la vignette d'un épisode ;
   - SyncPlay : « Rejoindre la lecture » après avoir quitté le lecteur, à la position du groupe ;
   - « Passer le générique » à partir des marqueurs de l'extension Intro Skipper (épisode sans segments côté serveur) ;

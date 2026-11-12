@@ -910,6 +910,9 @@
                     </StackPanel>
                     <StackPanel Margin="16,0" VerticalAlignment="Center">
                         <TextBlock x:Name="MediaEyebrow" Text="LECTURE EN COURS" Foreground="{StaticResource Accent}" FontSize="11" FontWeight="Bold"/>
+                        <!-- Logo de l'œuvre (comme le grand visuel de l'accueil) à la place du titre écrit. -->
+                        <Image x:Name="MediaLogo" MaxHeight="58" MaxWidth="300" Stretch="Uniform" HorizontalAlignment="Left" Margin="0,4,0,2"
+                               RenderOptions.BitmapScalingMode="HighQuality" Visibility="Collapsed" AutomationProperties.AutomationId="MediaLogo"/>
                         <TextBlock x:Name="MediaTitle" FontFamily="{StaticResource DisplayFont}" FontSize="22" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                         <TextBlock x:Name="MediaSubtitle" FontSize="13" Foreground="#C3C8D8" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" Visibility="Collapsed"/>
                     </StackPanel>
